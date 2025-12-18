@@ -1,0 +1,203 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: amd64
+          - os: macos-latest
+            platform: darwin
+            arch: amd64
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+          - os: windows-latest
+            platform: windows
+            arch: amd64
+          - os: windows-latest
+            platform: windows
+            arch: arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install npm dependencies
+        run: |
+          cd desktop/ui
+          npm install
+        shell: bash
+
+      - name: Cache Wails CLI
+        id: cache-wails
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/wails
+          key: ${{ runner.os }}-wails-v2.10.2
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.ref_type }}" == "tag" ]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Install Wails (Linux)
+        if: matrix.platform == 'linux' && steps.cache-wails.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+          # Create webkit2gtk-4.0.pc symlink to webkit2gtk-4.1.pc in all pkg-config paths
+          for pcdir in $(pkg-config --variable pc_path pkg-config | tr ':' ' '); do
+            if [ -f "$pcdir/webkit2gtk-4.1.pc" ]; then
+              echo "Creating symlink in $pcdir"
+              sudo ln -sf "$pcdir/webkit2gtk-4.1.pc" "$pcdir/webkit2gtk-4.0.pc"
+            fi
+          done
+          # Verify the symlink was created
+          pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 found" || echo "✗ webkit2gtk-4.0 NOT found"
+          pkg-config --modversion webkit2gtk-4.0 || true
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install Linux dependencies (cached)
+        if: matrix.platform == 'linux' && steps.cache-wails.outputs.cache-hit == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+          # Create webkit2gtk-4.0.pc symlink to webkit2gtk-4.1.pc in all pkg-config paths
+          for pcdir in $(pkg-config --variable pc_path pkg-config | tr ':' ' '); do
+            if [ -f "$pcdir/webkit2gtk-4.1.pc" ]; then
+              echo "Creating symlink in $pcdir"
+              sudo ln -sf "$pcdir/webkit2gtk-4.1.pc" "$pcdir/webkit2gtk-4.0.pc"
+            fi
+          done
+          pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 found" || echo "✗ webkit2gtk-4.0 NOT found"
+
+      - name: Install Wails (macOS)
+        if: matrix.platform == 'darwin' && steps.cache-wails.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install Wails (Windows)
+        if: matrix.platform == 'windows' && steps.cache-wails.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        shell: pwsh
+
+      - name: Build application (Linux/macOS)
+        if: matrix.platform != 'windows'
+        env:
+          CGO_ENABLED: 1
+        run: |
+          export PATH=$PATH:$(go env GOPATH)/bin
+          cd desktop
+          if [ "${{ matrix.platform }}" == "linux" ]; then
+            # Verify webkit2gtk-4.0 is available before building
+            echo "Checking WebKit2GTK availability..."
+            pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 is available" || echo "✗ webkit2gtk-4.0 NOT available"
+            pkg-config --modversion webkit2gtk-4.0 || true
+
+            export CGO_CFLAGS="$(pkg-config --cflags gtk+-3.0 webkit2gtk-4.0)"
+            export CGO_LDFLAGS="$(pkg-config --libs gtk+-3.0 webkit2gtk-4.0)"
+            export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH}"
+
+            echo "CGO_CFLAGS: $CGO_CFLAGS"
+            echo "CGO_LDFLAGS: $CGO_LDFLAGS"
+          fi
+          wails build -platform ${{ matrix.platform }}/${{ matrix.arch }}
+
+      - name: Build application (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          $env:PATH += ";$(go env GOPATH)\bin"
+          cd desktop
+          wails build -platform ${{ matrix.platform }}/${{ matrix.arch }}
+        shell: pwsh
+
+      - name: Package application (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          cd desktop/build/bin
+          tar -czf cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub
+          mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../
+
+      - name: Package application (macOS)
+        if: matrix.platform == 'darwin'
+        run: |
+          cd desktop/build/bin
+          if [ -d "CliSimpleHub.app" ]; then
+            zip -r cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip "CliSimpleHub.app"
+          else
+            tar -czf cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub
+          fi
+          mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.* ../../../
+
+      - name: Package application (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          cd desktop/build/bin
+          Compress-Archive -Path cliSimpleHub.exe -DestinationPath ../../../cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
+        shell: pwsh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            cliSimpleHub-*.tar.gz
+            cliSimpleHub-*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

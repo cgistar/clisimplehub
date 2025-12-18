@@ -1,0 +1,35 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+# editor
+.vscode
+.idea/
+.kiro
+
+# Go
+.gocache
+.gomodcache
+go.sum
+
+desktop/build/*
+!desktop/build/appicon.png
+!desktop/build/darwin/
+desktop/build/darwin/*
+!desktop/build/darwin/appicon.icns
+!desktop/build/darwin/Info.plist
+!desktop/build/windows/
+desktop/build/windows/*
+!desktop/build/windows/icon.ico
+!desktop/build/windows/wails.exe.manifest
+**/dist
+
+# Config
+config.json
+data.sqlite
