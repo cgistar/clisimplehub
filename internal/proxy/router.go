@@ -463,3 +463,37 @@ func (r *DefaultRouter) GetEnabledEndpointsByType(interfaceType InterfaceType) [
 	}
 	return result
 }
+
+// IsRetryablePath checks if the given path should have retry and failover enabled.
+// Only /v1/messages (Claude) and /responses (Codex) paths support retry/failover.
+func IsRetryablePath(path string) bool {
+	lowerPath := strings.ToLower(path)
+	// Claude: /v1/messages
+	if strings.HasPrefix(lowerPath, "/v1/messages") {
+		return true
+	}
+	// Codex: /v1/responses or paths ending with /responses
+	if strings.HasPrefix(lowerPath, "/v1/responses") || strings.HasSuffix(lowerPath, "/responses") {
+		return true
+	}
+	return false
+}
+
+// ShouldRecordVendorStats checks if the request should be recorded to vendor_stats.
+// Only Claude/Codex interface types with retryable paths should be recorded.
+func ShouldRecordVendorStats(interfaceType InterfaceType, path string) bool {
+	// Only Claude and Codex interface types
+	if interfaceType == InterfaceTypeClaude || interfaceType == InterfaceTypeCodex {
+		lowerPath := strings.ToLower(path)
+		// Claude: /v1/messages
+		if strings.HasPrefix(lowerPath, "/v1/messages") {
+			return true
+		}
+		// Codex: /v1/responses or paths ending with /responses
+		if strings.HasPrefix(lowerPath, "/v1/responses") || strings.HasSuffix(lowerPath, "/responses") {
+			return true
+		}
+		return false
+	}
+	return true
+}

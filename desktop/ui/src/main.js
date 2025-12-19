@@ -56,7 +56,6 @@ import {
     saveCLIConfig,
     processCLIConfig,
     updateCLIConfigEditorButton,
-    installCLI
 } from './modules/cliconfig.js';
 
 // Initialize the application
@@ -152,4 +151,3 @@ window.openCLIConfigEditor = openCLIConfigEditor;
 window.closeCLIConfigEditor = closeCLIConfigEditor;
 window.saveCLIConfig = saveCLIConfig;
 window.processCLIConfig = processCLIConfig;
-window.installCLI = installCLI;

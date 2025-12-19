@@ -81,24 +81,6 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class CLIVersionInfo {
-	    nodeVersion: string;
-	    nodeInstalled: boolean;
-	    cliVersion: string;
-	    cliInstalled: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new CLIVersionInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.nodeVersion = source["nodeVersion"];
-	        this.nodeInstalled = source["nodeInstalled"];
-	        this.cliVersion = source["cliVersion"];
-	        this.cliInstalled = source["cliInstalled"];
-	    }
-	}
 	export class EndpointInfo {
 	    id: number;
 	    name: string;
@@ -203,22 +185,6 @@ export namespace main {
 	        this.reasoning = source["reasoning"];
 	        this.total = source["total"];
 	        this.requestCount = source["requestCount"];
-	    }
-	}
-	export class InstallCLIResult {
-	    success: boolean;
-	    message: string;
-	    output: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new InstallCLIResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.message = source["message"];
-	        this.output = source["output"];
 	    }
 	}
 	export class InterfaceTypeStatsSummaryInfo {

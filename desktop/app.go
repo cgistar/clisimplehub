@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -1004,16 +1003,42 @@ func (a *App) DeleteEndpoint(id int64) error {
 // Language Settings
 // =============================================================================
 
-// GetLanguage returns the current language setting
+// GetLanguage returns the current language setting.
+// On first launch (no saved language), it detects the system language and uses it if supported.
 func (a *App) GetLanguage() (string, error) {
 	if a.storage == nil {
-		return "en", nil
+		return detectSystemLanguage(), nil
 	}
 	lang, err := a.storage.GetConfig("language")
 	if err != nil || lang == "" {
-		return "en", nil
+		// First launch: detect system language and save it
+		detectedLang := detectSystemLanguage()
+		_ = a.storage.SetConfig("language", detectedLang)
+		return detectedLang, nil
 	}
 	return lang, nil
+}
+
+// detectSystemLanguage detects the system language and returns a supported language code.
+// Supported languages: "en", "zh-CN"
+func detectSystemLanguage() string {
+	// Try LANG environment variable first (common on Unix-like systems)
+	lang := os.Getenv("LANG")
+	if lang == "" {
+		lang = os.Getenv("LC_ALL")
+	}
+	if lang == "" {
+		lang = os.Getenv("LC_MESSAGES")
+	}
+
+	// Check for Chinese language
+	langLower := strings.ToLower(lang)
+	if strings.HasPrefix(langLower, "zh") {
+		return "zh-CN"
+	}
+
+	// Default to English
+	return "en"
 }
 
 // SetLanguage sets the language setting
@@ -1758,12 +1783,15 @@ func (a *App) GetClaudeConfig() (*CLIConfigResult, error) {
 	}
 	files = append(files, CLIConfigFile{Name: "settings.json", Content: settingsContent, Exists: settingsExists})
 
-	// Ensure ~/.claude.json exists (create if not, but don't edit)
+	// Ensure ~/.claude.json has hasCompletedOnboarding: true
 	claudeJsonPath := filepath.Join(homeDir, ".claude.json")
-	if _, err := os.Stat(claudeJsonPath); os.IsNotExist(err) {
-		defaultClaudeJson := `{"hasCompletedOnboarding": true}`
-		os.MkdirAll(filepath.Dir(claudeJsonPath), 0755)
-		os.WriteFile(claudeJsonPath, []byte(defaultClaudeJson), 0644)
+	claudeJsonData := map[string]interface{}{}
+	if data, err := os.ReadFile(claudeJsonPath); err == nil {
+		json.Unmarshal(data, &claudeJsonData)
+	}
+	claudeJsonData["hasCompletedOnboarding"] = true
+	if newData, err := json.MarshalIndent(claudeJsonData, "", "  "); err == nil {
+		os.WriteFile(claudeJsonPath, newData, 0644)
 	}
 
 	return &CLIConfigResult{Success: true, Files: files}, nil
@@ -2024,125 +2052,4 @@ func (a *App) getDefaultCodexAuth() string {
 
 	data, _ := json.MarshalIndent(auth, "", "  ")
 	return string(data)
-}
-
-// =============================================================================
-// CLI Version Detection and Installation
-// =============================================================================
-
-// CLIVersionInfo represents version information for Node and CLI tools
-type CLIVersionInfo struct {
-	NodeVersion   string `json:"nodeVersion"`
-	NodeInstalled bool   `json:"nodeInstalled"`
-	CLIVersion    string `json:"cliVersion"`
-	CLIInstalled  bool   `json:"cliInstalled"`
-}
-
-// GetNodeVersion returns the installed Node.js version
-func (a *App) GetNodeVersion() string {
-	cmd := exec.Command("node", "--version")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(output))
-}
-
-// GetClaudeCodeVersion returns the installed Claude Code CLI version
-func (a *App) GetClaudeCodeVersion() *CLIVersionInfo {
-	info := &CLIVersionInfo{}
-
-	// Check Node.js
-	nodeVersion := a.GetNodeVersion()
-	if nodeVersion != "" {
-		info.NodeInstalled = true
-		info.NodeVersion = nodeVersion
-	}
-
-	// Check Claude Code CLI
-	cmd := exec.Command("claude", "--version")
-	output, err := cmd.Output()
-	if err == nil {
-		version := strings.TrimSpace(string(output))
-		if version != "" {
-			info.CLIInstalled = true
-			info.CLIVersion = version
-		}
-	}
-
-	return info
-}
-
-// GetCodexVersion returns the installed Codex CLI version
-func (a *App) GetCodexVersion() *CLIVersionInfo {
-	info := &CLIVersionInfo{}
-
-	// Check Node.js
-	nodeVersion := a.GetNodeVersion()
-	if nodeVersion != "" {
-		info.NodeInstalled = true
-		info.NodeVersion = nodeVersion
-	}
-
-	// Check Codex CLI
-	cmd := exec.Command("codex", "--version")
-	output, err := cmd.Output()
-	if err == nil {
-		version := strings.TrimSpace(string(output))
-		if version != "" {
-			info.CLIInstalled = true
-			info.CLIVersion = version
-		}
-	}
-
-	return info
-}
-
-// InstallCLIResult represents the result of CLI installation
-type InstallCLIResult struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	Output  string `json:"output"`
-}
-
-// InstallClaudeCode installs Claude Code CLI via npm
-func (a *App) InstallClaudeCode() *InstallCLIResult {
-	cmd := exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code", "--registry=https://registry.npmmirror.com")
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
-
-	if err != nil {
-		return &InstallCLIResult{
-			Success: false,
-			Message: fmt.Sprintf("Installation failed: %v", err),
-			Output:  outputStr,
-		}
-	}
-
-	return &InstallCLIResult{
-		Success: true,
-		Message: "Claude Code CLI installed successfully",
-		Output:  outputStr,
-	}
-}
-
-// InstallCodex installs Codex CLI via npm
-func (a *App) InstallCodex() *InstallCLIResult {
-	cmd := exec.Command("npm", "install", "-g", "@openai/codex@latest", "--registry=https://registry.npmmirror.com")
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
-
-	if err != nil {
-		return &InstallCLIResult{
-			Success: false,
-			Message: fmt.Sprintf("Installation failed: %v", err),
-			Output:  outputStr,
-		}
-	}
-
-	return &InstallCLIResult{
-		Success: true,
-		Message: "Codex CLI installed successfully",
-		Output:  outputStr,
-	}
 }

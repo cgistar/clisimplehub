@@ -23,14 +23,14 @@ export function initUI() {
             <div class="left-panel">
                 <div class="card">
                     <div class="card-header">
-                        <h2>${t('endpoints.title')} <button class="icon-btn" onclick="showManageModal()" title="${t('endpoints.manage')}">📝</button></h2>
+                        <h2>${t('endpoints.title')} <button class="icon-btn" onclick="showManageModal()" title="${t('endpoints.manage')}">📝端点配置</button></h2>
                     </div>
                     <div class="tabs" id="interfaceTabs">
                         <button class="tab-btn active" data-type="claude" onclick="switchTab('claude')">Claude</button>
                         <button class="tab-btn" data-type="codex" onclick="switchTab('codex')">Codex</button>
                         <button class="tab-btn" data-type="gemini" onclick="switchTab('gemini')">Gemini</button>
                         <button class="tab-btn" data-type="chat" onclick="switchTab('chat')">Chat</button>
-                        <button class="icon-btn cli-config-btn" id="cliConfigEditorBtn" onclick="openCLIConfigEditor()" title="${t('cliConfig.title')}">📝</button>
+                        <button class="icon-btn cli-config-btn" id="cliConfigEditorBtn" onclick="openCLIConfigEditor()" title="${t('cliConfig.title')}">📝Cli 配置</button>
                     </div>
                     <div class="active-selector">
                         <label>${t('endpoints.activeEndpoint')}:</label>

@@ -30,20 +30,12 @@ export function GetCLIConfigDirs() {
   return window['go']['main']['App']['GetCLIConfigDirs']();
 }
 
-export function GetClaudeCodeVersion() {
-  return window['go']['main']['App']['GetClaudeCodeVersion']();
-}
-
 export function GetClaudeConfig() {
   return window['go']['main']['App']['GetClaudeConfig']();
 }
 
 export function GetCodexConfig() {
   return window['go']['main']['App']['GetCodexConfig']();
-}
-
-export function GetCodexVersion() {
-  return window['go']['main']['App']['GetCodexVersion']();
 }
 
 export function GetConfigPath() {
@@ -72,10 +64,6 @@ export function GetLanguage() {
 
 export function GetLogDetail(arg1) {
   return window['go']['main']['App']['GetLogDetail'](arg1);
-}
-
-export function GetNodeVersion() {
-  return window['go']['main']['App']['GetNodeVersion']();
 }
 
 export function GetPort() {
@@ -116,14 +104,6 @@ export function GetVendors() {
 
 export function GetWebSocketURL() {
   return window['go']['main']['App']['GetWebSocketURL']();
-}
-
-export function InstallClaudeCode() {
-  return window['go']['main']['App']['InstallClaudeCode']();
-}
-
-export function InstallCodex() {
-  return window['go']['main']['App']['InstallCodex']();
 }
 
 export function ProcessClaudeConfig(arg1) {

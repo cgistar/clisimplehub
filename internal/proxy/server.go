@@ -305,13 +305,20 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Detect interface type from path (needed for logging even when unauthorized)
 	interfaceType := p.router.DetectInterfaceType(r.URL.Path)
 
+	// Check if this path should have retry/failover and vendor_stats recording
+	// Only /v1/messages (Claude) and /responses (Codex) paths support these features
+	isRetryable := IsRetryablePath(r.URL.Path)
+	shouldRecordStats := ShouldRecordVendorStats(interfaceType, r.URL.Path)
+
 	// Optional proxy authentication (empty token => no auth)
 	if required := p.getAuthKey(); required != "" && !isAuthorized(r, required) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		detail := &RequestDetail{Method: r.Method, StatusCode: http.StatusUnauthorized, RequestHeaders: reqHeaders}
 		runTime := time.Since(startTime).Milliseconds()
 		p.recordRequestWithDetail(requestID, interfaceType, nil, r.URL.Path, startTime, "error_401", runTime, detail)
-		p.insertVendorStat(r.Context(), interfaceType, nil, r.URL.Path, map[string]string{}, runTime, http.StatusUnauthorized, "error_401", nil)
+		if shouldRecordStats {
+			p.insertVendorStat(r.Context(), interfaceType, nil, r.URL.Path, map[string]string{}, runTime, http.StatusUnauthorized, "error_401", nil)
+		}
 		return
 	}
 
@@ -351,7 +358,41 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	detail.ResponseStream = ""
 	p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "in_progress", 0, detail)
 
-	// Retry loop
+	// For non-retryable paths (e.g., /token_count), forward directly without retry/failover
+	if !isRetryable {
+		result := p.forwardRequestWithDetail(r, endpoint, bodyBytes, streamReq.Stream, w)
+		detail.TargetURL = result.TargetURL
+		detail.StatusCode = result.StatusCode
+		detail.ResponseStream = result.ResponseStream
+		runTime := time.Since(startTime).Milliseconds()
+
+		if result.Error != nil {
+			status := "error"
+			if result.StatusCode > 0 {
+				status = fmt.Sprintf("error_%d", result.StatusCode)
+			}
+			p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, status, runTime, detail)
+			if result.StatusCode > 0 {
+				writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
+			} else {
+				http.Error(w, fmt.Sprintf("Request failed: %v", result.Error), http.StatusBadGateway)
+			}
+			return
+		}
+
+		status := "success"
+		if result.StatusCode != http.StatusOK {
+			status = fmt.Sprintf("error_%d", result.StatusCode)
+		}
+		p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, status, runTime, detail)
+
+		if !result.Streamed {
+			writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
+		}
+		return
+	}
+
+	// Retry loop for retryable paths (/v1/messages, /responses)
 	// Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 	var lastErr error
 	triedEndpoints := make(map[string]int) // Track attempts per endpoint
@@ -387,7 +428,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			if tokens == nil {
 				tokens = p.extractAndRecordTokens(endpoint, result.Body)
 			}
-			p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, result.TargetHeaders, runTime, http.StatusOK, "success", tokens)
+			if shouldRecordStats {
+				p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, result.TargetHeaders, runTime, http.StatusOK, "success", tokens)
+			}
 
 			return
 		}
@@ -426,7 +469,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			status := fmt.Sprintf("error_%d", result.StatusCode)
 			runTime := time.Since(startTime).Milliseconds()
 			p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, status, runTime, detail)
-			p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, result.TargetHeaders, runTime, result.StatusCode, status, nil)
+			if shouldRecordStats {
+				p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, result.TargetHeaders, runTime, result.StatusCode, status, nil)
+			}
 			writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
 			return
 		}
@@ -468,7 +513,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	detail.StatusCode = http.StatusServiceUnavailable
 	runTime := time.Since(startTime).Milliseconds()
 	p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "error_503", runTime, detail)
-	p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, map[string]string{}, runTime, http.StatusServiceUnavailable, "error_503", nil)
+	if shouldRecordStats {
+		p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, map[string]string{}, runTime, http.StatusServiceUnavailable, "error_503", nil)
+	}
 
 	if lastErr != nil {
 		http.Error(w, fmt.Sprintf("All endpoints failed: %v", lastErr), http.StatusServiceUnavailable)

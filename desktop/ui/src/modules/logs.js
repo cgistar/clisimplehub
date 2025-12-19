@@ -49,17 +49,20 @@ function handleRealtimeEvent(event) {
         case 'started':
         case 'progress':
             if (event.data) {
-                realtimeRequests.set(event.request_id, event.data);
-                renderRealtimeRequests();
-                // Also update recent logs
-                updateRecentLog(event.data);
+                // Only show in realtime section if still pending
+                if (event.data.status === 'PENDING' || event.data.status === 'STREAMING') {
+                    realtimeRequests.set(event.request_id, event.data);
+                    renderRealtimeRequests();
+                }
             }
             break;
         case 'completed':
         case 'failed':
             if (event.data) {
-                realtimeRequests.set(event.request_id, event.data);
+                // Remove from realtime section immediately
+                realtimeRequests.delete(event.request_id);
                 renderRealtimeRequests();
+                // Add to recent logs
                 updateRecentLog(event.data);
             }
             break;
@@ -179,26 +182,24 @@ function renderRealtimeSection() {
 }
 
 /**
- * Render real-time requests list
- * Only shows PENDING/STREAMING requests (in-progress)
+ * Render real-time requests list (only active/pending requests)
  */
 function renderRealtimeRequests() {
     const container = document.getElementById('realtimeRequests');
     if (!container) return;
     
-    // Only show in-progress requests
-    const requests = Array.from(realtimeRequests.values())
+    // Only show pending/streaming requests
+    const activeRequests = Array.from(realtimeRequests.values())
         .filter(req => req.status === 'PENDING' || req.status === 'STREAMING')
-        .sort((a, b) => new Date(b.startTime) - new Date(a.startTime))
-        .slice(0, 10); // Show max 10 real-time requests
+        .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
     
-    if (requests.length === 0) {
+    if (activeRequests.length === 0) {
         container.innerHTML = `<div class="empty-state-sm">${t('logs.noRealtime')}</div>`;
         stopRealtimeDurationRefresh();
         return;
     }
     
-    container.innerHTML = requests.map(req => `
+    container.innerHTML = activeRequests.map(req => `
         <div class="realtime-item ${getStatusClass(req.status)}" 
              onclick="showLogDetail('${req.request_id}')" 
              data-request-id="${req.request_id}">
@@ -213,7 +214,7 @@ function renderRealtimeRequests() {
                 <span class="realtime-path" title="${req.path}">${req.method || 'POST'} ${req.path}</span>
                 <span class="realtime-duration">${formatDuration(req)}</span>
             </div>
-            ${req.status === 'PENDING' ? '<div class="realtime-progress"><div class="progress-bar"></div></div>' : ''}
+            <div class="realtime-progress"><div class="progress-bar"></div></div>
         </div>
     `).join('');
 
@@ -222,7 +223,6 @@ function renderRealtimeRequests() {
 
 /**
  * Render logs list
- * Only shows completed requests (excludes in_progress)
  */
 export function renderLogs(logs) {
     const container = document.getElementById('logsContainer');
@@ -230,19 +230,16 @@ export function renderLogs(logs) {
     
     if (!container) return;
     
-    // Filter out in-progress requests - they are shown in realtime section
-    const completedLogs = (logs || []).filter(log => log.status !== 'in_progress');
-    
     if (countEl) {
-        countEl.textContent = `${completedLogs.length} / 5`;
+        countEl.textContent = `${logs.length} / 5`;
     }
     
-    if (completedLogs.length === 0) {
+    if (!logs || logs.length === 0) {
         container.innerHTML = `<div class="empty-state">${t('logs.noLogs')}</div>`;
         return;
     }
     
-    container.innerHTML = completedLogs.map(log => `
+    container.innerHTML = logs.map(log => `
         <div class="log-item ${getLogClass(log)}" onclick="showLogDetail('${log.id}')" style="cursor: pointer;">
             <div class="log-header">
                 <span class="log-type badge">${log.interfaceType}</span>

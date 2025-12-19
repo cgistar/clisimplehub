@@ -103,21 +103,9 @@ async function loadCodexConfig() {
 /**
  * Render CLI config editor content
  */
-async function renderCLIConfigEditor(type, files) {
+function renderCLIConfigEditor(type, files) {
     const modal = document.getElementById('cliConfigModal');
     const title = type === 'claude' ? 'Claude Code' : 'Codex';
-    
-    // Get version info
-    let versionInfo = { nodeInstalled: false, nodeVersion: '', cliInstalled: false, cliVersion: '' };
-    try {
-        if (type === 'claude' && window.go?.main?.App?.GetClaudeCodeVersion) {
-            versionInfo = await window.go.main.App.GetClaudeCodeVersion();
-        } else if (type === 'codex' && window.go?.main?.App?.GetCodexVersion) {
-            versionInfo = await window.go.main.App.GetCodexVersion();
-        }
-    } catch (e) {
-        console.error('Failed to get version info:', e);
-    }
     
     let editorsHtml = '';
     files.forEach((file, index) => {
@@ -136,22 +124,6 @@ async function renderCLIConfigEditor(type, files) {
         `;
     });
     
-    // Build version info HTML
-    const cliName = type === 'claude' ? 'Claude Code' : 'Codex';
-    let versionHtml = '';
-    
-    if (versionInfo.nodeInstalled) {
-        versionHtml += `<span class="cli-version-item">Node: ${versionInfo.nodeVersion}</span>`;
-        
-        if (versionInfo.cliInstalled) {
-            versionHtml += `<span class="cli-version-item">${cliName}: ${versionInfo.cliVersion}</span>`;
-        } else {
-            versionHtml += `<span class="cli-version-item cli-not-installed">${cliName}: <a href="#" onclick="installCLI('${type}'); return false;">${t('cliConfig.clickToInstall')}</a></span>`;
-        }
-    } else {
-        versionHtml += `<span class="cli-version-item cli-not-installed">Node: ${t('cliConfig.notInstalled')}</span>`;
-    }
-    
     modal.innerHTML = `
         <div class="modal-content modal-large">
             <div class="modal-header">
@@ -162,7 +134,6 @@ async function renderCLIConfigEditor(type, files) {
                 ${editorsHtml}
             </div>
             <div class="modal-footer">
-                <div class="cli-version-info" id="cliVersionInfo">${versionHtml}</div>
                 <div class="cli-footer-actions">
                     <button class="btn btn-secondary" onclick="processCLIConfig()" title="${t('cliConfig.processHelp')}">🔄 ${t('cliConfig.process')}</button>
                     <button class="btn btn-primary" onclick="saveCLIConfig()">💾 ${t('cliConfig.save')}</button>
@@ -248,81 +219,6 @@ export async function processCLIConfig() {
     } catch (error) {
         showError(t('cliConfig.processFailed') + ': ' + error.message);
     }
-}
-
-/**
- * Install CLI tool
- */
-export async function installCLI(type) {
-    const cliName = type === 'claude' ? 'Claude Code' : 'Codex';
-    
-    // Update UI to show installing
-    const versionInfoEl = document.getElementById('cliVersionInfo');
-    if (versionInfoEl) {
-        versionInfoEl.innerHTML = `<span class="cli-version-item cli-installing">⏳ ${t('cliConfig.installing')} ${cliName}...</span>`;
-    }
-    
-    try {
-        let result;
-        if (type === 'claude') {
-            result = await window.go.main.App.InstallClaudeCode();
-        } else {
-            result = await window.go.main.App.InstallCodex();
-        }
-        
-        if (result.success) {
-            showSuccess(t('cliConfig.installSuccess'));
-            // Refresh version info
-            if (type === 'claude') {
-                await loadClaudeConfig();
-            } else {
-                await loadCodexConfig();
-            }
-        } else {
-            showError(t('cliConfig.installFailed') + ': ' + result.message);
-            // Restore version info
-            await refreshVersionInfo(type);
-        }
-    } catch (error) {
-        showError(t('cliConfig.installFailed') + ': ' + error.message);
-        await refreshVersionInfo(type);
-    }
-}
-
-/**
- * Refresh version info display
- */
-async function refreshVersionInfo(type) {
-    const versionInfoEl = document.getElementById('cliVersionInfo');
-    if (!versionInfoEl) return;
-    
-    let versionInfo = { nodeInstalled: false, nodeVersion: '', cliInstalled: false, cliVersion: '' };
-    try {
-        if (type === 'claude' && window.go?.main?.App?.GetClaudeCodeVersion) {
-            versionInfo = await window.go.main.App.GetClaudeCodeVersion();
-        } else if (type === 'codex' && window.go?.main?.App?.GetCodexVersion) {
-            versionInfo = await window.go.main.App.GetCodexVersion();
-        }
-    } catch (e) {
-        console.error('Failed to get version info:', e);
-    }
-    
-    const cliName = type === 'claude' ? 'Claude Code' : 'Codex';
-    let versionHtml = '';
-    
-    if (versionInfo.nodeInstalled) {
-        versionHtml += `<span class="cli-version-item">Node: ${versionInfo.nodeVersion}</span>`;
-        
-        if (versionInfo.cliInstalled) {
-            versionHtml += `<span class="cli-version-item">${cliName}: ${versionInfo.cliVersion}</span>`;
-        } else {
-            versionHtml += `<span class="cli-version-item cli-not-installed">${cliName}: <a href="#" onclick="installCLI('${type}'); return false;">${t('cliConfig.clickToInstall')}</a></span>`;
-        }
-    } else {
-        versionHtml += `<span class="cli-version-item cli-not-installed">Node: ${t('cliConfig.notInstalled')}</span>`;
-    }
-    
-    versionInfoEl.innerHTML = versionHtml;
 }
 
 /**

@@ -20,13 +20,9 @@ export function GetAllEndpoints():Promise<Array<main.EndpointInfo>>;
 
 export function GetCLIConfigDirs():Promise<main.CLIConfigDirs>;
 
-export function GetClaudeCodeVersion():Promise<main.CLIVersionInfo>;
-
 export function GetClaudeConfig():Promise<main.CLIConfigResult>;
 
 export function GetCodexConfig():Promise<main.CLIConfigResult>;
-
-export function GetCodexVersion():Promise<main.CLIVersionInfo>;
 
 export function GetConfigPath():Promise<string>;
 
@@ -41,8 +37,6 @@ export function GetInterfaceTypes():Promise<Array<string>>;
 export function GetLanguage():Promise<string>;
 
 export function GetLogDetail(arg1:string):Promise<main.RequestLogDetailInfo>;
-
-export function GetNodeVersion():Promise<string>;
 
 export function GetPort():Promise<number>;
 
@@ -63,10 +57,6 @@ export function GetTokenStatsForEndpoint(arg1:string):Promise<main.TokenStatsInf
 export function GetVendors():Promise<Array<main.VendorInfo>>;
 
 export function GetWebSocketURL():Promise<string>;
-
-export function InstallClaudeCode():Promise<main.InstallCLIResult>;
-
-export function InstallCodex():Promise<main.InstallCLIResult>;
 
 export function ProcessClaudeConfig(arg1:string):Promise<string>;
 
