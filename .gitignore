@@ -12,6 +12,8 @@ node_modules/
 .vscode
 .idea/
 .kiro
+.claude
+.cursor
 
 # Go
 .gocache

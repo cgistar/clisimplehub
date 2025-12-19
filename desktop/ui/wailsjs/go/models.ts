@@ -189,6 +189,60 @@ export namespace main {
 	        this.requestCount = source["requestCount"];
 	    }
 	}
+	export class VendorInfo {
+	    id: number;
+	    name: string;
+	    homeUrl: string;
+	    apiUrl: string;
+	    remark?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new VendorInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.homeUrl = source["homeUrl"];
+	        this.apiUrl = source["apiUrl"];
+	        this.remark = source["remark"];
+	    }
+	}
+	export class FullConfig {
+	    appConfig?: Record<string, any>;
+	    vendors: VendorInfo[];
+	    endpoints: EndpointInfo[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FullConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.appConfig = source["appConfig"];
+	        this.vendors = this.convertValues(source["vendors"], VendorInfo);
+	        this.endpoints = this.convertValues(source["endpoints"], EndpointInfo);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class InterfaceTypeStatsSummaryInfo {
 	    interfaceType: string;
 	    inputTokens: number;
@@ -375,26 +429,7 @@ export namespace main {
 	        this.total = source["total"];
 	    }
 	}
-	export class VendorInfo {
-	    id: number;
-	    name: string;
-	    homeUrl: string;
-	    apiUrl: string;
-	    remark?: string;
 	
-	    static createFrom(source: any = {}) {
-	        return new VendorInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.homeUrl = source["homeUrl"];
-	        this.apiUrl = source["apiUrl"];
-	        this.remark = source["remark"];
-	    }
-	}
 	export class VendorStatsSummaryInfo {
 	    vendorId: string;
 	    vendorName: string;
@@ -421,6 +456,64 @@ export namespace main {
 	        this.reasoning = source["reasoning"];
 	        this.total = source["total"];
 	        this.endpoints = this.convertValues(source["endpoints"], EndpointStatsSummaryInfo);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class WebDAVConfigInput {
+	    serverUrl: string;
+	    username: string;
+	    password: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WebDAVConfigInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.serverUrl = source["serverUrl"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	    }
+	}
+	export class WebDAVRequestInput {
+	    config: WebDAVConfigInput;
+	    method: string;
+	    path: string;
+	    body?: string;
+	    headers?: Record<string, string>;
+	    destPath?: string;
+	    depth?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WebDAVRequestInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.config = this.convertValues(source["config"], WebDAVConfigInput);
+	        this.method = source["method"];
+	        this.path = source["path"];
+	        this.body = source["body"];
+	        this.headers = source["headers"];
+	        this.destPath = source["destPath"];
+	        this.depth = source["depth"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -480,6 +573,24 @@ export namespace proxy {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	
+	    }
+	}
+	export class WebDAVResponse {
+	    statusCode: number;
+	    headers?: Record<string, string>;
+	    body?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WebDAVResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.statusCode = source["statusCode"];
+	        this.headers = source["headers"];
+	        this.body = source["body"];
+	        this.error = source["error"];
 	    }
 	}
 

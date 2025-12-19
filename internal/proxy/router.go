@@ -43,8 +43,11 @@ var ErrEndpointNotFound = errors.New("endpoint not found")
 
 // DefaultRouter is the default implementation of the Router interface
 type DefaultRouter struct {
-	endpoints      map[InterfaceType][]*Endpoint
-	active         map[InterfaceType]*Endpoint
+	endpoints map[InterfaceType][]*Endpoint
+	active    map[InterfaceType]*Endpoint
+	// preferred stores the endpoint key (id/name) that should be used when available.
+	// It follows manual SetActiveEndpoint and survives temporary disables, allowing automatic recovery.
+	preferred      map[InterfaceType]string
 	mu             sync.RWMutex
 	tempDisableTTL time.Duration
 	tempDisabled   map[InterfaceType]map[string]*tempDisableEntry
@@ -62,6 +65,7 @@ func NewRouter() *DefaultRouter {
 	return &DefaultRouter{
 		endpoints:      make(map[InterfaceType][]*Endpoint),
 		active:         make(map[InterfaceType]*Endpoint),
+		preferred:      make(map[InterfaceType]string),
 		tempDisableTTL: defaultTempDisableTTL,
 		tempDisabled:   make(map[InterfaceType]map[string]*tempDisableEntry),
 	}
@@ -166,10 +170,17 @@ func (r *DefaultRouter) LoadEndpoints(endpoints []*Endpoint) {
 			previousActiveIDs[interfaceType] = ep.ID
 		}
 	}
+	previousPreferredKeys := make(map[InterfaceType]string)
+	for interfaceType, key := range r.preferred {
+		if strings.TrimSpace(key) != "" {
+			previousPreferredKeys[interfaceType] = key
+		}
+	}
 
 	// Clear existing endpoints and active map
 	r.endpoints = make(map[InterfaceType][]*Endpoint)
 	r.active = make(map[InterfaceType]*Endpoint)
+	r.preferred = make(map[InterfaceType]string)
 	// Clear any runtime-only temporary disables
 	r.tempDisabled = make(map[InterfaceType]map[string]*tempDisableEntry)
 
@@ -204,6 +215,18 @@ func (r *DefaultRouter) LoadEndpoints(endpoints []*Endpoint) {
 			}
 		}
 
+		// If not restored, try to restore the previously preferred endpoint (by key) and enabled
+		if r.active[interfaceType] == nil {
+			if prevKey := previousPreferredKeys[interfaceType]; strings.TrimSpace(prevKey) != "" {
+				for _, ep := range eps {
+					if ep != nil && ep.Enabled && endpointKey(ep) == prevKey {
+						r.active[interfaceType] = ep
+						break
+					}
+				}
+			}
+		}
+
 		// If not restored, try to find an endpoint marked as active and enabled
 		if r.active[interfaceType] == nil {
 			for _, ep := range eps {
@@ -223,6 +246,10 @@ func (r *DefaultRouter) LoadEndpoints(endpoints []*Endpoint) {
 				}
 			}
 		}
+
+		if r.active[interfaceType] != nil {
+			r.preferred[interfaceType] = endpointKey(r.active[interfaceType])
+		}
 	}
 }
 
@@ -233,8 +260,24 @@ func (r *DefaultRouter) GetActiveEndpoint(interfaceType InterfaceType) *Endpoint
 	defer r.mu.Unlock()
 	r.restoreExpiredLocked(interfaceType)
 
+	// Prefer the configured/manual endpoint when available (e.g., after recovery from a temporary disable).
+	if preferredKey := strings.TrimSpace(r.preferred[interfaceType]); preferredKey != "" {
+		if active := r.active[interfaceType]; active != nil && active.Enabled && endpointKey(active) == preferredKey {
+			return active
+		}
+		for _, ep := range r.endpoints[interfaceType] {
+			if ep != nil && ep.Enabled && endpointKey(ep) == preferredKey {
+				r.active[interfaceType] = ep
+				return ep
+			}
+		}
+	}
+
 	// Ensure active endpoint is enabled; if not, pick the first enabled one.
 	if active := r.active[interfaceType]; active != nil && active.Enabled {
+		if strings.TrimSpace(r.preferred[interfaceType]) == "" {
+			r.preferred[interfaceType] = endpointKey(active)
+		}
 		return active
 	}
 
@@ -242,6 +285,9 @@ func (r *DefaultRouter) GetActiveEndpoint(interfaceType InterfaceType) *Endpoint
 	for _, ep := range eps {
 		if ep != nil && ep.Enabled {
 			r.active[interfaceType] = ep
+			if strings.TrimSpace(r.preferred[interfaceType]) == "" {
+				r.preferred[interfaceType] = endpointKey(ep)
+			}
 			return ep
 		}
 	}
@@ -339,12 +385,14 @@ func (r *DefaultRouter) SetActiveEndpoint(interfaceType InterfaceType, endpoint 
 		if endpoint.ID != 0 {
 			if ep.ID == endpoint.ID {
 				r.active[interfaceType] = ep
+				r.preferred[interfaceType] = endpointKey(ep)
 				return nil
 			}
 			continue
 		}
 		if ep.Name == endpoint.Name {
 			r.active[interfaceType] = ep
+			r.preferred[interfaceType] = endpointKey(ep)
 			return nil
 		}
 	}
@@ -423,6 +471,9 @@ func (r *DefaultRouter) DisableEndpoint(interfaceType InterfaceType, endpoint *E
 		nextIdx := (targetIdx + i) % len(eps)
 		if eps[nextIdx].Enabled {
 			r.active[interfaceType] = eps[nextIdx]
+			// Sticky failover: once an endpoint is temporarily disabled, keep using the failover endpoint
+			// until user manually switches again. This avoids automatic "back switch" on recovery.
+			r.preferred[interfaceType] = endpointKey(eps[nextIdx])
 			return entry.until
 		}
 	}

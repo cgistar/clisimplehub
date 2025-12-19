@@ -777,6 +777,8 @@ input:disabled + .slider {
 
 .modal-body {
     padding: 20px;
+    overflow-y: auto;
+    max-height: calc(90vh - 140px); /* 减去 header 和 footer 的高度 */
 }
 
 .modal-footer {
@@ -1046,6 +1048,155 @@ input:disabled + .slider {
 .btn-danger {
     background: var(--error-color);
     color: white;
+}
+
+/* =============================================================================
+   WebDAV Sync Styles
+   ============================================================================= */
+.card-section {
+    background: var(--bg-secondary);
+    padding: 15px;
+    border-radius: var(--radius-md);
+    margin-bottom: 15px;
+    border: 1px solid var(--border-light);
+}
+
+.card-section h3 {
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.backup-actions-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+}
+
+.webdav-backups-list {
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+}
+
+.backup-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    border-bottom: 1px solid var(--border-light);
+    transition: background 0.2s ease;
+}
+
+.backup-item:last-child {
+    border-bottom: none;
+}
+
+.backup-item:hover {
+    background: var(--bg-secondary);
+}
+
+.backup-info {
+    flex: 1;
+}
+
+.backup-name {
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 13px;
+    margin-bottom: 4px;
+    font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+}
+
+.backup-time {
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.backup-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.backup-actions .btn {
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
+/* Modal size for WebDAV */
+.modal-large {
+    max-width: 600px !important;
+    width: 95% !important;
+}
+
+/* Form row layout */
+.form-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+}
+
+.form-row .form-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+/* Input with icon */
+.input-with-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.input-with-icon input {
+    flex: 1;
+    padding-right: 40px;
+}
+
+.input-icon-btn {
+    position: absolute;
+    right: 8px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    color: var(--text-secondary);
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    transition: all 0.2s ease;
+}
+
+.input-icon-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--primary-color);
+}
+
+/* Loading state for buttons */
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    position: relative;
+}
+
+.btn:disabled::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 12px;
+    height: 12px;
+    margin: -6px 0 0 -6px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 
 .btn-danger:hover {

@@ -57,6 +57,15 @@ import {
     processCLIConfig,
     updateCLIConfigEditorButton,
 } from './modules/cliconfig.js';
+import {
+    showWebDAVModal,
+    closeWebDAVModal,
+    testWebDAVConnection,
+    backupToWebDAV,
+    loadBackupsList,
+    loadConfigFromWebDAV,
+    deleteBackupFromWebDAV
+} from './modules/webdav.js';
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', async () => {
@@ -151,3 +160,10 @@ window.openCLIConfigEditor = openCLIConfigEditor;
 window.closeCLIConfigEditor = closeCLIConfigEditor;
 window.saveCLIConfig = saveCLIConfig;
 window.processCLIConfig = processCLIConfig;
+window.showWebDAVModal = showWebDAVModal;
+window.closeWebDAVModal = closeWebDAVModal;
+window.testWebDAVConnection = testWebDAVConnection;
+window.backupToWebDAV = backupToWebDAV;
+window.loadBackupsList = loadBackupsList;
+window.loadConfigFromWebDAV = loadConfigFromWebDAV;
+window.deleteBackupFromWebDAV = deleteBackupFromWebDAV;

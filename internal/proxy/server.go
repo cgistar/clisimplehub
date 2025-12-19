@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,6 +28,8 @@ import (
 const (
 	MaxRetriesPerEndpoint = 2  // Max retries per endpoint before rotating
 	MaxTotalRetries       = 10 // Max total retries across all endpoints
+	// CircuitBreakerFailureThreshold opens (temporarily disables) an endpoint after N consecutive failures.
+	CircuitBreakerFailureThreshold = 2
 )
 
 // ProxyServer represents the main proxy server implementation
@@ -314,6 +317,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Only /v1/messages (Claude) and /responses (Codex) paths support these features
 	isRetryable := IsRetryablePath(r.URL.Path)
 	shouldRecordStats := ShouldRecordVendorStats(interfaceType, r.URL.Path)
+	fallbackEnabled := p.IsFallbackEnabled()
 
 	// Optional proxy authentication (empty token => no auth)
 	if required := p.getAuthKey(); required != "" && !isAuthorized(r, required) {
@@ -363,8 +367,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	detail.ResponseStream = ""
 	p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "in_progress", 0, detail)
 
-	// For non-retryable paths (e.g., /token_count), forward directly without retry/failover
-	if !isRetryable {
+	// When fallback is disabled (or path isn't retryable), forward directly without retry/failover.
+	// Note: We still capture details and (for retryable paths) record vendor stats on the single attempt.
+	if !isRetryable || !fallbackEnabled {
 		result := p.forwardRequestWithDetail(r, endpoint, bodyBytes, streamReq.Stream, w)
 		detail.TargetURL = result.TargetURL
 		detail.StatusCode = result.StatusCode
@@ -377,6 +382,10 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 				status = fmt.Sprintf("error_%d", result.StatusCode)
 			}
 			p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, status, runTime, detail)
+			// Only retryable paths record vendor_stats; keep behavior consistent even when fallback is disabled.
+			if isRetryable && shouldRecordStats {
+				p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, result.TargetHeaders, runTime, result.StatusCode, status, nil)
+			}
 			if result.StatusCode > 0 {
 				writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
 			} else {
@@ -390,6 +399,13 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			status = fmt.Sprintf("error_%d", result.StatusCode)
 		}
 		p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, status, runTime, detail)
+		if isRetryable && shouldRecordStats {
+			tokens := result.Tokens
+			if tokens == nil {
+				tokens = p.extractAndRecordTokens(endpoint, result.Body)
+			}
+			p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, result.TargetHeaders, runTime, result.StatusCode, status, tokens)
+		}
 
 		if !result.Streamed {
 			writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
@@ -400,25 +416,28 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Retry loop for retryable paths (/v1/messages, /responses)
 	// Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 	var lastErr error
-	triedEndpoints := make(map[string]int)      // Track attempts per endpoint in this request
-	exhaustedEndpoints := make(map[string]bool) // Track endpoints that have been fully tried
+	triedEndpoints := make(map[string]int)      // Track attempts per endpoint in this request (keyed by endpoint id/name)
+	exhaustedEndpoints := make(map[string]bool) // Track endpoints that have been fully tried in this request
 
 	for totalRetries := 0; totalRetries < MaxTotalRetries; totalRetries++ {
 		if endpoint == nil {
 			break
 		}
 
-		// Skip endpoints that have been exhausted in this request
-		if exhaustedEndpoints[endpoint.Name] {
+		currentKey := endpointFailureKey(endpoint)
+
+		// Skip endpoints that have been exhausted or disabled in this request
+		if exhaustedEndpoints[currentKey] || !endpoint.Enabled {
 			nextEndpoint := p.findNextUntriedEndpoint(interfaceType, endpoint, exhaustedEndpoints)
 			if nextEndpoint == nil {
 				break // All endpoints exhausted
 			}
 			endpoint = nextEndpoint
+			currentKey = endpointFailureKey(endpoint)
 		}
 
 		// Track attempts for this endpoint
-		triedEndpoints[endpoint.Name]++
+		triedEndpoints[currentKey]++
 
 		// Make the request with detail capture
 		result := p.forwardRequestWithDetail(r, endpoint, bodyBytes, streamReq.Stream, w)
@@ -428,15 +447,36 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		detail.StatusCode = result.StatusCode
 		detail.ResponseStream = result.ResponseStream
 
+		// For streaming responses, the response has already been written to the client,
+		// so we cannot retry regardless of the status code. Record and return immediately.
+		if result.Streamed {
+			runTime := time.Since(startTime).Milliseconds()
+			status := "success"
+			if result.StatusCode != http.StatusOK {
+				status = fmt.Sprintf("error_%d", result.StatusCode)
+			}
+			p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, status, runTime, detail)
+
+			p.updateCircuitBreaker(interfaceType, endpoint, result.StatusCode, result.Error)
+
+			tokens := result.Tokens
+			if tokens == nil {
+				tokens = p.extractAndRecordTokens(endpoint, result.Body)
+			}
+			if shouldRecordStats {
+				p.insertVendorStat(r.Context(), interfaceType, endpoint, r.URL.Path, result.TargetHeaders, runTime, result.StatusCode, status, tokens)
+			}
+			return
+		}
+
 		if result.Error == nil && result.StatusCode == http.StatusOK {
 			// Success - record and return
 			runTime := time.Since(startTime).Milliseconds()
 			p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "success", runTime, detail)
 
-			// Response already written by forwardRequest for streaming
-			if !result.Streamed {
-				writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
-			}
+			writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
+
+			p.updateCircuitBreaker(interfaceType, endpoint, result.StatusCode, nil)
 
 			tokens := result.Tokens
 			if tokens == nil {
@@ -451,15 +491,16 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		lastErr = result.Error
 		if result.Error != nil {
+			p.updateCircuitBreaker(interfaceType, endpoint, result.StatusCode, result.Error)
+
 			// Check if this endpoint has been tried enough times
-			if triedEndpoints[endpoint.Name] >= MaxRetriesPerEndpoint {
-				exhaustedEndpoints[endpoint.Name] = true
+			if triedEndpoints[currentKey] >= MaxRetriesPerEndpoint {
+				exhaustedEndpoints[currentKey] = true
 				// Find next untried endpoint
 				nextEndpoint := p.findNextUntriedEndpoint(interfaceType, endpoint, exhaustedEndpoints)
 				if nextEndpoint != nil {
 					prevEndpoint := endpoint
 					endpoint = nextEndpoint
-					p.router.SetActiveEndpoint(interfaceType, endpoint)
 					// Broadcast fallback switch notification
 					p.broadcastFallbackSwitch(prevEndpoint, endpoint, r.URL.Path, 0, result.Error.Error())
 					detail.TargetURL = strings.TrimSuffix(endpoint.APIURL, "/") + r.URL.Path
@@ -489,16 +530,17 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		p.updateCircuitBreaker(interfaceType, endpoint, result.StatusCode, nil)
+
 		// Retryable error (5xx) - check if endpoint exhausted
 		// Requirements: 4.4, 4.6
-		if triedEndpoints[endpoint.Name] >= MaxRetriesPerEndpoint {
-			exhaustedEndpoints[endpoint.Name] = true
+		if triedEndpoints[currentKey] >= MaxRetriesPerEndpoint {
+			exhaustedEndpoints[currentKey] = true
 			// Find next untried endpoint
 			nextEndpoint := p.findNextUntriedEndpoint(interfaceType, endpoint, exhaustedEndpoints)
 			if nextEndpoint != nil {
 				prevEndpoint := endpoint
 				endpoint = nextEndpoint
-				p.router.SetActiveEndpoint(interfaceType, endpoint)
 				// Broadcast fallback switch notification
 				errMsg := fmt.Sprintf("HTTP %d", result.StatusCode)
 				p.broadcastFallbackSwitch(prevEndpoint, endpoint, r.URL.Path, result.StatusCode, errMsg)
@@ -547,6 +589,63 @@ func shouldRetry(statusCode int) bool {
 		return true
 	}
 	return false
+}
+
+func endpointFailureKey(endpoint *Endpoint) string {
+	if endpoint == nil {
+		return ""
+	}
+	if endpoint.ID != 0 {
+		return fmt.Sprintf("id:%d", endpoint.ID)
+	}
+	if strings.TrimSpace(endpoint.Name) == "" {
+		return ""
+	}
+	return "name:" + endpoint.Name
+}
+
+func isIgnorableCircuitBreakerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Client cancelled or timed out: don't treat as endpoint failure.
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func (p *ProxyServer) updateCircuitBreaker(interfaceType InterfaceType, endpoint *Endpoint, statusCode int, err error) {
+	if endpoint == nil || !p.IsFallbackEnabled() {
+		return
+	}
+	// Reset on success.
+	if err == nil && statusCode == http.StatusOK {
+		p.resetFailureCount(endpointFailureKey(endpoint))
+		return
+	}
+
+	// Count only upstream/network failures and 5xx responses.
+	isFailure := false
+	if err != nil && !isIgnorableCircuitBreakerError(err) {
+		isFailure = true
+	}
+	if err == nil && statusCode >= 500 && statusCode <= 599 {
+		isFailure = true
+	}
+	if !isFailure {
+		return
+	}
+
+	key := endpointFailureKey(endpoint)
+	if key == "" {
+		return
+	}
+	failures := p.incrementFailureCount(key)
+	if failures < CircuitBreakerFailureThreshold {
+		return
+	}
+	// Open circuit: temporarily disable endpoint and reset counter.
+	p.resetFailureCount(key)
+	disabledUntil := p.router.DisableEndpoint(interfaceType, endpoint)
+	p.broadcastEndpointTempDisabled(interfaceType, endpoint, disabledUntil)
 }
 
 // ForwardResult contains the result of a forwarded request
@@ -849,13 +948,20 @@ func (p *ProxyServer) broadcastEndpointTempDisabled(interfaceType InterfaceType,
 }
 
 // Failure count management
-func (p *ProxyServer) incrementFailureCount(endpointName string) {
+func (p *ProxyServer) incrementFailureCount(endpointName string) int {
+	if strings.TrimSpace(endpointName) == "" {
+		return 0
+	}
 	p.failureMu.Lock()
 	defer p.failureMu.Unlock()
 	p.failureCounts[endpointName]++
+	return p.failureCounts[endpointName]
 }
 
 func (p *ProxyServer) resetFailureCount(endpointName string) {
+	if strings.TrimSpace(endpointName) == "" {
+		return
+	}
 	p.failureMu.Lock()
 	defer p.failureMu.Unlock()
 	p.failureCounts[endpointName] = 0
@@ -872,7 +978,17 @@ func (p *ProxyServer) findNextUntriedEndpoint(interfaceType InterfaceType, curre
 	// Find current endpoint's position
 	currentIdx := -1
 	for i, ep := range eps {
-		if current != nil && ep.Name == current.Name {
+		if current == nil || ep == nil {
+			continue
+		}
+		if current.ID != 0 {
+			if ep.ID == current.ID {
+				currentIdx = i
+				break
+			}
+			continue
+		}
+		if ep.Name == current.Name {
 			currentIdx = i
 			break
 		}
@@ -881,17 +997,25 @@ func (p *ProxyServer) findNextUntriedEndpoint(interfaceType InterfaceType, curre
 	// First, search for next untried endpoint after current position (same or higher priority)
 	for i := currentIdx + 1; i < len(eps); i++ {
 		ep := eps[i]
-		if ep.Enabled && !exhausted[ep.Name] {
-			return ep
+		if ep == nil || !ep.Enabled {
+			continue
 		}
+		if exhausted[endpointFailureKey(ep)] {
+			continue
+		}
+		return ep
 	}
 
 	// Then, search from the beginning (lower priority endpoints)
 	for i := 0; i < currentIdx; i++ {
 		ep := eps[i]
-		if ep.Enabled && !exhausted[ep.Name] {
-			return ep
+		if ep == nil || !ep.Enabled {
+			continue
 		}
+		if exhausted[endpointFailureKey(ep)] {
+			continue
+		}
+		return ep
 	}
 
 	return nil

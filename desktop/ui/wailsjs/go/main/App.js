@@ -38,6 +38,10 @@ export function GetCodexConfig() {
   return window['go']['main']['App']['GetCodexConfig']();
 }
 
+export function GetComputerName() {
+  return window['go']['main']['App']['GetComputerName']();
+}
+
 export function GetConfigPath() {
   return window['go']['main']['App']['GetConfigPath']();
 }
@@ -52,6 +56,10 @@ export function GetEndpointsByType(arg1) {
 
 export function GetEndpointsByVendorID(arg1) {
   return window['go']['main']['App']['GetEndpointsByVendorID'](arg1);
+}
+
+export function GetFullConfig() {
+  return window['go']['main']['App']['GetFullConfig']();
 }
 
 export function GetInterfaceTypes() {
@@ -134,6 +142,10 @@ export function SaveEndpointData(arg1) {
   return window['go']['main']['App']['SaveEndpointData'](arg1);
 }
 
+export function SaveFullConfig(arg1) {
+  return window['go']['main']['App']['SaveFullConfig'](arg1);
+}
+
 export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
 }
@@ -196,4 +208,36 @@ export function TestEndpointWithParams(arg1) {
 
 export function ToggleEndpointEnabled(arg1, arg2) {
   return window['go']['main']['App']['ToggleEndpointEnabled'](arg1, arg2);
+}
+
+export function WebDAVCopy(arg1) {
+  return window['go']['main']['App']['WebDAVCopy'](arg1);
+}
+
+export function WebDAVDelete(arg1) {
+  return window['go']['main']['App']['WebDAVDelete'](arg1);
+}
+
+export function WebDAVGet(arg1) {
+  return window['go']['main']['App']['WebDAVGet'](arg1);
+}
+
+export function WebDAVList(arg1) {
+  return window['go']['main']['App']['WebDAVList'](arg1);
+}
+
+export function WebDAVMkcol(arg1) {
+  return window['go']['main']['App']['WebDAVMkcol'](arg1);
+}
+
+export function WebDAVMove(arg1) {
+  return window['go']['main']['App']['WebDAVMove'](arg1);
+}
+
+export function WebDAVProxyRequest(arg1) {
+  return window['go']['main']['App']['WebDAVProxyRequest'](arg1);
+}
+
+export function WebDAVPut(arg1) {
+  return window['go']['main']['App']['WebDAVPut'](arg1);
 }

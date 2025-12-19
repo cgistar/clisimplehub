@@ -2068,3 +2068,405 @@ func (a *App) getDefaultCodexAuth() string {
 	data, _ := json.MarshalIndent(auth, "", "  ")
 	return string(data)
 }
+
+// =============================================================================
+// WebDAV Sync Methods
+// =============================================================================
+
+// FullConfig represents the complete application configuration for backup/restore
+type FullConfig struct {
+	AppConfig map[string]interface{} `json:"appConfig,omitempty"`
+	Vendors   []*VendorInfo          `json:"vendors"`
+	Endpoints []*EndpointInfo        `json:"endpoints"`
+}
+
+// GetFullConfig returns the complete configuration for backup
+func (a *App) GetFullConfig() (*FullConfig, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+
+	// Get app settings
+	settings, err := a.GetSettings()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get settings: %w", err)
+	}
+
+	// Get vendors
+	vendors, err := a.GetVendors()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get vendors: %w", err)
+	}
+
+	// Get all endpoints
+	allEndpoints, err := a.storage.GetEndpoints()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get endpoints: %w", err)
+	}
+
+	// Convert endpoints to frontend format
+	endpoints := make([]*EndpointInfo, 0, len(allEndpoints))
+	for _, ep := range allEndpoints {
+		// Find vendor name
+		var vendorName string
+		for _, v := range vendors {
+			if v.ID == ep.VendorID {
+				vendorName = v.Name
+				break
+			}
+		}
+
+		endpoints = append(endpoints, &EndpointInfo{
+			ID:            ep.ID,
+			Name:          ep.Name,
+			APIURL:        ep.APIURL,
+			APIKey:        ep.APIKey,
+			Active:        ep.Active,
+			Enabled:       ep.Enabled,
+			InterfaceType: ep.InterfaceType,
+			VendorID:      ep.VendorID,
+			VendorName:    vendorName,
+			Model:         ep.Model,
+			Remark:        ep.Remark,
+			Priority:      ep.Priority,
+		})
+	}
+
+	// Create appConfig map from settings
+	appConfig := map[string]interface{}{
+		"port":     settings.Port,
+		"apiKey":   settings.APIKey,
+		"fallback": settings.Fallback,
+	}
+
+	return &FullConfig{
+		AppConfig: appConfig,
+		Vendors:   vendors,
+		Endpoints: endpoints,
+	}, nil
+}
+
+// SaveFullConfig saves the complete configuration from backup
+func (a *App) SaveFullConfig(config *FullConfig) error {
+	if a.storage == nil {
+		return fmt.Errorf("storage not initialized")
+	}
+	if config == nil {
+		return fmt.Errorf("config is nil")
+	}
+
+	// Save app settings
+	if config.AppConfig != nil {
+		settings := &Settings{
+			Port:     5600, // Default
+			APIKey:   "",
+			Fallback: false,
+		}
+
+		if port, ok := config.AppConfig["port"].(float64); ok {
+			settings.Port = int(port)
+		} else if port, ok := config.AppConfig["port"].(int); ok {
+			settings.Port = port
+		}
+
+		if apiKey, ok := config.AppConfig["apiKey"].(string); ok {
+			settings.APIKey = apiKey
+		}
+
+		if fallback, ok := config.AppConfig["fallback"].(bool); ok {
+			settings.Fallback = fallback
+		}
+
+		if err := a.SaveSettings(settings); err != nil {
+			return fmt.Errorf("failed to save settings: %w", err)
+		}
+	}
+
+	// Clear existing vendors and endpoints
+	// Note: We need to be careful here to avoid data loss
+	// Instead, we'll overwrite by ID or add new ones
+
+	// Save vendors
+	if config.Vendors != nil {
+		// First, get existing vendors to avoid duplicates
+		existingVendors, err := a.storage.GetVendors()
+		if err != nil {
+			return fmt.Errorf("failed to get existing vendors: %w", err)
+		}
+
+		// Create a map of existing vendors by name for lookup
+		existingVendorMap := make(map[string]*storage.Vendor)
+		for _, v := range existingVendors {
+			existingVendorMap[v.Name] = v
+		}
+
+		for _, v := range config.Vendors {
+			// Check if vendor already exists
+			if existing, exists := existingVendorMap[v.Name]; exists {
+				// Update existing vendor
+				existing.Name = v.Name
+				existing.HomeURL = v.HomeURL
+				existing.APIURL = v.APIURL
+				existing.Remark = v.Remark
+				if err := a.storage.SaveVendor(existing); err != nil {
+					return fmt.Errorf("failed to update vendor %s: %w", v.Name, err)
+				}
+			} else {
+				// Create new vendor
+				newVendor := &storage.Vendor{
+					Name:    v.Name,
+					HomeURL: v.HomeURL,
+					APIURL:  v.APIURL,
+					Remark:  v.Remark,
+				}
+				if err := a.storage.SaveVendor(newVendor); err != nil {
+					return fmt.Errorf("failed to save vendor %s: %w", v.Name, err)
+				}
+			}
+		}
+	}
+
+	// Save endpoints
+	if config.Endpoints != nil {
+		// Get updated vendors to map names to IDs
+		vendors, err := a.storage.GetVendors()
+		if err != nil {
+			return fmt.Errorf("failed to get vendors: %w", err)
+		}
+
+		vendorNameToID := make(map[string]int64)
+		for _, v := range vendors {
+			vendorNameToID[v.Name] = v.ID
+		}
+
+		// Get existing endpoints to avoid duplicates
+		existingEndpoints, err := a.storage.GetEndpoints()
+		if err != nil {
+			return fmt.Errorf("failed to get existing endpoints: %w", err)
+		}
+
+		// Create a map for existing endpoints by name+vendor
+		existingEndpointMap := make(map[string]*storage.Endpoint)
+		for _, ep := range existingEndpoints {
+			var vendorName string
+			for _, v := range vendors {
+				if v.ID == ep.VendorID {
+					vendorName = v.Name
+					break
+				}
+			}
+			key := fmt.Sprintf("%s-%s", vendorName, ep.Name)
+			existingEndpointMap[key] = ep
+		}
+
+		for _, ep := range config.Endpoints {
+			vendorID, ok := vendorNameToID[ep.VendorName]
+			if !ok {
+				return fmt.Errorf("vendor not found: %s", ep.VendorName)
+			}
+
+			key := fmt.Sprintf("%s-%s", ep.VendorName, ep.Name)
+
+			// Check if endpoint already exists
+			if existing, exists := existingEndpointMap[key]; exists {
+				// Update existing endpoint
+				existing.Name = ep.Name
+				existing.APIURL = ep.APIURL
+				existing.APIKey = ep.APIKey
+				existing.Active = ep.Active
+				existing.Enabled = ep.Enabled
+				existing.InterfaceType = ep.InterfaceType
+				existing.VendorID = vendorID
+				existing.Model = ep.Model
+				existing.Remark = ep.Remark
+				existing.Priority = ep.Priority
+				if err := a.storage.UpdateEndpoint(existing); err != nil {
+					return fmt.Errorf("failed to update endpoint %s: %w", ep.Name, err)
+				}
+			} else {
+				// Create new endpoint
+				newEndpoint := &storage.Endpoint{
+					Name:          ep.Name,
+					APIURL:        ep.APIURL,
+					APIKey:        ep.APIKey,
+					Active:        ep.Active,
+					Enabled:       ep.Enabled,
+					InterfaceType: ep.InterfaceType,
+					VendorID:      vendorID,
+					Model:         ep.Model,
+					Remark:        ep.Remark,
+					Priority:      ep.Priority,
+				}
+				if err := a.storage.SaveEndpoint(newEndpoint); err != nil {
+					return fmt.Errorf("failed to save endpoint %s: %w", ep.Name, err)
+				}
+			}
+		}
+	}
+
+	// Reload the router configuration
+	if err := a.ReloadConfig(); err != nil {
+		return fmt.Errorf("failed to reload config: %w", err)
+	}
+
+	return nil
+}
+
+// GetComputerName returns the computer name for backup identification
+func (a *App) GetComputerName() (string, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "Unknown-Computer", nil
+	}
+	return hostname, nil
+}
+
+// =============================================================================
+// WebDAV Proxy Methods
+// =============================================================================
+
+// webdavProxy is the singleton WebDAV proxy instance
+var webdavProxy = proxy.NewWebDAVProxy()
+
+// WebDAVConfigInput represents WebDAV configuration from frontend
+type WebDAVConfigInput struct {
+	ServerURL string `json:"serverUrl"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+}
+
+// WebDAVRequestInput represents a WebDAV request from frontend
+type WebDAVRequestInput struct {
+	Config   WebDAVConfigInput `json:"config"`
+	Method   string            `json:"method"`
+	Path     string            `json:"path"`
+	Body     string            `json:"body,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	DestPath string            `json:"destPath,omitempty"` // For MOVE/COPY operations
+	Depth    string            `json:"depth,omitempty"`    // For PROPFIND operations
+}
+
+// WebDAVProxyRequest proxies a generic WebDAV request
+func (a *App) WebDAVProxyRequest(input *WebDAVRequestInput) (*proxy.WebDAVResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input is required")
+	}
+
+	config := &proxy.WebDAVConfig{
+		ServerURL: input.Config.ServerURL,
+		Username:  input.Config.Username,
+		Password:  input.Config.Password,
+	}
+
+	var body io.Reader
+	if input.Body != "" {
+		body = strings.NewReader(input.Body)
+	}
+
+	return webdavProxy.ProxyRequest(config, input.Method, input.Path, body, input.Headers)
+}
+
+// WebDAVList lists files and directories at the given path
+func (a *App) WebDAVList(input *WebDAVRequestInput) (*proxy.WebDAVResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input is required")
+	}
+
+	config := &proxy.WebDAVConfig{
+		ServerURL: input.Config.ServerURL,
+		Username:  input.Config.Username,
+		Password:  input.Config.Password,
+	}
+
+	return webdavProxy.List(config, input.Path, input.Depth)
+}
+
+// WebDAVGet retrieves a file from the WebDAV server
+func (a *App) WebDAVGet(input *WebDAVRequestInput) (*proxy.WebDAVResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input is required")
+	}
+
+	config := &proxy.WebDAVConfig{
+		ServerURL: input.Config.ServerURL,
+		Username:  input.Config.Username,
+		Password:  input.Config.Password,
+	}
+
+	return webdavProxy.Get(config, input.Path)
+}
+
+// WebDAVPut uploads a file to the WebDAV server
+func (a *App) WebDAVPut(input *WebDAVRequestInput) (*proxy.WebDAVResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input is required")
+	}
+
+	config := &proxy.WebDAVConfig{
+		ServerURL: input.Config.ServerURL,
+		Username:  input.Config.Username,
+		Password:  input.Config.Password,
+	}
+
+	return webdavProxy.Put(config, input.Path, input.Body)
+}
+
+// WebDAVDelete removes a file or directory from the WebDAV server
+func (a *App) WebDAVDelete(input *WebDAVRequestInput) (*proxy.WebDAVResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input is required")
+	}
+
+	config := &proxy.WebDAVConfig{
+		ServerURL: input.Config.ServerURL,
+		Username:  input.Config.Username,
+		Password:  input.Config.Password,
+	}
+
+	return webdavProxy.Delete(config, input.Path)
+}
+
+// WebDAVMkcol creates a new directory on the WebDAV server
+func (a *App) WebDAVMkcol(input *WebDAVRequestInput) (*proxy.WebDAVResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input is required")
+	}
+
+	config := &proxy.WebDAVConfig{
+		ServerURL: input.Config.ServerURL,
+		Username:  input.Config.Username,
+		Password:  input.Config.Password,
+	}
+
+	return webdavProxy.Mkcol(config, input.Path)
+}
+
+// WebDAVMove moves/renames a file or directory on the WebDAV server
+func (a *App) WebDAVMove(input *WebDAVRequestInput) (*proxy.WebDAVResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input is required")
+	}
+
+	config := &proxy.WebDAVConfig{
+		ServerURL: input.Config.ServerURL,
+		Username:  input.Config.Username,
+		Password:  input.Config.Password,
+	}
+
+	return webdavProxy.Move(config, input.Path, input.DestPath)
+}
+
+// WebDAVCopy copies a file or directory on the WebDAV server
+func (a *App) WebDAVCopy(input *WebDAVRequestInput) (*proxy.WebDAVResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input is required")
+	}
+
+	config := &proxy.WebDAVConfig{
+		ServerURL: input.Config.ServerURL,
+		Username:  input.Config.Username,
+		Password:  input.Config.Password,
+	}
+
+	return webdavProxy.Copy(config, input.Path, input.DestPath)
+}

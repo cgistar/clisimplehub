@@ -24,6 +24,8 @@ export function GetClaudeConfig():Promise<main.CLIConfigResult>;
 
 export function GetCodexConfig():Promise<main.CLIConfigResult>;
 
+export function GetComputerName():Promise<string>;
+
 export function GetConfigPath():Promise<string>;
 
 export function GetEnabledEndpointsByType(arg1:string):Promise<Array<main.EndpointInfo>>;
@@ -31,6 +33,8 @@ export function GetEnabledEndpointsByType(arg1:string):Promise<Array<main.Endpoi
 export function GetEndpointsByType(arg1:string):Promise<Array<main.EndpointInfo>>;
 
 export function GetEndpointsByVendorID(arg1:number):Promise<Array<main.EndpointInfo>>;
+
+export function GetFullConfig():Promise<main.FullConfig>;
 
 export function GetInterfaceTypes():Promise<Array<string>>;
 
@@ -72,6 +76,8 @@ export function SaveCodexConfig(arg1:string,arg2:string):Promise<void>;
 
 export function SaveEndpointData(arg1:main.EndpointInput):Promise<main.EndpointInfo>;
 
+export function SaveFullConfig(arg1:main.FullConfig):Promise<void>;
+
 export function SaveSettings(arg1:main.Settings):Promise<void>;
 
 export function SaveVendor(arg1:main.VendorInfo):Promise<main.VendorInfo>;
@@ -103,3 +109,19 @@ export function TestEndpoint(arg1:number):Promise<string>;
 export function TestEndpointWithParams(arg1:main.TestEndpointParams):Promise<string>;
 
 export function ToggleEndpointEnabled(arg1:number,arg2:boolean):Promise<void>;
+
+export function WebDAVCopy(arg1:main.WebDAVRequestInput):Promise<proxy.WebDAVResponse>;
+
+export function WebDAVDelete(arg1:main.WebDAVRequestInput):Promise<proxy.WebDAVResponse>;
+
+export function WebDAVGet(arg1:main.WebDAVRequestInput):Promise<proxy.WebDAVResponse>;
+
+export function WebDAVList(arg1:main.WebDAVRequestInput):Promise<proxy.WebDAVResponse>;
+
+export function WebDAVMkcol(arg1:main.WebDAVRequestInput):Promise<proxy.WebDAVResponse>;
+
+export function WebDAVMove(arg1:main.WebDAVRequestInput):Promise<proxy.WebDAVResponse>;
+
+export function WebDAVProxyRequest(arg1:main.WebDAVRequestInput):Promise<proxy.WebDAVResponse>;
+
+export function WebDAVPut(arg1:main.WebDAVRequestInput):Promise<proxy.WebDAVResponse>;
