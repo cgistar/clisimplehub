@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"clisimplehub/internal/logger"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
 
@@ -78,6 +79,10 @@ func buildTargetURL(apiURL string, path string, rawQuery string) (string, error)
 func shouldCopyRequestHeader(key string) bool {
 	// Hop-by-hop / computed headers
 	if strings.EqualFold(key, "Host") || strings.EqualFold(key, "Accept-Encoding") {
+		return false
+	}
+	// Content-Length will be recalculated by http.NewRequest
+	if strings.EqualFold(key, "Content-Length") {
 		return false
 	}
 	// Auth headers: always replace with endpoint api_key
@@ -395,11 +400,21 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Retry loop for retryable paths (/v1/messages, /responses)
 	// Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 	var lastErr error
-	triedEndpoints := make(map[string]int) // Track attempts per endpoint
+	triedEndpoints := make(map[string]int)      // Track attempts per endpoint in this request
+	exhaustedEndpoints := make(map[string]bool) // Track endpoints that have been fully tried
 
 	for totalRetries := 0; totalRetries < MaxTotalRetries; totalRetries++ {
 		if endpoint == nil {
 			break
+		}
+
+		// Skip endpoints that have been exhausted in this request
+		if exhaustedEndpoints[endpoint.Name] {
+			nextEndpoint := p.findNextUntriedEndpoint(interfaceType, endpoint, exhaustedEndpoints)
+			if nextEndpoint == nil {
+				break // All endpoints exhausted
+			}
+			endpoint = nextEndpoint
 		}
 
 		// Track attempts for this endpoint
@@ -417,7 +432,6 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			// Success - record and return
 			runTime := time.Since(startTime).Milliseconds()
 			p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "success", runTime, detail)
-			p.resetFailureCount(endpoint.Name)
 
 			// Response already written by forwardRequest for streaming
 			if !result.Streamed {
@@ -437,13 +451,12 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		lastErr = result.Error
 		if result.Error != nil {
-			p.incrementFailureCount(endpoint.Name)
-			if triedEndpoints[endpoint.Name] >= MaxRetriesPerEndpoint || p.getFailureCount(endpoint.Name) >= MaxRetriesPerEndpoint {
-				disabledUntil := p.router.DisableEndpoint(interfaceType, endpoint)
-				p.broadcastEndpointTempDisabled(interfaceType, endpoint, disabledUntil)
-				p.resetFailureCount(endpoint.Name)
-				nextEndpoint := p.router.GetNextEndpoint(interfaceType, endpoint)
-				if nextEndpoint != nil && nextEndpoint.Name != endpoint.Name {
+			// Check if this endpoint has been tried enough times
+			if triedEndpoints[endpoint.Name] >= MaxRetriesPerEndpoint {
+				exhaustedEndpoints[endpoint.Name] = true
+				// Find next untried endpoint
+				nextEndpoint := p.findNextUntriedEndpoint(interfaceType, endpoint, exhaustedEndpoints)
+				if nextEndpoint != nil {
 					prevEndpoint := endpoint
 					endpoint = nextEndpoint
 					p.router.SetActiveEndpoint(interfaceType, endpoint)
@@ -455,13 +468,13 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 					detail.ResponseStream = ""
 					p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "in_progress", 0, detail)
 				} else {
-					break
+					break // All endpoints exhausted
 				}
 			}
 			continue
 		}
 
-		// Check if we should retry
+		// Check if we should retry based on status code
 		// Requirements: 4.1, 4.2, 4.3
 		if !shouldRetry(result.StatusCode) {
 			// Non-retryable error - return to client
@@ -476,19 +489,13 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Record failure and check if we should rotate
-		// Requirements: 4.6
-		p.incrementFailureCount(endpoint.Name)
-
-		// Check if this endpoint has failed too many times consecutively
+		// Retryable error (5xx) - check if endpoint exhausted
 		// Requirements: 4.4, 4.6
-		if triedEndpoints[endpoint.Name] >= MaxRetriesPerEndpoint || p.getFailureCount(endpoint.Name) >= MaxRetriesPerEndpoint {
-			// Rotate to next endpoint
-			disabledUntil := p.router.DisableEndpoint(interfaceType, endpoint)
-			p.broadcastEndpointTempDisabled(interfaceType, endpoint, disabledUntil)
-			p.resetFailureCount(endpoint.Name)
-			nextEndpoint := p.router.GetNextEndpoint(interfaceType, endpoint)
-			if nextEndpoint != nil && nextEndpoint.Name != endpoint.Name {
+		if triedEndpoints[endpoint.Name] >= MaxRetriesPerEndpoint {
+			exhaustedEndpoints[endpoint.Name] = true
+			// Find next untried endpoint
+			nextEndpoint := p.findNextUntriedEndpoint(interfaceType, endpoint, exhaustedEndpoints)
+			if nextEndpoint != nil {
 				prevEndpoint := endpoint
 				endpoint = nextEndpoint
 				p.router.SetActiveEndpoint(interfaceType, endpoint)
@@ -502,7 +509,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 				detail.ResponseStream = ""
 				p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "in_progress", 0, detail)
 			} else {
-				// No more endpoints to try
+				// All endpoints exhausted
 				break
 			}
 		}
@@ -571,6 +578,11 @@ func (p *ProxyServer) forwardRequestWithDetail(r *http.Request, endpoint *Endpoi
 		return result
 	}
 	result.TargetURL = targetURL
+
+	// Override model in request body if endpoint has model configured
+	if endpoint.Model != "" {
+		body = overrideModelInBody(body, endpoint.Model)
+	}
 
 	// Create proxy request
 	proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
@@ -843,14 +855,66 @@ func (p *ProxyServer) incrementFailureCount(endpointName string) {
 	p.failureCounts[endpointName]++
 }
 
-func (p *ProxyServer) getFailureCount(endpointName string) int {
-	p.failureMu.RLock()
-	defer p.failureMu.RUnlock()
-	return p.failureCounts[endpointName]
-}
-
 func (p *ProxyServer) resetFailureCount(endpointName string) {
 	p.failureMu.Lock()
 	defer p.failureMu.Unlock()
 	p.failureCounts[endpointName] = 0
+}
+
+// findNextUntriedEndpoint finds the next enabled endpoint that hasn't been exhausted
+// Endpoints are already sorted by priority (ascending), so we search in order
+func (p *ProxyServer) findNextUntriedEndpoint(interfaceType InterfaceType, current *Endpoint, exhausted map[string]bool) *Endpoint {
+	eps := p.router.GetEndpointsByType(interfaceType)
+	if len(eps) == 0 {
+		return nil
+	}
+
+	// Find current endpoint's position
+	currentIdx := -1
+	for i, ep := range eps {
+		if current != nil && ep.Name == current.Name {
+			currentIdx = i
+			break
+		}
+	}
+
+	// First, search for next untried endpoint after current position (same or higher priority)
+	for i := currentIdx + 1; i < len(eps); i++ {
+		ep := eps[i]
+		if ep.Enabled && !exhausted[ep.Name] {
+			return ep
+		}
+	}
+
+	// Then, search from the beginning (lower priority endpoints)
+	for i := 0; i < currentIdx; i++ {
+		ep := eps[i]
+		if ep.Enabled && !exhausted[ep.Name] {
+			return ep
+		}
+	}
+
+	return nil
+}
+
+// overrideModelInBody replaces the model field in the request body with the specified model
+func overrideModelInBody(body []byte, model string) []byte {
+	if model == "" {
+		return body
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return body
+	}
+
+	originalModel, _ := data["model"].(string)
+	data["model"] = model
+	newBody, err := json.Marshal(data)
+	if err != nil {
+		return body
+	}
+
+	logger.Info("[ModelOverride] Replaced model: %s -> %s", originalModel, model)
+	return newBody
 }

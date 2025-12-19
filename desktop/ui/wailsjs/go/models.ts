@@ -35,6 +35,7 @@ export namespace main {
 	    name: string;
 	    content: string;
 	    exists: boolean;
+	    isProxyConfigured: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new CLIConfigFile(source);
@@ -45,6 +46,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.content = source["content"];
 	        this.exists = source["exists"];
+	        this.isProxyConfigured = source["isProxyConfigured"];
 	    }
 	}
 	export class CLIConfigResult {

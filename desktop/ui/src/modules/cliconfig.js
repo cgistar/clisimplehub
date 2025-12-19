@@ -113,11 +113,14 @@ function renderCLIConfigEditor(type, files) {
         const isToml = file.name.endsWith('.toml');
         const lang = isJson ? 'json' : (isToml ? 'toml' : 'text');
         
+        const proxyStatus = file.isProxyConfigured ? '✅' : '❌';
+        const proxyStatusClass = file.isProxyConfigured ? 'proxy-configured' : 'proxy-not-configured';
+        
         editorsHtml += `
             <div class="cli-config-file">
                 <div class="cli-config-file-header">
                     <span class="cli-config-file-name">${file.name}</span>
-                    <span class="cli-config-file-status ${file.exists ? 'exists' : 'new'}">${file.exists ? t('cliConfig.fileExists') : t('cliConfig.fileNew')}</span>
+                    <span class="cli-config-file-status ${proxyStatusClass}">${proxyStatus} ${file.isProxyConfigured ? t('cliConfig.proxyConfigured') : t('cliConfig.proxyNotConfigured')}</span>
                 </div>
                 <textarea id="cliConfigEditor_${index}" class="cli-config-textarea" data-filename="${file.name}" data-lang="${lang}" spellcheck="false">${escapeHtml(file.content)}</textarea>
             </div>
@@ -134,6 +137,7 @@ function renderCLIConfigEditor(type, files) {
                 ${editorsHtml}
             </div>
             <div class="modal-footer">
+                <div class="cli-footer-spacer"></div>
                 <div class="cli-footer-actions">
                     <button class="btn btn-secondary" onclick="processCLIConfig()" title="${t('cliConfig.processHelp')}">🔄 ${t('cliConfig.process')}</button>
                     <button class="btn btn-primary" onclick="saveCLIConfig()">💾 ${t('cliConfig.save')}</button>

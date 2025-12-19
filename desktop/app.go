@@ -1711,9 +1711,10 @@ type CLIConfigDirs struct {
 
 // CLIConfigFile represents a config file content
 type CLIConfigFile struct {
-	Name    string `json:"name"`
-	Content string `json:"content"`
-	Exists  bool   `json:"exists"`
+	Name              string `json:"name"`
+	Content           string `json:"content"`
+	Exists            bool   `json:"exists"`
+	IsProxyConfigured bool   `json:"isProxyConfigured"`
 }
 
 // CLIConfigResult represents the result of reading CLI configs
@@ -1771,6 +1772,9 @@ func (a *App) GetClaudeConfig() (*CLIConfigResult, error) {
 		return &CLIConfigResult{Success: false, Message: err.Error()}, nil
 	}
 
+	settings, _ := a.GetSettings()
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", settings.Port)
+
 	homeDir, _ := os.UserHomeDir()
 	files := []CLIConfigFile{}
 
@@ -1781,7 +1785,11 @@ func (a *App) GetClaudeConfig() (*CLIConfigResult, error) {
 		// Create default settings.json
 		settingsContent = a.getDefaultClaudeSettings()
 	}
-	files = append(files, CLIConfigFile{Name: "settings.json", Content: settingsContent, Exists: settingsExists})
+
+	// Check if proxy is configured by looking for ANTHROPIC_BASE_URL
+	isProxyConfigured := strings.Contains(settingsContent, proxyURL)
+
+	files = append(files, CLIConfigFile{Name: "settings.json", Content: settingsContent, Exists: settingsExists, IsProxyConfigured: isProxyConfigured})
 
 	// Ensure ~/.claude.json has hasCompletedOnboarding: true
 	claudeJsonPath := filepath.Join(homeDir, ".claude.json")
@@ -1804,6 +1812,9 @@ func (a *App) GetCodexConfig() (*CLIConfigResult, error) {
 		return &CLIConfigResult{Success: false, Message: err.Error()}, nil
 	}
 
+	settings, _ := a.GetSettings()
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d/v1", settings.Port)
+
 	files := []CLIConfigFile{}
 
 	// Read config.toml
@@ -1812,7 +1823,11 @@ func (a *App) GetCodexConfig() (*CLIConfigResult, error) {
 	if !configExists {
 		configContent = a.getDefaultCodexConfig()
 	}
-	files = append(files, CLIConfigFile{Name: "config.toml", Content: configContent, Exists: configExists})
+
+	// Check if proxy is configured by looking for base_url
+	isConfigProxyConfigured := strings.Contains(configContent, proxyURL)
+
+	files = append(files, CLIConfigFile{Name: "config.toml", Content: configContent, Exists: configExists, IsProxyConfigured: isConfigProxyConfigured})
 
 	// Read auth.json
 	authPath := filepath.Join(dirs.CodexConfigDir, "auth.json")
@@ -1820,7 +1835,7 @@ func (a *App) GetCodexConfig() (*CLIConfigResult, error) {
 	if !authExists {
 		authContent = a.getDefaultCodexAuth()
 	}
-	files = append(files, CLIConfigFile{Name: "auth.json", Content: authContent, Exists: authExists})
+	files = append(files, CLIConfigFile{Name: "auth.json", Content: authContent, Exists: authExists, IsProxyConfigured: true})
 
 	return &CLIConfigResult{Success: true, Files: files}, nil
 }
