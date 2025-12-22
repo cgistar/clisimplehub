@@ -20,6 +20,7 @@ type RequestLog struct {
 	StatusCode     int               `json:"statusCode,omitempty"`
 	TargetURL      string            `json:"targetUrl,omitempty"`
 	RequestHeaders map[string]string `json:"requestHeaders,omitempty"`
+	RequestStream  string            `json:"requestStream,omitempty"`
 	ResponseStream string            `json:"responseStream,omitempty"`
 }
 

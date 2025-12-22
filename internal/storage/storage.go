@@ -17,19 +17,28 @@ type Vendor struct {
 
 // Endpoint represents an API endpoint configuration
 type Endpoint struct {
-	ID            int64     `json:"id"`
-	Name          string    `json:"name"`
-	APIURL        string    `json:"apiUrl"`
-	APIKey        string    `json:"apiKey"`
-	Active        bool      `json:"active"`
-	Enabled       bool      `json:"enabled"`
-	InterfaceType string    `json:"interfaceType"`
-	VendorID      int64     `json:"vendorId"`
-	Model         string    `json:"model,omitempty"`
-	Remark        string    `json:"remark,omitempty"`
-	Priority      int       `json:"priority,omitempty"`
-	CreateTime    time.Time `json:"createTime,omitempty"`
-	UpdateTime    time.Time `json:"updateTime,omitempty"`
+	ID            int64             `json:"id"`
+	Name          string            `json:"name"`
+	APIURL        string            `json:"apiUrl"`
+	APIKey        string            `json:"apiKey"`
+	Active        bool              `json:"active"`
+	Enabled       bool              `json:"enabled"`
+	InterfaceType string            `json:"interfaceType"`
+	VendorID      int64             `json:"vendorId"`
+	Model         string            `json:"model,omitempty"`
+	Remark        string            `json:"remark,omitempty"`
+	Priority      int               `json:"priority,omitempty"`
+	ProxyURL      string            `json:"proxyUrl,omitempty"`
+	Models        []ModelMapping    `json:"models,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	CreateTime    time.Time         `json:"createTime,omitempty"`
+	UpdateTime    time.Time         `json:"updateTime,omitempty"`
+}
+
+// ModelMapping represents a model name mapping configuration
+type ModelMapping struct {
+	Name  string `json:"name"`  // Upstream model name
+	Alias string `json:"alias"` // Client-facing alias
 }
 
 // Storage defines the data operations interface

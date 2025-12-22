@@ -62,7 +62,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
-	log.Println("Storage initialized successfully")
 
 	// Initialize vendor stats SQLite store (best-effort; never blocks proxy startup).
 	vendorStatsPath := filepath.Join(dataDir, "data.sqlite")
@@ -75,7 +74,7 @@ func main() {
 	}
 
 	// Load port configuration with priority:
-	// 1. CODESP_PORT environment variable (highest priority)
+	// 1. PORT environment variable (highest priority)
 	// 2. config.json app_config
 	// 3. Default port
 	port := DefaultPort
@@ -83,11 +82,10 @@ func main() {
 	// Check environment variable first (highest priority)
 	if envPort := config.GetPortFromEnv(); envPort > 0 {
 		port = envPort
-		log.Printf("Using port from CODESP_PORT environment variable: %d", port)
+		log.Printf("Using port from PORT environment variable: %d", port)
 	} else if savedPort, err := store.GetConfig(ConfigKeyPort); err == nil && savedPort != "" {
 		if p, err := strconv.Atoi(savedPort); err == nil {
 			port = p
-			log.Printf("Using port from config.json app_config: %d", port)
 		}
 	}
 
@@ -116,7 +114,6 @@ func main() {
 	// Requirements: 7.1, 8.5
 	wsHub := proxy.NewWSHub()
 	go wsHub.Run()
-	log.Println("WebSocket hub started")
 
 	// Initialize proxy server with WebSocket hub
 	// Requirements: 1.1, 5.1, 7.1, 8.5
@@ -129,9 +126,7 @@ func main() {
 	// Load fallback setting from config
 	if fallbackStr, err := store.GetConfig(ConfigKeyFallback); err == nil && fallbackStr == "true" {
 		proxyServer.SetFallbackEnabled(true)
-		log.Println("Fallback mode enabled")
 	}
-	log.Printf("Proxy server configured on port %d", port)
 
 	// Create the app instance
 	app := NewApp()
@@ -199,6 +194,13 @@ func main() {
 func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 	result := make([]*proxy.Endpoint, len(endpoints))
 	for i, e := range endpoints {
+		var models []proxy.ModelMapping
+		if len(e.Models) > 0 {
+			models = make([]proxy.ModelMapping, 0, len(e.Models))
+			for _, m := range e.Models {
+				models = append(models, proxy.ModelMapping{Name: m.Name, Alias: m.Alias})
+			}
+		}
 		result[i] = &proxy.Endpoint{
 			ID:            e.ID,
 			Name:          e.Name,
@@ -210,6 +212,10 @@ func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 			VendorID:      e.VendorID,
 			Model:         e.Model,
 			Remark:        e.Remark,
+			Priority:      e.Priority,
+			ProxyURL:      e.ProxyURL,
+			Models:        models,
+			Headers:       e.Headers,
 		}
 	}
 	return result

@@ -166,6 +166,13 @@ func getEnvInt(key string, defaultValue int) int {
 func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 	result := make([]*proxy.Endpoint, len(endpoints))
 	for i, e := range endpoints {
+		var models []proxy.ModelMapping
+		if len(e.Models) > 0 {
+			models = make([]proxy.ModelMapping, 0, len(e.Models))
+			for _, m := range e.Models {
+				models = append(models, proxy.ModelMapping{Name: m.Name, Alias: m.Alias})
+			}
+		}
 		result[i] = &proxy.Endpoint{
 			ID:            e.ID,
 			Name:          e.Name,
@@ -177,6 +184,10 @@ func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 			VendorID:      e.VendorID,
 			Model:         e.Model,
 			Remark:        e.Remark,
+			Priority:      e.Priority,
+			ProxyURL:      e.ProxyURL,
+			Models:        models,
+			Headers:       e.Headers,
 		}
 	}
 	return result

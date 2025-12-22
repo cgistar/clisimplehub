@@ -41,6 +41,7 @@ export default {
         startTime: 'Start Time',
         targetUrl: 'Target URL',
         upstreamAuth: 'Upstream Auth (masked)',
+        requestStream: 'Request Stream',
         responseStream: 'Response Stream',
         requestHeaders: 'Request Headers',
         // Real-time request keys

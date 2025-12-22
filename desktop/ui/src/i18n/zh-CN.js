@@ -41,6 +41,7 @@ export default {
         startTime: '开始时间',
         targetUrl: '目标 URL',
         upstreamAuth: '上游认证 (已脱敏)',
+        requestStream: '请求流',
         responseStream: '响应流',
         requestHeaders: '请求头',
         realtime: '实时请求',

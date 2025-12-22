@@ -587,6 +587,7 @@ type RequestLogDetailInfo struct {
 	TargetURL      string            `json:"targetUrl"`
 	UpstreamAuth   string            `json:"upstreamAuth"`
 	RequestHeaders map[string]string `json:"requestHeaders"`
+	RequestStream  string            `json:"requestStream"`
 	ResponseStream string            `json:"responseStream"`
 }
 
@@ -619,6 +620,7 @@ func (a *App) GetLogDetail(logID string) (*RequestLogDetailInfo, error) {
 				TargetURL:      log.TargetURL,
 				UpstreamAuth:   log.UpstreamAuth,
 				RequestHeaders: log.RequestHeaders,
+				RequestStream:  log.RequestStream,
 				ResponseStream: log.ResponseStream,
 			}, nil
 		}

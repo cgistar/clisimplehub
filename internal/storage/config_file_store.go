@@ -512,6 +512,15 @@ func flattenEndpoints(cfg *config.AppConfig) []*Endpoint {
 	out := make([]*Endpoint, 0)
 	for _, v := range cfg.Vendors {
 		for _, ep := range v.Endpoints {
+			// Convert config.ModelMapping to storage.ModelMapping
+			var models []ModelMapping
+			for _, m := range ep.Models {
+				models = append(models, ModelMapping{
+					Name:  m.Name,
+					Alias: m.Alias,
+				})
+			}
+
 			out = append(out, &Endpoint{
 				ID:            ep.ID,
 				Name:          ep.Name,
@@ -524,6 +533,9 @@ func flattenEndpoints(cfg *config.AppConfig) []*Endpoint {
 				Model:         ep.Model,
 				Remark:        ep.Remark,
 				Priority:      ep.Priority,
+				ProxyURL:      ep.ProxyURL,
+				Models:        models,
+				Headers:       ep.Headers,
 			})
 		}
 	}
@@ -535,6 +547,16 @@ func addEndpointToVendor(cfg *config.AppConfig, endpoint *Endpoint) error {
 		if cfg.Vendors[i].ID != endpoint.VendorID {
 			continue
 		}
+
+		// Convert storage.ModelMapping to config.ModelMapping
+		var models []config.ModelMapping
+		for _, m := range endpoint.Models {
+			models = append(models, config.ModelMapping{
+				Name:  m.Name,
+				Alias: m.Alias,
+			})
+		}
+
 		cfg.Vendors[i].Endpoints = append(cfg.Vendors[i].Endpoints, config.EndpointConfig{
 			ID:            endpoint.ID,
 			Name:          endpoint.Name,
@@ -546,6 +568,9 @@ func addEndpointToVendor(cfg *config.AppConfig, endpoint *Endpoint) error {
 			Model:         endpoint.Model,
 			Remark:        endpoint.Remark,
 			Priority:      endpoint.Priority,
+			ProxyURL:      endpoint.ProxyURL,
+			Models:        models,
+			Headers:       endpoint.Headers,
 		})
 		return nil
 	}
@@ -553,6 +578,15 @@ func addEndpointToVendor(cfg *config.AppConfig, endpoint *Endpoint) error {
 }
 
 func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error) {
+	// Convert storage.ModelMapping to config.ModelMapping
+	var models []config.ModelMapping
+	for _, m := range endpoint.Models {
+		models = append(models, config.ModelMapping{
+			Name:  m.Name,
+			Alias: m.Alias,
+		})
+	}
+
 	for vi := range cfg.Vendors {
 		eps := cfg.Vendors[vi].Endpoints
 		for ei := range eps {
@@ -573,6 +607,9 @@ func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error)
 				moved.Model = endpoint.Model
 				moved.Remark = endpoint.Remark
 				moved.Priority = endpoint.Priority
+				moved.ProxyURL = endpoint.ProxyURL
+				moved.Models = models
+				moved.Headers = endpoint.Headers
 
 				cfg.Vendors[vi].Endpoints = append(eps[:ei], eps[ei+1:]...)
 				for dest := range cfg.Vendors {
@@ -595,6 +632,9 @@ func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error)
 			eps[ei].Model = endpoint.Model
 			eps[ei].Remark = endpoint.Remark
 			eps[ei].Priority = endpoint.Priority
+			eps[ei].ProxyURL = endpoint.ProxyURL
+			eps[ei].Models = models
+			eps[ei].Headers = endpoint.Headers
 			return true, nil
 		}
 	}

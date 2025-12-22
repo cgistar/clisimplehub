@@ -42,16 +42,25 @@ type VendorConfig struct {
 
 // EndpointConfig represents endpoint configuration in JSON
 type EndpointConfig struct {
-	ID            int64  `json:"id,omitempty"`
-	Name          string `json:"name"`
-	APIURL        string `json:"apiUrl"`
-	APIKey        string `json:"apiKey"`
-	Active        bool   `json:"active"`
-	Enabled       bool   `json:"enabled"`
-	InterfaceType string `json:"interfaceType"`
-	Model         string `json:"model,omitempty"`
-	Remark        string `json:"remark,omitempty"`
-	Priority      int    `json:"priority,omitempty"`
+	ID            int64             `json:"id,omitempty"`
+	Name          string            `json:"name"`
+	APIURL        string            `json:"apiUrl"`
+	APIKey        string            `json:"apiKey"`
+	Active        bool              `json:"active"`
+	Enabled       bool              `json:"enabled"`
+	InterfaceType string            `json:"interfaceType"`
+	Model         string            `json:"model,omitempty"`
+	Remark        string            `json:"remark,omitempty"`
+	Priority      int               `json:"priority,omitempty"`
+	ProxyURL      string            `json:"proxyUrl,omitempty"`
+	Models        []ModelMapping    `json:"models,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+}
+
+// ModelMapping represents a model name mapping configuration
+type ModelMapping struct {
+	Name  string `json:"name"`  // Upstream model name
+	Alias string `json:"alias"` // Client-facing alias
 }
 
 // AppConfig represents the complete application configuration

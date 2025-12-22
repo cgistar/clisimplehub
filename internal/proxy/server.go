@@ -349,7 +349,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	endpoint := p.router.GetActiveEndpoint(interfaceType)
 	if endpoint == nil {
 		http.Error(w, "No enabled endpoints available", http.StatusServiceUnavailable)
-		detail := &RequestDetail{Method: r.Method, StatusCode: http.StatusServiceUnavailable, RequestHeaders: reqHeaders}
+		detail := &RequestDetail{Method: r.Method, StatusCode: http.StatusServiceUnavailable, RequestHeaders: reqHeaders, RequestStream: string(bodyBytes)}
 		runTime := time.Since(startTime).Milliseconds()
 		p.recordRequestWithDetail(requestID, interfaceType, nil, r.URL.Path, startTime, "error_503", runTime, detail)
 		return
@@ -361,6 +361,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		Method:         r.Method,
 		TargetURL:      targetURL,
 		RequestHeaders: reqHeaders,
+		RequestStream:  string(bodyBytes),
 		UpstreamAuth:   formatUpstreamAuthForLog(endpoint),
 	}
 	detail.StatusCode = 0
@@ -836,6 +837,7 @@ type RequestDetail struct {
 	StatusCode     int
 	TargetURL      string
 	RequestHeaders map[string]string
+	RequestStream  string
 	ResponseStream string
 	UpstreamAuth   string
 }
@@ -866,6 +868,7 @@ func (p *ProxyServer) recordRequestWithDetail(id string, interfaceType Interface
 		log.StatusCode = detail.StatusCode
 		log.TargetURL = detail.TargetURL
 		log.RequestHeaders = detail.RequestHeaders
+		log.RequestStream = detail.RequestStream
 		log.ResponseStream = detail.ResponseStream
 		log.UpstreamAuth = detail.UpstreamAuth
 	}

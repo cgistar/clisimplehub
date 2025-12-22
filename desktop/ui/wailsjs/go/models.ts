@@ -317,6 +317,7 @@ export namespace main {
 	    targetUrl: string;
 	    upstreamAuth: string;
 	    requestHeaders: Record<string, string>;
+	    requestStream: string;
 	    responseStream: string;
 	
 	    static createFrom(source: any = {}) {
@@ -338,6 +339,7 @@ export namespace main {
 	        this.targetUrl = source["targetUrl"];
 	        this.upstreamAuth = source["upstreamAuth"];
 	        this.requestHeaders = source["requestHeaders"];
+	        this.requestStream = source["requestStream"];
 	        this.responseStream = source["responseStream"];
 	    }
 	}

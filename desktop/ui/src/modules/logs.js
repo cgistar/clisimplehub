@@ -108,6 +108,7 @@ function updateRecentLog(request) {
         targetUrl: request.targetUrl,
         upstreamAuth: request.upstreamAuth,
         requestHeaders: request.requestHeaders,
+        requestStream: request.requestStream,
         responseStream: request.responseStream
     };
     
@@ -283,6 +284,7 @@ export async function showLogDetail(logId) {
                         targetUrl: detail.targetUrl,
                         upstreamAuth: detail.upstreamAuth,
                         requestHeaders: detail.requestHeaders,
+                        requestStream: detail.requestStream,
                         responseStream: detail.responseStream
                     };
                 }
@@ -308,6 +310,7 @@ export async function showLogDetail(logId) {
                     targetUrl: stateLog.targetUrl,
                     upstreamAuth: stateLog.upstreamAuth,
                     requestHeaders: stateLog.requestHeaders,
+                    requestStream: stateLog.requestStream,
                     responseStream: stateLog.responseStream
                 };
             }
@@ -383,10 +386,10 @@ function renderLogDetailModal(log) {
                         </tr>
                     </table>
                 </div>
-                ${log.responseStream ? `
+                ${log.requestStream ? `
                 <div class="log-detail-section">
-                    <h3>${t('logs.responseStream')}</h3>
-                    <pre class="log-stream-content">${escapeHtml(log.responseStream)}</pre>
+                    <h3>${t('logs.requestStream')}</h3>
+                    <pre class="log-stream-content">${escapeHtml(log.requestStream)}</pre>
                 </div>` : ''}
                 ${log.requestHeaders && Object.keys(log.requestHeaders).length > 0 ? `
                 <div class="log-detail-section">

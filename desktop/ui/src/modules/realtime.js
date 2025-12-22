@@ -179,6 +179,7 @@ class RealTimeManager {
             targetUrl: log.targetUrl || '',
             upstreamAuth: log.upstreamAuth || '',
             requestHeaders: log.requestHeaders || {},
+            requestStream: log.requestStream || '',
             responseStream: log.responseStream || '',
             // Computed display values
             displayDuration: log.runTime || 0,
