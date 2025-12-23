@@ -71,6 +71,21 @@ func formatUpstreamAuthForLog(endpoint *Endpoint) string {
 	}
 }
 
+func formatUpstreamAuthForLogConfig(interfaceType string, apiKey string) string {
+	key := strings.TrimSpace(apiKey)
+	if key == "" {
+		return ""
+	}
+	switch InterfaceType(strings.ToLower(strings.TrimSpace(interfaceType))) {
+	case InterfaceTypeGemini:
+		return "key=" + maskSecret(key)
+	case InterfaceTypeCodex, InterfaceTypeChat:
+		return "Authorization: Bearer " + maskSecret(key)
+	default:
+		return "key=" + maskSecret(key)
+	}
+}
+
 func maskSecret(secret string) string {
 	s := strings.TrimSpace(secret)
 	if s == "" {

@@ -59,7 +59,7 @@ var once sync.Once
 
 // init initializes the default logger
 func init() {
-	defaultLogger = New("[AI-API-Proxy] ", LevelInfo, os.Stdout)
+	defaultLogger = New("[Cli-Simple-Hub] ", LevelInfo, os.Stdout)
 }
 
 // New creates a new Logger instance
@@ -82,7 +82,7 @@ func NewWithFile(prefix string, level LogLevel, logDir string) (*Logger, error) 
 	}
 
 	// Create log file with date-based name
-	logFileName := fmt.Sprintf("ai-api-proxy-%s.log", time.Now().Format("2006-01-02"))
+	logFileName := fmt.Sprintf("cli-simple-hub-%s.log", time.Now().Format("2006-01-02"))
 	logPath := filepath.Join(logDir, logFileName)
 
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
