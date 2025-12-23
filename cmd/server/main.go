@@ -181,6 +181,7 @@ func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 			Active:        e.Active,
 			Enabled:       e.Enabled,
 			InterfaceType: e.InterfaceType,
+			Transformer:   e.Transformer,
 			VendorID:      e.VendorID,
 			Model:         e.Model,
 			Remark:        e.Remark,

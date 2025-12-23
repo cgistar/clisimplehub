@@ -529,6 +529,7 @@ func flattenEndpoints(cfg *config.AppConfig) []*Endpoint {
 				Active:        ep.Active,
 				Enabled:       ep.Enabled,
 				InterfaceType: ep.InterfaceType,
+				Transformer:   ep.Transformer,
 				VendorID:      v.ID,
 				Model:         ep.Model,
 				Remark:        ep.Remark,
@@ -565,6 +566,7 @@ func addEndpointToVendor(cfg *config.AppConfig, endpoint *Endpoint) error {
 			Active:        endpoint.Active,
 			Enabled:       endpoint.Enabled,
 			InterfaceType: endpoint.InterfaceType,
+			Transformer:   endpoint.Transformer,
 			Model:         endpoint.Model,
 			Remark:        endpoint.Remark,
 			Priority:      endpoint.Priority,
@@ -604,6 +606,7 @@ func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error)
 				moved.Active = endpoint.Active
 				moved.Enabled = endpoint.Enabled
 				moved.InterfaceType = endpoint.InterfaceType
+				moved.Transformer = endpoint.Transformer
 				moved.Model = endpoint.Model
 				moved.Remark = endpoint.Remark
 				moved.Priority = endpoint.Priority
@@ -629,6 +632,7 @@ func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error)
 			eps[ei].Active = endpoint.Active
 			eps[ei].Enabled = endpoint.Enabled
 			eps[ei].InterfaceType = endpoint.InterfaceType
+			eps[ei].Transformer = endpoint.Transformer
 			eps[ei].Model = endpoint.Model
 			eps[ei].Remark = endpoint.Remark
 			eps[ei].Priority = endpoint.Priority

@@ -51,6 +51,7 @@ type EndpointConfig struct {
 	APIURL        string            `json:"api_url"`
 	APIKey        string            `json:"api_key"`
 	InterfaceType string            `json:"interface_type"`
+	Transformer   string            `json:"transformer,omitempty"`
 	VendorID      int64             `json:"vendor_id,omitempty"`
 	Model         string            `json:"model,omitempty"`
 	ProxyURL      string            `json:"proxy_url,omitempty"`
@@ -60,8 +61,8 @@ type EndpointConfig struct {
 
 // ModelMapping 模型映射配置
 type ModelMapping struct {
-	Name  string `json:"name"`  // 上游模型名称
-	Alias string `json:"alias"` // 客户端使用的别名
+	Name  string `json:"name"`  // 实际模型名（上游模型名）
+	Alias string `json:"alias"` // API 使用的别名（客户端传入的 model）
 }
 
 // Executor 定义执行器接口

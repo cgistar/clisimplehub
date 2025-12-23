@@ -1,7 +1,11 @@
 // Package executor 提供端点查找接口
 package executor
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // EndpointProvider 端点提供者接口
 // 用于查找和管理可用端点
@@ -34,38 +38,13 @@ func EndpointKey(ep *EndpointConfig) string {
 		return ""
 	}
 	if ep.ID != 0 {
-		return "id:" + formatInt64(ep.ID)
+		return "id:" + strconv.FormatInt(ep.ID, 10)
 	}
-	if ep.Name == "" {
+	name := strings.TrimSpace(ep.Name)
+	if name == "" {
 		return ""
 	}
-	return "name:" + ep.Name
-}
-
-func formatInt64(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte(n%10) + '0'
-		n /= 10
-	}
-
-	if negative {
-		i--
-		buf[i] = '-'
-	}
-
-	return string(buf[i:])
+	return "name:" + name
 }
 
 // FindNextUntriedEndpoint 查找下一个未尝试的端点
@@ -97,7 +76,7 @@ func FindNextUntriedEndpoint(endpoints []*EndpointConfig, current *EndpointConfi
 	// 先从当前位置之后查找
 	for i := currentIdx + 1; i < len(endpoints); i++ {
 		ep := endpoints[i]
-		if ep == nil || !isEndpointEnabled(ep) {
+		if ep == nil {
 			continue
 		}
 		if exhausted[EndpointKey(ep)] {
@@ -109,7 +88,7 @@ func FindNextUntriedEndpoint(endpoints []*EndpointConfig, current *EndpointConfi
 	// 再从开头查找
 	for i := 0; i < currentIdx; i++ {
 		ep := endpoints[i]
-		if ep == nil || !isEndpointEnabled(ep) {
+		if ep == nil {
 			continue
 		}
 		if exhausted[EndpointKey(ep)] {
@@ -119,10 +98,4 @@ func FindNextUntriedEndpoint(endpoints []*EndpointConfig, current *EndpointConfi
 	}
 
 	return nil
-}
-
-func isEndpointEnabled(ep *EndpointConfig) bool {
-	// EndpointConfig 没有 Enabled 字段，默认认为是启用的
-	// 实际的启用状态由 EndpointProvider 实现管理
-	return ep != nil
 }

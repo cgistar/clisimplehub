@@ -27,17 +27,6 @@ func NewStatsManager() *StatsManager {
 	}
 }
 
-// NewStatsManagerWithDeps creates a new StatsManager with WebSocket hub and storage
-// Requirements: 7.1, 8.4, 8.5
-func NewStatsManagerWithDeps(wsHub *WSHub, store storage.Storage) *StatsManager {
-	return &StatsManager{
-		recentLogs: make([]*RequestLog, 0, MaxRecentLogs),
-		tokenStats: make(map[string]*TokenStats),
-		wsHub:      wsHub,
-		storage:    store,
-	}
-}
-
 // SetWSHub sets the WebSocket hub for broadcasting
 func (s *StatsManager) SetWSHub(hub *WSHub) {
 	s.mu.Lock()
@@ -185,76 +174,4 @@ func (s *StatsManager) GetTokenStatsForEndpoint(endpointName string) *TokenStats
 		return &statsCopy
 	}
 	return nil
-}
-
-// SetVendorName sets the vendor name for an endpoint's token stats
-func (s *StatsManager) SetVendorName(endpointName, vendorName string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if stats, exists := s.tokenStats[endpointName]; exists {
-		stats.VendorName = vendorName
-	}
-}
-
-// Clear resets all statistics
-func (s *StatsManager) Clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.recentLogs = make([]*RequestLog, 0, MaxRecentLogs)
-	s.tokenStats = make(map[string]*TokenStats)
-}
-
-// RecordTokensWithVendor records token usage with vendor name
-// Requirements: 8.1, 8.2, 8.3, 8.5
-func (s *StatsManager) RecordTokensWithVendor(endpointName, vendorName string, tokens *TokenUsage) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if tokens == nil {
-		return
-	}
-
-	stats, exists := s.tokenStats[endpointName]
-	if !exists {
-		stats = &TokenStats{
-			EndpointName: endpointName,
-			VendorName:   vendorName,
-		}
-		s.tokenStats[endpointName] = stats
-	}
-
-	// Update vendor name if not set
-	// Requirements: 8.1
-	if stats.VendorName == "" {
-		stats.VendorName = vendorName
-	}
-
-	// Accumulate token counts
-	// Requirements: 8.2
-	stats.InputTokens += tokens.InputTokens
-	stats.CachedCreate += tokens.CachedCreate
-	stats.CachedRead += tokens.CachedRead
-	stats.OutputTokens += tokens.OutputTokens
-	stats.Reasoning += tokens.Reasoning
-
-	// Calculate total
-	// Requirements: 8.3
-	stats.Total = stats.InputTokens + stats.CachedCreate + stats.CachedRead + stats.OutputTokens + stats.Reasoning
-
-	// Broadcast via WebSocket
-	// Requirements: 8.5
-	if s.wsHub != nil {
-		s.wsHub.Broadcast(&WSMessage{
-			Type:    WSMessageTypeTokenStats,
-			Payload: stats,
-		})
-	}
-}
-
-// GetAllTokenStats returns all token statistics as a slice
-// Requirements: 8.1, 8.2
-func (s *StatsManager) GetAllTokenStats() []*TokenStats {
-	return s.GetTokenStats()
 }

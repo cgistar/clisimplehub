@@ -50,25 +50,8 @@ func maskAuthorizationValue(value string) string {
 	return maskSecret(trimmed)
 }
 
-func formatUpstreamAuthForLog(endpoint *Endpoint) string {
-	if endpoint == nil {
-		return ""
-	}
-
-	key := strings.TrimSpace(endpoint.APIKey)
-	if key == "" {
-		return ""
-	}
-
-	switch InterfaceType(endpoint.InterfaceType) {
-	case InterfaceTypeGemini:
-		return "key=" + maskSecret(key)
-	case InterfaceTypeCodex, InterfaceTypeChat:
-		return "Authorization: Bearer " + maskSecret(key)
-	default:
-		// Unknown interface type: show key only (masked) to avoid implying header format.
-		return "key=" + maskSecret(key)
-	}
+func MaskAuthorizationValue(value string) string {
+	return maskAuthorizationValue(value)
 }
 
 func formatUpstreamAuthForLogConfig(interfaceType string, apiKey string) string {

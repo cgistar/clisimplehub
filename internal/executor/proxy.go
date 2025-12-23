@@ -106,8 +106,15 @@ func ApplyEndpointHeaders(req *http.Request, endpoint *EndpointConfig) {
 // ResolveUpstreamModel 根据配置解析上游模型名称
 // 如果配置了模型映射，返回映射后的模型名；否则返回原始模型名
 func ResolveUpstreamModel(requestModel string, endpoint *EndpointConfig) string {
-	if endpoint == nil || requestModel == "" {
+	if endpoint == nil {
 		return requestModel
+	}
+
+	if strings.TrimSpace(requestModel) == "" {
+		if endpoint.Model != "" {
+			return endpoint.Model
+		}
+		return ""
 	}
 
 	// 检查模型映射

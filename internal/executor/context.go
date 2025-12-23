@@ -4,6 +4,7 @@ package executor
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -81,8 +82,13 @@ func (c *ExecutionContext) Execute(ctx context.Context, req *ForwardRequest, w h
 	}
 
 	// 3. 选择执行器并执行
-	exec := c.GetExecutor(interfaceType)
-	result := exec.Forward(ctx, endpoint, req, w)
+	var result *ForwardResult
+	if endpoint != nil && strings.TrimSpace(endpoint.Transformer) != "" {
+		result = c.executeWithTransformer(ctx, interfaceType, endpoint, req, w)
+	} else {
+		exec := c.GetExecutor(interfaceType)
+		result = exec.Forward(ctx, endpoint, req, w)
+	}
 
 	return result, endpoint, interfaceType
 }
@@ -90,6 +96,9 @@ func (c *ExecutionContext) Execute(ctx context.Context, req *ForwardRequest, w h
 // ExecuteWithEndpoint 使用指定端点执行请求
 func (c *ExecutionContext) ExecuteWithEndpoint(ctx context.Context, endpoint *EndpointConfig, req *ForwardRequest, w http.ResponseWriter) *ForwardResult {
 	interfaceType := c.DetectInterfaceType(req.Path)
+	if endpoint != nil && strings.TrimSpace(endpoint.Transformer) != "" {
+		return c.executeWithTransformer(ctx, interfaceType, endpoint, req, w)
+	}
 	exec := c.GetExecutor(interfaceType)
 	return exec.Forward(ctx, endpoint, req, w)
 }

@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
@@ -175,6 +174,7 @@ func toExecutorEndpointConfig(ep *Endpoint) *executor.EndpointConfig {
 		APIURL:        ep.APIURL,
 		APIKey:        ep.APIKey,
 		InterfaceType: ep.InterfaceType,
+		Transformer:   ep.Transformer,
 		VendorID:      ep.VendorID,
 		Model:         ep.Model,
 		ProxyURL:      ep.ProxyURL,
@@ -209,11 +209,8 @@ func endpointKeyFromProxy(ep *Endpoint) string {
 	if ep == nil {
 		return ""
 	}
-	if ep.ID != 0 {
-		return "id:" + strconv.FormatInt(ep.ID, 10)
-	}
-	if strings.TrimSpace(ep.Name) == "" {
-		return ""
-	}
-	return "name:" + ep.Name
+	return executor.EndpointKey(&executor.EndpointConfig{
+		ID:   ep.ID,
+		Name: ep.Name,
+	})
 }

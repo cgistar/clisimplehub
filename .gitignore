@@ -35,3 +35,4 @@ desktop/build/windows/*
 # Config
 config.json
 data.sqlite
+.other

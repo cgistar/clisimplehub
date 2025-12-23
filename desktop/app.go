@@ -321,26 +321,6 @@ func (a *App) GetEndpointsByType(interfaceType string) ([]*EndpointInfo, error) 
 	return result, nil
 }
 
-// GetEnabledEndpointsByType returns only enabled endpoints for the given interface type
-// Requirements: 6.4
-func (a *App) GetEnabledEndpointsByType(interfaceType string) ([]*EndpointInfo, error) {
-	endpoints, err := a.GetEndpointsByType(interfaceType)
-	if err != nil {
-		return nil, err
-	}
-
-	// Filter to only enabled endpoints
-	// Requirements: 6.4
-	result := make([]*EndpointInfo, 0)
-	for _, ep := range endpoints {
-		if ep.Enabled {
-			result = append(result, ep)
-		}
-	}
-
-	return result, nil
-}
-
 // GetActiveEndpoint returns the currently active endpoint for the given interface type
 // Requirements: 6.1
 func (a *App) GetActiveEndpoint(interfaceType string) (*EndpointInfo, error) {
@@ -1536,7 +1516,7 @@ func sanitizeTestHeaderValue(key string, value string) string {
 		return ""
 	}
 	if strings.EqualFold(key, "authorization") || strings.EqualFold(key, "proxy-authorization") {
-		return maskAuthorizationValue(value)
+		return proxy.MaskAuthorizationValue(value)
 	}
 	if strings.EqualFold(key, "x-api-key") {
 		return maskSecret(value)
@@ -1545,18 +1525,6 @@ func sanitizeTestHeaderValue(key string, value string) string {
 		return "[redacted]"
 	}
 	return value
-}
-
-func maskAuthorizationValue(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	parts := strings.Fields(trimmed)
-	if len(parts) >= 2 && strings.EqualFold(parts[0], "bearer") {
-		return "Bearer " + maskSecret(parts[1])
-	}
-	return maskSecret(trimmed)
 }
 
 func maskSecret(secret string) string {
@@ -1692,8 +1660,8 @@ func (a *App) fetchGeminiModels(apiURL, apiKey string) ([]string, error) {
 	models := make([]string, 0, len(result.Models))
 	for _, m := range result.Models {
 		name := m.Name
-		if strings.HasPrefix(name, "models/") {
-			name = strings.TrimPrefix(name, "models/")
+		if after, ok := strings.CutPrefix(name, "models/"); ok {
+			name = after
 		}
 		models = append(models, name)
 	}

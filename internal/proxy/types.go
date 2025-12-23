@@ -37,6 +37,7 @@ type Endpoint struct {
 	Active        bool              `json:"active"`
 	Enabled       bool              `json:"enabled"`
 	InterfaceType string            `json:"interface_type"`
+	Transformer   string            `json:"transformer,omitempty"`
 	VendorID      int64             `json:"vendor_id"`
 	Model         string            `json:"model,omitempty"`
 	Remark        string            `json:"remark,omitempty"`
@@ -50,6 +51,6 @@ type Endpoint struct {
 
 // ModelMapping represents a model name mapping configuration
 type ModelMapping struct {
-	Name  string `json:"name"`  // Upstream model name
-	Alias string `json:"alias"` // Client-facing alias
+	Name  string `json:"name"`  // 实际模型名（上游模型名）
+	Alias string `json:"alias"` // API 使用的别名（客户端传入的 model）
 }

@@ -38,22 +38,10 @@ func (r *Registry) GetByInterfaceType(interfaceType string) Executor {
 	defer r.mu.RUnlock()
 
 	normalized := strings.ToLower(strings.TrimSpace(interfaceType))
-
-	switch normalized {
-	case "claude":
-		return r.executors["claude"]
-	case "codex":
-		return r.executors["codex"]
-	case "gemini":
-		return r.executors["gemini"]
-	case "chat":
-		return r.executors["chat"]
-	default:
-		if exec, ok := r.executors[normalized]; ok {
-			return exec
-		}
-		return nil
+	if exec, ok := r.executors[normalized]; ok {
+		return exec
 	}
+	return nil
 }
 
 // 全局默认注册表
@@ -81,8 +69,8 @@ func GetByInterfaceTypeDefault(interfaceType string) Executor {
 
 // init 初始化默认执行器
 func init() {
-	RegisterDefault(NewClaudeExecutor())
-	RegisterDefault(NewCodexExecutor())
-	RegisterDefault(NewGeminiExecutor())
-	RegisterDefault(NewOpenAICompatExecutor("chat"))
+	RegisterDefault(NewBaseExecutor("claude"))
+	RegisterDefault(NewBaseExecutor("codex"))
+	RegisterDefault(NewBaseExecutor("gemini"))
+	RegisterDefault(NewBaseExecutor("chat"))
 }
