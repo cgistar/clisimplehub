@@ -28,8 +28,6 @@ export function GetComputerName():Promise<string>;
 
 export function GetConfigPath():Promise<string>;
 
-export function GetEnabledEndpointsByType(arg1:string):Promise<Array<main.EndpointInfo>>;
-
 export function GetEndpointsByType(arg1:string):Promise<Array<main.EndpointInfo>>;
 
 export function GetEndpointsByVendorID(arg1:number):Promise<Array<main.EndpointInfo>>;
@@ -57,6 +55,8 @@ export function GetTokenStats():Promise<Array<main.TokenStatsInfo>>;
 export function GetTokenStatsByTimeRange(arg1:string):Promise<Array<main.VendorStatsSummaryInfo>>;
 
 export function GetTokenStatsForEndpoint(arg1:string):Promise<main.TokenStatsInfo>;
+
+export function GetTransformers():Promise<Record<string, Array<string>>>;
 
 export function GetVendors():Promise<Array<main.VendorInfo>>;
 

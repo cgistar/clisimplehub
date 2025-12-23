@@ -20,6 +20,7 @@ import (
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
+	"clisimplehub/internal/transformer"
 
 	"github.com/google/uuid"
 )
@@ -34,18 +35,21 @@ type Settings struct {
 // EndpointInfo represents endpoint information for frontend display
 // Requirements: 6.1, 6.2, 6.3, 6.4
 type EndpointInfo struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	APIURL        string `json:"apiUrl"`
-	APIKey        string `json:"apiKey,omitempty"`
-	Active        bool   `json:"active"`
-	Enabled       bool   `json:"enabled"`
-	InterfaceType string `json:"interfaceType"`
-	VendorID      int64  `json:"vendorId"`
-	VendorName    string `json:"vendorName,omitempty"`
-	Model         string `json:"model,omitempty"`
-	Remark        string `json:"remark,omitempty"`
-	Priority      int    `json:"priority"`
+	ID            int64                  `json:"id"`
+	Name          string                 `json:"name"`
+	APIURL        string                 `json:"apiUrl"`
+	APIKey        string                 `json:"apiKey,omitempty"`
+	Active        bool                   `json:"active"`
+	Enabled       bool                   `json:"enabled"`
+	InterfaceType string                 `json:"interfaceType"`
+	VendorID      int64                  `json:"vendorId"`
+	VendorName    string                 `json:"vendorName,omitempty"`
+	Model         string                 `json:"model,omitempty"`
+	Transformer   string                 `json:"transformer,omitempty"`
+	ProxyURL      string                 `json:"proxyUrl,omitempty"`
+	Models        []storage.ModelMapping `json:"models,omitempty"`
+	Remark        string                 `json:"remark,omitempty"`
+	Priority      int                    `json:"priority"`
 	// Daily stats
 	TodayRequests int64 `json:"todayRequests"`
 	TodayErrors   int64 `json:"todayErrors"`
@@ -353,6 +357,9 @@ func (a *App) SetActiveEndpoint(interfaceType string, endpointID int64) error {
 	if a.router == nil {
 		return fmt.Errorf("router not initialized")
 	}
+	if a.storage == nil {
+		return fmt.Errorf("storage not initialized")
+	}
 
 	// Get all endpoints for this type
 	endpoints := a.router.GetEndpointsByType(proxy.InterfaceType(interfaceType))
@@ -376,7 +383,22 @@ func (a *App) SetActiveEndpoint(interfaceType string, endpointID int64) error {
 		return fmt.Errorf("cannot set disabled endpoint as active: %d", endpointID)
 	}
 
-	// Set the active endpoint
+	// 持久化：清除同类型其他端点的 Active，设置目标端点为 Active
+	storageEndpoints, err := a.storage.GetEndpointsByType(interfaceType)
+	if err != nil {
+		return fmt.Errorf("failed to get endpoints: %w", err)
+	}
+	for _, ep := range storageEndpoints {
+		if ep.Active && ep.ID != endpointID {
+			ep.Active = false
+			_ = a.storage.UpdateEndpoint(ep)
+		} else if ep.ID == endpointID && !ep.Active {
+			ep.Active = true
+			_ = a.storage.UpdateEndpoint(ep)
+		}
+	}
+
+	// Set the active endpoint in router
 	return a.router.SetActiveEndpoint(proxy.InterfaceType(interfaceType), targetEndpoint)
 }
 
@@ -414,23 +436,7 @@ func (a *App) ToggleEndpointEnabled(endpointID int64, enabled bool) error {
 	if a.router != nil {
 		endpoints, err := a.storage.GetEndpoints()
 		if err == nil {
-			proxyEndpoints := make([]*proxy.Endpoint, 0, len(endpoints))
-			for _, e := range endpoints {
-				proxyEndpoints = append(proxyEndpoints, &proxy.Endpoint{
-					ID:            e.ID,
-					Name:          e.Name,
-					APIURL:        e.APIURL,
-					APIKey:        e.APIKey,
-					Active:        e.Active,
-					Enabled:       e.Enabled,
-					InterfaceType: e.InterfaceType,
-					VendorID:      e.VendorID,
-					Model:         e.Model,
-					Remark:        e.Remark,
-					Priority:      e.Priority,
-				})
-			}
-			a.router.LoadEndpoints(proxyEndpoints)
+			a.router.LoadEndpoints(convertEndpoints(endpoints))
 		}
 	}
 
@@ -486,6 +492,11 @@ func (a *App) GetInterfaceTypes() []string {
 		string(proxy.InterfaceTypeGemini),
 		string(proxy.InterfaceTypeChat),
 	}
+}
+
+// GetTransformers returns all supported transformer specs grouped by source interfaceType
+func (a *App) GetTransformers() map[string][]string {
+	return transformer.ListAll()
 }
 
 // =============================================================================
@@ -738,25 +749,7 @@ func (a *App) ReloadConfig() error {
 			return fmt.Errorf("failed to get endpoints: %w", err)
 		}
 
-		// Convert storage.Endpoint to proxy.Endpoint
-		proxyEndpoints := make([]*proxy.Endpoint, 0, len(endpoints))
-		for _, ep := range endpoints {
-			proxyEndpoints = append(proxyEndpoints, &proxy.Endpoint{
-				ID:            ep.ID,
-				Name:          ep.Name,
-				APIURL:        ep.APIURL,
-				APIKey:        ep.APIKey,
-				Active:        ep.Active,
-				Enabled:       ep.Enabled,
-				InterfaceType: ep.InterfaceType,
-				VendorID:      ep.VendorID,
-				Model:         ep.Model,
-				Remark:        ep.Remark,
-				Priority:      ep.Priority,
-			})
-		}
-
-		a.router.LoadEndpoints(proxyEndpoints)
+		a.router.LoadEndpoints(convertEndpoints(endpoints))
 	}
 
 	// Also refresh runtime proxy settings from config.json.
@@ -857,6 +850,9 @@ func (a *App) GetEndpointsByVendorID(vendorID int64) ([]*EndpointInfo, error) {
 			InterfaceType: ep.InterfaceType,
 			VendorID:      ep.VendorID,
 			Model:         ep.Model,
+			Transformer:   ep.Transformer,
+			ProxyURL:      ep.ProxyURL,
+			Models:        ep.Models,
 			Remark:        ep.Remark,
 			Priority:      ep.Priority,
 		})
@@ -866,17 +862,20 @@ func (a *App) GetEndpointsByVendorID(vendorID int64) ([]*EndpointInfo, error) {
 
 // EndpointInput represents endpoint input from frontend
 type EndpointInput struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	APIURL        string `json:"apiUrl"`
-	APIKey        string `json:"apiKey"`
-	Active        bool   `json:"active"`
-	Enabled       bool   `json:"enabled"`
-	InterfaceType string `json:"interfaceType"`
-	VendorID      int64  `json:"vendorId"`
-	Model         string `json:"model,omitempty"`
-	Remark        string `json:"remark,omitempty"`
-	Priority      int    `json:"priority"`
+	ID            int64                  `json:"id"`
+	Name          string                 `json:"name"`
+	APIURL        string                 `json:"apiUrl"`
+	APIKey        string                 `json:"apiKey"`
+	Active        bool                   `json:"active"`
+	Enabled       bool                   `json:"enabled"`
+	InterfaceType string                 `json:"interfaceType"`
+	VendorID      int64                  `json:"vendorId"`
+	Model         string                 `json:"model,omitempty"`
+	Transformer   string                 `json:"transformer,omitempty"`
+	ProxyURL      string                 `json:"proxyUrl,omitempty"`
+	Models        []storage.ModelMapping `json:"models,omitempty"`
+	Remark        string                 `json:"remark,omitempty"`
+	Priority      int                    `json:"priority"`
 }
 
 // SaveEndpointData creates or updates an endpoint
@@ -884,6 +883,15 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("storage not initialized")
 	}
+
+	// 更新已有端点时，保留前端表单未覆盖的字段（如 transformer/proxy/models/headers），避免意外清空。
+	var existing *storage.Endpoint
+	if endpoint.ID > 0 {
+		if ep, err := a.storage.GetEndpointByID(endpoint.ID); err == nil {
+			existing = ep
+		}
+	}
+
 	// Default priority to 5 if not set
 	priority := endpoint.Priority
 	if priority == 0 {
@@ -899,8 +907,25 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		InterfaceType: endpoint.InterfaceType,
 		VendorID:      endpoint.VendorID,
 		Model:         endpoint.Model,
+		Transformer:   endpoint.Transformer,
+		ProxyURL:      endpoint.ProxyURL,
+		Models:        endpoint.Models,
 		Remark:        endpoint.Remark,
 		Priority:      priority,
+	}
+	if existing != nil {
+		if ep.Transformer == "" {
+			ep.Transformer = existing.Transformer
+		}
+		if ep.ProxyURL == "" {
+			ep.ProxyURL = existing.ProxyURL
+		}
+		if ep.Headers == nil {
+			ep.Headers = existing.Headers
+		}
+		if ep.Models == nil {
+			ep.Models = existing.Models
+		}
 	}
 	if err := a.storage.SaveEndpoint(ep); err != nil {
 		return nil, err
@@ -910,23 +935,7 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 	if a.router != nil {
 		endpoints, err := a.storage.GetEndpoints()
 		if err == nil {
-			proxyEndpoints := make([]*proxy.Endpoint, 0, len(endpoints))
-			for _, e := range endpoints {
-				proxyEndpoints = append(proxyEndpoints, &proxy.Endpoint{
-					ID:            e.ID,
-					Name:          e.Name,
-					APIURL:        e.APIURL,
-					APIKey:        e.APIKey,
-					Active:        e.Active,
-					Enabled:       e.Enabled,
-					InterfaceType: e.InterfaceType,
-					VendorID:      e.VendorID,
-					Model:         e.Model,
-					Remark:        e.Remark,
-					Priority:      e.Priority,
-				})
-			}
-			a.router.LoadEndpoints(proxyEndpoints)
+			a.router.LoadEndpoints(convertEndpoints(endpoints))
 		}
 	}
 
@@ -958,23 +967,7 @@ func (a *App) DeleteEndpoint(id int64) error {
 	if a.router != nil {
 		endpoints, err := a.storage.GetEndpoints()
 		if err == nil {
-			proxyEndpoints := make([]*proxy.Endpoint, 0, len(endpoints))
-			for _, e := range endpoints {
-				proxyEndpoints = append(proxyEndpoints, &proxy.Endpoint{
-					ID:            e.ID,
-					Name:          e.Name,
-					APIURL:        e.APIURL,
-					APIKey:        e.APIKey,
-					Active:        e.Active,
-					Enabled:       e.Enabled,
-					InterfaceType: e.InterfaceType,
-					VendorID:      e.VendorID,
-					Model:         e.Model,
-					Remark:        e.Remark,
-					Priority:      e.Priority,
-				})
-			}
-			a.router.LoadEndpoints(proxyEndpoints)
+			a.router.LoadEndpoints(convertEndpoints(endpoints))
 		}
 	}
 

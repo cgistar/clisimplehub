@@ -387,9 +387,14 @@ function renderLogDetailModal(log) {
                     </table>
                 </div>
                 ${log.requestStream ? `
-                <div class="log-detail-section">
-                    <h3>${t('logs.requestStream')}</h3>
+                <div class="log-detail-section collapsible">
+                    <h3 onclick="this.parentElement.classList.toggle('expanded')">${t('logs.requestStream')} <span class="collapse-icon">▶</span></h3>
                     <pre class="log-stream-content">${escapeHtml(log.requestStream)}</pre>
+                </div>` : ''}
+                ${log.responseStream ? `
+                <div class="log-detail-section collapsible">
+                    <h3 onclick="this.parentElement.classList.toggle('expanded')">${t('logs.responseStream')} <span class="collapse-icon">▶</span></h3>
+                    <pre class="log-stream-content">${escapeHtml(log.responseStream)}</pre>
                 </div>` : ''}
                 ${log.requestHeaders && Object.keys(log.requestHeaders).length > 0 ? `
                 <div class="log-detail-section">

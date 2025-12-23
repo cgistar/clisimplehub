@@ -30,6 +30,7 @@ func (p *ProxyServer) recordRequestWithDetail(id string, interfaceType Interface
 	if endpoint != nil {
 		log.EndpointName = endpoint.Name
 		log.VendorID = endpoint.VendorID
+		log.Transformer = endpoint.Transformer
 	}
 
 	if detail != nil {

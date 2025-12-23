@@ -271,8 +271,35 @@ export function initUI() {
                         </div>
                     </div>
                     <div class="form-group">
-                        <label>${t('manage.remark')}</label>
-                        <input type="text" id="endpointRemark" placeholder="${t('manage.remarkPlaceholder')}">
+                        <label>${t('manage.transformer')}</label>
+                        <div class="model-select-container">
+                            <input type="text" id="endpointTransformerDisplay" readonly onclick="toggleTransformerDropdown()" placeholder="${t('manage.transformerPlaceholder')}">
+                            <button type="button" class="model-dropdown-toggle" onclick="toggleTransformerDropdown()">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                            </button>
+                            <div class="model-dropdown" id="transformerDropdown"></div>
+                        </div>
+                        <input type="hidden" id="endpointTransformer">
+                        <small>${t('manage.transformerHelp')}</small>
+                    </div>
+                    <div class="form-group">
+                        <label>${t('manage.modelMappings')}</label>
+                        <small>${t('manage.modelMappingsHelp')}</small>
+                        <div class="model-mappings-container" id="modelMappingsContainer">
+                            <div class="model-mapping-header">
+                                <input type="text" placeholder="${t('manage.modelMappingAlias')}" disabled class="mapping-header-label">
+                                <input type="text" placeholder="${t('manage.modelMappingName')}" disabled class="mapping-header-label">
+                                <button type="button" class="btn btn-sm btn-primary" onclick="addModelMapping()">+</button>
+                            </div>
+                            <div id="modelMappingsList"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>${t('manage.proxyUrl')}</label>
+                        <input type="text" id="endpointProxyUrl" placeholder="${t('manage.proxyUrlPlaceholder')}">
+                        <small>${t('manage.proxyUrlHelp')}</small>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -287,6 +314,10 @@ export function initUI() {
                                 <span class="slider"></span>
                             </label>
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label>${t('manage.remark')}</label>
+                        <input type="text" id="endpointRemark" placeholder="${t('manage.remarkPlaceholder')}">
                     </div>
                 </div>
                 <div class="modal-footer">

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"strings"
 	"time"
 
 	"clisimplehub/internal/executor"
@@ -31,4 +32,15 @@ func (o *proxyExecutionObserver) OnEndpointDisabled(interfaceType string, endpoi
 		return
 	}
 	o.server.broadcastEndpointTempDisabled(interfaceType, endpoint, until)
+}
+
+func (o *proxyExecutionObserver) OnDebugLog(requestID string, level int, message string) {
+	if o == nil || o.server == nil || o.server.wsHub == nil {
+		return
+	}
+	o.server.wsHub.BroadcastDebugLog(&DebugLogPayload{
+		RequestID: strings.TrimSpace(requestID),
+		Level:     level,
+		Message:   strings.TrimSpace(message),
+	})
 }

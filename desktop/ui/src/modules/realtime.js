@@ -146,6 +146,14 @@ class RealTimeManager {
                         data: message.payload
                     });
                 }
+
+                // Process debug_log messages (backend debug logs for UI console)
+                if (message.type === 'debug_log' && message.payload) {
+                    this.notifyListeners({
+                        type: 'debug_log',
+                        data: message.payload
+                    });
+                }
             }
         } catch (error) {
             console.error('Failed to parse WebSocket message:', error, event.data);
@@ -170,6 +178,7 @@ class RealTimeManager {
             interfaceType: log.interfaceType || '',
             vendorName: log.vendorName || '',
             endpointName: log.endpointName || '',
+            transformer: log.transformer || '',
             method: log.method || 'POST',
             path: log.path || '',
             status: status,

@@ -147,6 +147,18 @@ function handleRealtimeEvent(event) {
     if (!event) return;
 
     const eventType = event.type || '';
+
+    if (eventType === 'debug_log' && event.data) {
+        const level = Number.isInteger(event.data.level) ? event.data.level : LOG_LEVELS.DEBUG;
+        const requestId = (event.data.requestId || '').trim();
+        const prefix = requestId ? `[${requestId.slice(0, 8)}] ` : '';
+        const message = (event.data.message || '').trim();
+        if (message) {
+            appendLog(level, `${prefix}${message}`);
+        }
+        return;
+    }
+
     const requestId = event.request_id || event.data?.request_id;
     if (requestId && (eventType === 'completed' || eventType === 'failed' || eventType === 'removed')) {
         loggedRequestIds.delete(requestId);
@@ -167,8 +179,11 @@ function handleRealtimeEvent(event) {
     const endpointLabel = (request.vendorName && request.endpointName)
         ? ` (${request.vendorName}-${request.endpointName})`
         : '';
+    const transformerLabel = (request.transformer || '').trim()
+        ? ` tr=${(request.transformer || '').trim()}`
+        : '';
 
-    logInfo(`代理请求: ${method} ${url}${endpointLabel}`);
+    logInfo(`${method} ${url}${endpointLabel}${transformerLabel}`);
 }
 
 // Toggle bottom console panel visibility (from logs-card button)

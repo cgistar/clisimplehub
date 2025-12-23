@@ -38,7 +38,10 @@ import {
     updateTestButtonVisibility,
     testEndpoint,
     fetchModels,
-    toggleModelDropdown
+    toggleModelDropdown,
+    toggleTransformerDropdown,
+    addModelMapping,
+    removeModelMapping
 } from './modules/vendors.js';
 import {
     toggleConsolePanel,
@@ -156,6 +159,9 @@ window.updateTestButtonVisibility = updateTestButtonVisibility;
 window.testEndpoint = testEndpoint;
 window.fetchModels = fetchModels;
 window.toggleModelDropdown = toggleModelDropdown;
+window.toggleTransformerDropdown = toggleTransformerDropdown;
+window.addModelMapping = addModelMapping;
+window.removeModelMapping = removeModelMapping;
 window.openCLIConfigEditor = openCLIConfigEditor;
 window.closeCLIConfigEditor = closeCLIConfigEditor;
 window.saveCLIConfig = saveCLIConfig;

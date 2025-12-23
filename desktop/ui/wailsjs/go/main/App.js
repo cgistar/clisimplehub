@@ -46,10 +46,6 @@ export function GetConfigPath() {
   return window['go']['main']['App']['GetConfigPath']();
 }
 
-export function GetEnabledEndpointsByType(arg1) {
-  return window['go']['main']['App']['GetEnabledEndpointsByType'](arg1);
-}
-
 export function GetEndpointsByType(arg1) {
   return window['go']['main']['App']['GetEndpointsByType'](arg1);
 }
@@ -104,6 +100,10 @@ export function GetTokenStatsByTimeRange(arg1) {
 
 export function GetTokenStatsForEndpoint(arg1) {
   return window['go']['main']['App']['GetTokenStatsForEndpoint'](arg1);
+}
+
+export function GetTransformers() {
+  return window['go']['main']['App']['GetTransformers']();
 }
 
 export function GetVendors() {

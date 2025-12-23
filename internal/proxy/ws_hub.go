@@ -24,6 +24,8 @@ const (
 	WSMessageTypeFallbackSwitch WSMessageType = "fallback_switch"
 	// WSMessageTypeEndpointTempDisabled indicates an endpoint was temporarily disabled in runtime
 	WSMessageTypeEndpointTempDisabled WSMessageType = "endpoint_temp_disabled"
+	// WSMessageTypeDebugLog indicates a debug log message (for UI console)
+	WSMessageTypeDebugLog WSMessageType = "debug_log"
 )
 
 // WSMessage represents a WebSocket message
@@ -31,6 +33,13 @@ const (
 type WSMessage struct {
 	Type    WSMessageType `json:"type"`
 	Payload interface{}   `json:"payload"`
+}
+
+// DebugLogPayload represents debug log payload for UI console.
+type DebugLogPayload struct {
+	RequestID string `json:"requestId,omitempty"`
+	Level     int    `json:"level"`
+	Message   string `json:"message"`
 }
 
 // WSClient represents a WebSocket client connection
@@ -218,6 +227,17 @@ func (h *WSHub) BroadcastFallbackSwitch(payload *FallbackSwitchPayload) {
 func (h *WSHub) BroadcastEndpointTempDisabled(payload *EndpointTempDisabledPayload) {
 	h.Broadcast(&WSMessage{
 		Type:    WSMessageTypeEndpointTempDisabled,
+		Payload: payload,
+	})
+}
+
+// BroadcastDebugLog broadcasts a debug log message for UI console.
+func (h *WSHub) BroadcastDebugLog(payload *DebugLogPayload) {
+	if payload == nil {
+		return
+	}
+	h.Broadcast(&WSMessage{
+		Type:    WSMessageTypeDebugLog,
 		Payload: payload,
 	})
 }

@@ -96,6 +96,7 @@ func (p *ProxyServer) Start() error {
 	mux.HandleFunc("/", p.handleProxy)
 	mux.HandleFunc("/health", p.handleHealth)
 	mux.HandleFunc("/stats", p.handleStats)
+	mux.HandleFunc("/transformers", p.handleTransformers)
 
 	if p.wsHub != nil {
 		mux.HandleFunc("/ws", p.wsHub.HandleWebSocket)

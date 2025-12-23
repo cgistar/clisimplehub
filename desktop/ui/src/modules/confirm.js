@@ -109,3 +109,84 @@ function handleConfirm(result) {
         resolvePromise = null;
     }
 }
+
+// 多选项对话框
+let optionsModal = null;
+let optionsResolve = null;
+
+/**
+ * 显示多选项对话框
+ * @param {string} message - 提示信息
+ * @param {Object} options - 配置
+ * @param {string} options.title - 标题
+ * @param {Array<{value: string, text: string, danger?: boolean, primary?: boolean}>} options.buttons - 按钮列表
+ * @returns {Promise<string|null>} - 返回选中按钮的 value，取消返回 null
+ */
+export function confirmWithOptions(message, options = {}) {
+    return new Promise((resolve) => {
+        optionsResolve = resolve;
+
+        const title = options.title || t('common.confirm') || 'Confirm';
+        const buttons = options.buttons || [];
+
+        if (!optionsModal) {
+            optionsModal = createOptionsModal();
+            document.body.appendChild(optionsModal);
+        }
+
+        optionsModal.querySelector('.confirm-title').textContent = title;
+        optionsModal.querySelector('.confirm-message').textContent = message;
+
+        // 渲染按钮
+        const footer = optionsModal.querySelector('.modal-footer');
+        footer.innerHTML = buttons.map(btn => {
+            let btnClass = 'btn';
+            if (btn.danger) btnClass += ' btn-danger';
+            else if (btn.primary) btnClass += ' btn-primary';
+            else btnClass += ' btn-secondary';
+            return `<button class="${btnClass}" data-value="${btn.value}">${btn.text}</button>`;
+        }).join('');
+
+        // 绑定按钮事件
+        footer.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', () => handleOptionsResult(btn.dataset.value));
+        });
+
+        optionsModal.classList.add('active');
+        footer.querySelector('button')?.focus();
+    });
+}
+
+function createOptionsModal() {
+    const modal = document.createElement('div');
+    modal.id = 'optionsModal';
+    modal.className = 'modal confirm-modal';
+    modal.innerHTML = `
+        <div class="modal-content confirm-modal-content">
+            <div class="modal-header">
+                <h2 class="confirm-title">Confirm</h2>
+            </div>
+            <div class="modal-body">
+                <p class="confirm-message"></p>
+            </div>
+            <div class="modal-footer"></div>
+        </div>
+    `;
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) handleOptionsResult(null);
+    });
+    modal.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') handleOptionsResult(null);
+    });
+
+    return modal;
+}
+
+function handleOptionsResult(value) {
+    if (optionsModal) optionsModal.classList.remove('active');
+    if (optionsResolve) {
+        optionsResolve(value);
+        optionsResolve = null;
+    }
+}

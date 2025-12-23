@@ -94,6 +94,9 @@ export namespace main {
 	    vendorId: number;
 	    vendorName?: string;
 	    model?: string;
+	    transformer?: string;
+	    proxyUrl?: string;
+	    models?: storage.ModelMapping[];
 	    remark?: string;
 	    priority: number;
 	    todayRequests: number;
@@ -117,6 +120,9 @@ export namespace main {
 	        this.vendorId = source["vendorId"];
 	        this.vendorName = source["vendorName"];
 	        this.model = source["model"];
+	        this.transformer = source["transformer"];
+	        this.proxyUrl = source["proxyUrl"];
+	        this.models = this.convertValues(source["models"], storage.ModelMapping);
 	        this.remark = source["remark"];
 	        this.priority = source["priority"];
 	        this.todayRequests = source["todayRequests"];
@@ -124,6 +130,24 @@ export namespace main {
 	        this.todayInput = source["todayInput"];
 	        this.todayOutput = source["todayOutput"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class EndpointInput {
 	    id: number;
@@ -135,6 +159,9 @@ export namespace main {
 	    interfaceType: string;
 	    vendorId: number;
 	    model?: string;
+	    transformer?: string;
+	    proxyUrl?: string;
+	    models?: storage.ModelMapping[];
 	    remark?: string;
 	    priority: number;
 	
@@ -153,9 +180,30 @@ export namespace main {
 	        this.interfaceType = source["interfaceType"];
 	        this.vendorId = source["vendorId"];
 	        this.model = source["model"];
+	        this.transformer = source["transformer"];
+	        this.proxyUrl = source["proxyUrl"];
+	        this.models = this.convertValues(source["models"], storage.ModelMapping);
 	        this.remark = source["remark"];
 	        this.priority = source["priority"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class EndpointStatsSummaryInfo {
 	    endpointId: string;
@@ -610,6 +658,25 @@ export namespace statsdb {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	
+	    }
+	}
+
+}
+
+export namespace storage {
+	
+	export class ModelMapping {
+	    name: string;
+	    alias: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelMapping(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.alias = source["alias"];
 	    }
 	}
 

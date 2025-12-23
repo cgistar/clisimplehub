@@ -100,6 +100,10 @@ export function renderVendorEndpoints(endpoints) {
     
     container.innerHTML = endpoints.map(ep => `
         <div class="endpoint-manage-item">
+            <div class="endpoint-actions-top">
+                <button class="btn btn-sm btn-icon" onclick="editEndpoint(${ep.id})" title="Edit">✏️</button>
+                <button class="btn btn-sm btn-icon" onclick="deleteEndpointById(${ep.id}, ${state.selectedVendor.id})" title="${t('manage.delete') || 'Delete'}">🗑️</button>
+            </div>
             <div class="endpoint-info">
                 <div class="endpoint-name">
                     ${ep.name}
@@ -110,10 +114,6 @@ export function renderVendorEndpoints(endpoints) {
                     <span class="badge">${ep.interfaceType}</span>
                     ${ep.model ? `<span class="model-tag">${ep.model}</span>` : ''}
                 </div>
-            </div>
-            <div class="endpoint-actions">
-                <button class="btn btn-sm btn-icon" onclick="editEndpoint(${ep.id})" title="Edit">✏️</button>
-                <button class="btn btn-sm btn-icon" onclick="deleteEndpointById(${ep.id}, ${state.selectedVendor.id})" title="${t('manage.delete') || 'Delete'}">🗑️</button>
             </div>
         </div>
     `).join('');
@@ -230,7 +230,7 @@ export function showEndpointForm(endpoint = null) {
         showError('Please select a vendor first');
         return;
     }
-    
+
     document.getElementById('endpointFormTitle').textContent = endpoint ? t('manage.editEndpoint') : t('manage.addEndpoint');
     document.getElementById('endpointId').value = endpoint?.id || '';
     document.getElementById('endpointName').value = endpoint?.name || '';
@@ -242,6 +242,19 @@ export function showEndpointForm(endpoint = null) {
     document.getElementById('endpointRemark').value = endpoint?.remark || '';
     document.getElementById('endpointPriority').value = endpoint?.priority || 5;
     document.getElementById('endpointEnabled').checked = endpoint?.enabled !== false;
+
+    // 初始化 proxyUrl
+    document.getElementById('endpointProxyUrl').value = endpoint?.proxyUrl || '';
+
+    // 初始化 transformer
+    document.getElementById('endpointTransformer').value = endpoint?.transformer || '';
+    syncTransformerDisplay();
+    loadTransformersForInterfaceType();
+    closeTransformerDropdown();
+
+    // 初始化 models 映射
+    renderModelMappings(endpoint?.models || []);
+
     const deleteBtn = document.getElementById('deleteEndpointBtn');
     const parsedEndpointId = parseInt(endpoint?.id, 10);
     const canDelete = Number.isFinite(parsedEndpointId) && parsedEndpointId > 0;
@@ -251,7 +264,7 @@ export function showEndpointForm(endpoint = null) {
 
     syncEndpointInterfaceTypeDisplay();
     closeInterfaceTypeDropdown();
-    
+
     // Reset password visibility
     const apiKeyInput = document.getElementById('endpointApiKey');
     apiKeyInput.type = 'password';
@@ -259,10 +272,10 @@ export function showEndpointForm(endpoint = null) {
     if (toggleBtn) {
         toggleBtn.textContent = '👁️';
     }
-    
+
     // Update test button visibility based on interface type
     updateTestButtonVisibility();
-    
+
     document.getElementById('endpointFormModal').classList.add('active');
 }
 
@@ -318,6 +331,10 @@ export function onEndpointInterfaceTypeChange() {
     closeInterfaceTypeDropdown();
     clearFetchedModels();
     updateTestButtonVisibility();
+    // interfaceType 变化时重置 transformer
+    document.getElementById('endpointTransformer').value = '';
+    syncTransformerDisplay();
+    loadTransformersForInterfaceType();
 }
 
 // Update test button visibility based on interface type and model
@@ -1019,7 +1036,10 @@ export async function saveEndpoint() {
     const endpointId = parseInt(document.getElementById('endpointId').value) || 0;
     const apiKey = document.getElementById('endpointApiKey').value.trim();
     const vendorId = parseInt(document.getElementById('endpointVendorId')?.value, 10) || state.selectedVendor?.id || 0;
-    
+
+    // 收集 models 映射
+    const models = collectModelMappings();
+
     const endpoint = {
         id: endpointId,
         name: document.getElementById('endpointName').value.trim(),
@@ -1028,22 +1048,25 @@ export async function saveEndpoint() {
         interfaceType: document.getElementById('endpointInterfaceType').value,
         vendorId: vendorId,
         model: document.getElementById('endpointModel').value.trim(),
+        transformer: document.getElementById('endpointTransformer').value.trim(),
+        proxyUrl: document.getElementById('endpointProxyUrl').value.trim(),
+        models: models.length > 0 ? models : null,
         remark: document.getElementById('endpointRemark').value.trim(),
         priority: parseInt(document.getElementById('endpointPriority').value) || 5,
         enabled: document.getElementById('endpointEnabled').checked,
         active: false
     };
-    
+
     if (!endpoint.name || !endpoint.apiUrl) {
         showError('Please fill in all required fields');
         return;
     }
-    
+
     if (!endpointId && !apiKey) {
         showError('API Key is required for new endpoints');
         return;
     }
-    
+
     try {
         if (window.go?.main?.App?.SaveEndpointData) {
             await window.go.main.App.SaveEndpointData(endpoint);
@@ -1124,4 +1147,164 @@ async function runEndpointDeletion(endpointId, vendorId, source) {
         logError(`[Endpoint] delete failed: ${error?.message || error}`);
         showError(t('manage.deleteFailed') + ': ' + error.message);
     }
+}
+
+// =============================================================================
+// Transformer 相关函数
+// =============================================================================
+
+// 缓存转换器列表
+let cachedTransformers = null;
+
+// 加载当前 interfaceType 对应的转换器列表
+export async function loadTransformersForInterfaceType() {
+    const interfaceType = document.getElementById('endpointInterfaceType')?.value || '';
+    const dropdown = document.getElementById('transformerDropdown');
+    if (!dropdown) return;
+
+    // 获取转换器列表（带缓存）
+    if (!cachedTransformers && window.go?.main?.App?.GetTransformers) {
+        try {
+            cachedTransformers = await window.go.main.App.GetTransformers();
+        } catch (e) {
+            console.error('Failed to load transformers:', e);
+            cachedTransformers = {};
+        }
+    }
+
+    const transformers = cachedTransformers?.[interfaceType] || [];
+    renderTransformerDropdown(transformers);
+}
+
+function renderTransformerDropdown(transformers) {
+    const dropdown = document.getElementById('transformerDropdown');
+    const currentValue = document.getElementById('endpointTransformer')?.value || '';
+    if (!dropdown) return;
+
+    dropdown.innerHTML = '';
+
+    // 添加 "无" 选项
+    const noneItem = document.createElement('div');
+    noneItem.className = 'model-dropdown-item' + (currentValue === '' ? ' selected' : '');
+    noneItem.textContent = t('manage.transformerNone');
+    noneItem.onclick = () => {
+        document.getElementById('endpointTransformer').value = '';
+        syncTransformerDisplay();
+        closeTransformerDropdown();
+    };
+    dropdown.appendChild(noneItem);
+
+    // 添加转换器选项
+    transformers.forEach(tf => {
+        const item = document.createElement('div');
+        item.className = 'model-dropdown-item' + (currentValue === tf ? ' selected' : '');
+        item.textContent = tf;
+        item.onclick = () => {
+            document.getElementById('endpointTransformer').value = tf;
+            syncTransformerDisplay();
+            closeTransformerDropdown();
+        };
+        dropdown.appendChild(item);
+    });
+}
+
+function syncTransformerDisplay() {
+    const value = document.getElementById('endpointTransformer')?.value || '';
+    const display = document.getElementById('endpointTransformerDisplay');
+    if (display) {
+        display.value = value || t('manage.transformerNone');
+    }
+}
+
+export function toggleTransformerDropdown() {
+    const dropdown = document.getElementById('transformerDropdown');
+    if (!dropdown) return;
+
+    if (dropdown.classList.contains('show')) {
+        dropdown.classList.remove('show');
+    } else {
+        loadTransformersForInterfaceType();
+        dropdown.classList.add('show');
+    }
+}
+
+function closeTransformerDropdown() {
+    const dropdown = document.getElementById('transformerDropdown');
+    if (dropdown) {
+        dropdown.classList.remove('show');
+    }
+}
+
+// =============================================================================
+// Model Mappings 相关函数
+// =============================================================================
+
+// 渲染 model mappings 列表
+export function renderModelMappings(models) {
+    const container = document.getElementById('modelMappingsList');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    if (!models || models.length === 0) {
+        return;
+    }
+
+    models.forEach((mapping, index) => {
+        const row = createModelMappingRow(mapping.alias || '', mapping.name || '', index);
+        container.appendChild(row);
+    });
+}
+
+function createModelMappingRow(alias, name, index) {
+    const row = document.createElement('div');
+    row.className = 'model-mapping-row';
+    row.dataset.index = index;
+    row.innerHTML = `
+        <input type="text" class="mapping-alias" value="${escapeHtml(alias)}" placeholder="${t('manage.modelMappingAlias')}">
+        <input type="text" class="mapping-name" value="${escapeHtml(name)}" placeholder="${t('manage.modelMappingName')}">
+        <button type="button" class="btn btn-sm btn-icon btn-danger" onclick="removeModelMapping(this)" title="${t('manage.delete')}">×</button>
+    `;
+    return row;
+}
+
+export function addModelMapping() {
+    const container = document.getElementById('modelMappingsList');
+    if (!container) return;
+
+    const index = container.children.length;
+    const row = createModelMappingRow('', '', index);
+    container.appendChild(row);
+}
+
+export function removeModelMapping(btn) {
+    const row = btn.closest('.model-mapping-row');
+    if (row) {
+        row.remove();
+    }
+}
+
+// 收集 model mappings
+function collectModelMappings() {
+    const container = document.getElementById('modelMappingsList');
+    if (!container) return [];
+
+    const rows = container.querySelectorAll('.model-mapping-row');
+    const models = [];
+
+    rows.forEach(row => {
+        const alias = row.querySelector('.mapping-alias')?.value?.trim() || '';
+        const name = row.querySelector('.mapping-name')?.value?.trim() || '';
+        if (alias || name) {
+            models.push({ alias, name });
+        }
+    });
+
+    return models;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }

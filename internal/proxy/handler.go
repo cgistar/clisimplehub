@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/executor"
+	"clisimplehub/internal/transformer"
 
 	"github.com/google/uuid"
 )
@@ -69,10 +70,26 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		RequestStream:  string(bodyBytes),
 		UpstreamAuth:   formatUpstreamAuthForLogConfig(endpoint.InterfaceType, endpoint.APIKey),
 	}
+
+	// 如果配置了 transformer，提前计算实际转发目标 URL（用于 started 日志/控制台展示）。
+	if endpoint != nil && strings.TrimSpace(endpoint.Transformer) != "" {
+		if tr, err := transformer.Get(strings.TrimSpace(string(interfaceType)), endpoint.Transformer); err == nil && tr != nil {
+			requestModel := extractModelFromBody(bodyBytes)
+			upstreamModel := executor.ResolveUpstreamModel(requestModel, endpoint)
+			targetPath := tr.TargetPath(isStreaming, upstreamModel)
+			if strings.TrimSpace(targetPath) != "" {
+				target := strings.TrimSuffix(endpoint.APIURL, "/") + targetPath
+				if r.URL.RawQuery != "" {
+					target += "?" + r.URL.RawQuery
+				}
+				detail.TargetURL = target
+			}
+		}
+	}
 	p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "in_progress", 0, detail)
 
 	enableRetry := isRetryable && fallbackEnabled
-	execResult := exec.retry.Execute(r.Context(), forwardReq, w, enableRetry)
+	execResult := exec.retry.Execute(executor.WithRequestID(r.Context(), requestID), forwardReq, w, enableRetry)
 	result := execResult.Result
 
 	if result != nil {
@@ -112,6 +129,14 @@ func isStreamRequested(body []byte) bool {
 	}
 	_ = json.Unmarshal(body, &streamReq)
 	return streamReq.Stream
+}
+
+func extractModelFromBody(body []byte) string {
+	var req struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &req)
+	return strings.TrimSpace(req.Model)
 }
 
 func statusFromExecuteResult(result *executor.ForwardResult) string {

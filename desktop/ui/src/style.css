@@ -1311,9 +1311,9 @@ input:disabled + .slider {
 }
 
 .endpoint-manage-item {
+    position: relative;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     padding: 10px 12px;
     border-radius: var(--radius-sm);
     background: var(--bg-secondary);
@@ -1322,6 +1322,20 @@ input:disabled + .slider {
 
 .endpoint-manage-item:hover {
     background: var(--bg-tertiary);
+}
+
+.endpoint-actions-top {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.endpoint-manage-item:hover .endpoint-actions-top {
+    opacity: 1;
 }
 
 .endpoint-manage-item .endpoint-info {
@@ -1464,6 +1478,29 @@ input:disabled + .slider {
     margin-bottom: 12px;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border-light);
+}
+
+/* 可折叠区块 */
+.log-detail-section.collapsible h3 {
+    cursor: pointer;
+    user-select: none;
+}
+.log-detail-section.collapsible h3:hover {
+    color: var(--primary);
+}
+.log-detail-section.collapsible .collapse-icon {
+    font-size: 10px;
+    margin-left: 6px;
+    transition: transform 0.2s;
+}
+.log-detail-section.collapsible.expanded .collapse-icon {
+    transform: rotate(90deg);
+}
+.log-detail-section.collapsible pre {
+    display: none;
+}
+.log-detail-section.collapsible.expanded pre {
+    display: block;
 }
 
 .log-detail-table {
@@ -2501,4 +2538,85 @@ input:disabled + .slider {
     display: flex;
     gap: 10px;
     margin-left: auto;
+}
+
+/* =============================================================================
+   Model Mappings
+   ============================================================================= */
+.model-mappings-container {
+    margin-top: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.model-mapping-header {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.model-mapping-header input.mapping-header-label {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 0;
+    cursor: default;
+}
+
+.model-mapping-header .btn {
+    flex-shrink: 0;
+}
+
+#modelMappingsList {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.model-mapping-row {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-light);
+    align-items: center;
+}
+
+.model-mapping-row:last-child {
+    border-bottom: none;
+}
+
+.model-mapping-row input {
+    flex: 1;
+    padding: 8px 10px;
+    font-size: 13px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.model-mapping-row input:focus {
+    border-color: var(--primary-color);
+    outline: none;
+}
+
+.model-mapping-row .btn-icon {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+}
+
+.model-dropdown-item.selected {
+    background: var(--primary-color);
+    color: #fff;
 }

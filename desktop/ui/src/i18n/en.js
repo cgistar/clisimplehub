@@ -163,7 +163,19 @@ export default {
         confirmDeleteEndpoint: 'Are you sure you want to delete this endpoint?',
         saveFailed: 'Failed to save',
         deleteFailed: 'Failed to delete',
-        activeEndpointNote: 'Active endpoint cannot be edited. Please switch to another endpoint first.'
+        activeEndpointNote: 'Active endpoint cannot be edited. Please switch to another endpoint first.',
+        proxyUrl: 'Proxy URL',
+        proxyUrlPlaceholder: 'e.g., socks5://proxy.example.com:1080',
+        proxyUrlHelp: 'Optional, use proxy to access upstream API',
+        transformer: 'Transformer',
+        transformerPlaceholder: 'Select transformer',
+        transformerHelp: 'Transform requests to another API format',
+        transformerNone: 'None',
+        modelMappings: 'Model Mappings',
+        modelMappingsHelp: 'alias -> name mapping, transform client model name to upstream model name',
+        modelMappingAlias: 'Request Model',
+        modelMappingName: 'Upstream Model',
+        addModelMapping: 'Add Mapping'
     },
     console: {
         title: 'Console Logs',

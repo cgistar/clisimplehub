@@ -6,7 +6,7 @@
 
 import { state } from './state.js';
 import { showError, showSuccess } from './utils.js';
-import { confirm } from './confirm.js';
+import { confirm, confirmWithOptions } from './confirm.js';
 
 // WebDAV configuration state
 export const webdavState = {
@@ -275,13 +275,20 @@ export async function loadConfigFromWebDAV(filename) {
         return;
     }
 
-    const confirmed = await confirm('确定要载入此配置吗？当前配置将被覆盖。', {
-        title: '载入配置',
-        confirmText: '载入',
-        cancelText: '取消',
-        danger: true
-    });
-    if (!confirmed) {
+    // 让用户选择载入模式
+    const mode = await confirmWithOptions(
+        '请选择配置载入方式：',
+        {
+            title: '载入配置',
+            buttons: [
+                { value: 'cancel', text: '取消' },
+                { value: 'merge', text: '合并配置', primary: true },
+                { value: 'replace', text: '清空并替换', danger: true }
+            ]
+        }
+    );
+
+    if (!mode || mode === 'cancel') {
         return;
     }
 
@@ -300,13 +307,23 @@ export async function loadConfigFromWebDAV(filename) {
             throw new Error(`下载失败: ${result.statusCode}`);
         }
 
-        const configData = JSON.parse(result.body);
+        const remoteConfig = JSON.parse(result.body);
+
+        // 根据模式处理配置
+        let finalConfig;
+        if (mode === 'replace') {
+            // 清空并替换：直接使用远程配置
+            finalConfig = remoteConfig;
+        } else {
+            // 合并模式：将远程配置合并到本地
+            finalConfig = await mergeConfigs(remoteConfig);
+        }
 
         // Save to config.json via backend
         if (window.go?.main?.App?.SaveFullConfig) {
             // SaveFullConfig returns error (null on success)
-            await window.go.main.App.SaveFullConfig(configData);
-            showSuccess('配置已载入，正在刷新...');
+            await window.go.main.App.SaveFullConfig(finalConfig);
+            showSuccess(mode === 'replace' ? '配置已替换，正在刷新...' : '配置已合并，正在刷新...');
             // Reload configuration
             setTimeout(async () => {
                 if (window.go?.main?.App?.ReloadConfig) {
@@ -317,22 +334,66 @@ export async function loadConfigFromWebDAV(filename) {
             }, 1000);
         } else {
             // Fallback: save to localStorage and reload
-            if (configData.settings) {
-                localStorage.setItem('settings', JSON.stringify(configData.settings));
+            if (finalConfig.settings) {
+                localStorage.setItem('settings', JSON.stringify(finalConfig.settings));
             }
-            if (configData.vendors) {
-                localStorage.setItem('vendors', JSON.stringify(configData.vendors));
+            if (finalConfig.vendors) {
+                localStorage.setItem('vendors', JSON.stringify(finalConfig.vendors));
             }
-            if (configData.endpoints) {
-                localStorage.setItem('endpoints', JSON.stringify(configData.endpoints));
+            if (finalConfig.endpoints) {
+                localStorage.setItem('endpoints', JSON.stringify(finalConfig.endpoints));
             }
-            showSuccess('配置已载入，正在刷新...');
+            showSuccess(mode === 'replace' ? '配置已替换，正在刷新...' : '配置已合并，正在刷新...');
             setTimeout(() => location.reload(), 1000);
         }
     } catch (error) {
         console.error('Load config error:', error);
         showError('载入配置失败: ' + error.message);
     }
+}
+
+/**
+ * 合并远程配置到本地配置
+ * @param {Object} remoteConfig - 远程配置
+ * @returns {Object} - 合并后的配置
+ */
+async function mergeConfigs(remoteConfig) {
+    // 获取当前本地配置
+    let localConfig;
+    if (window.go?.main?.App?.GetFullConfig) {
+        localConfig = await window.go.main.App.GetFullConfig();
+    } else {
+        localConfig = {
+            settings: state.settings || {},
+            vendors: state.vendors || [],
+            endpoints: Object.values(state.endpoints || {}).flat()
+        };
+    }
+
+    // 合并 settings：远程覆盖本地（保留本地独有字段）
+    const mergedSettings = { ...localConfig.settings, ...remoteConfig.settings };
+
+    // 合并 vendors：按 name 去重，远程优先
+    const localVendors = localConfig.vendors || [];
+    const remoteVendors = remoteConfig.vendors || [];
+    const vendorMap = new Map();
+    localVendors.forEach(v => vendorMap.set(v.name, v));
+    remoteVendors.forEach(v => vendorMap.set(v.name, v)); // 远程覆盖同名
+    const mergedVendors = Array.from(vendorMap.values());
+
+    // 合并 endpoints：按 vendor+name 去重，远程优先
+    const localEndpoints = localConfig.endpoints || [];
+    const remoteEndpoints = remoteConfig.endpoints || [];
+    const endpointMap = new Map();
+    localEndpoints.forEach(e => endpointMap.set(`${e.vendor}:${e.name}`, e));
+    remoteEndpoints.forEach(e => endpointMap.set(`${e.vendor}:${e.name}`, e)); // 远程覆盖同名
+    const mergedEndpoints = Array.from(endpointMap.values());
+
+    return {
+        settings: mergedSettings,
+        vendors: mergedVendors,
+        endpoints: mergedEndpoints
+    };
 }
 
 /**

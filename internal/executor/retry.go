@@ -66,10 +66,9 @@ func (r *RetryExecutor) Execute(ctx context.Context, req *ForwardRequest, w http
 		}
 	}
 
-	// 不启用重试时，直接执行一次
+	// 不启用重试时，直接执行一次，不更新断路器（避免隐式故障转移）
 	if !enableRetry {
 		result := r.execCtx.ExecuteWithEndpoint(ctx, endpoint, req, w)
-		_ = r.updateCircuitBreaker(endpoint, req.Path, result)
 		return &ExecuteResult{
 			Result:        result,
 			Endpoint:      endpoint,

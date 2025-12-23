@@ -10,6 +10,7 @@ type RequestLog struct {
 	VendorName    string    `json:"vendorName"`
 	VendorID      int64     `json:"vendorId,omitempty"`
 	EndpointName  string    `json:"endpointName"`
+	Transformer   string    `json:"transformer,omitempty"`
 	Path          string    `json:"path"`
 	RunTime       int64     `json:"runTime"` // milliseconds
 	Status        string    `json:"status"`

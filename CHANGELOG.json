@@ -1,5 +1,19 @@
 [
   {
+    "version": "v1.0.4",
+    "date": "2025-12-24",
+    "changes": [
+      "Add endpoint transformer for forwarding Claude/Codex requests to different upstream interface types",
+      "Refactor proxy handling logic and executor architecture",
+      "Add request data display in logs"
+    ]
+  },
+  {
+    "version": "v1.0.3",
+    "date": "2025-12-23",
+    "changes": ["Add WebDAV configuration sync"]
+  },
+  {
     "version": "v1.0.2",
     "date": "2025-12-19",
     "changes": ["The model replacement feature has been added to the endpoint configuration."]

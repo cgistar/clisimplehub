@@ -28,6 +28,10 @@ type ExecutionObserver interface {
 	OnEndpointDisabled(interfaceType string, endpoint *EndpointConfig, until time.Time)
 }
 
+type DebugObserver interface {
+	OnDebugLog(requestID string, level int, message string)
+}
+
 // NewExecutionContext 创建执行上下文
 func NewExecutionContext(provider EndpointProvider) *ExecutionContext {
 	return &ExecutionContext{provider: provider}
@@ -141,5 +145,14 @@ func (c *ExecutionContext) NotifyStart(requestID, interfaceType string, endpoint
 func (c *ExecutionContext) NotifyComplete(requestID, interfaceType string, endpoint *EndpointConfig, result *ForwardResult, duration time.Duration) {
 	if c.observer != nil {
 		c.observer.OnRequestComplete(requestID, interfaceType, endpoint, result, duration)
+	}
+}
+
+func (c *ExecutionContext) DebugLog(ctx context.Context, level int, message string) {
+	if c == nil || c.observer == nil {
+		return
+	}
+	if dbg, ok := c.observer.(DebugObserver); ok {
+		dbg.OnDebugLog(RequestIDFromContext(ctx), level, message)
 	}
 }
