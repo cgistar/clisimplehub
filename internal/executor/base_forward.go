@@ -14,7 +14,7 @@ import (
 func (e *BaseExecutor) Forward(ctx context.Context, endpoint *EndpointConfig, req *ForwardRequest, w http.ResponseWriter) *ForwardResult {
 	result := &ForwardResult{}
 
-	targetURL, err := buildTargetURL(endpoint.APIURL, req.Path, req.RawQuery)
+	targetURL, err := BuildTargetURL(endpoint.APIURL, req.Path, req.RawQuery)
 	if err != nil {
 		result.Error = err
 		return result

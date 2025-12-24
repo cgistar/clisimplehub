@@ -174,7 +174,9 @@ export default {
         modelMappingsHelp: 'alias -> name 映射，将客户端请求的模型名转换为上游模型名',
         modelMappingAlias: '请求模型名',
         modelMappingName: '上游模型名',
-        addModelMapping: '添加映射'
+        addModelMapping: '添加映射',
+        quickMapping: '快捷映射',
+        quickMappingTitle: '快速填充Claude模型映射'
     },
     console: {
         title: '控制台日志',

@@ -45,7 +45,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		return result
 	}
 
-	targetURL, err := buildTargetURL(endpoint.APIURL, targetPath, req.RawQuery)
+	targetURL, err := BuildTargetURL(endpoint.APIURL, targetPath, req.RawQuery)
 	if err != nil {
 		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 目标URL构造失败: endpoint=%s apiUrl=%s path=%s err=%v", endpoint.Name, endpoint.APIURL, targetPath, err))
 		result.Error = err

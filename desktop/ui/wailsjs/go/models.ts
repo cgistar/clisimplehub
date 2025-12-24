@@ -160,8 +160,10 @@ export namespace main {
 	    vendorId: number;
 	    model?: string;
 	    transformer?: string;
+	    transformerSet?: boolean;
 	    proxyUrl?: string;
 	    models?: storage.ModelMapping[];
+	    modelsSet?: boolean;
 	    remark?: string;
 	    priority: number;
 	
@@ -181,8 +183,10 @@ export namespace main {
 	        this.vendorId = source["vendorId"];
 	        this.model = source["model"];
 	        this.transformer = source["transformer"];
+	        this.transformerSet = source["transformerSet"];
 	        this.proxyUrl = source["proxyUrl"];
 	        this.models = this.convertValues(source["models"], storage.ModelMapping);
+	        this.modelsSet = source["modelsSet"];
 	        this.remark = source["remark"];
 	        this.priority = source["priority"];
 	    }

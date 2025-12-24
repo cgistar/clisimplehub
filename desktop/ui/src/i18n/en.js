@@ -175,7 +175,9 @@ export default {
         modelMappingsHelp: 'alias -> name mapping, transform client model name to upstream model name',
         modelMappingAlias: 'Request Model',
         modelMappingName: 'Upstream Model',
-        addModelMapping: 'Add Mapping'
+        addModelMapping: 'Add Mapping',
+        quickMapping: 'Quick Mapping',
+        quickMappingTitle: 'Quick fill Claude model mappings'
     },
     console: {
         title: 'Console Logs',

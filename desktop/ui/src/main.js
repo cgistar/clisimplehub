@@ -41,7 +41,8 @@ import {
     toggleModelDropdown,
     toggleTransformerDropdown,
     addModelMapping,
-    removeModelMapping
+    removeModelMapping,
+    applyQuickModelMappings
 } from './modules/vendors.js';
 import {
     toggleConsolePanel,
@@ -162,6 +163,7 @@ window.toggleModelDropdown = toggleModelDropdown;
 window.toggleTransformerDropdown = toggleTransformerDropdown;
 window.addModelMapping = addModelMapping;
 window.removeModelMapping = removeModelMapping;
+window.applyQuickModelMappings = applyQuickModelMappings;
 window.openCLIConfigEditor = openCLIConfigEditor;
 window.closeCLIConfigEditor = closeCLIConfigEditor;
 window.saveCLIConfig = saveCLIConfig;

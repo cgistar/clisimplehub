@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,6 +71,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		RequestStream:  string(bodyBytes),
 		UpstreamAuth:   formatUpstreamAuthForLogConfig(endpoint.InterfaceType, endpoint.APIKey),
 	}
+	if target, err := executor.BuildTargetURL(endpoint.APIURL, r.URL.Path, r.URL.RawQuery); err == nil && target != "" {
+		detail.TargetURL = target
+	}
 
 	// 如果配置了 transformer，提前计算实际转发目标 URL（用于 started 日志/控制台展示）。
 	if endpoint != nil && strings.TrimSpace(endpoint.Transformer) != "" {
@@ -78,11 +82,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			upstreamModel := executor.ResolveUpstreamModel(requestModel, endpoint)
 			targetPath := tr.TargetPath(isStreaming, upstreamModel)
 			if strings.TrimSpace(targetPath) != "" {
-				target := strings.TrimSuffix(endpoint.APIURL, "/") + targetPath
-				if r.URL.RawQuery != "" {
-					target += "?" + r.URL.RawQuery
+				if target, err := executor.BuildTargetURL(endpoint.APIURL, targetPath, r.URL.RawQuery); err == nil && target != "" {
+					detail.TargetURL = target
 				}
-				detail.TargetURL = target
 			}
 		}
 	}
@@ -96,6 +98,13 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		detail.TargetURL = result.TargetURL
 		detail.StatusCode = result.StatusCode
 		detail.ResponseStream = result.ResponseStream
+		if detail.ResponseStream == "" && shouldCaptureErrorResponse(result) {
+			if len(result.Body) > 0 {
+				detail.ResponseStream = truncateResponseBodyForLog(result.Body, 50*1024)
+			} else if result.Error != nil {
+				detail.ResponseStream = truncateResponseBodyForLog([]byte(result.Error.Error()), 8*1024)
+			}
+		}
 	}
 
 	runTime := time.Since(startTime).Milliseconds()
@@ -137,6 +146,29 @@ func extractModelFromBody(body []byte) string {
 	}
 	_ = json.Unmarshal(body, &req)
 	return strings.TrimSpace(req.Model)
+}
+
+func shouldCaptureErrorResponse(result *executor.ForwardResult) bool {
+	if result == nil {
+		return false
+	}
+	if result.Streamed {
+		return false
+	}
+	return result.Error != nil || result.StatusCode != http.StatusOK
+}
+
+func truncateResponseBodyForLog(body []byte, maxLen int) string {
+	if maxLen <= 0 {
+		maxLen = 1024
+	}
+	raw := bytes.TrimSpace(body)
+	raw = bytes.ReplaceAll(raw, []byte("\r"), []byte("\\r"))
+	raw = bytes.ReplaceAll(raw, []byte("\n"), []byte("\\n"))
+	if len(raw) <= maxLen {
+		return string(raw)
+	}
+	return string(raw[:maxLen]) + "...(truncated)"
 }
 
 func statusFromExecuteResult(result *executor.ForwardResult) string {

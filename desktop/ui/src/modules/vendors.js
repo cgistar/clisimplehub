@@ -275,6 +275,7 @@ export function showEndpointForm(endpoint = null) {
 
     // Update test button visibility based on interface type
     updateTestButtonVisibility();
+    updateQuickMappingVisibility();
 
     document.getElementById('endpointFormModal').classList.add('active');
 }
@@ -331,10 +332,57 @@ export function onEndpointInterfaceTypeChange() {
     closeInterfaceTypeDropdown();
     clearFetchedModels();
     updateTestButtonVisibility();
+    updateQuickMappingVisibility();
     // interfaceType 变化时重置 transformer
     document.getElementById('endpointTransformer').value = '';
     syncTransformerDisplay();
     loadTransformersForInterfaceType();
+}
+
+// 控制快捷映射按钮的显示/隐藏
+function updateQuickMappingVisibility() {
+    const interfaceType = document.getElementById('endpointInterfaceType')?.value || '';
+    const quickMappingBtn = document.getElementById('quickMappingBtn');
+    if (quickMappingBtn) {
+        quickMappingBtn.style.display = interfaceType === 'claude' ? 'inline-block' : 'none';
+    }
+}
+
+// Claude 快捷模型映射预设
+const CLAUDE_QUICK_MAPPINGS = [
+    { alias: 'claude-haiku-4-5-20251001', name: 'claude-4.5-haiku' },
+    { alias: 'claude-opus-4-5-20251101', name: 'claude-4.5-opus' },
+    { alias: 'claude-sonnet-4-5-20250929', name: 'claude-4.5-sonnet' }
+];
+
+// 应用快捷模型映射
+export function applyQuickModelMappings() {
+    const container = document.getElementById('modelMappingsList');
+    if (!container) return;
+
+    // 获取现有映射
+    const existingAliases = new Set();
+    container.querySelectorAll('.model-mapping-row .mapping-alias').forEach(input => {
+        const alias = input.value?.trim();
+        if (alias) existingAliases.add(alias);
+    });
+
+    // 添加不存在的映射
+    let addedCount = 0;
+    CLAUDE_QUICK_MAPPINGS.forEach(mapping => {
+        if (!existingAliases.has(mapping.alias)) {
+            const index = container.children.length;
+            const row = createModelMappingRow(mapping.alias, mapping.name, index);
+            container.appendChild(row);
+            addedCount++;
+        }
+    });
+
+    if (addedCount > 0) {
+        showSuccess(`已添加 ${addedCount} 个映射`);
+    } else {
+        showSuccess('映射已存在，无需添加');
+    }
 }
 
 // Update test button visibility based on interface type and model
@@ -1049,8 +1097,10 @@ export async function saveEndpoint() {
         vendorId: vendorId,
         model: document.getElementById('endpointModel').value.trim(),
         transformer: document.getElementById('endpointTransformer').value.trim(),
+        transformerSet: true,
         proxyUrl: document.getElementById('endpointProxyUrl').value.trim(),
         models: models.length > 0 ? models : null,
+        modelsSet: true,
         remark: document.getElementById('endpointRemark').value.trim(),
         priority: parseInt(document.getElementById('endpointPriority').value) || 5,
         enabled: document.getElementById('endpointEnabled').checked,

@@ -862,20 +862,22 @@ func (a *App) GetEndpointsByVendorID(vendorID int64) ([]*EndpointInfo, error) {
 
 // EndpointInput represents endpoint input from frontend
 type EndpointInput struct {
-	ID            int64                  `json:"id"`
-	Name          string                 `json:"name"`
-	APIURL        string                 `json:"apiUrl"`
-	APIKey        string                 `json:"apiKey"`
-	Active        bool                   `json:"active"`
-	Enabled       bool                   `json:"enabled"`
-	InterfaceType string                 `json:"interfaceType"`
-	VendorID      int64                  `json:"vendorId"`
-	Model         string                 `json:"model,omitempty"`
-	Transformer   string                 `json:"transformer,omitempty"`
-	ProxyURL      string                 `json:"proxyUrl,omitempty"`
-	Models        []storage.ModelMapping `json:"models,omitempty"`
-	Remark        string                 `json:"remark,omitempty"`
-	Priority      int                    `json:"priority"`
+	ID             int64                  `json:"id"`
+	Name           string                 `json:"name"`
+	APIURL         string                 `json:"apiUrl"`
+	APIKey         string                 `json:"apiKey"`
+	Active         bool                   `json:"active"`
+	Enabled        bool                   `json:"enabled"`
+	InterfaceType  string                 `json:"interfaceType"`
+	VendorID       int64                  `json:"vendorId"`
+	Model          string                 `json:"model,omitempty"`
+	Transformer    string                 `json:"transformer,omitempty"`
+	TransformerSet bool                   `json:"transformerSet,omitempty"`
+	ProxyURL       string                 `json:"proxyUrl,omitempty"`
+	Models         []storage.ModelMapping `json:"models,omitempty"`
+	ModelsSet      bool                   `json:"modelsSet,omitempty"`
+	Remark         string                 `json:"remark,omitempty"`
+	Priority       int                    `json:"priority"`
 }
 
 // SaveEndpointData creates or updates an endpoint
@@ -914,7 +916,9 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		Priority:      priority,
 	}
 	if existing != nil {
-		if ep.Transformer == "" {
+		// transformer 支持显式清空：前端会发送 transformerSet=true，
+		// 只有当旧客户端未发送该字段时才走“空值保留”逻辑，避免误清空。
+		if !endpoint.TransformerSet && ep.Transformer == "" {
 			ep.Transformer = existing.Transformer
 		}
 		if ep.ProxyURL == "" {
@@ -923,7 +927,9 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		if ep.Headers == nil {
 			ep.Headers = existing.Headers
 		}
-		if ep.Models == nil {
+		// models 支持显式清空：前端会发送 modelsSet=true，
+		// 只有当旧客户端未发送该字段时才走“空值保留”逻辑，避免误清空。
+		if !endpoint.ModelsSet && ep.Models == nil {
 			ep.Models = existing.Models
 		}
 	}

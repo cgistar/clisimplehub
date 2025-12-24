@@ -272,14 +272,17 @@ export function initUI() {
                     </div>
                     <div class="form-group">
                         <label>${t('manage.transformer')}</label>
-                        <div class="model-select-container">
-                            <input type="text" id="endpointTransformerDisplay" readonly onclick="toggleTransformerDropdown()" placeholder="${t('manage.transformerPlaceholder')}">
-                            <button type="button" class="model-dropdown-toggle" onclick="toggleTransformerDropdown()">
-                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
-                                </svg>
-                            </button>
-                            <div class="model-dropdown" id="transformerDropdown"></div>
+                        <div class="model-input-wrapper">
+                            <div class="model-select-container">
+                                <input type="text" id="endpointTransformerDisplay" readonly onclick="toggleTransformerDropdown()" placeholder="${t('manage.transformerPlaceholder')}">
+                                <button type="button" class="model-dropdown-toggle" onclick="toggleTransformerDropdown()">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                        <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                                    </svg>
+                                </button>
+                                <div class="model-dropdown" id="transformerDropdown"></div>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-primary" id="quickMappingBtn" onclick="applyQuickModelMappings()" style="display:none;" title="${t('manage.quickMappingTitle')}">🚀 ${t('manage.quickMapping')}</button>
                         </div>
                         <input type="hidden" id="endpointTransformer">
                         <small>${t('manage.transformerHelp')}</small>
