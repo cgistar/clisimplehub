@@ -1,5 +1,13 @@
 [
   {
+    "version": "v1.0.5",
+    "date": "2025-12-26",
+    "changes": [
+      "Fix deleted transformers still persisting after endpoint save",
+      "Return 503 to client when endpoint returns HTTP 200 but content is HTML page"
+    ]
+  },
+  {
     "version": "v1.0.4",
     "date": "2025-12-24",
     "changes": [

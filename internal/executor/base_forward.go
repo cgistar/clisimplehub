@@ -138,6 +138,11 @@ func (e *BaseExecutor) handleNonStreamingResponse(resp *http.Response, result *F
 		return result
 	}
 
+	if isLikelyHTMLResponse(resp.StatusCode, resp.Header.Get("Content-Type"), body) {
+		result.StatusCode = http.StatusServiceUnavailable
+		result.Error = fmt.Errorf("upstream returned HTML with HTTP 200")
+	}
+
 	result.Body = body
 	result.Tokens = e.ExtractTokens(body)
 	return result

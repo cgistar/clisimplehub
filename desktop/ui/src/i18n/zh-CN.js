@@ -166,7 +166,7 @@ export default {
         proxyUrl: '代理 URL',
         proxyUrlPlaceholder: '例如：socks5://proxy.example.com:1080',
         proxyUrlHelp: '可选，用于通过代理访问上游 API',
-        transformer: '供应商转换器',
+        transformer: '转换器',
         transformerPlaceholder: '选择转换器',
         transformerHelp: '将请求转换为其他 API 格式',
         transformerNone: '无',

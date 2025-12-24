@@ -218,6 +218,13 @@ func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Respo
 		return result
 	}
 
+	if isLikelyHTMLResponse(resp.StatusCode, resp.Header.Get("Content-Type"), body) {
+		result.StatusCode = http.StatusServiceUnavailable
+		result.Error = fmt.Errorf("upstream returned HTML with HTTP 200")
+		result.Body = body
+		return result
+	}
+
 	converted, err := tr.TransformResponseNonStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, body, nil)
 	if err != nil {
 		result.Error = err

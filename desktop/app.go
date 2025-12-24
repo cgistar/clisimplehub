@@ -1827,6 +1827,11 @@ func (a *App) SaveClaudeConfig(content string) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
+	// 隐性需求：保存时确保 {claudeConfigDir}/config.json 存在且包含 primaryApiKey
+	if err := ensureClaudePrimaryAPIKeyConfig(dirs.ClaudeConfigDir); err != nil {
+		return err
+	}
+
 	settingsPath := filepath.Join(dirs.ClaudeConfigDir, "settings.json")
 	if err := os.WriteFile(settingsPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write settings.json: %w", err)
@@ -1980,6 +1985,55 @@ func readFileContent(path string) (string, bool) {
 		return "", false
 	}
 	return string(data), true
+}
+
+func ensureClaudePrimaryAPIKeyConfig(claudeConfigDir string) error {
+	if strings.TrimSpace(claudeConfigDir) == "" {
+		return fmt.Errorf("claude config dir is empty")
+	}
+
+	if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
+		return fmt.Errorf("failed to create claude config directory: %w", err)
+	}
+
+	configPath := filepath.Join(claudeConfigDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read config.json: %w", err)
+		}
+
+		defaultConfig := map[string]string{"primaryApiKey": "key"}
+		newData, marshalErr := json.MarshalIndent(defaultConfig, "", "  ")
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal default config.json: %w", marshalErr)
+		}
+		newData = append(newData, '\n')
+		if writeErr := os.WriteFile(configPath, newData, 0644); writeErr != nil {
+			return fmt.Errorf("failed to write config.json: %w", writeErr)
+		}
+		return nil
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil
+	}
+	if _, ok := config["primaryApiKey"]; ok {
+		return nil
+	}
+
+	config["primaryApiKey"] = "key"
+	newData, marshalErr := json.MarshalIndent(config, "", "  ")
+	if marshalErr != nil {
+		return fmt.Errorf("failed to marshal updated config.json: %w", marshalErr)
+	}
+	newData = append(newData, '\n')
+	if err := os.WriteFile(configPath, newData, 0644); err != nil {
+		return fmt.Errorf("failed to write updated config.json: %w", err)
+	}
+
+	return nil
 }
 
 func (a *App) getDefaultClaudeSettings() string {
