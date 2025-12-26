@@ -116,6 +116,19 @@ export function renderEndpointList(endpoints) {
             ? `<span class="badge badge-active">${t('endpoints.currentUse')}</span>`
             : (ep.enabled ? `<button class="btn-switch" onclick="event.stopPropagation(); setActiveEndpointById(${ep.id})">${t('endpoints.switch')}</button>` : '');
         
+        // Get ping result from state if available
+        const pingResult = state.pingResults?.[ep.id];
+        let pingDisplay = '';
+        if (pingResult) {
+            if (pingResult.loading) {
+                pingDisplay = `<span class="ping-result ping-loading">(...)</span>`;
+            } else if (pingResult.success) {
+                pingDisplay = `<span class="ping-result ping-success">(${pingResult.latency}ms)</span>`;
+            } else {
+                pingDisplay = `<span class="ping-result ping-error">(${t('endpoints.pingFailed')})</span>`;
+            }
+        }
+        
         return `
         <div class="endpoint-item ${ep.active ? 'active' : ''} ${!ep.enabled ? 'disabled' : ''}" 
             onclick="editEndpointFromList(${ep.id}, ${ep.vendorId})">
@@ -134,7 +147,7 @@ export function renderEndpointList(endpoints) {
                 </div>
             </div>
             <div class="endpoint-info">
-                <div class="endpoint-url">🌐 ${ep.apiUrl}</div>
+                <div class="endpoint-url" onclick="event.stopPropagation(); pingSingleEndpoint(${ep.id})" title="${t('endpoints.ping')}">🌐 ${ep.apiUrl} ${pingDisplay}</div>
                 <div class="endpoint-daily-stats">
                     <span class="stat-item">📊 ${t('endpoints.requests')}: ${ep.todayRequests || 0}</span>
                     <span class="stat-separator">|</span>
@@ -230,5 +243,65 @@ export async function toggleEndpointEnabled(endpointId, enabled) {
     } catch (error) {
         showError('Failed to toggle endpoint: ' + error.message);
         await loadEndpoints(state.currentTab); // Refresh to reset UI
+    }
+}
+
+// Ping a single endpoint
+export async function pingSingleEndpoint(endpointId) {
+    try {
+        if (!window.go?.main?.App?.PingEndpoint) {
+            showError('Ping not available');
+            return;
+        }
+        
+        // Initialize pingResults if not exists
+        if (!state.pingResults) {
+            state.pingResults = {};
+        }
+        
+        // Show loading state
+        state.pingResults[endpointId] = { loading: true };
+        renderEndpointList(state.endpoints[state.currentTab] || []);
+        
+        const result = await window.go.main.App.PingEndpoint(endpointId);
+        state.pingResults[endpointId] = result;
+        renderEndpointList(state.endpoints[state.currentTab] || []);
+    } catch (error) {
+        state.pingResults[endpointId] = { success: false, error: error.message };
+        renderEndpointList(state.endpoints[state.currentTab] || []);
+    }
+}
+
+// Ping all endpoints of current tab
+export async function pingAllEndpoints() {
+    try {
+        if (!window.go?.main?.App?.PingAllEndpoints) {
+            showError('Ping not available');
+            return;
+        }
+        
+        // Initialize pingResults if not exists
+        if (!state.pingResults) {
+            state.pingResults = {};
+        }
+        
+        // Show loading state for all endpoints
+        const endpoints = state.endpoints[state.currentTab] || [];
+        endpoints.forEach(ep => {
+            state.pingResults[ep.id] = { loading: true };
+        });
+        renderEndpointList(endpoints);
+        
+        const results = await window.go.main.App.PingAllEndpoints(state.currentTab);
+        
+        // Update state with results
+        if (results) {
+            results.forEach(result => {
+                state.pingResults[result.endpointId] = result;
+            });
+        }
+        renderEndpointList(state.endpoints[state.currentTab] || []);
+    } catch (error) {
+        showError('Ping failed: ' + error.message);
     }
 }

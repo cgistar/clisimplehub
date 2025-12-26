@@ -21,7 +21,10 @@ export default {
         currentUse: '当前使用',
         switch: '切换',
         requests: '请求数',
-        errors: '错误数'
+        errors: '错误数',
+        ping: '测速',
+        pingAll: '全部测速',
+        pingFailed: '失败'
     },
     logs: {
         title: '请求日志',

@@ -39,6 +39,7 @@ export function initUI() {
                             <option value="">${t('endpoints.selectActive')}</option>
                         </select>
                         <button class="icon-btn" onclick="refreshConfig()" title="${t('endpoints.refresh')}">🔄</button>
+                        <button class="icon-btn" onclick="pingAllEndpoints()" title="${t('endpoints.pingAll')}">⚡</button>
                     </div>
                     <div class="endpoint-list" id="endpointList">
                         <div class="loading">${t('common.loading')}</div>

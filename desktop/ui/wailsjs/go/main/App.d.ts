@@ -64,6 +64,12 @@ export function GetVendors():Promise<Array<main.VendorInfo>>;
 
 export function GetWebSocketURL():Promise<string>;
 
+export function PingAllEndpoints(arg1:string):Promise<Array<main.PingResult>>;
+
+export function PingEndpoint(arg1:number):Promise<main.PingResult>;
+
+export function PingEndpointByURL(arg1:string):Promise<main.PingResult>;
+
 export function ProcessClaudeConfig(arg1:string):Promise<string>;
 
 export function ProcessClaudeConfigWithIP(arg1:string,arg2:string):Promise<string>;

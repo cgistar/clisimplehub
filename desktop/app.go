@@ -2591,6 +2591,130 @@ func (a *App) WebDAVCopy(input *WebDAVRequestInput) (*proxy.WebDAVResponse, erro
 }
 
 // =============================================================================
+// Endpoint Ping/Speed Test Methods
+// =============================================================================
+
+// PingResult represents the result of pinging an endpoint
+type PingResult struct {
+	EndpointID int64  `json:"endpointId"`
+	Success    bool   `json:"success"`
+	Latency    int64  `json:"latency"` // milliseconds
+	Error      string `json:"error,omitempty"`
+}
+
+// PingEndpoint tests the HTTP connection speed to an endpoint's API URL
+func (a *App) PingEndpoint(endpointID int64) (*PingResult, error) {
+	if a.storage == nil {
+		return &PingResult{EndpointID: endpointID, Success: false, Error: "storage not initialized"}, nil
+	}
+
+	ep, err := a.storage.GetEndpointByID(endpointID)
+	if err != nil || ep == nil {
+		return &PingResult{EndpointID: endpointID, Success: false, Error: "endpoint not found"}, nil
+	}
+
+	return a.doPingURL(endpointID, ep.APIURL, ep.ProxyURL), nil
+}
+
+// PingEndpointByURL tests the HTTP connection speed to a specific URL
+func (a *App) PingEndpointByURL(apiURL string) (*PingResult, error) {
+	return a.doPingURL(0, apiURL, ""), nil
+}
+
+// PingAllEndpoints tests the HTTP connection speed to all endpoints of a given interface type
+func (a *App) PingAllEndpoints(interfaceType string) ([]*PingResult, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+
+	endpoints, err := a.storage.GetEndpointsByType(interfaceType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get endpoints: %w", err)
+	}
+
+	results := make([]*PingResult, 0, len(endpoints))
+	for _, ep := range endpoints {
+		result := a.doPingURL(ep.ID, ep.APIURL, ep.ProxyURL)
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// doPingURL performs the actual HTTP HEAD/GET request to measure latency
+func (a *App) doPingURL(endpointID int64, apiURL, proxyURL string) *PingResult {
+	result := &PingResult{EndpointID: endpointID, Success: false}
+
+	// Normalize URL
+	rawURL := strings.TrimSpace(apiURL)
+	if rawURL == "" {
+		result.Error = "empty API URL"
+		return result
+	}
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		rawURL = "https://" + rawURL
+	}
+
+	// Parse URL to get base (without path for ping)
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		result.Error = fmt.Sprintf("invalid URL: %v", err)
+		return result
+	}
+
+	// Use just the scheme and host for ping
+	pingURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse // Don't follow redirects
+		},
+	}
+
+	// Configure proxy if specified
+	if proxyURL != "" {
+		proxyParsed, err := url.Parse(proxyURL)
+		if err == nil {
+			client.Transport = &http.Transport{
+				Proxy: http.ProxyURL(proxyParsed),
+			}
+		}
+	}
+
+	// Create HEAD request (lighter than GET)
+	req, err := http.NewRequest("HEAD", pingURL, nil)
+	if err != nil {
+		result.Error = fmt.Sprintf("failed to create request: %v", err)
+		return result
+	}
+
+	// Measure latency
+	startTime := time.Now()
+	resp, err := client.Do(req)
+	latency := time.Since(startTime).Milliseconds()
+
+	if err != nil {
+		// Try GET if HEAD fails (some servers don't support HEAD)
+		req, _ = http.NewRequest("GET", pingURL, nil)
+		startTime = time.Now()
+		resp, err = client.Do(req)
+		latency = time.Since(startTime).Milliseconds()
+
+		if err != nil {
+			result.Error = fmt.Sprintf("connection failed: %v", err)
+			return result
+		}
+	}
+	defer resp.Body.Close()
+
+	result.Success = true
+	result.Latency = latency
+	return result
+}
+
+// =============================================================================
 // Network Utility Methods
 // =============================================================================
 

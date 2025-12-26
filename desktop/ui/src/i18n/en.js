@@ -21,7 +21,10 @@ export default {
         currentUse: 'Current',
         switch: 'Switch',
         requests: 'Requests',
-        errors: 'Errors'
+        errors: 'Errors',
+        ping: 'Ping',
+        pingAll: 'Ping All',
+        pingFailed: 'Failed'
     },
     logs: {
         title: 'Request Logs',

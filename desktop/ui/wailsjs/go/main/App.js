@@ -118,6 +118,18 @@ export function GetWebSocketURL() {
   return window['go']['main']['App']['GetWebSocketURL']();
 }
 
+export function PingAllEndpoints(arg1) {
+  return window['go']['main']['App']['PingAllEndpoints'](arg1);
+}
+
+export function PingEndpoint(arg1) {
+  return window['go']['main']['App']['PingEndpoint'](arg1);
+}
+
+export function PingEndpointByURL(arg1) {
+  return window['go']['main']['App']['PingEndpointByURL'](arg1);
+}
+
 export function ProcessClaudeConfig(arg1) {
   return window['go']['main']['App']['ProcessClaudeConfig'](arg1);
 }
