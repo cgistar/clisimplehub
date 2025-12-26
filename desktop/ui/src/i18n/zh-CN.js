@@ -222,6 +222,9 @@ export default {
         clickToInstall: '点此安装',
         installing: '正在安装',
         installSuccess: '安装成功',
-        installFailed: '安装失败'
+        installFailed: '安装失败',
+        selectIP: '选择 IP 地址',
+        selectIPHint: '选择代理配置使用的 IP 地址。本机访问使用 localhost，其他设备访问使用局域网 IP。',
+        localhost: '本机'
     }
 };

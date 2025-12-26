@@ -66,6 +66,10 @@ export function GetLanguage() {
   return window['go']['main']['App']['GetLanguage']();
 }
 
+export function GetLocalIPs() {
+  return window['go']['main']['App']['GetLocalIPs']();
+}
+
 export function GetLogDetail(arg1) {
   return window['go']['main']['App']['GetLogDetail'](arg1);
 }
@@ -118,8 +122,16 @@ export function ProcessClaudeConfig(arg1) {
   return window['go']['main']['App']['ProcessClaudeConfig'](arg1);
 }
 
+export function ProcessClaudeConfigWithIP(arg1, arg2) {
+  return window['go']['main']['App']['ProcessClaudeConfigWithIP'](arg1, arg2);
+}
+
 export function ProcessCodexConfig(arg1, arg2) {
   return window['go']['main']['App']['ProcessCodexConfig'](arg1, arg2);
+}
+
+export function ProcessCodexConfigWithIP(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ProcessCodexConfigWithIP'](arg1, arg2, arg3);
 }
 
 export function ReloadConfig() {

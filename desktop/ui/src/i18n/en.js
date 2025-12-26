@@ -223,6 +223,9 @@ export default {
         clickToInstall: 'Click to install',
         installing: 'Installing',
         installSuccess: 'Installation successful',
-        installFailed: 'Installation failed'
+        installFailed: 'Installation failed',
+        selectIP: 'Select IP Address',
+        selectIPHint: 'Select the IP address for proxy configuration. Use localhost for local access, or LAN IP for access from other devices.',
+        localhost: 'localhost'
     }
 };

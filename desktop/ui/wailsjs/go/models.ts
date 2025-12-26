@@ -341,6 +341,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class LocalIPInfo {
+	    ip: string;
+	    interface: string;
+	    isIPv4: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalIPInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ip = source["ip"];
+	        this.interface = source["interface"];
+	        this.isIPv4 = source["isIPv4"];
+	    }
+	}
 	export class ProcessCodexConfigResult {
 	    configToml: string;
 	    authJson: string;

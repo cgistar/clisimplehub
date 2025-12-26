@@ -38,6 +38,8 @@ export function GetInterfaceTypes():Promise<Array<string>>;
 
 export function GetLanguage():Promise<string>;
 
+export function GetLocalIPs():Promise<Array<main.LocalIPInfo>>;
+
 export function GetLogDetail(arg1:string):Promise<main.RequestLogDetailInfo>;
 
 export function GetPort():Promise<number>;
@@ -64,7 +66,11 @@ export function GetWebSocketURL():Promise<string>;
 
 export function ProcessClaudeConfig(arg1:string):Promise<string>;
 
+export function ProcessClaudeConfigWithIP(arg1:string,arg2:string):Promise<string>;
+
 export function ProcessCodexConfig(arg1:string,arg2:string):Promise<main.ProcessCodexConfigResult>;
+
+export function ProcessCodexConfigWithIP(arg1:string,arg2:string,arg3:string):Promise<main.ProcessCodexConfigResult>;
 
 export function ReloadConfig():Promise<void>;
 

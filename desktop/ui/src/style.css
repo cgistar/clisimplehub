@@ -2620,3 +2620,33 @@ input:disabled + .slider {
     background: var(--primary-color);
     color: #fff;
 }
+
+/* =============================================================================
+   IP Selection Dialog
+   ============================================================================= */
+.ip-select {
+    width: 100%;
+    padding: 12px;
+    font-size: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.ip-select:focus {
+    border-color: var(--primary-color);
+    outline: none;
+}
+
+.ip-select-hint {
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+#ipSelectionModal .modal-content {
+    max-width: 400px;
+}

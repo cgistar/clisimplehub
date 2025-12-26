@@ -193,6 +193,15 @@ export async function saveCLIConfig() {
  */
 export async function processCLIConfig() {
     try {
+        // Get local IPs for user selection
+        const ips = await window.go.main.App.GetLocalIPs();
+        
+        // Show IP selection dialog
+        const selectedIP = await showIPSelectionDialog(ips);
+        if (!selectedIP) {
+            return; // User cancelled
+        }
+        
         const textareas = document.querySelectorAll('.cli-config-textarea');
         const files = {};
         
@@ -201,7 +210,7 @@ export async function processCLIConfig() {
         });
         
         if (currentEditorType === 'claude') {
-            const processed = await window.go.main.App.ProcessClaudeConfig(files['settings.json']);
+            const processed = await window.go.main.App.ProcessClaudeConfigWithIP(files['settings.json'], selectedIP);
             
             // Update textarea
             const ta = document.querySelector('[data-filename="settings.json"]');
@@ -209,7 +218,7 @@ export async function processCLIConfig() {
                 ta.value = processed;
             }
         } else if (currentEditorType === 'codex') {
-            const result = await window.go.main.App.ProcessCodexConfig(files['config.toml'], files['auth.json']);
+            const result = await window.go.main.App.ProcessCodexConfigWithIP(files['config.toml'], files['auth.json'], selectedIP);
             
             // Update textareas
             const configTa = document.querySelector('[data-filename="config.toml"]');
@@ -223,6 +232,65 @@ export async function processCLIConfig() {
     } catch (error) {
         showError(t('cliConfig.processFailed') + ': ' + error.message);
     }
+}
+
+/**
+ * Show IP selection dialog
+ */
+function showIPSelectionDialog(ips) {
+    return new Promise((resolve) => {
+        const dialog = document.createElement('div');
+        dialog.className = 'modal active';
+        dialog.id = 'ipSelectionModal';
+        
+        let optionsHtml = ips.map(ip => {
+            const label = ip.interface === 'localhost' 
+                ? `${ip.ip} (${t('cliConfig.localhost')})` 
+                : `${ip.ip} (${ip.interface})`;
+            return `<option value="${ip.ip}">${label}</option>`;
+        }).join('');
+        
+        dialog.innerHTML = `
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2>🌐 ${t('cliConfig.selectIP')}</h2>
+                    <button class="modal-close" id="ipSelectClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="ip-select-hint">${t('cliConfig.selectIPHint')}</p>
+                    <select id="ipSelect" class="ip-select">
+                        ${optionsHtml}
+                    </select>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="ipSelectCancel">${t('common.cancel')}</button>
+                    <button class="btn btn-primary" id="ipSelectConfirm">${t('common.confirm')}</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(dialog);
+        
+        const cleanup = () => {
+            dialog.remove();
+        };
+        
+        document.getElementById('ipSelectClose').onclick = () => {
+            cleanup();
+            resolve(null);
+        };
+        
+        document.getElementById('ipSelectCancel').onclick = () => {
+            cleanup();
+            resolve(null);
+        };
+        
+        document.getElementById('ipSelectConfirm').onclick = () => {
+            const selected = document.getElementById('ipSelect').value;
+            cleanup();
+            resolve(selected);
+        };
+    });
 }
 
 /**

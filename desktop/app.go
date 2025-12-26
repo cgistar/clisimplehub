@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1977,6 +1978,101 @@ func (a *App) ProcessCodexConfig(configToml, authJson string) (*ProcessCodexConf
 	}, nil
 }
 
+// ProcessClaudeConfigWithIP processes Claude config with proxy settings using specified IP
+func (a *App) ProcessClaudeConfigWithIP(content string, ip string) (string, error) {
+	settings, err := a.GetSettings()
+	if err != nil {
+		return "", err
+	}
+
+	// Parse JSON
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		return "", fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	// Ensure env section exists
+	env, ok := config["env"].(map[string]interface{})
+	if !ok {
+		env = make(map[string]interface{})
+		config["env"] = env
+	}
+
+	// Set proxy URL with user-selected IP and API key
+	proxyURL := fmt.Sprintf("http://%s:%d", ip, settings.Port)
+	env["ANTHROPIC_BASE_URL"] = proxyURL
+
+	apiKey := settings.APIKey
+	if apiKey == "" {
+		apiKey = "-"
+	}
+	env["ANTHROPIC_AUTH_TOKEN"] = apiKey
+	env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+
+	// Marshal back to JSON with indentation
+	result, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	return string(result), nil
+}
+
+// ProcessCodexConfigWithIP processes Codex config with proxy settings using specified IP
+func (a *App) ProcessCodexConfigWithIP(configToml, authJson, ip string) (*ProcessCodexConfigResult, error) {
+	settings, err := a.GetSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	proxyURL := fmt.Sprintf("http://%s:%d/v1", ip, settings.Port)
+	apiKey := settings.APIKey
+	if apiKey == "" {
+		apiKey = "-"
+	}
+
+	// Process config.toml - replace base_url
+	lines := strings.Split(configToml, "\n")
+	var newLines []string
+	inLocalProvider := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Track if we're in [model_providers.local] section
+		if strings.HasPrefix(trimmed, "[model_providers.local]") {
+			inLocalProvider = true
+		} else if strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "[model_providers.local]") {
+			inLocalProvider = false
+		}
+
+		// Replace base_url in local provider section
+		if inLocalProvider && strings.HasPrefix(trimmed, "base_url") {
+			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", proxyURL))
+		} else {
+			newLines = append(newLines, line)
+		}
+	}
+	newConfigToml := strings.Join(newLines, "\n")
+
+	// Process auth.json
+	var auth map[string]interface{}
+	if err := json.Unmarshal([]byte(authJson), &auth); err != nil {
+		auth = make(map[string]interface{})
+	}
+	auth["OPENAI_API_KEY"] = apiKey
+
+	newAuthJson, err := json.MarshalIndent(auth, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+
+	return &ProcessCodexConfigResult{
+		ConfigToml: newConfigToml,
+		AuthJson:   string(newAuthJson),
+	}, nil
+}
+
 // Helper functions
 
 func readFileContent(path string) (string, bool) {
@@ -2492,4 +2588,69 @@ func (a *App) WebDAVCopy(input *WebDAVRequestInput) (*proxy.WebDAVResponse, erro
 	}
 
 	return webdavProxy.Copy(config, input.Path, input.DestPath)
+}
+
+// =============================================================================
+// Network Utility Methods
+// =============================================================================
+
+// LocalIPInfo represents a local IP address with its interface name
+type LocalIPInfo struct {
+	IP        string `json:"ip"`
+	Interface string `json:"interface"`
+	IsIPv4    bool   `json:"isIPv4"`
+}
+
+// GetLocalIPs returns all local IP addresses of the machine
+func (a *App) GetLocalIPs() ([]*LocalIPInfo, error) {
+	var result []*LocalIPInfo
+
+	// Always include localhost first
+	result = append(result, &LocalIPInfo{
+		IP:        "127.0.0.1",
+		Interface: "localhost",
+		IsIPv4:    true,
+	})
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return result, nil // Return at least localhost
+	}
+
+	for _, iface := range interfaces {
+		// Skip loopback and down interfaces
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+
+			// Check if IPv4
+			if ipv4 := ip.To4(); ipv4 != nil {
+				result = append(result, &LocalIPInfo{
+					IP:        ipv4.String(),
+					Interface: iface.Name,
+					IsIPv4:    true,
+				})
+			}
+		}
+	}
+
+	return result, nil
 }
