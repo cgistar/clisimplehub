@@ -357,6 +357,24 @@ export namespace main {
 	        this.isIPv4 = source["isIPv4"];
 	    }
 	}
+	export class PingResult {
+	    endpointId: number;
+	    success: boolean;
+	    latency: number;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PingResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.endpointId = source["endpointId"];
+	        this.success = source["success"];
+	        this.latency = source["latency"];
+	        this.error = source["error"];
+	    }
+	}
 	export class ProcessCodexConfigResult {
 	    configToml: string;
 	    authJson: string;
