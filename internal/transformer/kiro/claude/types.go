@@ -117,7 +117,7 @@ type ToolResult struct {
 
 // ToolResultContent represents the content of a tool result
 type ToolResultContent struct {
-	Text string `json:"text,omitempty"`
+	Text string `json:"text"`
 }
 
 // StreamState maintains state during streaming response transformation

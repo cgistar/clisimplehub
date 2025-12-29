@@ -138,7 +138,6 @@ func normalizeAndMergeClaudeMessages(rawMessages []interface{}, systemPrompt *st
 		}
 
 		// OpenAI-style `role="tool"` compatibility: treat tool messages as user tool_result blocks.
-		// The Python gateway does this in its OpenAI merge step.
 		if role == "tool" {
 			toolCallID := strings.TrimSpace(shared.StringFromAny(msg["tool_call_id"]))
 			resultText := extractMessageContent(msg)
@@ -170,12 +169,6 @@ func normalizeAndMergeClaudeMessages(rawMessages []interface{}, systemPrompt *st
 			Images:      images,
 			ToolUses:    extractToolUses(msg),
 			ToolResults: extractToolResults(msg),
-		}
-
-		// Keep parity with the reference Python converter: user messages that carry `tool_result`
-		// blocks are treated as "tool-results-only" (their free-form text, if any, is ignored).
-		if n.Role == "user" && len(n.ToolResults) > 0 {
-			n.Text = ""
 		}
 
 		// Merge adjacent messages with the same role to avoid invalid role sequences for Kiro.
@@ -295,7 +288,7 @@ func extractSystemPrompt(claudeReq map[string]interface{}) string {
 				}
 			}
 		}
-		return strings.TrimSpace(strings.Join(parts, "\n"))
+		return strings.TrimSpace(strings.Join(parts, "\n\n"))
 	}
 	return ""
 }
@@ -394,8 +387,6 @@ func extractMessageContentWithImages(msg map[string]interface{}) (string, []Kiro
 	case string:
 		return c, nil
 	case []interface{}:
-		// Keep parity with the reference Python gateway for Anthropic content blocks:
-		// collect relevant content segments and join them with "\n".
 		var parts []string
 		var images []KiroImage
 		for _, part := range c {
@@ -437,7 +428,7 @@ func extractMessageContentWithImages(msg map[string]interface{}) (string, []Kiro
 				}
 			}
 		}
-		return strings.Join(parts, "\n"), images
+		return strings.Join(parts, ""), images
 	}
 	return "", nil
 }
@@ -619,8 +610,6 @@ func extractToolResults(msg map[string]interface{}) []ToolResult {
 				Status:    status,
 			}
 
-			// Keep parity with the Python gateway:
-			// tool_result content is normalized into a single text item (with "\n" between blocks).
 			result.Content = []ToolResultContent{{Text: extractToolResultText(partMap["content"])}}
 
 			results = append(results, result)
@@ -773,15 +762,16 @@ func convertClaudeToolsToKiroWithToolDocs(tools []interface{}, maxDescriptionLen
 }
 
 func appendToolDocumentationToSystemPrompt(systemPrompt string, toolDoc string) string {
-	// Keep parity with the reference converter: preserve the leading `\n\n---\n` on tool docs.
-	systemPrompt = strings.TrimRight(systemPrompt, "\r\n")
+	toolDoc = strings.Trim(toolDoc, "\r\n")
+	systemPrompt = strings.Trim(systemPrompt, "\r\n")
+
 	if strings.TrimSpace(toolDoc) == "" {
 		return systemPrompt
 	}
-	if systemPrompt == "" {
-		return strings.TrimLeft(toolDoc, "\r\n")
+	if strings.TrimSpace(systemPrompt) == "" {
+		return toolDoc
 	}
-	return systemPrompt + toolDoc
+	return toolDoc + "\n\n" + systemPrompt
 }
 
 // generateConversationID generates a unique conversation ID
@@ -1064,7 +1054,6 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			if err := json.Unmarshal([]byte(args), &obj); err == nil {
 				input = obj
 			} else {
-				// Keep parity with the Python gateway: if tool args aren't valid JSON, treat them as empty.
 				input = map[string]any{}
 			}
 		}
@@ -1140,7 +1129,6 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 
 		ensureMessageStarted(state, &outputs)
 
-		// Close text content block if open (Python gateway closes the text block before emitting tool_use blocks).
 		if state.ContentBlockOpen {
 			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
 			state.ContentBlockOpen = false
@@ -1187,9 +1175,6 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			incomingID := strings.TrimSpace(shared.StringFromAny(m["toolUseId"]))
 			incomingName := shared.StringFromAny(m["name"])
 
-			// If the stream doesn't send explicit tool_start events, a new toolUseId in an input
-			// chunk should be treated as a new tool call. This mirrors the Python parser, which
-			// finalizes any in-flight tool call when a new one starts.
 			if state.ToolUseBlockOpen && incomingID != "" && strings.TrimSpace(state.CurrentToolUseID) != "" && incomingID != state.CurrentToolUseID {
 				finalizeToolUse()
 				stopToolBlock()
@@ -1492,7 +1477,6 @@ func FinishStream(state *StreamState) []string {
 
 			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, id, toolName))
 
-			// Python only emits input_json_delta when tool_input parses to a non-empty dict.
 			if m, ok := input.(map[string]any); ok && len(m) > 0 {
 				partial := argsRaw
 				if partial == "" {

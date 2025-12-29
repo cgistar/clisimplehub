@@ -190,9 +190,6 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	enableRetry := isRetryable && fallbackEnabled
 	captureUpstreamRequestBody := p.isDebugModeAll() && isRetryable && shouldRecordStats
 	execCtx := executor.WithRequestID(r.Context(), requestID)
-	if p.isDebugModeAll() {
-		execCtx = executor.WithKiroDebugLogs(execCtx)
-	}
 	if captureUpstreamRequestBody {
 		execCtx = executor.WithCaptureUpstreamRequestBody(execCtx)
 	}

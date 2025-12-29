@@ -19,8 +19,6 @@ func DecodeJSONMap(raw []byte) (map[string]any, error) {
 }
 
 // MarshalNoEscapeHTML marshals JSON without escaping '<', '>' and '&' to \u003c, \u003e, \u0026.
-// This matches typical JSON emitters (e.g. Python's json.dumps) and avoids issues with upstreams
-// that expect literal tag-like content in the raw JSON bytes.
 func MarshalNoEscapeHTML(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

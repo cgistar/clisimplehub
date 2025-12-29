@@ -306,7 +306,6 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 		}
 	}
 
-	// followupPrompt-only：忽略（保持与 Rust/Python 行为一致）
 	if fp, ok := data["followupPrompt"]; ok && fp != nil {
 		return nil, nil
 	}

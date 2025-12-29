@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -67,16 +65,6 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	}
 
 	targetInterface := strings.ToLower(strings.TrimSpace(tr.TargetInterfaceType()))
-	var kiroDbg *kiroDebugLogger
-	if targetInterface == "kiro" && shouldWriteKiroDebugLogs(ctx) {
-		if dbg, err := newKiroDebugLogger(ctx, "debug_logs"); err == nil {
-			kiroDbg = dbg
-			_ = kiroDbg.writeFile("request_body.json", originalBody)
-			_ = kiroDbg.writeFile("kiro_request.json", transformedBody)
-		} else {
-			c.DebugLog(ctx, 2, fmt.Sprintf("[KiroDebug] init failed: %v", err))
-		}
-	}
 
 	// Build target URL - special handling for kiro transformer (region-specific URL)
 	var targetURL string
@@ -210,10 +198,6 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 			return result
 		}
 		result.Body = body
-		if kiroDbg != nil {
-			_ = kiroDbg.writeFile("kiro_response_raw.txt", body)
-			_ = kiroDbg.writeFile("kiro_response.txt", body)
-		}
 		return result
 	}
 
@@ -223,10 +207,10 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	if targetInterface == "kiro" && resp.StatusCode == http.StatusOK {
 		if req.IsStreaming {
 			c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s (kiro stream)", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
-			return handleKiroStreamingResponse(ctx, w, resp, result, tr, requestModel, originalBody, requestBody, kiroDbg)
+			return handleKiroStreamingResponse(ctx, w, resp, result, tr, requestModel, originalBody, requestBody)
 		}
 		c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s (kiro non-stream)", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
-		return handleTransformedNonStreamingResponse(ctx, resp, result, tr, requestModel, originalBody, requestBody, kiroDbg)
+		return handleTransformedNonStreamingResponse(ctx, resp, result, tr, requestModel, originalBody, requestBody)
 	}
 
 	if req.IsStreaming && resp.StatusCode == http.StatusOK && shouldTreatAsStreaming(resp, tr) {
@@ -235,7 +219,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	}
 
 	c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
-	out := handleTransformedNonStreamingResponse(ctx, resp, result, tr, requestModel, originalBody, requestBody, nil)
+	out := handleTransformedNonStreamingResponse(ctx, resp, result, tr, requestModel, originalBody, requestBody)
 	if out != nil && (out.Error != nil || out.StatusCode >= 400) && len(out.Body) > 0 {
 		level := 2
 		if out.Error != nil || out.StatusCode >= 500 {
@@ -258,7 +242,7 @@ func shouldTreatAsStreaming(resp *http.Response, tr transformer.Transformer) boo
 	return strings.EqualFold(strings.TrimSpace(tr.TargetInterfaceType()), "gemini")
 }
 
-func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte, dbg *kiroDebugLogger) *ForwardResult {
+func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
 	// Force Claude streaming semantics to the caller.
 	for key, values := range resp.Header {
 		switch strings.ToLower(key) {
@@ -285,19 +269,6 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 		defer closer.Close()
 	}
 
-	var rawFile *os.File
-	var outFile *os.File
-	if dbg != nil && strings.TrimSpace(dbg.dirPath()) != "" {
-		if f, err := os.Create(filepath.Join(dbg.dirPath(), "kiro_response_raw.txt")); err == nil {
-			rawFile = f
-			defer rawFile.Close()
-		}
-		if f, err := os.Create(filepath.Join(dbg.dirPath(), "kiro_response.txt")); err == nil {
-			outFile = f
-			defer outFile.Close()
-		}
-	}
-
 	var state any
 
 	var capture strings.Builder
@@ -317,9 +288,6 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 		n, err := reader.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
-			if rawFile != nil {
-				_, _ = rawFile.Write(chunk)
-			}
 			outs, trErr := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, &state)
 			if trErr != nil {
 				result.Error = trErr
@@ -328,9 +296,6 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 			for _, out := range outs {
 				if out == "" {
 					continue
-				}
-				if outFile != nil {
-					_, _ = outFile.WriteString(out)
 				}
 				if _, err := w.Write([]byte(out)); err != nil {
 					result.Error = context.Canceled
@@ -371,9 +336,6 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 				if out == "" {
 					continue
 				}
-				if outFile != nil {
-					_, _ = outFile.WriteString(out)
-				}
 				if _, err := w.Write([]byte(out)); err != nil {
 					result.Error = context.Canceled
 					break
@@ -396,9 +358,6 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 		for _, out := range kiro_claude.FinishStream(s) {
 			if out == "" {
 				continue
-			}
-			if outFile != nil {
-				_, _ = outFile.WriteString(out)
 			}
 			if _, err := w.Write([]byte(out)); err != nil {
 				result.Error = context.Canceled
@@ -511,7 +470,7 @@ func truncateForLog(body []byte, maxLen int) string {
 	return raw[:maxLen] + "...(truncated)"
 }
 
-func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte, dbg *kiroDebugLogger) *ForwardResult {
+func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
 	reader := getResponseReader(resp)
 	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
 		defer closer.Close()
@@ -532,10 +491,6 @@ func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Respo
 		result.StatusCode = http.StatusServiceUnavailable
 		result.Error = fmt.Errorf("upstream returned HTML with HTTP 200")
 		result.Body = body
-		if dbg != nil {
-			_ = dbg.writeFile("kiro_response_raw.txt", body)
-			_ = dbg.writeFile("kiro_response.txt", body)
-		}
 		return result
 	}
 
@@ -543,20 +498,12 @@ func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Respo
 	if err != nil {
 		result.Error = err
 		result.Body = body
-		if dbg != nil {
-			_ = dbg.writeFile("kiro_response_raw.txt", body)
-			_ = dbg.writeFile("kiro_response.txt", body)
-		}
 		return result
 	}
 
 	result.Body = converted
 	result.Headers.Set("Content-Type", tr.OutputContentType(false))
 	result.Tokens = usageTokens(converted)
-	if dbg != nil {
-		_ = dbg.writeFile("kiro_response_raw.txt", body)
-		_ = dbg.writeFile("kiro_response.txt", converted)
-	}
 	return result
 }
 
