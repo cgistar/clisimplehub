@@ -29,6 +29,10 @@ func ApplyAuthForInterfaceType(req *http.Request, apiKey string, interfaceType s
 	if key == "" {
 		return
 	}
+	// Prevent header/query injection; net/http will likely reject these, but fail closed early.
+	if strings.ContainsAny(key, "\r\n") {
+		return
+	}
 
 	switch strings.ToLower(strings.TrimSpace(interfaceType)) {
 	case "gemini":
@@ -38,6 +42,10 @@ func ApplyAuthForInterfaceType(req *http.Request, apiKey string, interfaceType s
 			q.Set("alt", "sse")
 		}
 		req.URL.RawQuery = q.Encode()
+	case "kiro":
+		// Kiro auth handled by transformer's auth manager
+		// Do NOT set Authorization here - handled by kiro-specific logic
+		return
 	case "codex", "chat":
 		req.Header.Set("Authorization", "Bearer "+key)
 	default:

@@ -1206,6 +1206,10 @@ async function runEndpointDeletion(endpointId, vendorId, source) {
 // 缓存转换器列表
 let cachedTransformers = null;
 
+export function clearTransformersCache() {
+    cachedTransformers = null;
+}
+
 // 加载当前 interfaceType 对应的转换器列表
 export async function loadTransformersForInterfaceType() {
     const interfaceType = document.getElementById('endpointInterfaceType')?.value || '';

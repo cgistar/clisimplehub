@@ -42,6 +42,61 @@ func NewHTTPClient(endpoint *EndpointConfig, timeout time.Duration) *http.Client
 	return client
 }
 
+// NewHTTPClientForcedProxyURL creates an HTTP client that only uses the provided proxy URL.
+// When proxyURL is empty, it forces direct connection (does not use environment proxy variables).
+func NewHTTPClientForcedProxyURL(proxyURL string, timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = DefaultHTTPTimeout
+	}
+
+	client := &http.Client{Timeout: timeout}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		client.Transport = transport
+		return client
+	}
+
+	parsedURL, err := url.Parse(proxyURL)
+	if err != nil {
+		logger.Warn("[Executor] parse proxy URL failed: %v", err)
+		client.Transport = transport
+		return client
+	}
+
+	switch parsedURL.Scheme {
+	case "socks5":
+		var auth *proxy.Auth
+		if parsedURL.User != nil {
+			username := parsedURL.User.Username()
+			password, _ := parsedURL.User.Password()
+			auth = &proxy.Auth{User: username, Password: password}
+		}
+		dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, proxy.Direct)
+		if err != nil {
+			logger.Warn("[Executor] create SOCKS5 dialer failed: %v", err)
+			client.Transport = transport
+			return client
+		}
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		}
+		client.Transport = transport
+		return client
+	case "http", "https":
+		transport.Proxy = http.ProxyURL(parsedURL)
+		client.Transport = transport
+		return client
+	default:
+		logger.Warn("[Executor] unsupported proxy scheme: %s", parsedURL.Scheme)
+		client.Transport = transport
+		return client
+	}
+}
+
 // buildProxyTransport 根据代理 URL 创建 HTTP Transport
 // 支持 socks5, http, https 代理协议
 func buildProxyTransport(proxyURL string) *http.Transport {

@@ -9,11 +9,22 @@ import (
 	"sync"
 
 	"clisimplehub/internal/config"
+	"strings"
 )
 
 type ConfigFileStore struct {
 	loader *config.ConfigLoader
 	mu     sync.Mutex
+}
+
+func kiroAllEmpty(cfg *config.KiroConfig) bool {
+	if cfg == nil {
+		return true
+	}
+	return strings.TrimSpace(cfg.ProxyURL) == "" &&
+		strings.TrimSpace(cfg.UserAgent) == "" &&
+		strings.TrimSpace(cfg.Version) == "" &&
+		strings.TrimSpace(cfg.MachineID) == ""
 }
 
 func NewConfigFileStore(loader *config.ConfigLoader) (*ConfigFileStore, error) {
@@ -318,6 +329,26 @@ func (s *ConfigFileStore) GetConfig(key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	switch key {
+	case "kiro.proxyUrl":
+		if cfg.Kiro != nil {
+			return cfg.Kiro.ProxyURL, nil
+		}
+	case "kiro.userAgent":
+		if cfg.Kiro != nil {
+			return cfg.Kiro.UserAgent, nil
+		}
+	case "kiro.version":
+		if cfg.Kiro != nil {
+			return cfg.Kiro.Version, nil
+		}
+	case "kiro.machineId":
+		if cfg.Kiro != nil {
+			return cfg.Kiro.MachineID, nil
+		}
+	}
+
 	if cfg.AppConfigKV == nil {
 		return "", nil
 	}
@@ -352,10 +383,61 @@ func (s *ConfigFileStore) SetConfig(key, value string) error {
 	if err != nil {
 		return err
 	}
+
+	switch key {
+	case "kiro.proxyUrl":
+		if cfg.Kiro == nil {
+			cfg.Kiro = &config.KiroConfig{}
+		}
+		cfg.Kiro.ProxyURL = strings.TrimSpace(value)
+		if kiroAllEmpty(cfg.Kiro) {
+			cfg.Kiro = nil
+		}
+		return s.saveLocked(cfg)
+	case "kiro.userAgent":
+		if cfg.Kiro == nil {
+			cfg.Kiro = &config.KiroConfig{}
+		}
+		cfg.Kiro.UserAgent = strings.TrimSpace(value)
+		if kiroAllEmpty(cfg.Kiro) {
+			cfg.Kiro = nil
+		}
+		return s.saveLocked(cfg)
+	case "kiro.version":
+		if cfg.Kiro == nil {
+			cfg.Kiro = &config.KiroConfig{}
+		}
+		cfg.Kiro.Version = strings.TrimSpace(value)
+		if kiroAllEmpty(cfg.Kiro) {
+			cfg.Kiro = nil
+		}
+		return s.saveLocked(cfg)
+	case "kiro.machineId":
+		if cfg.Kiro == nil {
+			cfg.Kiro = &config.KiroConfig{}
+		}
+		cfg.Kiro.MachineID = strings.TrimSpace(value)
+		if kiroAllEmpty(cfg.Kiro) {
+			cfg.Kiro = nil
+		}
+		return s.saveLocked(cfg)
+	}
+
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		if cfg.AppConfigKV != nil {
+			delete(cfg.AppConfigKV, key)
+			if len(cfg.AppConfigKV) == 0 {
+				cfg.AppConfigKV = nil
+			}
+		}
+		return s.saveLocked(cfg)
+	}
+
 	if cfg.AppConfigKV == nil {
 		cfg.AppConfigKV = make(map[string]interface{})
 	}
-	cfg.AppConfigKV[key] = value
+	cfg.AppConfigKV[key] = trimmed
 	return s.saveLocked(cfg)
 }
 
@@ -417,6 +499,10 @@ func (s *ConfigFileStore) loadAndNormalizeLocked() (*config.AppConfig, error) {
 	}
 
 	changed := ensureIDs(cfg)
+	if cfg.Kiro != nil && kiroAllEmpty(cfg.Kiro) {
+		cfg.Kiro = nil
+		changed = true
+	}
 	if changed {
 		_ = s.saveLocked(cfg)
 	}

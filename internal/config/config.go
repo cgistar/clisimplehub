@@ -64,9 +64,18 @@ type ModelMapping struct {
 	Alias string `json:"alias"` // API 使用的别名（客户端传入的 model）
 }
 
+// KiroConfig represents top-level Kiro settings in config.json.
+type KiroConfig struct {
+	ProxyURL  string `json:"proxyUrl,omitempty"`
+	UserAgent string `json:"userAgent,omitempty"`
+	Version   string `json:"version,omitempty"`
+	MachineID string `json:"machineId,omitempty"`
+}
+
 // AppConfig represents the complete application configuration
 type AppConfig struct {
 	AppConfigKV map[string]interface{} `json:"appConfig,omitempty"`
+	Kiro        *KiroConfig            `json:"kiro,omitempty"`
 	Vendors     []VendorConfig         `json:"vendors"`
 }
 
@@ -78,8 +87,8 @@ type ConfigLoader struct {
 // NewConfigLoader creates a new ConfigLoader with the specified path
 // If path is empty, it will search for config.json in the following order:
 // 1. Current directory
-// 2. User home directory under .clishub
-// 3. If not found, create in user home directory under .clishub
+// 2. User home directory under .clisimplehub
+// 3. If not found, create in user home directory under .clisimplehub
 func NewConfigLoader(path string) *ConfigLoader {
 	if path == "" {
 		path = FindOrCreateConfigPath()
@@ -91,7 +100,7 @@ func NewConfigLoader(path string) *ConfigLoader {
 // Priority order:
 // 1. CODESP_DATA environment variable (highest priority)
 // 2. Current directory (if config.json exists)
-// 3. User home directory under .clishub
+// 3. User home directory under .clisimplehub
 func GetDataDir() string {
 	// 1. Check environment variable (highest priority)
 	if envDir := os.Getenv(EnvDataDir); envDir != "" {
@@ -136,7 +145,7 @@ func GetPortFromEnv() int {
 // Priority order:
 // 1. CODESP_DATA environment variable directory
 // 2. Current directory (./config.json)
-// 3. User home directory (~/.clishub/config.json)
+// 3. User home directory (~/.clisimplehub/config.json)
 // 4. If not found, create in the determined data directory
 func FindOrCreateConfigPath() string {
 	dataDir := GetDataDir()

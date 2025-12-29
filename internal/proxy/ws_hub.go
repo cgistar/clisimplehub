@@ -2,7 +2,6 @@
 package proxy
 
 import (
-	"encoding/json"
 	"net/http"
 	"sync"
 	"time"
@@ -324,7 +323,7 @@ func (c *WSClient) writePump() {
 			}
 
 			// Marshal the message to JSON
-			data, err := json.Marshal(message)
+			data, err := marshalJSONNoEscapeHTML(message)
 			if err != nil {
 				continue
 			}
@@ -339,7 +338,7 @@ func (c *WSClient) writePump() {
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
 				msg := <-c.Send
-				data, err := json.Marshal(msg)
+				data, err := marshalJSONNoEscapeHTML(msg)
 				if err != nil {
 					continue
 				}

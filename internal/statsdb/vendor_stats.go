@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type VendorStat struct {
 	Date          string
 	InterfaceType string
 	TargetHeaders string
+	RequestBody   string
 	DurationMs    int64
 	StatusCode    int
 	Status        string
@@ -80,6 +82,49 @@ func (s *SQLiteVendorStatsStore) initSchema(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
+	if err := s.ensureVendorStatsColumns(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteVendorStatsStore) ensureVendorStatsColumns(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("nil sqlite store")
+	}
+	hasColumn := func(table, column string) (bool, error) {
+		rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull int
+			var dflt sql.NullString
+			var pk int
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+				return false, err
+			}
+			if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(column)) {
+				return true, nil
+			}
+		}
+		return false, rows.Err()
+	}
+
+	ok, err := hasColumn("vendor_stats", "request_body")
+	if err != nil {
+		return fmt.Errorf("check vendor_stats columns: %w", err)
+	}
+	if ok {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, "ALTER TABLE vendor_stats ADD COLUMN request_body TEXT"); err != nil {
+		return fmt.Errorf("add vendor_stats.request_body: %w", err)
+	}
 	return nil
 }
 
@@ -100,9 +145,10 @@ func (s *SQLiteVendorStatsStore) InsertVendorStat(ctx context.Context, stat Vend
 INSERT INTO vendor_stats(
   vendor_id, vendor_name, endpoint_id, endpoint_name,
   path, date, interface_type, target_headers,
+  request_body,
   duration_ms, status_code, status,
   input_tokens, output_tokens, cached_create, cached_read, reasoning
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.VendorID,
 		normalized.VendorName,
 		normalized.EndpointID,
@@ -111,6 +157,7 @@ INSERT INTO vendor_stats(
 		normalized.Date,
 		normalized.InterfaceType,
 		normalized.TargetHeaders,
+		normalized.RequestBody,
 		normalized.DurationMs,
 		normalized.StatusCode,
 		normalized.Status,
@@ -122,6 +169,21 @@ INSERT INTO vendor_stats(
 	)
 	if err != nil {
 		return fmt.Errorf("insert vendor_stats: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteVendorStatsStore) DeleteStatsByEndpointID(ctx context.Context, endpointID int64) error {
+	if s == nil || s.db == nil {
+		return errors.New("nil sqlite store")
+	}
+	if endpointID <= 0 {
+		return nil
+	}
+
+	_, err := s.db.ExecContext(ctx, `DELETE FROM vendor_stats WHERE endpoint_id = ?`, strconv.FormatInt(endpointID, 10))
+	if err != nil {
+		return fmt.Errorf("delete vendor_stats by endpoint_id=%d: %w", endpointID, err)
 	}
 	return nil
 }

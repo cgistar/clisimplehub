@@ -28,9 +28,10 @@ import (
 
 // Settings represents the application settings exposed to frontend
 type Settings struct {
-	Port     int    `json:"port"`
-	APIKey   string `json:"apiKey"`
-	Fallback bool   `json:"fallback"`
+	Port      int    `json:"port"`
+	APIKey    string `json:"apiKey"`
+	Fallback  bool   `json:"fallback"`
+	DebugMode string `json:"debugMode,omitempty"`
 }
 
 // EndpointInfo represents endpoint information for frontend display
@@ -123,9 +124,10 @@ func (a *App) GetSettings() (*Settings, error) {
 	}
 
 	settings := &Settings{
-		Port:     5600, // Default port
-		APIKey:   "",
-		Fallback: false, // Default fallback disabled
+		Port:      5600, // Default port
+		APIKey:    "",
+		Fallback:  false, // Default fallback disabled
+		DebugMode: "",
 	}
 
 	// Get port from storage
@@ -146,6 +148,12 @@ func (a *App) GetSettings() (*Settings, error) {
 	fallbackStr, err := a.storage.GetConfig(ConfigKeyFallback)
 	if err == nil && fallbackStr == "true" {
 		settings.Fallback = true
+	}
+
+	// Get debug mode from storage (e.g., "all")
+	debugMode, err := a.storage.GetConfig(ConfigKeyDebugMode)
+	if err == nil {
+		settings.DebugMode = debugMode
 	}
 
 	return settings, nil
@@ -175,6 +183,11 @@ func (a *App) SaveSettings(settings *Settings) error {
 	// Save fallback setting to storage as bool
 	if err := a.storage.SetConfigBool(ConfigKeyFallback, settings.Fallback); err != nil {
 		return fmt.Errorf("failed to save fallback setting: %w", err)
+	}
+
+	// Save debug mode to storage (empty will remove key)
+	if err := a.storage.SetConfig(ConfigKeyDebugMode, strings.TrimSpace(settings.DebugMode)); err != nil {
+		return fmt.Errorf("failed to save debug mode: %w", err)
 	}
 
 	// Update proxy server port if available
@@ -975,6 +988,15 @@ func (a *App) DeleteEndpoint(id int64) error {
 		endpoints, err := a.storage.GetEndpoints()
 		if err == nil {
 			a.router.LoadEndpoints(convertEndpoints(endpoints))
+		}
+	}
+
+	// Also cleanup vendor_stats logs for this endpoint.
+	if a.vendorStats != nil {
+		deleteCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := a.vendorStats.DeleteStatsByEndpointID(deleteCtx, id); err != nil {
+			return err
 		}
 	}
 
@@ -2777,4 +2799,36 @@ func (a *App) GetLocalIPs() ([]*LocalIPInfo, error) {
 	}
 
 	return result, nil
+}
+
+// convertEndpoints converts storage.Endpoint to proxy.Endpoint
+func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
+	result := make([]*proxy.Endpoint, len(endpoints))
+	for i, e := range endpoints {
+		var models []proxy.ModelMapping
+		if len(e.Models) > 0 {
+			models = make([]proxy.ModelMapping, 0, len(e.Models))
+			for _, m := range e.Models {
+				models = append(models, proxy.ModelMapping{Name: m.Name, Alias: m.Alias})
+			}
+		}
+		result[i] = &proxy.Endpoint{
+			ID:            e.ID,
+			Name:          e.Name,
+			APIURL:        e.APIURL,
+			APIKey:        e.APIKey,
+			Active:        e.Active,
+			Enabled:       e.Enabled,
+			InterfaceType: e.InterfaceType,
+			Transformer:   e.Transformer,
+			VendorID:      e.VendorID,
+			Model:         e.Model,
+			Remark:        e.Remark,
+			Priority:      e.Priority,
+			ProxyURL:      e.ProxyURL,
+			Models:        models,
+			Headers:       e.Headers,
+		}
+	}
+	return result
 }

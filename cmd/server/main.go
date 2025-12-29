@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
+	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
 )
 
 // Default configuration values
@@ -28,6 +30,7 @@ const (
 	ConfigKeyPort     = "port"
 	ConfigKeyAPIKey   = "apiKey"
 	ConfigKeyFallback = "fallback"
+	ConfigKeyDebugMode = "debugMode"
 	// Temporary disable TTL for failed endpoints (minutes)
 	ConfigKeyTempDisableMinutes = "tempDisableMinutes"
 )
@@ -107,8 +110,18 @@ func main() {
 	proxyServer := proxy.NewProxyServerWithWSHub(port, router, wsHub)
 	proxyServer.SetStorage(store)
 	proxyServer.SetVendorStatsStore(vendorStatsStore)
+
+	// Initialize kiro transformer config getter
+	kiro_claude.SetConfigGetter(func(key string) (string, error) {
+		if strings.TrimSpace(key) == "configPath" {
+			return configPath, nil
+		}
+		return store.GetConfig(key)
+	})
 	if key, err := store.GetConfig(ConfigKeyAPIKey); err == nil {
-		proxyServer.SetAuthKey(key)
+		if key = strings.TrimSpace(key); key != "" {
+			proxyServer.SetAuthKey(key)
+		}
 	}
 	// Load fallback setting from config
 	if fallbackStr, err := store.GetConfig(ConfigKeyFallback); err == nil && fallbackStr == "true" {

@@ -14,7 +14,9 @@ export const state = {
     settings: {
         port: 5600,
         configPath: '',
-        apiKey: ''
+        apiKey: '',
+        fallback: false,
+        debugMode: ''
     },
     language: 'en',
     wsConnection: null,

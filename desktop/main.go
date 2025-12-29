@@ -6,12 +6,14 @@ import (
 	"log"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
+	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -31,6 +33,7 @@ const (
 	ConfigKeyPort     = "port"
 	ConfigKeyAPIKey   = "apiKey"
 	ConfigKeyFallback = "fallback"
+	ConfigKeyDebugMode = "debugMode"
 	// Temporary disable TTL for failed endpoints (minutes)
 	ConfigKeyTempDisableMinutes = "tempDisableMinutes"
 	// CLI config directories
@@ -47,7 +50,7 @@ func main() {
 	// Get data directory with priority:
 	// 1. CODESP_DATA environment variable (highest priority)
 	// 2. Current directory (if config.json exists)
-	// 3. User home directory under .clishub
+	// 3. User home directory under .clisimplehub
 	dataDir := config.GetDataDir()
 	configPath := filepath.Join(dataDir, config.ConfigFileName)
 
@@ -120,8 +123,18 @@ func main() {
 	proxyServer := proxy.NewProxyServerWithWSHub(port, router, wsHub)
 	proxyServer.SetStorage(store)
 	proxyServer.SetVendorStatsStore(vendorStatsStore)
+
+	// Initialize kiro transformer config getter
+	kiro_claude.SetConfigGetter(func(key string) (string, error) {
+		if strings.TrimSpace(key) == "configPath" {
+			return configPath, nil
+		}
+		return store.GetConfig(key)
+	})
 	if key, err := store.GetConfig(ConfigKeyAPIKey); err == nil {
-		proxyServer.SetAuthKey(key)
+		if key = strings.TrimSpace(key); key != "" {
+			proxyServer.SetAuthKey(key)
+		}
 	}
 	// Load fallback setting from config
 	if fallbackStr, err := store.GetConfig(ConfigKeyFallback); err == nil && fallbackStr == "true" {
@@ -188,36 +201,4 @@ func main() {
 	if err != nil {
 		log.Printf("Error: %v", err.Error())
 	}
-}
-
-// convertEndpoints converts storage.Endpoint to proxy.Endpoint
-func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
-	result := make([]*proxy.Endpoint, len(endpoints))
-	for i, e := range endpoints {
-		var models []proxy.ModelMapping
-		if len(e.Models) > 0 {
-			models = make([]proxy.ModelMapping, 0, len(e.Models))
-			for _, m := range e.Models {
-				models = append(models, proxy.ModelMapping{Name: m.Name, Alias: m.Alias})
-			}
-		}
-		result[i] = &proxy.Endpoint{
-			ID:            e.ID,
-			Name:          e.Name,
-			APIURL:        e.APIURL,
-			APIKey:        e.APIKey,
-			Active:        e.Active,
-			Enabled:       e.Enabled,
-			InterfaceType: e.InterfaceType,
-			Transformer:   e.Transformer,
-			VendorID:      e.VendorID,
-			Model:         e.Model,
-			Remark:        e.Remark,
-			Priority:      e.Priority,
-			ProxyURL:      e.ProxyURL,
-			Models:        models,
-			Headers:       e.Headers,
-		}
-	}
-	return result
 }

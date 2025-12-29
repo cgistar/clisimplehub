@@ -22,6 +22,9 @@ func (e *BaseExecutor) Forward(ctx context.Context, endpoint *EndpointConfig, re
 	result.TargetURL = targetURL
 
 	requestBody := applyModelMapping(req.Body, endpoint)
+	if shouldCaptureUpstreamRequestBody(ctx) {
+		result.UpstreamRequestBody, result.UpstreamRequestBodyTruncated = truncateCapturedUpstreamRequestBody(requestBody)
+	}
 	proxyReq, err := http.NewRequestWithContext(ctx, req.Method, targetURL, bytes.NewReader(requestBody))
 	if err != nil {
 		result.Error = fmt.Errorf("failed to create request: %w", err)

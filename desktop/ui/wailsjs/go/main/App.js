@@ -62,6 +62,14 @@ export function GetInterfaceTypes() {
   return window['go']['main']['App']['GetInterfaceTypes']();
 }
 
+export function GetKiroConfig() {
+  return window['go']['main']['App']['GetKiroConfig']();
+}
+
+export function GetKiroUsage(arg1) {
+  return window['go']['main']['App']['GetKiroUsage'](arg1);
+}
+
 export function GetLanguage() {
   return window['go']['main']['App']['GetLanguage']();
 }
@@ -170,6 +178,10 @@ export function SaveFullConfig(arg1) {
   return window['go']['main']['App']['SaveFullConfig'](arg1);
 }
 
+export function SaveKiroConfig(arg1) {
+  return window['go']['main']['App']['SaveKiroConfig'](arg1);
+}
+
 export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
 }
@@ -228,6 +240,10 @@ export function TestEndpoint(arg1) {
 
 export function TestEndpointWithParams(arg1) {
   return window['go']['main']['App']['TestEndpointWithParams'](arg1);
+}
+
+export function TestKiroRefreshToken(arg1) {
+  return window['go']['main']['App']['TestKiroRefreshToken'](arg1);
 }
 
 export function ToggleEndpointEnabled(arg1, arg2) {

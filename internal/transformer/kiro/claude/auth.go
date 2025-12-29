@@ -1,0 +1,389 @@
+package claude
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	kiroapi "clisimplehub/internal/transformer/kiro"
+	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+
+	"golang.org/x/net/proxy"
+)
+
+const (
+	// TokenRefreshThreshold is the time before expiration to refresh token (5 minutes)
+	TokenRefreshThreshold = 5 * time.Minute
+	// MaxRetries is the maximum number of retry attempts for token refresh
+	MaxRetries = 3
+	// BaseRetryDelay is the initial delay for exponential backoff
+	BaseRetryDelay = 1 * time.Second
+)
+
+// KiroAuthManager manages Kiro API authentication and token lifecycle
+type KiroAuthManager struct {
+	mu            sync.RWMutex
+	creds         *kiroShared.KiroCredentials
+	credsPath     string
+	httpClient    *http.Client
+	refreshURL    string
+	clientVersion string
+}
+
+// NewKiroAuthManager creates a new authentication manager
+func NewKiroAuthManager(creds *kiroShared.KiroCredentials, credsPath string, proxyURL string, version string) *KiroAuthManager {
+	if creds == nil {
+		creds = &kiroShared.KiroCredentials{}
+	}
+	region := creds.Region
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	// Create HTTP client with optional proxy support
+	httpClient := buildProxyHTTPClient(proxyURL, 30*time.Second)
+
+	return &KiroAuthManager{
+		creds:         creds,
+		credsPath:     credsPath,
+		httpClient:    httpClient,
+		refreshURL:    kiroapi.KiroRefreshURL(region),
+		clientVersion: kiroShared.KiroVersionOrDefault(version),
+	}
+}
+
+// GetAccessToken returns a valid access token, refreshing if necessary
+func (m *KiroAuthManager) GetAccessToken() (string, error) {
+	if m == nil {
+		return "", errors.New("auth manager is nil")
+	}
+
+	now := time.Now()
+
+	// Fast path: check if we have a valid token without taking write lock
+	m.mu.RLock()
+	if m.creds != nil && m.creds.AccessToken != "" && !m.isTokenExpiringLocked(now) {
+		token := m.creds.AccessToken // Copy token while holding lock
+		m.mu.RUnlock()
+		return token, nil
+	}
+	m.mu.RUnlock()
+
+	// Slow path: need to refresh token
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.creds == nil {
+		return "", errors.New("credentials not loaded")
+	}
+
+	// Double-check after acquiring write lock (another goroutine might have refreshed)
+	if m.creds.AccessToken != "" && !m.isTokenExpiringLocked(now) {
+		return m.creds.AccessToken, nil
+	}
+
+	// Perform token refresh
+	if err := m.refreshTokenLocked(); err != nil {
+		return "", err
+	}
+
+	if m.creds.AccessToken == "" {
+		return "", errors.New("failed to obtain access token")
+	}
+
+	return m.creds.AccessToken, nil
+}
+
+// ForceRefresh forces a token refresh
+func (m *KiroAuthManager) ForceRefresh() (string, error) {
+	if m == nil {
+		return "", errors.New("auth manager is nil")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.creds == nil {
+		return "", errors.New("credentials not loaded")
+	}
+
+	if err := m.refreshTokenLocked(); err != nil {
+		return "", err
+	}
+
+	return m.creds.AccessToken, nil
+}
+
+// GetProfileArn returns the profile ARN
+func (m *KiroAuthManager) GetProfileArn() string {
+	if m == nil {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.creds == nil {
+		return ""
+	}
+	return m.creds.ProfileArn
+}
+
+// GetRegion returns the region
+func (m *KiroAuthManager) GetRegion() string {
+	if m == nil {
+		return "us-east-1"
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.creds == nil {
+		return "us-east-1"
+	}
+	if m.creds.Region == "" {
+		return "us-east-1"
+	}
+	return m.creds.Region
+}
+
+// isTokenExpiringLocked checks if the token is expiring soon. Caller must hold at least RLock.
+func (m *KiroAuthManager) isTokenExpiringLocked(now time.Time) bool {
+	if m == nil || m.creds == nil {
+		return true
+	}
+	if m.creds.ExpiresAt.IsZero() {
+		return true
+	}
+	return now.Add(TokenRefreshThreshold).After(m.creds.ExpiresAt)
+}
+
+// retryDelay calculates retry delay with jitter and Retry-After header support
+func (m *KiroAuthManager) retryDelay(attempt int, resp *http.Response) time.Duration {
+	delay := BaseRetryDelay * time.Duration(1<<attempt)
+	if delay > 30*time.Second {
+		delay = 30 * time.Second
+	}
+
+	if resp != nil && resp.StatusCode == 429 {
+		if ra := strings.TrimSpace(resp.Header.Get("Retry-After")); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+				return time.Duration(secs) * time.Second
+			}
+			if t, err := http.ParseTime(ra); err == nil {
+				d := time.Until(t)
+				if d > 0 {
+					return d
+				}
+			}
+		}
+	}
+
+	jitterMax := delay / 2
+	if jitterMax > 0 {
+		delay += time.Duration(time.Now().UnixNano() % int64(jitterMax+1))
+	}
+	return delay
+}
+
+// userAgent generates the User-Agent string
+func (m *KiroAuthManager) userAgent() string {
+	return kiroShared.KiroVersionOrDefault(m.clientVersion) + "-unknown"
+}
+
+// refreshTokenLocked performs the token refresh request with exponential backoff. Caller must hold Lock.
+func (m *KiroAuthManager) refreshTokenLocked() error {
+	if m.creds == nil {
+		return errors.New("credentials not loaded")
+	}
+	if m.creds.RefreshToken == "" {
+		return errors.New("refresh token is not set")
+	}
+
+	payload := map[string]string{
+		"refreshToken": m.creds.RefreshToken,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal refresh payload: %w", err)
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < MaxRetries; attempt++ {
+		req, err := http.NewRequest("POST", m.refreshURL, bytes.NewReader(payloadBytes))
+		if err != nil {
+			return fmt.Errorf("failed to create refresh request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", m.userAgent())
+
+		resp, err := m.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			time.Sleep(m.retryDelay(attempt, nil))
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			defer resp.Body.Close()
+			return m.handleRefreshResponse(resp)
+		}
+
+		bodySnippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		// Check if error is retryable
+		if isRetryableStatus(resp.StatusCode) {
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(bodySnippet)))
+			time.Sleep(m.retryDelay(attempt, resp))
+			continue
+		}
+
+		// Non-retryable error (4xx except 429)
+		return fmt.Errorf("token refresh failed with HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(bodySnippet)))
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("unknown error")
+	}
+	return fmt.Errorf("token refresh failed after %d attempts: %w", MaxRetries, lastErr)
+}
+
+// handleRefreshResponse processes the refresh response
+func (m *KiroAuthManager) handleRefreshResponse(resp *http.Response) error {
+	var data struct {
+		AccessToken  string `json:"accessToken"`
+		RefreshToken string `json:"refreshToken"`
+		ExpiresIn    int    `json:"expiresIn"`
+		ProfileArn   string `json:"profileArn"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return fmt.Errorf("failed to decode refresh response: %w", err)
+	}
+
+	if data.AccessToken == "" {
+		return errors.New("response does not contain accessToken")
+	}
+
+	// Update credentials
+	m.creds.AccessToken = data.AccessToken
+	if data.RefreshToken != "" {
+		m.creds.RefreshToken = data.RefreshToken
+	}
+	if data.ProfileArn != "" {
+		m.creds.ProfileArn = data.ProfileArn
+	}
+
+	// Calculate expiration time with 60 second buffer
+	expiresIn := data.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600 // Default 1 hour
+	}
+	now := time.Now()
+	if expiresIn <= 60 {
+		m.creds.ExpiresAt = now.Add(time.Duration(expiresIn) * time.Second)
+	} else {
+		m.creds.ExpiresAt = now.Add(time.Duration(expiresIn-60) * time.Second)
+	}
+
+	// Save to file
+	if m.credsPath != "" {
+		if err := kiroShared.SaveKiroCredentials(m.credsPath, m.creds); err != nil {
+			// Log but don't fail
+			fmt.Fprintf(os.Stderr, "Warning: failed to save kiro credentials: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+// isRetryableStatus checks if an HTTP status code is retryable
+func isRetryableStatus(status int) bool {
+	return status == 429 || status == 500 || status == 502 || status == 503 || status == 504
+}
+
+// buildProxyHTTPClient creates an HTTP client with optional proxy support
+func buildProxyHTTPClient(proxyURL string, timeout time.Duration) *http.Client {
+	client := &http.Client{Timeout: timeout}
+
+	// Always set an explicit transport so we don't accidentally pick up proxy settings
+	// from environment variables; Kiro proxy must come from config.json `kiro.proxyUrl`.
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		client.Transport = transport
+		return client
+	}
+
+	transport := buildKiroProxyTransport(proxyURL)
+	if transport == nil {
+		transport = http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+	}
+	client.Transport = transport
+	return client
+}
+
+// buildKiroProxyTransport creates an HTTP transport with proxy support
+// Supports socks5, http, and https proxy protocols
+func buildKiroProxyTransport(proxyURL string) *http.Transport {
+	if proxyURL == "" {
+		return nil
+	}
+
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.Proxy = nil
+
+	parsedURL, err := url.Parse(proxyURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to parse kiro proxy URL: %v\n", err)
+		return nil
+	}
+
+	switch parsedURL.Scheme {
+	case "socks5":
+		return buildKiroSOCKS5Transport(base, parsedURL)
+	case "http", "https":
+		base.Proxy = http.ProxyURL(parsedURL)
+		return base
+	default:
+		fmt.Fprintf(os.Stderr, "Warning: unsupported kiro proxy scheme: %s\n", parsedURL.Scheme)
+		return nil
+	}
+}
+
+// buildKiroSOCKS5Transport creates a SOCKS5 proxy transport
+func buildKiroSOCKS5Transport(base *http.Transport, parsedURL *url.URL) *http.Transport {
+	if base == nil {
+		base = http.DefaultTransport.(*http.Transport).Clone()
+		base.Proxy = nil
+	}
+
+	var auth *proxy.Auth
+	if parsedURL.User != nil {
+		username := parsedURL.User.Username()
+		password, _ := parsedURL.User.Password()
+		auth = &proxy.Auth{User: username, Password: password}
+	}
+
+	dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, proxy.Direct)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to create kiro SOCKS5 dialer: %v\n", err)
+		return nil
+	}
+
+	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialer.Dial(network, addr)
+	}
+	return base
+}

@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -16,18 +15,14 @@ import (
 // GET /transformers?from=claude
 // - 返回指定来源：{"from":"claude","transformers":[...]}
 func (p *ProxyServer) handleTransformers(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": "method not allowed"})
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
 
 	from := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("from")))
 	if from == "" {
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"transformers": transformer.ListAll(),
 		})
 		return
@@ -35,15 +30,13 @@ func (p *ProxyServer) handleTransformers(w http.ResponseWriter, r *http.Request)
 
 	list, err := transformer.List(from)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": err.Error(),
 		})
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"from":         from,
 		"transformers": list,
 	})

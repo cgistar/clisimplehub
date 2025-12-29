@@ -36,6 +36,10 @@ export function GetFullConfig():Promise<main.FullConfig>;
 
 export function GetInterfaceTypes():Promise<Array<string>>;
 
+export function GetKiroConfig():Promise<main.KiroConfig>;
+
+export function GetKiroUsage(arg1:main.KiroUsageInput):Promise<main.KiroUsageResult>;
+
 export function GetLanguage():Promise<string>;
 
 export function GetLocalIPs():Promise<Array<main.LocalIPInfo>>;
@@ -90,6 +94,8 @@ export function SaveEndpointData(arg1:main.EndpointInput):Promise<main.EndpointI
 
 export function SaveFullConfig(arg1:main.FullConfig):Promise<void>;
 
+export function SaveKiroConfig(arg1:main.KiroConfig):Promise<void>;
+
 export function SaveSettings(arg1:main.Settings):Promise<void>;
 
 export function SaveVendor(arg1:main.VendorInfo):Promise<main.VendorInfo>;
@@ -119,6 +125,8 @@ export function StopProxy():Promise<void>;
 export function TestEndpoint(arg1:number):Promise<string>;
 
 export function TestEndpointWithParams(arg1:main.TestEndpointParams):Promise<string>;
+
+export function TestKiroRefreshToken(arg1:main.KiroConfig):Promise<main.KiroTestResult>;
 
 export function ToggleEndpointEnabled(arg1:number,arg2:boolean):Promise<void>;
 

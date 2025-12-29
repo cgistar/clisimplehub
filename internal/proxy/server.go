@@ -3,7 +3,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -186,25 +185,18 @@ func (p *ProxyServer) GetStats() *StatsManager {
 
 // handleHealth handles health check requests
 func (p *ProxyServer) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
 	response := map[string]interface{}{
 		"status": "healthy",
 		"port":   p.port,
 	}
-
-	_ = json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, response)
 }
 
 // handleStats handles statistics requests
 func (p *ProxyServer) handleStats(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	stats := map[string]interface{}{
 		"recent_logs": p.stats.GetRecentLogs(5),
 		"token_stats": p.stats.GetTokenStats(),
 	}
-
-	_ = json.NewEncoder(w).Encode(stats)
+	writeJSON(w, http.StatusOK, stats)
 }

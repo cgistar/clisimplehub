@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS vendor_stats (
     date TEXT NOT NULL,
     interface_type TEXT NOT NULL,
     target_headers TEXT NOT NULL,
+    request_body TEXT,
     duration_ms INTEGER DEFAULT 0,
     status_code INTEGER NOT NULL,
     status TEXT NOT NULL,
@@ -21,4 +22,3 @@ CREATE TABLE IF NOT EXISTS vendor_stats (
 );
 CREATE INDEX IF NOT EXISTS idx_vendor_stats_date ON vendor_stats(date);
 CREATE INDEX IF NOT EXISTS idx_vendor_stats_vendor ON vendor_stats(vendor_id, endpoint_id);
-

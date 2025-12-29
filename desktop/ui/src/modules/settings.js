@@ -61,6 +61,7 @@ export async function showSettingsModal() {
     document.getElementById('settingsPort').value = state.settings.port || 5600;
     document.getElementById('settingsApiKey').value = state.settings.apiKey || '';
     document.getElementById('settingsFallback').checked = state.settings.fallback || false;
+    document.getElementById('settingsDebugModeAll').checked = (state.settings.debugMode || '').toLowerCase() === 'all';
     
     // Load CLI config directories
     try {
@@ -84,6 +85,7 @@ export async function saveSettings() {
     const port = parseInt(document.getElementById('settingsPort').value, 10);
     const apiKey = document.getElementById('settingsApiKey').value;
     const fallback = document.getElementById('settingsFallback').checked;
+    const debugMode = document.getElementById('settingsDebugModeAll').checked ? 'all' : '';
     const claudeConfigDir = document.getElementById('settingsClaudeConfigDir').value;
     const codexConfigDir = document.getElementById('settingsCodexConfigDir').value;
     
@@ -94,8 +96,8 @@ export async function saveSettings() {
     
     try {
         if (window.go?.main?.App?.SaveSettings) {
-            console.log('Saving settings:', { port, apiKey: apiKey ? '***' : '', fallback });
-            await window.go.main.App.SaveSettings({ port, apiKey, fallback });
+            console.log('Saving settings:', { port, apiKey: apiKey ? '***' : '', fallback, debugMode });
+            await window.go.main.App.SaveSettings({ port, apiKey, fallback, debugMode });
         }
         
         // Save CLI config directories

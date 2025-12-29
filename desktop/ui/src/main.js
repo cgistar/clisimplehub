@@ -70,6 +70,15 @@ import {
     loadConfigFromWebDAV,
     deleteBackupFromWebDAV
 } from './modules/webdav.js';
+import {
+    showKiroConfigModal,
+    closeKiroConfigModal,
+    saveKiroConfig,
+    testKiroRefreshToken,
+    onKiroRefreshTokenInput,
+    fetchKiroUsage,
+    toggleKiroRegionDropdown
+} from './modules/kiro.js';
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', async () => {
@@ -177,3 +186,10 @@ window.backupToWebDAV = backupToWebDAV;
 window.loadBackupsList = loadBackupsList;
 window.loadConfigFromWebDAV = loadConfigFromWebDAV;
 window.deleteBackupFromWebDAV = deleteBackupFromWebDAV;
+window.showKiroConfigModal = showKiroConfigModal;
+window.closeKiroConfigModal = closeKiroConfigModal;
+window.saveKiroConfig = saveKiroConfig;
+window.testKiroRefreshToken = testKiroRefreshToken;
+window.onKiroRefreshTokenInput = onKiroRefreshTokenInput;
+window.fetchKiroUsage = fetchKiroUsage;
+window.toggleKiroRegionDropdown = toggleKiroRegionDropdown;

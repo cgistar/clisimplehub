@@ -1,0 +1,40 @@
+package kiro
+
+import "strings"
+
+// KiroAPIHost 返回指定 region 的 Kiro/CodeWhisperer API 域名。
+func KiroAPIHost(region string) string {
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = "us-east-1"
+	}
+	return "codewhisperer." + region + ".amazonaws.com"
+}
+
+// KiroQHost 返回指定 region 的 Q API 域名（用于用量接口）。
+func KiroQHost(region string) string {
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = "us-east-1"
+	}
+	return "q." + region + ".amazonaws.com"
+}
+
+// KiroRefreshURL 返回指定 region 的 token refresh URL。
+func KiroRefreshURL(region string) string {
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = "us-east-1"
+	}
+	return "https://prod." + region + ".auth.desktop.kiro.dev/refreshToken"
+}
+
+// KiroGenerateURL 返回指定 region 的 generateAssistantResponse URL。
+func KiroGenerateURL(region string) string {
+	return "https://" + KiroAPIHost(region) + "/generateAssistantResponse"
+}
+
+// KiroUsageURL 返回指定 region 的用量查询 URL。
+func KiroUsageURL(region string) string {
+	return "https://" + KiroQHost(region) + "/getUsageLimits"
+}

@@ -8,20 +8,36 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"clisimplehub/internal/transformer"
+	kiroAuth "clisimplehub/internal/transformer/kiro"
+	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
 	"clisimplehub/internal/usage"
 )
 
 func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest, w http.ResponseWriter) *ForwardResult {
 	result := &ForwardResult{}
+	if endpoint == nil || req == nil {
+		result.StatusCode = http.StatusBadRequest
+		result.Error = fmt.Errorf("nil endpoint or request")
+		return result
+	}
 
 	tr, err := transformer.Get(interfaceType, endpoint.Transformer)
 	if err != nil {
 		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 解析失败: interfaceType=%s transformer=%q err=%v", interfaceType, endpoint.Transformer, err))
 		result.StatusCode = http.StatusBadRequest
 		result.Error = err
+		return result
+	}
+	if tr == nil {
+		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 解析失败: interfaceType=%s transformer=%q err=nil transformer", interfaceType, endpoint.Transformer))
+		result.StatusCode = http.StatusBadRequest
+		result.Error = fmt.Errorf("nil transformer: interfaceType=%s transformer=%q", interfaceType, endpoint.Transformer)
 		return result
 	}
 
@@ -37,7 +53,12 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		return result
 	}
 
-	transformedBody, err := tr.TransformRequest(requestModel, originalBody, req.IsStreaming)
+	// NOTE: `modelName` passed into the transformer must be the *upstream* model
+	// (after applying endpoint default / alias mapping). Some transformers (e.g. Kiro)
+	// do not carry a top-level `model` field in the transformed payload, so applying
+	// model mapping after transformation would be ineffective (or even inject an
+	// invalid `model` field into the upstream request).
+	transformedBody, err := tr.TransformRequest(upstreamModel, originalBody, req.IsStreaming)
 	if err != nil {
 		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 请求转换失败: endpoint=%s transformer=%q err=%v", endpoint.Name, endpoint.Transformer, err))
 		result.StatusCode = http.StatusBadRequest
@@ -45,42 +66,168 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		return result
 	}
 
-	targetURL, err := BuildTargetURL(endpoint.APIURL, targetPath, req.RawQuery)
+	targetInterface := strings.ToLower(strings.TrimSpace(tr.TargetInterfaceType()))
+	var kiroDbg *kiroDebugLogger
+	if targetInterface == "kiro" && shouldWriteKiroDebugLogs(ctx) {
+		if dbg, err := newKiroDebugLogger(ctx, "debug_logs"); err == nil {
+			kiroDbg = dbg
+			_ = kiroDbg.writeFile("request_body.json", originalBody)
+			_ = kiroDbg.writeFile("kiro_request.json", transformedBody)
+		} else {
+			c.DebugLog(ctx, 2, fmt.Sprintf("[KiroDebug] init failed: %v", err))
+		}
+	}
+
+	// Build target URL - special handling for kiro transformer (region-specific URL)
+	var targetURL string
+	baseURL := endpoint.APIURL
+	if targetInterface == "kiro" {
+		if urlProvider, ok := tr.(interface{ GetAPIURL() string }); ok && urlProvider != nil {
+			if apiURL := strings.TrimSpace(urlProvider.GetAPIURL()); apiURL != "" {
+				baseURL = apiURL
+			}
+		}
+	}
+	rawQuery := req.RawQuery
+	// Kiro endpoints don't accept arbitrary client query parameters (e.g. Anthropic-style `?beta=true`).
+	// The reference implementation always calls the Kiro API without query parameters.
+	if targetInterface == "kiro" {
+		rawQuery = ""
+	}
+	targetURL, err = BuildTargetURL(baseURL, targetPath, rawQuery)
 	if err != nil {
-		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 目标URL构造失败: endpoint=%s apiUrl=%s path=%s err=%v", endpoint.Name, endpoint.APIURL, targetPath, err))
+		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 目标URL构造失败: endpoint=%s apiUrl=%s path=%s err=%v", endpoint.Name, baseURL, targetPath, err))
 		result.Error = err
 		return result
 	}
 	result.TargetURL = targetURL
 
-	requestBody := applyModelMapping(transformedBody, endpoint)
+	requestBody := transformedBody
+	if shouldCaptureUpstreamRequestBody(ctx) {
+		result.UpstreamRequestBody, result.UpstreamRequestBodyTruncated = truncateCapturedUpstreamRequestBody(requestBody)
+	}
 	finalModel := extractModelFromBody(requestBody)
-	if finalModel == "" {
+	if strings.TrimSpace(finalModel) == "" {
 		finalModel = upstreamModel
 	}
-	modelMapped := requestModel != "" && finalModel != "" && requestModel != finalModel
-	c.DebugLog(ctx, 1, fmt.Sprintf("转发: endpoint=%s interface=%s transformer=%q target=%s model(client=%q upstream=%q final=%q mapped=%v) stream=%v", endpoint.Name, interfaceType, endpoint.Transformer, targetURL, requestModel, upstreamModel, finalModel, modelMapped, req.IsStreaming))
-	proxyReq, err := http.NewRequestWithContext(ctx, req.Method, targetURL, bytes.NewReader(requestBody))
-	if err != nil {
-		result.Error = fmt.Errorf("failed to create request: %w", err)
-		return result
+
+	modelMapped := strings.TrimSpace(requestModel) != "" && strings.TrimSpace(upstreamModel) != "" && !strings.EqualFold(requestModel, upstreamModel)
+
+	// For Kiro, the effective model is `userInputMessage.modelId`, not a top-level `model`.
+	// Log the resolved Kiro model id to make 403 diagnostics easier.
+	if targetInterface == "kiro" {
+		kiroModelID := kiro_claude.GetKiroModelID(upstreamModel)
+		c.DebugLog(ctx, 1, fmt.Sprintf("转发: endpoint=%s interface=%s transformer=%q target=%s model(client=%q upstream=%q final=%q mapped=%v kiroModelId=%q) clientStream=%v", endpoint.Name, interfaceType, endpoint.Transformer, targetURL, requestModel, upstreamModel, finalModel, modelMapped, kiroModelID, req.IsStreaming))
+	} else {
+		c.DebugLog(ctx, 1, fmt.Sprintf("转发: endpoint=%s interface=%s transformer=%q target=%s model(client=%q upstream=%q final=%q mapped=%v) clientStream=%v", endpoint.Name, interfaceType, endpoint.Transformer, targetURL, requestModel, upstreamModel, finalModel, modelMapped, req.IsStreaming))
 	}
 
-	copyRequestHeaders(proxyReq, req.Headers)
-	ApplyAuthForInterfaceType(proxyReq, endpoint.APIKey, tr.TargetInterfaceType(), req.IsStreaming)
-	ApplyEndpointHeaders(proxyReq, endpoint)
+	buildProxyReq := func() (*http.Request, error) {
+		proxyReq, err := http.NewRequestWithContext(ctx, req.Method, targetURL, bytes.NewReader(requestBody))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		// Apply authentication - special handling for kiro transformer
+		if targetInterface == "kiro" {
+			// Do NOT forward headers to the AWS Kiro/CodeWhisperer API.
+			// Some upstream paths are sensitive to unrelated client/vendor/custom headers and can return 403.
+			src, ok := tr.(kiroAuth.KiroAuthSource)
+			if !ok || src == nil {
+				return nil, fmt.Errorf("kiro auth source not available for transformer=%T", tr)
+			}
+			authApplier := kiroAuth.NewAuthApplier(src)
+			if err := authApplier.Apply(proxyReq); err != nil {
+				return nil, fmt.Errorf("kiro auth failed: %w", err)
+			}
+		} else {
+			copyRequestHeaders(proxyReq, req.Headers)
+			ApplyAuthForInterfaceType(proxyReq, endpoint.APIKey, tr.TargetInterfaceType(), req.IsStreaming)
+			ApplyEndpointHeaders(proxyReq, endpoint)
+		}
+
+		return proxyReq, nil
+	}
+
+	proxyReq, err := buildProxyReq()
+	if err != nil {
+		result.Error = err
+		return result
+	}
 	result.TargetHeaders = sanitizeHeaders(proxyReq.Header)
 
 	client := NewHTTPClient(endpoint, 0)
+	if targetInterface == "kiro" {
+		proxyURL := ""
+		if proxyProvider, ok := tr.(interface{ KiroProxyURL() string }); ok && proxyProvider != nil {
+			proxyURL = proxyProvider.KiroProxyURL()
+		}
+		client = NewHTTPClientForcedProxyURL(proxyURL, 0)
+	}
 	resp, err := client.Do(proxyReq)
 	if err != nil {
 		result.Error = fmt.Errorf("request failed: %w", err)
 		return result
 	}
+	// when backend returns 401/403, force-refresh token and retry once.
+	if targetInterface == "kiro" && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		if refresher, ok := tr.(interface{ ForceRefreshKiroToken() error }); ok && refresher != nil {
+			if refreshErr := refresher.ForceRefreshKiroToken(); refreshErr == nil {
+				time.Sleep(50 * time.Millisecond) // small jitter to avoid immediate retry collisions
+				if retryReq, err := buildProxyReq(); err == nil {
+					resp, err = client.Do(retryReq)
+					if err != nil {
+						result.Error = fmt.Errorf("request failed after kiro token refresh: %w", err)
+						return result
+					}
+				}
+			}
+		}
+	}
 	defer resp.Body.Close()
 
 	result.StatusCode = resp.StatusCode
 	result.Headers = resp.Header.Clone()
+
+	// For Kiro upstream errors, pass through the raw upstream body to aid debugging.
+	// Transforming non-200 responses often hides the real error payload.
+	if targetInterface == "kiro" && resp.StatusCode != http.StatusOK {
+		reader := getResponseReader(resp)
+		if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
+			defer closer.Close()
+		}
+
+		if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
+			result.Headers.Del("Content-Encoding")
+			result.Headers.Del("Content-Length")
+		}
+
+		body, readErr := io.ReadAll(reader)
+		if readErr != nil {
+			result.Error = fmt.Errorf("failed to read response: %w", readErr)
+			return result
+		}
+		result.Body = body
+		if kiroDbg != nil {
+			_ = kiroDbg.writeFile("kiro_response_raw.txt", body)
+			_ = kiroDbg.writeFile("kiro_response.txt", body)
+		}
+		return result
+	}
+
+	// Kiro upstream uses eventstream semantics even for non-stream callers.
+	// always parse upstream stream; for non-stream callers
+	// collect the stream into a single Claude message response.
+	if targetInterface == "kiro" && resp.StatusCode == http.StatusOK {
+		if req.IsStreaming {
+			c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s (kiro stream)", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
+			return handleKiroStreamingResponse(ctx, w, resp, result, tr, requestModel, originalBody, requestBody, kiroDbg)
+		}
+		c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s (kiro non-stream)", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
+		return handleTransformedNonStreamingResponse(ctx, resp, result, tr, requestModel, originalBody, requestBody, kiroDbg)
+	}
 
 	if req.IsStreaming && resp.StatusCode == http.StatusOK && shouldTreatAsStreaming(resp, tr) {
 		c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s (stream)", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
@@ -88,7 +235,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	}
 
 	c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
-	out := handleTransformedNonStreamingResponse(ctx, resp, result, tr, requestModel, originalBody, requestBody)
+	out := handleTransformedNonStreamingResponse(ctx, resp, result, tr, requestModel, originalBody, requestBody, nil)
 	if out != nil && (out.Error != nil || out.StatusCode >= 400) && len(out.Body) > 0 {
 		level := 2
 		if out.Error != nil || out.StatusCode >= 500 {
@@ -109,6 +256,169 @@ func shouldTreatAsStreaming(resp *http.Response, tr transformer.Transformer) boo
 	}
 	// Gemini often streams as JSON lines (not SSE) depending on gateway; treat it as stream when requested.
 	return strings.EqualFold(strings.TrimSpace(tr.TargetInterfaceType()), "gemini")
+}
+
+func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte, dbg *kiroDebugLogger) *ForwardResult {
+	// Force Claude streaming semantics to the caller.
+	for key, values := range resp.Header {
+		switch strings.ToLower(key) {
+		case "content-length", "content-encoding":
+			continue
+		case "content-type":
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(key, v)
+		}
+	}
+	w.Header().Set("Content-Type", tr.OutputContentType(true))
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		result.Error = fmt.Errorf("response writer does not support flushing")
+		return result
+	}
+
+	reader := getResponseReader(resp)
+	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
+		defer closer.Close()
+	}
+
+	var rawFile *os.File
+	var outFile *os.File
+	if dbg != nil && strings.TrimSpace(dbg.dirPath()) != "" {
+		if f, err := os.Create(filepath.Join(dbg.dirPath(), "kiro_response_raw.txt")); err == nil {
+			rawFile = f
+			defer rawFile.Close()
+		}
+		if f, err := os.Create(filepath.Join(dbg.dirPath(), "kiro_response.txt")); err == nil {
+			outFile = f
+			defer outFile.Close()
+		}
+	}
+
+	var state any
+
+	var capture strings.Builder
+	const maxCaptureSize = 50 * 1024
+
+	buf := make([]byte, 32*1024)
+	for {
+		select {
+		case <-ctx.Done():
+			result.Error = ctx.Err()
+			result.Streamed = true
+			result.ResponseStream = capture.String()
+			return result
+		default:
+		}
+
+		n, err := reader.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			if rawFile != nil {
+				_, _ = rawFile.Write(chunk)
+			}
+			outs, trErr := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, &state)
+			if trErr != nil {
+				result.Error = trErr
+				break
+			}
+			for _, out := range outs {
+				if out == "" {
+					continue
+				}
+				if outFile != nil {
+					_, _ = outFile.WriteString(out)
+				}
+				if _, err := w.Write([]byte(out)); err != nil {
+					result.Error = context.Canceled
+					break
+				}
+				if capture.Len() < maxCaptureSize {
+					remaining := maxCaptureSize - capture.Len()
+					if len(out) > remaining {
+						capture.WriteString(out[:remaining])
+					} else {
+						capture.WriteString(out)
+					}
+				}
+				flusher.Flush()
+			}
+
+			if tok, ok := state.(interface{ TokenUsage() (int, int) }); ok && tok != nil {
+				in, out := tok.TokenUsage()
+				if in != 0 || out != 0 {
+					result.Tokens = &TokenUsage{InputTokens: int64(in), OutputTokens: int64(out)}
+				}
+			}
+		}
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			result.Error = err
+			break
+		}
+	}
+
+	// Give the transformer a chance to emit a final end marker when upstream ends (best-effort).
+	if state != nil {
+		if outs, trErr := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, nil, &state); trErr == nil {
+			for _, out := range outs {
+				if out == "" {
+					continue
+				}
+				if outFile != nil {
+					_, _ = outFile.WriteString(out)
+				}
+				if _, err := w.Write([]byte(out)); err != nil {
+					result.Error = context.Canceled
+					break
+				}
+				if capture.Len() < maxCaptureSize {
+					remaining := maxCaptureSize - capture.Len()
+					if len(out) > remaining {
+						capture.WriteString(out[:remaining])
+					} else {
+						capture.WriteString(out)
+					}
+				}
+				flusher.Flush()
+			}
+		}
+	}
+
+	// If upstream ended without an explicit end marker, finish the Claude SSE stream.
+	if s, ok := state.(*kiro_claude.StreamState); ok && s != nil && !s.Finished {
+		for _, out := range kiro_claude.FinishStream(s) {
+			if out == "" {
+				continue
+			}
+			if outFile != nil {
+				_, _ = outFile.WriteString(out)
+			}
+			if _, err := w.Write([]byte(out)); err != nil {
+				result.Error = context.Canceled
+				break
+			}
+			if capture.Len() < maxCaptureSize {
+				remaining := maxCaptureSize - capture.Len()
+				if len(out) > remaining {
+					capture.WriteString(out[:remaining])
+				} else {
+					capture.WriteString(out)
+				}
+			}
+			flusher.Flush()
+		}
+	}
+
+	result.Streamed = true
+	result.ResponseStream = capture.String()
+	return result
 }
 
 func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
@@ -201,7 +511,7 @@ func truncateForLog(body []byte, maxLen int) string {
 	return raw[:maxLen] + "...(truncated)"
 }
 
-func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
+func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte, dbg *kiroDebugLogger) *ForwardResult {
 	reader := getResponseReader(resp)
 	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
 		defer closer.Close()
@@ -222,6 +532,10 @@ func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Respo
 		result.StatusCode = http.StatusServiceUnavailable
 		result.Error = fmt.Errorf("upstream returned HTML with HTTP 200")
 		result.Body = body
+		if dbg != nil {
+			_ = dbg.writeFile("kiro_response_raw.txt", body)
+			_ = dbg.writeFile("kiro_response.txt", body)
+		}
 		return result
 	}
 
@@ -229,12 +543,20 @@ func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Respo
 	if err != nil {
 		result.Error = err
 		result.Body = body
+		if dbg != nil {
+			_ = dbg.writeFile("kiro_response_raw.txt", body)
+			_ = dbg.writeFile("kiro_response.txt", body)
+		}
 		return result
 	}
 
 	result.Body = converted
 	result.Headers.Set("Content-Type", tr.OutputContentType(false))
 	result.Tokens = usageTokens(converted)
+	if dbg != nil {
+		_ = dbg.writeFile("kiro_response_raw.txt", body)
+		_ = dbg.writeFile("kiro_response.txt", converted)
+	}
 	return result
 }
 

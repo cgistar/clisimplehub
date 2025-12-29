@@ -1,21 +1,29 @@
 /**
  * UI initialization module
  */
-import { state } from './state.js';
-import { t, getAvailableLanguages } from '../i18n/index.js';
+import { state } from './state.js'
+import { t, getAvailableLanguages } from '../i18n/index.js'
 
 export function initUI() {
-    const app = document.getElementById('app');
-    app.innerHTML = `
+  const app = document.getElementById('app')
+  app.innerHTML = `
         <div class="header">
             <div class="header-content">
                 <div class="header-left">
-                    <h1>${t('header.title')}</h1>
-                    <p>${t('header.subtitle')}</p>
+                    <div class="header-tabs">
+                        <button class="header-tab active" data-tab="home">🏠 ${t('header.home')}</button>
+                    </div>
                 </div>
                 <div class="header-right">
-                    <button class="header-btn" onclick="showWebDAVModal()" title="WebDAV同步">🔄</button>
-                    <button class="header-btn" onclick="showSettingsModal()" title="${t('settings.title')}">⚙️</button>
+                    <div class="header-btn-group">
+                        <button class="header-btn" onclick="showKiroConfigModal()" title="${t(
+                          'kiro.title'
+                        )}">Kiro</button>
+                        <button class="header-btn" onclick="showWebDAVModal()" title="${t('webdav.title')}">🔄</button>
+                        <button class="header-btn" onclick="showSettingsModal()" title="${t(
+                          'settings.title'
+                        )}">⚙️</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -24,14 +32,18 @@ export function initUI() {
             <div class="left-panel">
                 <div class="card">
                     <div class="card-header">
-                        <h2>${t('endpoints.title')} <button class="icon-btn" onclick="showManageModal()" title="${t('endpoints.manage')}">📝端点配置</button></h2>
+                        <h2>${t('endpoints.title')} <button class="icon-btn" onclick="showManageModal()" title="${t(
+    'endpoints.manage'
+  )}">📝端点配置</button></h2>
                     </div>
                     <div class="tabs" id="interfaceTabs">
                         <button class="tab-btn active" data-type="claude" onclick="switchTab('claude')">Claude</button>
                         <button class="tab-btn" data-type="codex" onclick="switchTab('codex')">Codex</button>
                         <button class="tab-btn" data-type="gemini" onclick="switchTab('gemini')">Gemini</button>
                         <button class="tab-btn" data-type="chat" onclick="switchTab('chat')">Chat</button>
-                        <button class="icon-btn cli-config-btn" id="cliConfigEditorBtn" onclick="openCLIConfigEditor()" title="${t('cliConfig.title')}">📝Cli 配置</button>
+                        <button class="icon-btn cli-config-btn" id="cliConfigEditorBtn" onclick="openCLIConfigEditor()" title="${t(
+                          'cliConfig.title'
+                        )}">📝Cli 配置</button>
                     </div>
                     <div class="active-selector">
                         <label>${t('endpoints.activeEndpoint')}:</label>
@@ -39,7 +51,9 @@ export function initUI() {
                             <option value="">${t('endpoints.selectActive')}</option>
                         </select>
                         <button class="icon-btn" onclick="refreshConfig()" title="${t('endpoints.refresh')}">🔄</button>
-                        <button class="icon-btn" onclick="pingAllEndpoints()" title="${t('endpoints.pingAll')}">⚡</button>
+                        <button class="icon-btn" onclick="pingAllEndpoints()" title="${t(
+                          'endpoints.pingAll'
+                        )}">⚡</button>
                     </div>
                     <div class="endpoint-list" id="endpointList">
                         <div class="loading">${t('common.loading')}</div>
@@ -52,10 +66,14 @@ export function initUI() {
                     <div class="card-header">
                         <h2>📋 ${t('logs.title')}</h2>
                         <div class="card-header-actions">
-                            <button class="btn btn-sm btn-secondary" onclick="showStatsModal()" title="${t('stats.title')}">
+                            <button class="btn btn-sm btn-secondary" onclick="showStatsModal()" title="${t(
+                              'stats.title'
+                            )}">
                                 📊 ${t('stats.title')}
                             </button>
-                            <button class="toggle-btn" id="consoleToggleBtn" onclick="toggleBottomConsole()" title="${t('console.title')}">
+                            <button class="toggle-btn" id="consoleToggleBtn" onclick="toggleBottomConsole()" title="${t(
+                              'console.title'
+                            )}">
                                 🖥️
                             </button>
                         </div>
@@ -83,12 +101,18 @@ export function initUI() {
                             <option value="2">⚠️ ${t('console.levels.warn')}</option>
                             <option value="3">❌ ${t('console.levels.error')}</option>
                         </select>
-                        <button class="btn btn-sm btn-secondary" onclick="copyConsoleLogs()" title="${t('console.copy')}">📋</button>
-                        <button class="btn btn-sm btn-secondary" onclick="clearConsoleLogs()" title="${t('console.clear')}">🗑️</button>
+                        <button class="btn btn-sm btn-secondary" onclick="copyConsoleLogs()" title="${t(
+                          'console.copy'
+                        )}">📋</button>
+                        <button class="btn btn-sm btn-secondary" onclick="clearConsoleLogs()" title="${t(
+                          'console.clear'
+                        )}">🗑️</button>
                     </div>
                 </div>
                 <div id="consolePanel" class="console-panel">
-                    <textarea id="consoleContent" class="console-textarea" readonly placeholder="${t('console.placeholder')}"></textarea>
+                    <textarea id="consoleContent" class="console-textarea" readonly placeholder="${t(
+                      'console.placeholder'
+                    )}"></textarea>
                 </div>
             </div>
         </div>
@@ -104,10 +128,15 @@ export function initUI() {
                     <div class="form-group">
                         <label>${t('header.language')}</label>
                         <div class="language-tabs" id="languageTabs">
-                            ${getAvailableLanguages().map(lang => 
-                                `<button class="lang-tab ${state.language === lang.code ? 'active' : ''}" 
-                                    data-lang="${lang.code}" onclick="changeLanguage('${lang.code}')">${lang.name}</button>`
-                            ).join('')}
+                            ${getAvailableLanguages()
+                              .map(
+                                (lang) =>
+                                  `<button class="lang-tab ${state.language === lang.code ? 'active' : ''}"
+                                    data-lang="${lang.code}" onclick="changeLanguage('${lang.code}')">${
+                                    lang.name
+                                  }</button>`
+                              )
+                              .join('')}
                         </div>
                     </div>
                     <div class="form-group">
@@ -127,6 +156,14 @@ export function initUI() {
                             <span class="slider"></span>
                         </label>
                         <small>${t('settings.fallbackHelp')}</small>
+                    </div>
+                    <div class="form-group switch-form-group">
+                        <label class="switch-label-inline">${t('settings.debugMode')}</label>
+                        <label class="switch">
+                            <input type="checkbox" id="settingsDebugModeAll">
+                            <span class="slider"></span>
+                        </label>
+                        <small>${t('settings.debugModeHelp')}</small>
                     </div>
                     <div class="form-group">
                         <label>${t('settings.claudeConfigDir')}</label>
@@ -157,7 +194,9 @@ export function initUI() {
                     <div class="manage-section">
                         <div class="section-header">
                             <h3>${t('manage.vendors')}</h3>
-                            <button class="btn btn-sm btn-primary" onclick="showVendorForm()">+ ${t('manage.addVendor')}</button>
+                            <button class="btn btn-sm btn-primary" onclick="showVendorForm()">+ ${t(
+                              'manage.addVendor'
+                            )}</button>
                         </div>
                         <div class="vendor-list" id="vendorList">
                             <div class="empty-state">${t('manage.noVendors')}</div>
@@ -166,7 +205,9 @@ export function initUI() {
                     <div class="manage-section">
                         <div class="section-header">
                             <h3>${t('manage.endpoints')}</h3>
-                            <button class="btn btn-sm btn-primary" onclick="showEndpointForm()" id="addEndpointBtn" disabled>+ ${t('manage.addEndpoint')}</button>
+                            <button class="btn btn-sm btn-primary" onclick="showEndpointForm()" id="addEndpointBtn" disabled>+ ${t(
+                              'manage.addEndpoint'
+                            )}</button>
                         </div>
                         <div class="endpoint-manage-list" id="endpointManageList">
                             <div class="empty-state">${t('manage.selectVendorFirst')}</div>
@@ -203,7 +244,9 @@ export function initUI() {
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-danger" id="deleteVendorBtn" onclick="deleteVendor()" style="margin-right:auto;display:none;">${t('manage.delete')}</button>
+                    <button class="btn btn-danger" id="deleteVendorBtn" onclick="deleteVendor()" style="margin-right:auto;display:none;">${t(
+                      'manage.delete'
+                    )}</button>
                     <button class="btn btn-secondary" onclick="closeVendorForm()">${t('manage.cancel')}</button>
                     <button class="btn btn-primary" onclick="saveVendor()">${t('manage.save')}</button>
                 </div>
@@ -232,7 +275,9 @@ export function initUI() {
                         <label>${t('manage.apiKey')} *</label>
                         <div class="input-with-icon">
                             <input type="password" id="endpointApiKey" placeholder="${t('manage.apiKeyPlaceholder')}">
-                            <button type="button" class="input-icon-btn" id="toggleApiKeyVisibility" onclick="toggleApiKeyVisibility()" title="${t('manage.toggleVisibility')}">👁️</button>
+                            <button type="button" class="input-icon-btn" id="toggleApiKeyVisibility" onclick="toggleApiKeyVisibility()" title="${t(
+                              'manage.toggleVisibility'
+                            )}">👁️</button>
                         </div>
                     </div>
                     <div class="form-group">
@@ -257,7 +302,9 @@ export function initUI() {
                         <label>${t('manage.model')}</label>
                         <div class="model-input-wrapper">
                             <div class="model-select-container">
-                                <input type="text" id="endpointModel" placeholder="${t('manage.modelPlaceholder')}" autocomplete="off" oninput="updateTestButtonVisibility()">
+                                <input type="text" id="endpointModel" placeholder="${t(
+                                  'manage.modelPlaceholder'
+                                )}" autocomplete="off" oninput="updateTestButtonVisibility()">
                                 <button type="button" class="model-dropdown-toggle" onclick="toggleModelDropdown()">
                                     <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
                                         <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
@@ -265,17 +312,23 @@ export function initUI() {
                                 </button>
                                 <div class="model-dropdown" id="modelDropdown"></div>
                             </div>
-                            <button type="button" class="btn btn-sm btn-secondary" id="fetchModelsBtn" onclick="fetchModels()" title="${t('manage.fetchModels')}">
+                            <button type="button" class="btn btn-sm btn-secondary" id="fetchModelsBtn" onclick="fetchModels()" title="${t(
+                              'manage.fetchModels'
+                            )}">
                                 <span id="fetchModelsIcon">${t('manage.fetchModelsBtn')}</span>
                             </button>
-                            <button type="button" class="btn btn-sm btn-secondary" id="testEndpointBtn" onclick="testEndpoint()" style="display:none;">${t('manage.test')}</button>
+                            <button type="button" class="btn btn-sm btn-secondary" id="testEndpointBtn" onclick="testEndpoint()" style="display:none;">${t(
+                              'manage.test'
+                            )}</button>
                         </div>
                     </div>
                     <div class="form-group">
                         <label>${t('manage.transformer')}</label>
                         <div class="model-input-wrapper">
                             <div class="model-select-container">
-                                <input type="text" id="endpointTransformerDisplay" readonly onclick="toggleTransformerDropdown()" placeholder="${t('manage.transformerPlaceholder')}">
+                                <input type="text" id="endpointTransformerDisplay" readonly onclick="toggleTransformerDropdown()" placeholder="${t(
+                                  'manage.transformerPlaceholder'
+                                )}">
                                 <button type="button" class="model-dropdown-toggle" onclick="toggleTransformerDropdown()">
                                     <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
                                         <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
@@ -283,7 +336,9 @@ export function initUI() {
                                 </button>
                                 <div class="model-dropdown" id="transformerDropdown"></div>
                             </div>
-                            <button type="button" class="btn btn-sm btn-primary" id="quickMappingBtn" onclick="applyQuickModelMappings()" style="display:none;" title="${t('manage.quickMappingTitle')}">🚀 ${t('manage.quickMapping')}</button>
+                            <button type="button" class="btn btn-sm btn-primary" id="quickMappingBtn" onclick="applyQuickModelMappings()" style="display:none;" title="${t(
+                              'manage.quickMappingTitle'
+                            )}">🚀 ${t('manage.quickMapping')}</button>
                         </div>
                         <input type="hidden" id="endpointTransformer">
                         <small>${t('manage.transformerHelp')}</small>
@@ -293,8 +348,12 @@ export function initUI() {
                         <small>${t('manage.modelMappingsHelp')}</small>
                         <div class="model-mappings-container" id="modelMappingsContainer">
                             <div class="model-mapping-header">
-                                <input type="text" placeholder="${t('manage.modelMappingAlias')}" disabled class="mapping-header-label">
-                                <input type="text" placeholder="${t('manage.modelMappingName')}" disabled class="mapping-header-label">
+                                <input type="text" placeholder="${t(
+                                  'manage.modelMappingAlias'
+                                )}" disabled class="mapping-header-label">
+                                <input type="text" placeholder="${t(
+                                  'manage.modelMappingName'
+                                )}" disabled class="mapping-header-label">
                                 <button type="button" class="btn btn-sm btn-primary" onclick="addModelMapping()">+</button>
                             </div>
                             <div id="modelMappingsList"></div>
@@ -308,7 +367,9 @@ export function initUI() {
                     <div class="form-row">
                         <div class="form-group">
                             <label>${t('manage.priority')}</label>
-                            <input type="number" id="endpointPriority" min="1" max="10" value="5" placeholder="${t('manage.priorityPlaceholder')}">
+                            <input type="number" id="endpointPriority" min="1" max="10" value="5" placeholder="${t(
+                              'manage.priorityPlaceholder'
+                            )}">
                             <small>${t('manage.priorityHelp')}</small>
                         </div>
                         <div class="form-group switch-form-group">
@@ -325,7 +386,9 @@ export function initUI() {
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-danger" id="deleteEndpointBtn" onclick="deleteEndpoint()" style="margin-right:auto;display:none;">${t('manage.delete')}</button>
+                    <button class="btn btn-danger" id="deleteEndpointBtn" onclick="deleteEndpoint()" style="margin-right:auto;display:none;">${t(
+                      'manage.delete'
+                    )}</button>
                     <button class="btn btn-secondary" onclick="closeEndpointForm()">${t('manage.cancel')}</button>
                     <button class="btn btn-primary" onclick="saveEndpoint()">${t('manage.save')}</button>
                 </div>
@@ -346,7 +409,7 @@ export function initUI() {
         <div id="webdavModal" class="modal">
             <div class="modal-content modal-large">
                 <div class="modal-header">
-                    <h2>🔄 WebDAV 配置同步</h2>
+                    <h2>🔄 ${t('webdav.title')}</h2>
                     <button class="modal-close" onclick="closeWebDAVModal()">×</button>
                 </div>
                 <div class="modal-body">
@@ -393,5 +456,87 @@ export function initUI() {
                 </div>
             </div>
         </div>
-    `;
+
+	        <!-- Kiro Config Modal -->
+	        <div id="kiroConfigModal" class="modal">
+	            <div class="modal-content">
+	                <div class="modal-header">
+	                    <h2>${t('kiro.title')}</h2>
+	                    <button class="modal-close" onclick="closeKiroConfigModal()">&times;</button>
+	                </div>
+	                <div class="modal-body">
+		                    <div class="form-group">
+		                        <label>${t('kiro.refreshToken')}</label>
+		                        <div class="model-input-wrapper">
+		                            <input type="text" id="kiroRefreshToken" placeholder="${t(
+		                                'kiro.refreshTokenPlaceholder'
+		                              )}" oninput="onKiroRefreshTokenInput()">
+		                            <button type="button" class="btn btn-sm btn-secondary" id="testKiroRefreshTokenBtn" onclick="testKiroRefreshToken()">
+		                                <span id="testKiroRefreshTokenBtnText">${t('kiro.test')}</span>
+		                            </button>
+		                        </div>
+		                        <small>${t('kiro.refreshTokenHelp')}</small>
+		                    </div>
+		                    <div class="form-group">
+		                        <label>${t('kiro.accessToken')}</label>
+		                        <div class="model-input-wrapper">
+		                            <input type="text" id="kiroAccessToken" placeholder="${t(
+		                              'kiro.accessTokenPlaceholder'
+		                            )}" readonly>
+		                            <button type="button" class="btn btn-sm btn-secondary" id="fetchKiroUsageBtn" onclick="fetchKiroUsage()" disabled>
+		                                <span id="fetchKiroUsageBtnText">${t('kiro.usage')}</span>
+		                            </button>
+		                        </div>
+		                        <small>${t('kiro.accessTokenHelp')}</small>
+		                        <small id="kiroUsageInfo" style="display:none;"></small>
+		                    </div>
+	                    <div class="form-group">
+	                        <label>${t('kiro.profileArn')}</label>
+	                        <input type="text" id="kiroProfileArn" placeholder="${t(
+	                          'kiro.profileArnPlaceholder'
+	                        )}" readonly>
+	                        <small>${t('kiro.profileArnHelp')}</small>
+	                    </div>
+		                    <div class="form-group">
+		                        <label>${t('kiro.region')}</label>
+		                        <div class="model-select-container kiro-region-select">
+		                            <input type="text" id="kiroRegionDisplay" readonly onclick="toggleKiroRegionDropdown()">
+		                            <button type="button" class="model-dropdown-toggle" onclick="toggleKiroRegionDropdown()">
+		                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+		                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+		                                </svg>
+	                            </button>
+	                            <div class="model-dropdown" id="kiroRegionDropdown"></div>
+	                        </div>
+	                        <select id="kiroRegion" style="display:none;">
+	                            <option value="us-east-1">us-east-1 (N. Virginia)</option>
+	                            <option value="us-west-2">us-west-2 (Oregon)</option>
+	                            <option value="eu-west-1">eu-west-1 (Ireland)</option>
+	                        </select>
+	                    </div>
+	                    <div class="form-group">
+	                        <label>${t('kiro.proxyUrl')}</label>
+	                        <input type="text" id="kiroProxyUrl" placeholder="${t('kiro.proxyUrlPlaceholder')}">
+	                        <small>${t('kiro.proxyUrlHelp')}</small>
+	                    </div>
+	                    <div class="form-group">
+	                        <label>${t('kiro.userAgent')}</label>
+	                        <input type="text" id="kiroUserAgent" placeholder="${t('kiro.userAgentPlaceholder')}">
+	                        <small>${t('kiro.userAgentHelp')}</small>
+	                    </div>
+	                    <div class="form-group">
+	                        <label>${t('kiro.version')}</label>
+	                        <input type="text" id="kiroVersion" placeholder="${t('kiro.versionPlaceholder')}">
+	                        <small>${t('kiro.versionHelp')}</small>
+	                    </div>
+	                </div>
+	                <div class="modal-footer">
+	                    <button class="btn btn-secondary" onclick="closeKiroConfigModal()">${t('settings.cancel')}</button>
+	                    <button class="btn btn-primary" id="saveKiroConfigBtn" onclick="saveKiroConfig()">${t(
+                        'settings.save'
+                      )}</button>
+	                </div>
+	            </div>
+	        </div>
+	    `
 }

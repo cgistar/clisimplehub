@@ -143,6 +143,71 @@ export function logError(message) {
     appendLog(LOG_LEVELS.ERROR, message);
 }
 
+function formatNumber(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '0';
+    return num.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function formatPct(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '';
+    return `${num.toFixed(1)}%`;
+}
+
+export function logKiroUsageDetails(usageResult) {
+    if (!usageResult) {
+        logWarn('[KiroUsage] Empty usage result');
+        return;
+    }
+
+    const subscriptionTitle = String(usageResult.subscriptionTitle || '').trim();
+    const used = formatNumber(usageResult.currentUsage);
+    const limit = formatNumber(usageResult.usageLimit);
+    const balance = formatNumber(usageResult.balance);
+    const pct = formatPct(usageResult.usagePct);
+
+    const subscriptionLabel = subscriptionTitle ? ` subscription=${subscriptionTitle}` : '';
+    logInfo(`[KiroUsage]${subscriptionLabel} used=${used}/${limit} (${pct || 'n/a'}) remaining=${balance}`);
+    if (usageResult.isLowBalance) {
+        logWarn('[KiroUsage] Low remaining balance (<20%)');
+    }
+
+    const details = usageResult.details || null;
+    const breakdowns = Array.isArray(details?.usageBreakdownList) ? details.usageBreakdownList : [];
+    if (!details || breakdowns.length === 0) return;
+
+    const subscriptionType = String(details?.subscriptionInfo?.type || '').trim();
+    if (subscriptionType) {
+        logInfo(`[KiroUsage] subscriptionType=${subscriptionType}`);
+    }
+
+    breakdowns.forEach((b, index) => {
+        const name = String(b?.displayName || `Item ${index + 1}`).trim();
+        const itemUsed = formatNumber(b?.currentUsageWithPrecision);
+        const itemLimit = formatNumber(b?.usageLimitWithPrecision);
+        logInfo(`[KiroUsage] - ${name}: ${itemUsed}/${itemLimit}`);
+
+        if (b?.freeTrialInfo) {
+            const ftUsed = formatNumber(b.freeTrialInfo.currentUsageWithPrecision);
+            const ftLimit = formatNumber(b.freeTrialInfo.usageLimitWithPrecision);
+            const ftStatus = String(b.freeTrialInfo.freeTrialStatus || '').trim();
+            const ftLabel = ftStatus ? ` status=${ftStatus}` : '';
+            logInfo(`[KiroUsage]   freeTrial:${ftLabel} ${ftUsed}/${ftLimit}`);
+        }
+
+        const bonuses = Array.isArray(b?.bonuses) ? b.bonuses : [];
+        bonuses.forEach(bonus => {
+            const code = String(bonus?.bonusCode || '').trim() || 'bonus';
+            const status = String(bonus?.status || '').trim();
+            const bonusUsed = formatNumber(bonus?.currentUsage);
+            const bonusLimit = formatNumber(bonus?.usageLimit);
+            const statusLabel = status ? ` status=${status}` : '';
+            logInfo(`[KiroUsage]   bonus:${code}${statusLabel} ${bonusUsed}/${bonusLimit}`);
+        });
+    });
+}
+
 function handleRealtimeEvent(event) {
     if (!event) return;
 

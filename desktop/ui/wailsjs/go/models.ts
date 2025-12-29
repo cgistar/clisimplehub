@@ -15,6 +15,129 @@ export namespace config {
 
 }
 
+export namespace kiro {
+	
+	export class Bonus {
+	    bonusCode: string;
+	    usageLimit: number;
+	    currentUsage: number;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Bonus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bonusCode = source["bonusCode"];
+	        this.usageLimit = source["usageLimit"];
+	        this.currentUsage = source["currentUsage"];
+	        this.status = source["status"];
+	    }
+	}
+	export class FreeTrialInfo {
+	    usageLimitWithPrecision: number;
+	    currentUsageWithPrecision: number;
+	    freeTrialStatus: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FreeTrialInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.usageLimitWithPrecision = source["usageLimitWithPrecision"];
+	        this.currentUsageWithPrecision = source["currentUsageWithPrecision"];
+	        this.freeTrialStatus = source["freeTrialStatus"];
+	    }
+	}
+	export class SubscriptionInfo {
+	    subscriptionTitle: string;
+	    type: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.subscriptionTitle = source["subscriptionTitle"];
+	        this.type = source["type"];
+	    }
+	}
+	export class UsageBreakdown {
+	    usageLimitWithPrecision: number;
+	    currentUsageWithPrecision: number;
+	    displayName: string;
+	    freeTrialInfo?: FreeTrialInfo;
+	    bonuses: Bonus[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UsageBreakdown(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.usageLimitWithPrecision = source["usageLimitWithPrecision"];
+	        this.currentUsageWithPrecision = source["currentUsageWithPrecision"];
+	        this.displayName = source["displayName"];
+	        this.freeTrialInfo = this.convertValues(source["freeTrialInfo"], FreeTrialInfo);
+	        this.bonuses = this.convertValues(source["bonuses"], Bonus);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class UsageLimitsResponse {
+	    subscriptionInfo: SubscriptionInfo;
+	    usageBreakdownList: UsageBreakdown[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UsageLimitsResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.subscriptionInfo = this.convertValues(source["subscriptionInfo"], SubscriptionInfo);
+	        this.usageBreakdownList = this.convertValues(source["usageBreakdownList"], UsageBreakdown);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace main {
 	
 	export class CLIConfigDirs {
@@ -341,6 +464,118 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class KiroConfig {
+	    refreshToken: string;
+	    profileArn: string;
+	    region: string;
+	    proxyUrl: string;
+	    userAgent: string;
+	    version: string;
+	    accessToken?: string;
+	    expiresAt?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new KiroConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.refreshToken = source["refreshToken"];
+	        this.profileArn = source["profileArn"];
+	        this.region = source["region"];
+	        this.proxyUrl = source["proxyUrl"];
+	        this.userAgent = source["userAgent"];
+	        this.version = source["version"];
+	        this.accessToken = source["accessToken"];
+	        this.expiresAt = source["expiresAt"];
+	    }
+	}
+	export class KiroTestResult {
+	    accessToken: string;
+	    refreshToken?: string;
+	    expiresAt: string;
+	    profileArn?: string;
+	    region?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new KiroTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.accessToken = source["accessToken"];
+	        this.refreshToken = source["refreshToken"];
+	        this.expiresAt = source["expiresAt"];
+	        this.profileArn = source["profileArn"];
+	        this.region = source["region"];
+	    }
+	}
+	export class KiroUsageInput {
+	    accessToken: string;
+	    refreshToken?: string;
+	    profileArn?: string;
+	    region?: string;
+	    proxyUrl?: string;
+	    userAgent?: string;
+	    version?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new KiroUsageInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.accessToken = source["accessToken"];
+	        this.refreshToken = source["refreshToken"];
+	        this.profileArn = source["profileArn"];
+	        this.region = source["region"];
+	        this.proxyUrl = source["proxyUrl"];
+	        this.userAgent = source["userAgent"];
+	        this.version = source["version"];
+	    }
+	}
+	export class KiroUsageResult {
+	    subscriptionTitle?: string;
+	    usageLimit: number;
+	    currentUsage: number;
+	    balance: number;
+	    usagePct: number;
+	    isLowBalance: boolean;
+	    details?: kiro.UsageLimitsResponse;
+	
+	    static createFrom(source: any = {}) {
+	        return new KiroUsageResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.subscriptionTitle = source["subscriptionTitle"];
+	        this.usageLimit = source["usageLimit"];
+	        this.currentUsage = source["currentUsage"];
+	        this.balance = source["balance"];
+	        this.usagePct = source["usagePct"];
+	        this.isLowBalance = source["isLowBalance"];
+	        this.details = this.convertValues(source["details"], kiro.UsageLimitsResponse);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class LocalIPInfo {
 	    ip: string;
 	    interface: string;
@@ -459,6 +694,7 @@ export namespace main {
 	    port: number;
 	    apiKey: string;
 	    fallback: boolean;
+	    debugMode?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -469,6 +705,7 @@ export namespace main {
 	        this.port = source["port"];
 	        this.apiKey = source["apiKey"];
 	        this.fallback = source["fallback"];
+	        this.debugMode = source["debugMode"];
 	    }
 	}
 	export class TestEndpointParams {

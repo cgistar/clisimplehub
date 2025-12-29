@@ -23,6 +23,9 @@ type ForwardResult struct {
 	Body           []byte
 	TargetURL      string
 	TargetHeaders  map[string]string
+	// UpstreamRequestBody records the effective request body sent to upstream when enabled via context.
+	UpstreamRequestBody          string
+	UpstreamRequestBodyTruncated bool
 	ResponseStream string
 	Tokens         *TokenUsage
 	Streamed       bool
