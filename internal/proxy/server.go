@@ -104,8 +104,8 @@ func (p *ProxyServer) Start() error {
 	p.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", p.port),
 		Handler:      mux,
-		ReadTimeout:  300 * time.Second,
-		WriteTimeout: 300 * time.Second,
+		ReadTimeout:  600 * time.Second,
+		WriteTimeout: 600 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 

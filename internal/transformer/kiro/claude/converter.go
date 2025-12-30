@@ -1044,40 +1044,6 @@ func applyTokenAccounting(state *StreamState) {
 func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]string, error) {
 	var outputs []string
 
-	finalizeToolUse := func() {
-		if state == nil {
-			return
-		}
-		if strings.TrimSpace(state.CurrentToolUseID) == "" && strings.TrimSpace(state.CurrentToolName) == "" && strings.TrimSpace(state.ToolUseArgs) == "" {
-			return
-		}
-
-		var input any = map[string]any{}
-		args := strings.TrimSpace(state.ToolUseArgs)
-		if args != "" {
-			var obj any
-			if err := json.Unmarshal([]byte(args), &obj); err == nil {
-				input = obj
-			} else {
-				input = map[string]any{}
-			}
-		}
-
-		if state.CollectedToolUses == nil {
-			state.CollectedToolUses = make([]map[string]any, 0, 1)
-		}
-		state.CollectedToolUses = append(state.CollectedToolUses, map[string]any{
-			"id":       state.CurrentToolUseID,
-			"name":     state.CurrentToolName,
-			"input":    input,
-			"args_raw": args,
-		})
-
-		state.CurrentToolUseID = ""
-		state.CurrentToolName = ""
-		state.ToolUseArgs = ""
-	}
-
 	switch event.Type {
 	case kirotypes.StreamEventContent:
 		content, ok := event.Data.(string)
@@ -1127,18 +1093,20 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 
 		// If a previous tool call didn't emit a stop marker, finalize it before starting a new one.
 		if state.ToolUseBlockOpen {
-			finalizeToolUse()
-			// ❌ 不再实时发送 tool block stop
-			// stopToolBlock()
+			outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
 			state.ToolUseBlockOpen = false
+			state.CurrentToolBlock = -1
+			state.ContentIndex++
 		}
 
 		state.CurrentToolUseID = shared.StringFromAny(data["toolUseId"])
 		state.CurrentToolName = shared.StringFromAny(data["name"])
 		state.ToolUseArgs = ""
+		state.CurrentToolBlock = state.ContentIndex
 		state.ToolUseBlockOpen = true
-		// ❌ 不再实时发送 tool block start
-		// startToolBlock(state.CurrentToolUseID, state.CurrentToolName)
+
+		// ✅ 实时发送 tool block start
+		outputs = append(outputs, buildToolUseBlockStart(state.CurrentToolBlock, state.CurrentToolUseID, state.CurrentToolName))
 
 	case kirotypes.StreamEventToolInput:
 		if state == nil {
@@ -1157,10 +1125,10 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			incomingName := shared.StringFromAny(m["name"])
 
 			if state.ToolUseBlockOpen && incomingID != "" && strings.TrimSpace(state.CurrentToolUseID) != "" && incomingID != state.CurrentToolUseID {
-				finalizeToolUse()
-				// ❌ 不再实时发送 tool block stop
-				// stopToolBlock()
+				outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
 				state.ToolUseBlockOpen = false
+				state.CurrentToolBlock = -1
+				state.ContentIndex++
 			}
 
 			data = m["input"]
@@ -1180,9 +1148,11 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 				state.CurrentToolUseID = incomingID
 				state.CurrentToolName = incomingName
 				state.ToolUseArgs = ""
+				state.CurrentToolBlock = state.ContentIndex
 				state.ToolUseBlockOpen = true
-				// ❌ 不再实时发送 tool block start
-				// startToolBlock(state.CurrentToolUseID, state.CurrentToolName)
+
+				// ✅ 实时发送 tool block start
+				outputs = append(outputs, buildToolUseBlockStart(state.CurrentToolBlock, state.CurrentToolUseID, state.CurrentToolName))
 			}
 		}
 
@@ -1205,26 +1175,24 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		}
 		if partial != "" {
 			state.ToolUseArgs += partial
+			// ✅ 实时发送 tool input delta
+			outputs = append(outputs, buildToolUseInputDelta(state.CurrentToolBlock, partial))
 		}
 
 		// Some streams mark tool completion on the final tool_input chunk (`stop: true`).
 		if stopAfter && state.ToolUseBlockOpen {
-			// ❌ 不再实时发送 tool args delta
-			// flushToolArgsDeltaIfValid()
-			finalizeToolUse()
+			outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
 			state.ToolUseBlockOpen = false
-			// ❌ 不再实时发送 tool block stop
-			// stopToolBlock()
+			state.CurrentToolBlock = -1
+			state.ContentIndex++
 		}
 
 	case kirotypes.StreamEventToolStop:
 		if state.ToolUseBlockOpen {
-			// ❌ 不再实时发送 tool args delta
-			// flushToolArgsDeltaIfValid()
-			finalizeToolUse()
+			outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
 			state.ToolUseBlockOpen = false
-			// ❌ 不再实时发送 tool block stop
-			// stopToolBlock()
+			state.CurrentToolBlock = -1
+			state.ContentIndex++
 		}
 
 	case kirotypes.StreamEventToolUses:
@@ -1236,9 +1204,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			return nil, nil
 		}
 
-		// Replace collected tool uses with the authoritative complete list when present.
-		state.CollectedToolUses = state.CollectedToolUses[:0]
-
+		// 实时发送完整的 tool_use blocks
 		for _, tu := range toolUses {
 			tuMap, ok := tu.(map[string]interface{})
 			if !ok {
@@ -1249,12 +1215,25 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			toolName := shared.StringFromAny(tuMap["name"])
 			input := tuMap["input"]
 
-			state.CollectedToolUses = append(state.CollectedToolUses, map[string]any{
-				"id":       toolUseID,
-				"name":     toolName,
-				"input":    input,
-				"args_raw": "",
-			})
+			// 关闭当前打开的文本块
+			if state.ContentBlockOpen {
+				outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+				state.ContentBlockOpen = false
+				state.ContentIndex++
+			}
+
+			// 发送 tool_use block
+			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, toolUseID, toolName))
+
+			// 发送 input
+			if m, ok := input.(map[string]any); ok && len(m) > 0 {
+				if b, err := json.Marshal(m); err == nil {
+					outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, string(b)))
+				}
+			}
+
+			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+			state.ContentIndex++
 		}
 
 	case kirotypes.StreamEventUsage:
@@ -1316,28 +1295,12 @@ func FinishStream(state *StreamState) []string {
 
 	if state != nil {
 		state.Finished = true
-		// If the upstream ended without a tool_stop marker, finalize the tool use so that
-		// non-stream collection can still return the tool_use content.
+		// If the upstream ended without a tool_stop marker, close the tool block
 		if state.ToolUseBlockOpen {
-			// Best-effort parse of arguments accumulated in ToolUseArgs.
-			var input any = map[string]any{}
-			args := strings.TrimSpace(state.ToolUseArgs)
-			if args != "" {
-				var obj any
-				if err := json.Unmarshal([]byte(args), &obj); err == nil {
-					input = obj
-				}
-			}
-			if strings.TrimSpace(state.CurrentToolUseID) != "" || strings.TrimSpace(state.CurrentToolName) != "" || args != "" {
-				state.CollectedToolUses = append(state.CollectedToolUses, map[string]any{
-					"id":    state.CurrentToolUseID,
-					"name":  state.CurrentToolName,
-					"input": input,
-				})
-			}
-			state.CurrentToolUseID = ""
-			state.CurrentToolName = ""
-			state.ToolUseArgs = ""
+			outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
+			state.ToolUseBlockOpen = false
+			state.CurrentToolBlock = -1
+			state.ContentIndex++
 		}
 	}
 
@@ -1397,87 +1360,6 @@ func FinishStream(state *StreamState) []string {
 		state.ToolBlockOpen = false
 		state.CurrentToolBlock = -1
 		state.ContentIndex++
-	}
-
-	// ✅ 批量发送所有 tool_use blocks，始终在流结束后批量发送
-	if state != nil && len(state.CollectedToolUses) > 0 {
-		// Deduplicate by toolUseId, preferring non-empty args.
-		type chosen struct {
-			firstIdx int
-			argsLen  int
-			hasInput bool
-			m        map[string]any
-		}
-		byID := map[string]chosen{}
-		orderedIDs := make([]string, 0, len(state.CollectedToolUses))
-
-		for idx, tu := range state.CollectedToolUses {
-			if tu == nil {
-				continue
-			}
-			id, _ := tu["id"].(string)
-			id = strings.TrimSpace(id)
-			if id == "" {
-				continue
-			}
-			argsRaw, _ := tu["args_raw"].(string)
-			argsRaw = strings.TrimSpace(argsRaw)
-			input := tu["input"]
-			hasInput := false
-			if m, ok := input.(map[string]any); ok && len(m) > 0 {
-				hasInput = true
-			}
-			cand := chosen{
-				firstIdx: idx,
-				argsLen:  len(argsRaw),
-				hasInput: hasInput,
-				m:        tu,
-			}
-			if existing, ok := byID[id]; ok {
-				// Prefer non-empty inputs; otherwise longer args.
-				better := false
-				if cand.hasInput && !existing.hasInput {
-					better = true
-				} else if cand.hasInput == existing.hasInput && cand.argsLen > existing.argsLen {
-					better = true
-				}
-				if better {
-					cand.firstIdx = existing.firstIdx
-					byID[id] = cand
-				}
-				continue
-			}
-			byID[id] = cand
-			orderedIDs = append(orderedIDs, id)
-		}
-
-		for _, id := range orderedIDs {
-			c := byID[id]
-			tu := c.m
-			toolName, _ := tu["name"].(string)
-			toolName = strings.TrimSpace(toolName)
-			argsRaw, _ := tu["args_raw"].(string)
-			argsRaw = strings.TrimSpace(argsRaw)
-			input := tu["input"]
-
-			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, id, toolName))
-
-			if m, ok := input.(map[string]any); ok && len(m) > 0 {
-				partial := argsRaw
-				if partial == "" {
-					// Fall back to compact JSON if we don't have the raw string.
-					if b, err := json.Marshal(m); err == nil {
-						partial = string(b)
-					}
-				}
-				if partial != "" {
-					outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, partial))
-				}
-			}
-
-			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
-			state.ContentIndex++
-		}
 	}
 
 	applyTokenAccounting(state)

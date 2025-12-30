@@ -281,6 +281,13 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 	captureUpstream := shouldCaptureUpstreamResponseBody(ctx)
 	var upstream limitedByteBuffer
 
+	// 连续超时容错机制
+	const (
+		readTimeout            = 30 * time.Second
+		maxConsecutiveTimeouts = 3
+	)
+	consecutiveTimeouts := 0
+
 	buf := make([]byte, 32*1024)
 	for {
 		select {
@@ -295,7 +302,39 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 		default:
 		}
 
-		n, err := reader.Read(buf)
+		// 使用带超时的读取
+		type readResult struct {
+			n   int
+			err error
+		}
+		readChan := make(chan readResult, 1)
+		go func() {
+			n, err := reader.Read(buf)
+			readChan <- readResult{n: n, err: err}
+		}()
+
+		var n int
+		var err error
+		select {
+		case res := <-readChan:
+			n, err = res.n, res.err
+			consecutiveTimeouts = 0 // 成功读取，重置计数器
+		case <-time.After(readTimeout):
+			consecutiveTimeouts++
+			if consecutiveTimeouts <= maxConsecutiveTimeouts {
+				// 记录警告但继续
+				continue
+			}
+			// 超过最大连续超时次数，退出
+			result.Error = fmt.Errorf("kiro stream: consecutive read timeout (%d times)", maxConsecutiveTimeouts)
+			result.Streamed = true
+			result.ResponseStream = capture.String()
+			if captureUpstream {
+				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+			}
+			return result
+		}
+
 		if n > 0 {
 			chunk := buf[:n]
 			if captureUpstream {
