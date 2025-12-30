@@ -23,7 +23,7 @@ func (e *BaseExecutor) Forward(ctx context.Context, endpoint *EndpointConfig, re
 
 	requestBody := applyModelMapping(req.Body, endpoint)
 	if shouldCaptureUpstreamRequestBody(ctx) {
-		result.UpstreamRequestBody, result.UpstreamRequestBodyTruncated = truncateCapturedUpstreamRequestBody(requestBody)
+		result.UpstreamRequestBody = capturedUpstreamRequestBody(requestBody)
 	}
 	proxyReq, err := http.NewRequestWithContext(ctx, req.Method, targetURL, bytes.NewReader(requestBody))
 	if err != nil {
@@ -53,7 +53,7 @@ func (e *BaseExecutor) Forward(ctx context.Context, endpoint *EndpointConfig, re
 		return e.handleStreamingResponse(ctx, w, resp, result)
 	}
 
-	return e.handleNonStreamingResponse(resp, result)
+	return e.handleNonStreamingResponse(ctx, resp, result)
 }
 
 func (e *BaseExecutor) handleStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *ForwardResult) *ForwardResult {
@@ -82,7 +82,9 @@ func (e *BaseExecutor) handleStreamingResponse(ctx context.Context, w http.Respo
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var capture strings.Builder
-	const maxCaptureSize = 50 * 1024
+
+	captureUpstream := shouldCaptureUpstreamResponseBody(ctx)
+	var upstream limitedByteBuffer
 
 	for scanner.Scan() {
 		select {
@@ -90,14 +92,19 @@ func (e *BaseExecutor) handleStreamingResponse(ctx context.Context, w http.Respo
 			result.Error = ctx.Err()
 			result.Streamed = true
 			result.ResponseStream = capture.String()
+			if captureUpstream {
+				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+			}
 			return result
 		default:
 		}
 
 		line := scanner.Bytes()
-		if capture.Len() < maxCaptureSize {
-			capture.Write(line)
-			capture.WriteByte('\n')
+		capture.Write(line)
+		capture.WriteByte('\n')
+		if captureUpstream {
+			upstream.Append(line)
+			upstream.AppendByte('\n')
 		}
 
 		if tokens := e.extractStreamTokens(line); tokens != nil {
@@ -121,10 +128,13 @@ func (e *BaseExecutor) handleStreamingResponse(ctx context.Context, w http.Respo
 
 	result.ResponseStream = capture.String()
 	result.Streamed = true
+	if captureUpstream {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+	}
 	return result
 }
 
-func (e *BaseExecutor) handleNonStreamingResponse(resp *http.Response, result *ForwardResult) *ForwardResult {
+func (e *BaseExecutor) handleNonStreamingResponse(ctx context.Context, resp *http.Response, result *ForwardResult) *ForwardResult {
 	reader := getResponseReader(resp)
 	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
 		defer closer.Close()
@@ -139,6 +149,10 @@ func (e *BaseExecutor) handleNonStreamingResponse(resp *http.Response, result *F
 	if err != nil {
 		result.Error = fmt.Errorf("failed to read response: %w", err)
 		return result
+	}
+
+	if shouldCaptureUpstreamResponseBody(ctx) {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(body)
 	}
 
 	if isLikelyHTMLResponse(resp.StatusCode, resp.Header.Get("Content-Type"), body) {

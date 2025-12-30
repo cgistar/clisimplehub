@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS vendor_stats (
     interface_type TEXT NOT NULL,
     target_headers TEXT NOT NULL,
     request_body TEXT,
+    response_body TEXT,
     duration_ms INTEGER DEFAULT 0,
     status_code INTEGER NOT NULL,
     status TEXT NOT NULL,

@@ -25,11 +25,12 @@ type ForwardResult struct {
 	TargetHeaders  map[string]string
 	// UpstreamRequestBody records the effective request body sent to upstream when enabled via context.
 	UpstreamRequestBody          string
-	UpstreamRequestBodyTruncated bool
-	ResponseStream string
-	Tokens         *TokenUsage
-	Streamed       bool
-	Error          error
+	// UpstreamResponseBody records the response body from upstream when enabled via context (base64 encoded if binary).
+	UpstreamResponseBody          string
+	ResponseStream                string
+	Tokens                        *TokenUsage
+	Streamed                      bool
+	Error                         error
 }
 
 // StreamWriter 用于写入流式响应

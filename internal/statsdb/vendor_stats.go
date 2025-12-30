@@ -29,6 +29,7 @@ type VendorStat struct {
 	InterfaceType string
 	TargetHeaders string
 	RequestBody   string
+	ResponseBody  string
 	DurationMs    int64
 	StatusCode    int
 	Status        string
@@ -119,11 +120,20 @@ func (s *SQLiteVendorStatsStore) ensureVendorStatsColumns(ctx context.Context) e
 	if err != nil {
 		return fmt.Errorf("check vendor_stats columns: %w", err)
 	}
-	if ok {
-		return nil
+	if !ok {
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE vendor_stats ADD COLUMN request_body TEXT"); err != nil {
+			return fmt.Errorf("add vendor_stats.request_body: %w", err)
+		}
 	}
-	if _, err := s.db.ExecContext(ctx, "ALTER TABLE vendor_stats ADD COLUMN request_body TEXT"); err != nil {
-		return fmt.Errorf("add vendor_stats.request_body: %w", err)
+
+	ok, err = hasColumn("vendor_stats", "response_body")
+	if err != nil {
+		return fmt.Errorf("check vendor_stats columns: %w", err)
+	}
+	if !ok {
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE vendor_stats ADD COLUMN response_body TEXT"); err != nil {
+			return fmt.Errorf("add vendor_stats.response_body: %w", err)
+		}
 	}
 	return nil
 }
@@ -145,10 +155,10 @@ func (s *SQLiteVendorStatsStore) InsertVendorStat(ctx context.Context, stat Vend
 INSERT INTO vendor_stats(
   vendor_id, vendor_name, endpoint_id, endpoint_name,
   path, date, interface_type, target_headers,
-  request_body,
+  request_body, response_body,
   duration_ms, status_code, status,
   input_tokens, output_tokens, cached_create, cached_read, reasoning
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.VendorID,
 		normalized.VendorName,
 		normalized.EndpointID,
@@ -158,6 +168,7 @@ INSERT INTO vendor_stats(
 		normalized.InterfaceType,
 		normalized.TargetHeaders,
 		normalized.RequestBody,
+		normalized.ResponseBody,
 		normalized.DurationMs,
 		normalized.StatusCode,
 		normalized.Status,

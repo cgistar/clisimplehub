@@ -92,7 +92,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 
 	requestBody := transformedBody
 	if shouldCaptureUpstreamRequestBody(ctx) {
-		result.UpstreamRequestBody, result.UpstreamRequestBodyTruncated = truncateCapturedUpstreamRequestBody(requestBody)
+		result.UpstreamRequestBody = capturedUpstreamRequestBody(requestBody)
 	}
 	finalModel := extractModelFromBody(requestBody)
 	if strings.TrimSpace(finalModel) == "" {
@@ -197,6 +197,11 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 			result.Error = fmt.Errorf("failed to read response: %w", readErr)
 			return result
 		}
+
+		if shouldCaptureUpstreamResponseBody(ctx) {
+			result.UpstreamResponseBody = capturedUpstreamResponseBody(body)
+		}
+
 		result.Body = body
 		return result
 	}
@@ -272,7 +277,9 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 	var state any
 
 	var capture strings.Builder
-	const maxCaptureSize = 50 * 1024
+
+	captureUpstream := shouldCaptureUpstreamResponseBody(ctx)
+	var upstream limitedByteBuffer
 
 	buf := make([]byte, 32*1024)
 	for {
@@ -281,6 +288,9 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 			result.Error = ctx.Err()
 			result.Streamed = true
 			result.ResponseStream = capture.String()
+			if captureUpstream {
+				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+			}
 			return result
 		default:
 		}
@@ -288,6 +298,9 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 		n, err := reader.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
+			if captureUpstream {
+				upstream.Append(chunk)
+			}
 			outs, trErr := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, &state)
 			if trErr != nil {
 				result.Error = trErr
@@ -301,14 +314,7 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 					result.Error = context.Canceled
 					break
 				}
-				if capture.Len() < maxCaptureSize {
-					remaining := maxCaptureSize - capture.Len()
-					if len(out) > remaining {
-						capture.WriteString(out[:remaining])
-					} else {
-						capture.WriteString(out)
-					}
-				}
+				capture.WriteString(out)
 				flusher.Flush()
 			}
 
@@ -340,14 +346,7 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 					result.Error = context.Canceled
 					break
 				}
-				if capture.Len() < maxCaptureSize {
-					remaining := maxCaptureSize - capture.Len()
-					if len(out) > remaining {
-						capture.WriteString(out[:remaining])
-					} else {
-						capture.WriteString(out)
-					}
-				}
+				capture.WriteString(out)
 				flusher.Flush()
 			}
 		}
@@ -363,20 +362,16 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 				result.Error = context.Canceled
 				break
 			}
-			if capture.Len() < maxCaptureSize {
-				remaining := maxCaptureSize - capture.Len()
-				if len(out) > remaining {
-					capture.WriteString(out[:remaining])
-				} else {
-					capture.WriteString(out)
-				}
-			}
+			capture.WriteString(out)
 			flusher.Flush()
 		}
 	}
 
 	result.Streamed = true
 	result.ResponseStream = capture.String()
+	if captureUpstream {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+	}
 	return result
 }
 
@@ -411,7 +406,9 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var capture strings.Builder
-	const maxCaptureSize = 50 * 1024
+
+	captureUpstream := shouldCaptureUpstreamResponseBody(ctx)
+	var upstream limitedByteBuffer
 
 	var state any
 
@@ -421,14 +418,19 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 			result.Error = ctx.Err()
 			result.Streamed = true
 			result.ResponseStream = capture.String()
+			if captureUpstream {
+				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+			}
 			return result
 		default:
 		}
 
 		line := scanner.Bytes()
-		if capture.Len() < maxCaptureSize {
-			capture.Write(line)
-			capture.WriteByte('\n')
+		capture.Write(line)
+		capture.WriteByte('\n')
+		if captureUpstream {
+			upstream.Append(line)
+			upstream.AppendByte('\n')
 		}
 
 		if tokens := extractStreamTokensFromLine(line); tokens != nil {
@@ -457,6 +459,9 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 	result.ResponseStream = capture.String()
 	result.Streamed = true
+	if captureUpstream {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+	}
 	return result
 }
 
@@ -485,6 +490,10 @@ func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Respo
 	if err != nil {
 		result.Error = fmt.Errorf("failed to read response: %w", err)
 		return result
+	}
+
+	if shouldCaptureUpstreamResponseBody(ctx) {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(body)
 	}
 
 	if isLikelyHTMLResponse(resp.StatusCode, resp.Header.Get("Content-Type"), body) {

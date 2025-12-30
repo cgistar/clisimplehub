@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -189,9 +188,13 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	enableRetry := isRetryable && fallbackEnabled
 	captureUpstreamRequestBody := p.isDebugModeAll() && isRetryable && shouldRecordStats
+	captureUpstreamResponseBody := p.isDebugModeAll() && isRetryable && shouldRecordStats
 	execCtx := executor.WithRequestID(r.Context(), requestID)
 	if captureUpstreamRequestBody {
 		execCtx = executor.WithCaptureUpstreamRequestBody(execCtx)
+	}
+	if captureUpstreamResponseBody {
+		execCtx = executor.WithCaptureUpstreamResponseBody(execCtx)
 	}
 	execResult := exec.retry.Execute(execCtx, forwardReq, w, enableRetry)
 	result := execResult.Result
@@ -202,9 +205,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		detail.ResponseStream = result.ResponseStream
 		if detail.ResponseStream == "" && shouldCaptureErrorResponse(result) {
 			if len(result.Body) > 0 {
-				detail.ResponseStream = truncateResponseBodyForLog(result.Body, 50*1024)
+				detail.ResponseStream = string(result.Body)
 			} else if result.Error != nil {
-				detail.ResponseStream = truncateResponseBodyForLog([]byte(result.Error.Error()), 8*1024)
+				detail.ResponseStream = result.Error.Error()
 			}
 		}
 	}
@@ -216,11 +219,12 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if isRetryable {
 		p.recordTokens(execResult.Endpoint, result)
 		if shouldRecordStats {
-			requestBody := ""
-			if captureUpstreamRequestBody && result != nil {
-				requestBody = result.UpstreamRequestBody
+			requestBody := vendorStatsRequestBody(captureUpstreamRequestBody, bodyBytes)
+			responseBody := ""
+			if captureUpstreamResponseBody && result != nil {
+				responseBody = result.UpstreamResponseBody
 			}
-			p.insertVendorStat(r.Context(), interfaceType, execResult.Endpoint, r.URL.Path, targetHeadersFromResult(result), requestBody, runTime, statusCodeFromResult(result), status, tokensFromResult(result))
+			p.insertVendorStat(r.Context(), interfaceType, execResult.Endpoint, r.URL.Path, targetHeadersFromResult(result), requestBody, responseBody, runTime, statusCodeFromResult(result), status, tokensFromResult(result))
 		}
 	}
 
@@ -244,6 +248,13 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
+}
+
+func vendorStatsRequestBody(capture bool, rawBody []byte) string {
+	if !capture || len(rawBody) == 0 {
+		return ""
+	}
+	return string(rawBody)
 }
 
 func isStreamRequested(r *http.Request, body []byte) bool {
@@ -281,19 +292,6 @@ func shouldCaptureErrorResponse(result *executor.ForwardResult) bool {
 		return false
 	}
 	return result.Error != nil || result.StatusCode != http.StatusOK
-}
-
-func truncateResponseBodyForLog(body []byte, maxLen int) string {
-	if maxLen <= 0 {
-		maxLen = 1024
-	}
-	raw := bytes.TrimSpace(body)
-	raw = bytes.ReplaceAll(raw, []byte("\r"), []byte("\\r"))
-	raw = bytes.ReplaceAll(raw, []byte("\n"), []byte("\\n"))
-	if len(raw) <= maxLen {
-		return string(raw)
-	}
-	return string(raw[:maxLen]) + "...(truncated)"
 }
 
 func statusFromExecuteResult(result *executor.ForwardResult) string {

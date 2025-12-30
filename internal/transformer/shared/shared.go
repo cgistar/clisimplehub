@@ -68,7 +68,13 @@ func SSEDataPayload(line []byte) ([]byte, bool) {
 }
 
 func SSEEvent(event string, data any) string {
-	b, _ := json.Marshal(data)
+	// SSE payload is JSON; keep it compact and do not escape '<', '>' and '&'
+	// so that downstream clients see the same characters as upstream (Rust parity).
+	b, err := MarshalNoEscapeHTML(data)
+	if err != nil {
+		// Best-effort fallback.
+		b, _ = json.Marshal(data)
+	}
 	return "event: " + event + "\n" + "data: " + string(b) + "\n\n"
 }
 

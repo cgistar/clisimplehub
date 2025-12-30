@@ -72,6 +72,11 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 		currentContent = "Continue"
 	}
 
+	// If content is empty (e.g., message with only tool_result), set to "Continue"
+	if strings.TrimSpace(currentContent) == "" {
+		currentContent = "Continue"
+	}
+
 	toolResults := []ToolResult(nil)
 	if currentMsg.Role == "user" {
 		toolResults = currentMsg.ToolResults
@@ -288,7 +293,7 @@ func extractSystemPrompt(claudeReq map[string]interface{}) string {
 				}
 			}
 		}
-		return strings.TrimSpace(strings.Join(parts, "\n\n"))
+		return strings.TrimSpace(strings.Join(parts, "\n"))
 	}
 	return ""
 }
@@ -389,11 +394,15 @@ func extractMessageContentWithImages(msg map[string]interface{}) (string, []Kiro
 	case []interface{}:
 		var parts []string
 		var images []KiroImage
+		hasToolResult := false
+
 		for _, part := range c {
 			switch v := part.(type) {
 			case map[string]interface{}:
 				partType := shared.StringFromAny(v["type"])
 				switch partType {
+				case "tool_result":
+					hasToolResult = true
 				case "text":
 					if text, ok := v["text"].(string); ok && text != "" {
 						parts = append(parts, text)
@@ -428,7 +437,12 @@ func extractMessageContentWithImages(msg map[string]interface{}) (string, []Kiro
 				}
 			}
 		}
-		return strings.Join(parts, ""), images
+
+		if hasToolResult {
+			return "", images
+		}
+
+		return strings.Join(parts, "\n"), images
 	}
 	return "", nil
 }
@@ -771,7 +785,7 @@ func appendToolDocumentationToSystemPrompt(systemPrompt string, toolDoc string) 
 	if strings.TrimSpace(systemPrompt) == "" {
 		return toolDoc
 	}
-	return toolDoc + "\n\n" + systemPrompt
+	return systemPrompt + "\n\n" + toolDoc
 }
 
 // generateConversationID generates a unique conversation ID
@@ -786,13 +800,6 @@ func ensureMessageStarted(state *StreamState, outputs *[]string) {
 	}
 	state.Started = true
 	*outputs = append(*outputs, buildMessageStart(state.MessageID, state.Model, state.InputTokens))
-
-	// Rust parity: when thinking is not enabled, start the initial text block immediately
-	// after message_start (even before the first text delta arrives).
-	if !state.ThinkingEnabled && !state.ContentBlockOpen && !state.ToolUseBlockOpen && !state.ToolBlockOpen && !state.ThinkingBlockOpen {
-		*outputs = append(*outputs, buildContentBlockStart(state.ContentIndex, "text"))
-		state.ContentBlockOpen = true
-	}
 }
 
 // ensureTextBlockOpen ensures a text content block is open
@@ -863,7 +870,6 @@ func processContentWithThinking(state *StreamState, delta string, outputs *[]str
 			state.ThinkingExtracted = true
 			return
 		}
-		// Rust parity: send an empty thinking_delta before closing.
 		*outputs = append(*outputs, buildThinkingDelta(state.ThinkingBlockIndex, ""))
 		*outputs = append(*outputs, buildContentBlockStop(state.ThinkingBlockIndex))
 		state.ThinkingBlockOpen = false
@@ -958,11 +964,6 @@ func nextUpstreamTextDelta(state *StreamState, content string) string {
 		return delta
 	}
 
-	// Replay/rollback: don't emit anything
-	if strings.HasPrefix(state.RawTextSoFar, content) {
-		return ""
-	}
-
 	// Fallback: treat as a delta chunk and append
 	state.RawTextSoFar += content
 	return content
@@ -1002,19 +1003,12 @@ func applyTokenAccounting(state *StreamState) {
 		state.OutputTokens = estimateTokens(combined)
 	}
 
-	// When context usage percentage is present, derive prompt tokens by subtraction.
 	if state.ContextUsagePct > 0 {
 		totalTokens := int((state.ContextUsagePct / 100.0) * float64(defaultMaxInputTokens))
 		if totalTokens < 0 {
 			totalTokens = 0
 		}
-		promptTokens := totalTokens - state.OutputTokens
-		if promptTokens < 0 {
-			promptTokens = 0
-		}
-		if promptTokens > 0 {
-			state.InputTokens = promptTokens
-		}
+		state.InputTokens = totalTokens
 	}
 }
 
@@ -1207,7 +1201,6 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			return nil, nil
 		}
 
-		// Accumulate tool input
 		var partial string
 		switch v := data.(type) {
 		case nil:
@@ -1357,7 +1350,6 @@ func FinishStream(state *StreamState) []string {
 
 	ensureMessageStarted(state, &outputs)
 
-	// Flush any pending thinking buffer and close an open thinking block (Rust parity).
 	if state != nil && state.ThinkingEnabled && state.ThinkingBuffer != "" {
 		emitText := func(text string) {
 			if state == nil || text == "" {
@@ -1730,6 +1722,7 @@ func buildMessageDelta(state *StreamState) string {
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
+			"input_tokens":  state.InputTokens,
 			"output_tokens": state.OutputTokens,
 		},
 	}
