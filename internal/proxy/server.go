@@ -90,6 +90,9 @@ func (p *ProxyServer) GetWSHub() *WSHub {
 // Start starts the proxy server
 // Requirements: 1.1, 5.1, 7.1, 8.5
 func (p *ProxyServer) Start() error {
+	// 初始化文件调试日志
+	p.InitDebugFileLogger()
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", p.handleProxy)

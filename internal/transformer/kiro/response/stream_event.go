@@ -23,8 +23,8 @@ type EventStreamParser struct {
 	lastContent  string
 	parseErrors  int                   // Track number of parse errors for monitoring
 	droppedBytes int                   // Track dropped bytes for monitoring
-	maxErrors    int                   // 最大错误次数限制（迁移自 kiro2api）
-	toolManager  *ToolLifecycleManager // 工具生命周期管理器（迁移自 kiro2api）
+	maxErrors    int                   // 最大错误次数限制
+	toolManager  *ToolLifecycleManager // 工具生命周期管理器
 }
 
 // NewEventStreamParser creates a new EventStream parser
@@ -245,7 +245,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 	}
 
 	// 部分网关会把 payload 包一层：{"assistantResponseEvent": {...}}（见文档）。
-	// 增强：更完善的旧格式处理（迁移自 kiro2api）
+	// 增强：更完善的旧格式处理
 	if inner, ok := data["assistantResponseEvent"].(map[string]any); ok && inner != nil {
 		// 检查是否为流式响应（有 content 但无 toolUses）
 		if content, hasContent := inner["content"].(string); hasContent {
@@ -261,7 +261,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 		data = inner
 	}
 
-	// 增强：识别 completionChunk/delta 事件类型（迁移自 kiro2api）
+	// 增强：识别 completionChunk/delta 事件类型
 	// 流式补全块通常有 delta 字段
 	if delta, ok := data["delta"].(map[string]any); ok {
 		if text, ok := delta["text"].(string); ok && text != "" {
@@ -293,7 +293,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 	}
 
 	// assistantResponseMessage：非流式/聚合结构里也可能携带 content + toolUses
-	// 增强：识别 completion 事件类型（迁移自 kiro2api）
+	// 增强：识别 completion 事件类型
 	if arm, ok := data["assistantResponseMessage"].(map[string]any); ok {
 		if content, ok := arm["content"].(string); ok {
 			if content != p.lastContent {
@@ -314,7 +314,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 	name, hasName := data["name"].(string)
 	stop, hasStop := data["stop"].(bool)
 
-	// 验证 tool_use_id 完整性（迁移自 kiro2api）
+	// 验证 tool_use_id 完整性
 	if hasToolUseID && toolUseID != "" && !IsValidToolUseID(toolUseID) {
 		// 记录但不阻止处理，保持容错性
 		p.parseErrors++
@@ -323,7 +323,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 	// tool_input：Kiro toolUseEvent 可能把 input 分片（字符串/对象）放在 input 字段里
 	if input, ok := data["input"]; ok {
 		if hasToolUseID {
-			// 使用 toolManager 追加输入（迁移自 kiro2api）
+			// 使用 toolManager 追加输入
 			if p.toolManager != nil {
 				if inputStr, ok := input.(string); ok {
 					p.toolManager.AppendToolInput(toolUseID, inputStr)
@@ -339,7 +339,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 			}
 			if hasStop && stop {
 				payload["stop"] = true
-				// 完成工具调用（迁移自 kiro2api）
+				// 完成工具调用
 				if p.toolManager != nil {
 					p.toolManager.FinalizeToolCall(toolUseID)
 				}
@@ -352,7 +352,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 	// tool stop：可能是独立对象，或 {"name":...,"toolUseId":...,"stop":true}（无 input）
 	if hasStop && stop {
 		if hasToolUseID {
-			// 完成工具调用（迁移自 kiro2api）
+			// 完成工具调用
 			if p.toolManager != nil {
 				p.toolManager.FinalizeToolCall(toolUseID)
 			}
@@ -377,7 +377,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 
 	// tool_start：name + toolUseId 同时存在
 	if hasName && hasToolUseID {
-		// 使用 toolManager 追踪工具调用（迁移自 kiro2api）
+		// 使用 toolManager 追踪工具调用
 		if p.toolManager != nil {
 			p.toolManager.StartToolCall(toolUseID, name)
 		}
@@ -449,17 +449,17 @@ func (p *EventStreamParser) GetDroppedBytes() int {
 	return p.droppedBytes
 }
 
-// SetMaxErrors 设置最大错误次数（迁移自 kiro2api）
+// SetMaxErrors 设置最大错误次数
 func (p *EventStreamParser) SetMaxErrors(maxErrors int) {
 	p.maxErrors = maxErrors
 }
 
-// GetToolManager 获取工具生命周期管理器（迁移自 kiro2api）
+// GetToolManager 获取工具生命周期管理器
 func (p *EventStreamParser) GetToolManager() *ToolLifecycleManager {
 	return p.toolManager
 }
 
-// IsValidToolUseID 验证 tool_use_id 格式是否有效（迁移自 kiro2api）
+// IsValidToolUseID 验证 tool_use_id 格式是否有效
 // 有效格式：tooluse_ 前缀 + 20-50字符的 base64 编码 ID
 func IsValidToolUseID(toolUseID string) bool {
 	if len(toolUseID) < 20 || len(toolUseID) > 50 {

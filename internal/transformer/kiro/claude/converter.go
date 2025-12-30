@@ -1072,41 +1072,34 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			return nil, nil
 		}
 
-		ensureMessageStarted(state, &outputs)
+		toolUseID := shared.StringFromAny(data["toolUseId"])
+		toolName := shared.StringFromAny(data["name"])
 
-		if state.ContentBlockOpen {
+		// 如果有正在收集的 tool_use，先输出它
+		if state.ToolUseBlockOpen && state.CurrentToolUseID != "" {
+			ensureMessageStarted(state, &outputs)
+
+			// 先关闭文本 block（如果有）
+			if state.ContentBlockOpen {
+				outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+				state.ContentBlockOpen = false
+				state.ContentIndex++
+			}
+
+			// 立即输出之前的 tool_use
+			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, state.CurrentToolUseID, state.CurrentToolName))
+			if state.ToolUseArgs != "" {
+				outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, state.ToolUseArgs))
+			}
 			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
-			state.ContentBlockOpen = false
 			state.ContentIndex++
 		}
 
-		// Close thinking block if the upstream started a tool call mid-thinking.
-		if state.ThinkingBlockOpen {
-			outputs = append(outputs, buildThinkingDelta(state.ThinkingBlockIndex, ""))
-			outputs = append(outputs, buildContentBlockStop(state.ThinkingBlockIndex))
-			state.ThinkingBlockOpen = false
-			state.InThinkingBlock = false
-			state.ThinkingExtracted = true
-			state.ContentIndex = state.ThinkingBlockIndex + 1
-			state.ThinkingBlockIndex = -1
-		}
-
-		// If a previous tool call didn't emit a stop marker, finalize it before starting a new one.
-		if state.ToolUseBlockOpen {
-			outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
-			state.ToolUseBlockOpen = false
-			state.CurrentToolBlock = -1
-			state.ContentIndex++
-		}
-
-		state.CurrentToolUseID = shared.StringFromAny(data["toolUseId"])
-		state.CurrentToolName = shared.StringFromAny(data["name"])
+		// 开始收集新的 tool_use
+		state.CurrentToolUseID = toolUseID
+		state.CurrentToolName = toolName
 		state.ToolUseArgs = ""
-		state.CurrentToolBlock = state.ContentIndex
 		state.ToolUseBlockOpen = true
-
-		// ✅ 实时发送 tool block start
-		outputs = append(outputs, buildToolUseBlockStart(state.CurrentToolBlock, state.CurrentToolUseID, state.CurrentToolName))
 
 	case kirotypes.StreamEventToolInput:
 		if state == nil {
@@ -1124,11 +1117,26 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			incomingID := strings.TrimSpace(shared.StringFromAny(m["toolUseId"]))
 			incomingName := shared.StringFromAny(m["name"])
 
+			// 如果收到不同 tool 的 input，先输出当前的
 			if state.ToolUseBlockOpen && incomingID != "" && strings.TrimSpace(state.CurrentToolUseID) != "" && incomingID != state.CurrentToolUseID {
-				outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
-				state.ToolUseBlockOpen = false
-				state.CurrentToolBlock = -1
+				ensureMessageStarted(state, &outputs)
+
+				// 先关闭文本 block（如果有）
+				if state.ContentBlockOpen {
+					outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+					state.ContentBlockOpen = false
+					state.ContentIndex++
+				}
+
+				// 立即输出之前的 tool_use
+				outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, state.CurrentToolUseID, state.CurrentToolName))
+				if state.ToolUseArgs != "" {
+					outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, state.ToolUseArgs))
+				}
+				outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
 				state.ContentIndex++
+
+				state.ToolUseBlockOpen = false
 			}
 
 			data = m["input"]
@@ -1136,23 +1144,10 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			// Some streams may deliver input chunks without a preceding explicit tool_start.
 			// When that happens, start tracking the tool call based on the chunk metadata.
 			if !state.ToolUseBlockOpen && incomingID != "" {
-				ensureMessageStarted(state, &outputs)
-
-				// Close text content block if open.
-				if state.ContentBlockOpen {
-					outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
-					state.ContentBlockOpen = false
-					state.ContentIndex++
-				}
-
 				state.CurrentToolUseID = incomingID
 				state.CurrentToolName = incomingName
 				state.ToolUseArgs = ""
-				state.CurrentToolBlock = state.ContentIndex
 				state.ToolUseBlockOpen = true
-
-				// ✅ 实时发送 tool block start
-				outputs = append(outputs, buildToolUseBlockStart(state.CurrentToolBlock, state.CurrentToolUseID, state.CurrentToolName))
 			}
 		}
 
@@ -1175,36 +1170,77 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		}
 		if partial != "" {
 			state.ToolUseArgs += partial
-			// ✅ 实时发送 tool input delta
-			outputs = append(outputs, buildToolUseInputDelta(state.CurrentToolBlock, partial))
 		}
 
 		// Some streams mark tool completion on the final tool_input chunk (`stop: true`).
 		if stopAfter && state.ToolUseBlockOpen {
-			outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
-			state.ToolUseBlockOpen = false
-			state.CurrentToolBlock = -1
+			ensureMessageStarted(state, &outputs)
+
+			// 先关闭文本 block（如果有）
+			if state.ContentBlockOpen {
+				outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+				state.ContentBlockOpen = false
+				state.ContentIndex++
+			}
+
+			// 立即输出这个 tool_use
+			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, state.CurrentToolUseID, state.CurrentToolName))
+			if state.ToolUseArgs != "" {
+				outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, state.ToolUseArgs))
+			}
+			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
 			state.ContentIndex++
+
+			state.ToolUseBlockOpen = false
+			state.CurrentToolUseID = ""
+			state.CurrentToolName = ""
+			state.ToolUseArgs = ""
 		}
 
 	case kirotypes.StreamEventToolStop:
-		if state.ToolUseBlockOpen {
-			outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
-			state.ToolUseBlockOpen = false
-			state.CurrentToolBlock = -1
+		// 渐进式输出：立即输出已完成的 tool_use，避免批量发送导致前端卡顿
+		if state.ToolUseBlockOpen && state.CurrentToolUseID != "" {
+			ensureMessageStarted(state, &outputs)
+
+			// 先关闭文本 block（如果有）
+			if state.ContentBlockOpen {
+				outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+				state.ContentBlockOpen = false
+				state.ContentIndex++
+			}
+
+			// 立即输出这个 tool_use
+			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, state.CurrentToolUseID, state.CurrentToolName))
+			if state.ToolUseArgs != "" {
+				outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, state.ToolUseArgs))
+			}
+			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
 			state.ContentIndex++
+
+			// 重置状态
+			state.ToolUseBlockOpen = false
+			state.CurrentToolUseID = ""
+			state.CurrentToolName = ""
+			state.ToolUseArgs = ""
 		}
 
 	case kirotypes.StreamEventToolUses:
-		ensureMessageStarted(state, &outputs)
-
 		// Handle complete tool uses from assistantResponseMessage
+		// 渐进式输出：立即输出每个 tool_use
 		toolUses, ok := event.Data.([]interface{})
 		if !ok {
 			return nil, nil
 		}
 
-		// 实时发送完整的 tool_use blocks
+		ensureMessageStarted(state, &outputs)
+
+		// 先关闭文本 block（如果有）
+		if state.ContentBlockOpen {
+			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+			state.ContentBlockOpen = false
+			state.ContentIndex++
+		}
+
 		for _, tu := range toolUses {
 			tuMap, ok := tu.(map[string]interface{})
 			if !ok {
@@ -1215,23 +1251,18 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			toolName := shared.StringFromAny(tuMap["name"])
 			input := tuMap["input"]
 
-			// 关闭当前打开的文本块
-			if state.ContentBlockOpen {
-				outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
-				state.ContentBlockOpen = false
-				state.ContentIndex++
-			}
-
-			// 发送 tool_use block
-			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, toolUseID, toolName))
-
-			// 发送 input
+			var inputStr string
 			if m, ok := input.(map[string]any); ok && len(m) > 0 {
 				if b, err := json.Marshal(m); err == nil {
-					outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, string(b)))
+					inputStr = string(b)
 				}
 			}
 
+			// 立即输出这个 tool_use
+			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, toolUseID, toolName))
+			if inputStr != "" {
+				outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, inputStr))
+			}
 			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
 			state.ContentIndex++
 		}
@@ -1295,12 +1326,29 @@ func FinishStream(state *StreamState) []string {
 
 	if state != nil {
 		state.Finished = true
-		// If the upstream ended without a tool_stop marker, close the tool block
-		if state.ToolUseBlockOpen {
-			outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
-			state.ToolUseBlockOpen = false
-			state.CurrentToolBlock = -1
+		// 如果有未完成的 tool_use，立即输出
+		if state.ToolUseBlockOpen && state.CurrentToolUseID != "" {
+			ensureMessageStarted(state, &outputs)
+
+			// 先关闭文本 block（如果有）
+			if state.ContentBlockOpen {
+				outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+				state.ContentBlockOpen = false
+				state.ContentIndex++
+			}
+
+			// 立即输出这个 tool_use
+			outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, state.CurrentToolUseID, state.CurrentToolName))
+			if state.ToolUseArgs != "" {
+				outputs = append(outputs, buildToolUseInputDelta(state.ContentIndex, state.ToolUseArgs))
+			}
+			outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
 			state.ContentIndex++
+
+			state.ToolUseBlockOpen = false
+			state.CurrentToolUseID = ""
+			state.CurrentToolName = ""
+			state.ToolUseArgs = ""
 		}
 	}
 
@@ -1573,7 +1621,6 @@ func buildMessageDelta(state *StreamState) string {
 
 	// 使用 StopReasonManager 进行更准确的 stop_reason 判断
 	if state.StopReasonManager != nil {
-		// 更新工具调用状态
 		hasActiveTools := state.ToolUseBlockOpen || state.ToolBlockOpen
 		hasCompletedTools := len(state.CollectedToolUses) > 0 || len(state.CompletedToolUseIds) > 0
 		state.StopReasonManager.UpdateToolCallStatus(hasActiveTools, hasCompletedTools)

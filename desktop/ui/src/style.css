@@ -2016,6 +2016,12 @@ input:disabled + .slider {
     border-right: 1px solid var(--border-color);
 }
 
+.model-select-container.standalone-select input {
+    border-top-right-radius: var(--radius-sm);
+    border-bottom-right-radius: var(--radius-sm);
+    border-right: 1px solid var(--border-color);
+}
+
 .model-select-container input {
     flex: 1;
     padding-right: 32px;

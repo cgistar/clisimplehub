@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/executor"
+	"clisimplehub/internal/logger"
 	"clisimplehub/internal/transformer"
 	kiroclaude "clisimplehub/internal/transformer/kiro/claude"
 
@@ -189,12 +190,32 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	enableRetry := isRetryable && fallbackEnabled
 	captureUpstreamRequestBody := p.isDebugModeAll() && isRetryable && shouldRecordStats
 	captureUpstreamResponseBody := p.isDebugModeAll() && isRetryable && shouldRecordStats
+
+	// 创建请求级别的调试日志记录器（每次检查配置，支持热更新）
+	var debugLogger *logger.RequestDebugLogger
+	if logger.IsDebugFileModeEnabled() {
+		debugLogger = logger.NewRequestDebugLogger(requestID)
+		debugLogger.SetMetadata("InterfaceType", string(interfaceType))
+		debugLogger.SetMetadata("Path", r.URL.Path)
+		debugLogger.SetMetadata("Method", r.Method)
+		if endpoint != nil {
+			debugLogger.SetMetadata("Endpoint", endpoint.Name)
+			debugLogger.SetMetadata("Transformer", endpoint.Transformer)
+		}
+		debugLogger.Log("请求开始")
+		// 记录原始请求
+		debugLogger.SetSection("OriginalRequest", string(bodyBytes))
+	}
+
 	execCtx := executor.WithRequestID(r.Context(), requestID)
 	if captureUpstreamRequestBody {
 		execCtx = executor.WithCaptureUpstreamRequestBody(execCtx)
 	}
 	if captureUpstreamResponseBody {
 		execCtx = executor.WithCaptureUpstreamResponseBody(execCtx)
+	}
+	if debugLogger != nil {
+		execCtx = executor.WithDebugLogger(execCtx, debugLogger)
 	}
 	execResult := exec.retry.Execute(execCtx, forwardReq, w, enableRetry)
 	result := execResult.Result
@@ -210,11 +231,29 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 				detail.ResponseStream = result.Error.Error()
 			}
 		}
+		// 更新调试日志元数据
+		if debugLogger != nil {
+			debugLogger.SetMetadata("UpstreamURL", result.TargetURL)
+			debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", result.StatusCode))
+		}
 	}
 
 	runTime := time.Since(startTime).Milliseconds()
 	status := statusFromExecuteResult(result)
 	p.recordRequestWithDetail(requestID, interfaceType, execResult.Endpoint, r.URL.Path, startTime, status, runTime, detail)
+
+	// 写入调试日志文件
+	if debugLogger != nil {
+		debugLogger.Log("请求完成: status=%s, runTime=%dms", status, runTime)
+		// 记录转换后的响应（SSE）
+		if result != nil {
+			debugLogger.Log("ResponseStream长度: %d, Streamed=%v", len(result.ResponseStream), result.Streamed)
+			if result.ResponseStream != "" {
+				debugLogger.SetSection("TransformedResponse", result.ResponseStream)
+			}
+		}
+		_ = debugLogger.Flush()
+	}
 
 	if isRetryable {
 		p.recordTokens(execResult.Endpoint, result)

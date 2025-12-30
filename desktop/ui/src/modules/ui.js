@@ -157,12 +157,22 @@ export function initUI() {
                         </label>
                         <small>${t('settings.fallbackHelp')}</small>
                     </div>
-                    <div class="form-group switch-form-group">
-                        <label class="switch-label-inline">${t('settings.debugMode')}</label>
-                        <label class="switch">
-                            <input type="checkbox" id="settingsDebugModeAll">
-                            <span class="slider"></span>
-                        </label>
+                    <div class="form-group">
+                        <label>${t('settings.debugMode')}</label>
+                        <div class="model-select-container standalone-select">
+                            <input type="text" id="settingsDebugModeDisplay" readonly onclick="toggleDebugModeDropdown()">
+                            <button type="button" class="model-dropdown-toggle" onclick="toggleDebugModeDropdown()">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                            </button>
+                            <div class="model-dropdown" id="debugModeDropdown"></div>
+                        </div>
+                        <select id="settingsDebugMode" style="display:none;">
+                            <option value="">${t('settings.debugModeNone')}</option>
+                            <option value="db">${t('settings.debugModeDb')}</option>
+                            <option value="file">${t('settings.debugModeFile')}</option>
+                        </select>
                         <small>${t('settings.debugModeHelp')}</small>
                     </div>
                     <div class="form-group">
@@ -418,7 +428,12 @@ export function initUI() {
                         <h3>WebDAV 服务器配置</h3>
                         <div class="form-group">
                             <label>服务器地址</label>
-                            <input type="text" id="webdavServerUrl" placeholder="https://dav.example.com/backup">
+                            <div class="model-input-wrapper">
+                                <input type="text" id="webdavServerUrl" placeholder="https://dav.example.com/backup">
+                                <button class="btn btn-sm btn-secondary" onclick="testWebDAVConnection()" id="webdavTestBtn">
+                                    🧪 测试
+                                </button>
+                            </div>
                             <small>请输入WebDAV服务器地址（支持https/http）</small>
                         </div>
                         <div class="form-row">
@@ -432,9 +447,6 @@ export function initUI() {
                             </div>
                         </div>
                         <div class="form-row">
-                            <button class="btn btn-secondary" onclick="testWebDAVConnection()" id="webdavTestBtn">
-                                🧪 测试连接
-                            </button>
                             <button class="btn btn-primary" onclick="backupToWebDAV()" id="webdavBackupBtn">
                                 💾 备份配置
                             </button>

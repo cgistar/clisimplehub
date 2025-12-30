@@ -195,6 +195,8 @@ func (a *App) SaveSettings(settings *Settings) error {
 		a.proxyServer.SetPort(settings.Port)
 		a.proxyServer.SetAuthKey(settings.APIKey)
 		a.proxyServer.SetFallbackEnabled(settings.Fallback)
+		// 热更新调试日志配置
+		a.proxyServer.UpdateDebugFileLogger()
 	}
 
 	return nil
@@ -2419,6 +2421,9 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 				existing.InterfaceType = ep.InterfaceType
 				existing.VendorID = vendorID
 				existing.Model = ep.Model
+				existing.Transformer = ep.Transformer
+				existing.ProxyURL = ep.ProxyURL
+				existing.Models = ep.Models
 				existing.Remark = ep.Remark
 				existing.Priority = ep.Priority
 				if err := a.storage.UpdateEndpoint(existing); err != nil {
@@ -2435,6 +2440,9 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 					InterfaceType: ep.InterfaceType,
 					VendorID:      vendorID,
 					Model:         ep.Model,
+					Transformer:   ep.Transformer,
+					ProxyURL:      ep.ProxyURL,
+					Models:        ep.Models,
 					Remark:        ep.Remark,
 					Priority:      ep.Priority,
 				}

@@ -79,7 +79,6 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 		kiroVersion = k.source.KiroVersion()
 	}
 
-	// Keep headers aligned with the reference Kiro gateway implementation; some upstream paths are picky.
 	userAgent := strings.TrimSpace(userAgentBase) + " " + strings.TrimSpace(kiroVersion) + "-" + fp
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("x-amz-user-agent", kiroShared.DefaultKiroXAmzUserAgentBase+" "+strings.TrimSpace(kiroVersion)+"-"+fp)

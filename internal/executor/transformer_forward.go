@@ -19,6 +19,8 @@ import (
 
 func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest, w http.ResponseWriter) *ForwardResult {
 	result := &ForwardResult{}
+	debugLogger := DebugLoggerFromContext(ctx)
+
 	if endpoint == nil || req == nil {
 		result.StatusCode = http.StatusBadRequest
 		result.Error = fmt.Errorf("nil endpoint or request")
@@ -64,6 +66,11 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		return result
 	}
 
+	// 记录转换后的请求体
+	if debugLogger != nil {
+		debugLogger.SetSection("TransformedRequest", string(transformedBody))
+	}
+
 	targetInterface := strings.ToLower(strings.TrimSpace(tr.TargetInterfaceType()))
 
 	// Build target URL - special handling for kiro transformer (region-specific URL)
@@ -89,6 +96,11 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		return result
 	}
 	result.TargetURL = targetURL
+
+	// 记录上游URL
+	if debugLogger != nil {
+		debugLogger.SetMetadata("UpstreamURL", targetURL)
+	}
 
 	requestBody := transformedBody
 	if shouldCaptureUpstreamRequestBody(ctx) {
@@ -248,6 +260,12 @@ func shouldTreatAsStreaming(resp *http.Response, tr transformer.Transformer) boo
 }
 
 func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
+	// 获取调试日志记录器
+	debugLogger := DebugLoggerFromContext(ctx)
+	if debugLogger != nil {
+		debugLogger.Log("Kiro 流式响应开始: model=%s", modelName)
+	}
+
 	// Force Claude streaming semantics to the caller.
 	for key, values := range resp.Header {
 		switch strings.ToLower(key) {
@@ -280,6 +298,9 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 
 	captureUpstream := shouldCaptureUpstreamResponseBody(ctx)
 	var upstream limitedByteBuffer
+
+	// 调试日志：捕获上游原始响应（二进制）
+	var debugUpstreamRaw []byte
 
 	// 连续超时容错机制
 	const (
@@ -339,6 +360,10 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 			chunk := buf[:n]
 			if captureUpstream {
 				upstream.Append(chunk)
+			}
+			// 调试日志：追加原始二进制数据
+			if debugLogger != nil {
+				debugUpstreamRaw = append(debugUpstreamRaw, chunk...)
 			}
 			outs, trErr := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, &state)
 			if trErr != nil {
@@ -404,10 +429,29 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 			capture.WriteString(out)
 			flusher.Flush()
 		}
+
+		// 记录调试日志
+		if debugLogger != nil {
+			debugLogger.Log("Kiro 流式响应完成")
+		}
+	}
+
+	// 记录上游原始响应（二进制，base64编码）
+	if debugLogger != nil && len(debugUpstreamRaw) > 0 {
+		debugLogger.SetRawSection("UpstreamResponseRaw", debugUpstreamRaw)
+	}
+
+	// 记录转换后的 Claude SSE 响应
+	capturedSSE := capture.String()
+	if debugLogger != nil {
+		debugLogger.Log("Kiro capture长度: %d", len(capturedSSE))
+		if capturedSSE != "" {
+			debugLogger.SetSection("TransformedResponse", capturedSSE)
+		}
 	}
 
 	result.Streamed = true
-	result.ResponseStream = capture.String()
+	result.ResponseStream = capturedSSE
 	if captureUpstream {
 		result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
 	}
@@ -415,6 +459,8 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 }
 
 func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
+	debugLogger := DebugLoggerFromContext(ctx)
+
 	// Force Claude streaming semantics to the caller.
 	for key, values := range resp.Header {
 		switch strings.ToLower(key) {
@@ -449,6 +495,9 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 	captureUpstream := shouldCaptureUpstreamResponseBody(ctx)
 	var upstream limitedByteBuffer
 
+	// 调试日志：捕获上游原始响应
+	var debugUpstreamRaw strings.Builder
+
 	var state any
 
 	for scanner.Scan() {
@@ -470,6 +519,11 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 		if captureUpstream {
 			upstream.Append(line)
 			upstream.AppendByte('\n')
+		}
+		// 调试日志：追加原始数据
+		if debugLogger != nil {
+			debugUpstreamRaw.Write(line)
+			debugUpstreamRaw.WriteByte('\n')
 		}
 
 		if tokens := extractStreamTokensFromLine(line); tokens != nil {
@@ -496,6 +550,11 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 		result.Error = err
 	}
 
+	// 记录上游原始响应
+	if debugLogger != nil && debugUpstreamRaw.Len() > 0 {
+		debugLogger.SetSection("UpstreamResponseRaw", debugUpstreamRaw.String())
+	}
+
 	result.ResponseStream = capture.String()
 	result.Streamed = true
 	if captureUpstream {
@@ -515,6 +574,8 @@ func truncateForLog(body []byte, maxLen int) string {
 }
 
 func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
+	debugLogger := DebugLoggerFromContext(ctx)
+
 	reader := getResponseReader(resp)
 	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
 		defer closer.Close()
@@ -533,6 +594,16 @@ func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Respo
 
 	if shouldCaptureUpstreamResponseBody(ctx) {
 		result.UpstreamResponseBody = capturedUpstreamResponseBody(body)
+	}
+
+	// 记录上游原始响应
+	if debugLogger != nil && len(body) > 0 {
+		targetInterface := strings.ToLower(strings.TrimSpace(tr.TargetInterfaceType()))
+		if targetInterface == "kiro" {
+			debugLogger.SetRawSection("UpstreamResponseRaw", body)
+		} else {
+			debugLogger.SetSection("UpstreamResponseRaw", string(body))
+		}
 	}
 
 	if isLikelyHTMLResponse(resp.StatusCode, resp.Header.Get("Content-Type"), body) {
