@@ -312,8 +312,8 @@ export async function loadConfigFromWebDAV(filename) {
         // 根据模式处理配置
         let finalConfig;
         if (mode === 'replace') {
-            // 清空并替换：直接使用远程配置
-            finalConfig = remoteConfig;
+            // 清空并替换：直接使用远程配置，设置 replaceMode 标志
+            finalConfig = { ...remoteConfig, replaceMode: true };
         } else {
             // 合并模式：将远程配置合并到本地
             finalConfig = await mergeConfigs(remoteConfig);

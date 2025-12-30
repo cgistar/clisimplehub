@@ -2218,9 +2218,10 @@ func (a *App) getDefaultCodexAuth() string {
 
 // FullConfig represents the complete application configuration for backup/restore
 type FullConfig struct {
-	AppConfig map[string]interface{} `json:"appConfig,omitempty"`
-	Vendors   []*VendorInfo          `json:"vendors"`
-	Endpoints []*EndpointInfo        `json:"endpoints"`
+	AppConfig   map[string]interface{} `json:"appConfig,omitempty"`
+	Vendors     []*VendorInfo          `json:"vendors"`
+	Endpoints   []*EndpointInfo        `json:"endpoints"`
+	ReplaceMode bool                   `json:"replaceMode,omitempty"` // If true, clear existing config before saving
 }
 
 // GetFullConfig returns the complete configuration for backup
@@ -2325,26 +2326,45 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 		}
 	}
 
-	// Clear existing vendors and endpoints
-	// Note: We need to be careful here to avoid data loss
-	// Instead, we'll overwrite by ID or add new ones
+	// ReplaceMode: clear all existing endpoints and vendors first
+	if config.ReplaceMode {
+		// Delete all endpoints first (they depend on vendors)
+		existingEndpoints, err := a.storage.GetEndpoints()
+		if err != nil {
+			return fmt.Errorf("failed to get existing endpoints: %w", err)
+		}
+		for _, ep := range existingEndpoints {
+			if err := a.storage.DeleteEndpoint(ep.ID); err != nil {
+				return fmt.Errorf("failed to delete endpoint %s: %w", ep.Name, err)
+			}
+		}
+
+		// Delete all vendors
+		existingVendors, err := a.storage.GetVendors()
+		if err != nil {
+			return fmt.Errorf("failed to get existing vendors: %w", err)
+		}
+		for _, v := range existingVendors {
+			if err := a.storage.DeleteVendor(v.ID); err != nil {
+				return fmt.Errorf("failed to delete vendor %s: %w", v.Name, err)
+			}
+		}
+	}
 
 	// Save vendors
 	if config.Vendors != nil {
-		// First, get existing vendors to avoid duplicates
+		// Get existing vendors to check for duplicates (empty if ReplaceMode)
 		existingVendors, err := a.storage.GetVendors()
 		if err != nil {
 			return fmt.Errorf("failed to get existing vendors: %w", err)
 		}
 
-		// Create a map of existing vendors by name for lookup
 		existingVendorMap := make(map[string]*storage.Vendor)
 		for _, v := range existingVendors {
 			existingVendorMap[v.Name] = v
 		}
 
 		for _, v := range config.Vendors {
-			// Check if vendor already exists
 			if existing, exists := existingVendorMap[v.Name]; exists {
 				// Update existing vendor
 				existing.Name = v.Name
@@ -2382,13 +2402,12 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 			vendorNameToID[v.Name] = v.ID
 		}
 
-		// Get existing endpoints to avoid duplicates
+		// Get existing endpoints (empty if ReplaceMode)
 		existingEndpoints, err := a.storage.GetEndpoints()
 		if err != nil {
 			return fmt.Errorf("failed to get existing endpoints: %w", err)
 		}
 
-		// Create a map for existing endpoints by name+vendor
 		existingEndpointMap := make(map[string]*storage.Endpoint)
 		for _, ep := range existingEndpoints {
 			var vendorName string
@@ -2410,7 +2429,6 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 
 			key := fmt.Sprintf("%s-%s", ep.VendorName, ep.Name)
 
-			// Check if endpoint already exists
 			if existing, exists := existingEndpointMap[key]; exists {
 				// Update existing endpoint
 				existing.Name = ep.Name

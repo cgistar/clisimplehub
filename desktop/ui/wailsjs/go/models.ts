@@ -388,6 +388,7 @@ export namespace main {
 	    appConfig?: Record<string, any>;
 	    vendors: VendorInfo[];
 	    endpoints: EndpointInfo[];
+	    replaceMode?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new FullConfig(source);
@@ -398,6 +399,7 @@ export namespace main {
 	        this.appConfig = source["appConfig"];
 	        this.vendors = this.convertValues(source["vendors"], VendorInfo);
 	        this.endpoints = this.convertValues(source["endpoints"], EndpointInfo);
+	        this.replaceMode = source["replaceMode"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
