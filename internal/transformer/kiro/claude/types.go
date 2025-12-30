@@ -156,6 +156,10 @@ type StreamState struct {
 	SSEStateManager     *kiroresponse.SSEStateManager   // SSE 事件序列状态管理
 	StopReasonManager   *kiroresponse.StopReasonManager // stop_reason 判断管理
 	CompletedToolUseIds map[string]bool                 // 已完成的工具调用 ID 集合
+
+	// Token 来源追踪（用于调试和日志）
+	InputTokensSource  string // "context_usage" | "estimate" | "api"
+	OutputTokensSource string // "estimate" | "api"
 }
 
 // TokenUsage returns the best-known input/output token counts for this stream.

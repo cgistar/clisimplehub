@@ -971,6 +971,21 @@ func nextUpstreamTextDelta(state *StreamState, content string) string {
 
 const defaultMaxInputTokens = 200000
 
+// getModelMaxInputTokens 根据模型返回最大输入 token 数
+func getModelMaxInputTokens(model string) int {
+	// 根据模型返回最大输入 token 数
+	switch {
+	case strings.Contains(model, "opus"):
+		return 200000
+	case strings.Contains(model, "sonnet"):
+		return 200000
+	case strings.Contains(model, "haiku"):
+		return 200000
+	default:
+		return 200000
+	}
+}
+
 func estimateTokens(text string) int {
 	if strings.TrimSpace(text) == "" {
 		return 0
@@ -997,41 +1012,37 @@ func applyTokenAccounting(state *StreamState) {
 		return
 	}
 
-	// Kiro streams often don't provide output token counts; approximate from accumulated text.
+	// 1. 计算 output_tokens (基于实际输出文本)
 	if state.OutputTokens == 0 && (strings.TrimSpace(state.TextSoFar) != "" || strings.TrimSpace(state.ThinkingSoFar) != "") {
 		combined := state.TextSoFar + state.ThinkingSoFar
 		state.OutputTokens = estimateTokens(combined)
+		state.OutputTokensSource = "estimate"
 	}
 
-	if state.ContextUsagePct > 0 {
-		totalTokens := int((state.ContextUsagePct / 100.0) * float64(defaultMaxInputTokens))
-		if totalTokens < 0 {
-			totalTokens = 0
+	// 2. 优先使用 context_usage_percentage 计算 input_tokens
+	if state.ContextUsagePct > 0 && state.InputTokens == 0 {
+		// 获取模型的最大输入 token 数
+		maxInputTokens := getModelMaxInputTokens(state.Model)
+		if maxInputTokens > 0 {
+			totalTokens := int(float64(maxInputTokens) * state.ContextUsagePct / 100.0)
+			state.InputTokens = totalTokens - state.OutputTokens
+			if state.InputTokens < 0 {
+				state.InputTokens = 0
+			}
+			state.InputTokensSource = "context_usage"
 		}
-		state.InputTokens = totalTokens
+	}
+
+	// 3. 如果 context_usage_percentage 不可用，保持原有的 InputTokens (在 TransformResponseStream 中预先计算)
+	// 如果 InputTokensSource 为空，说明使用的是预先计算的值
+	if state.InputTokensSource == "" && state.InputTokens > 0 {
+		state.InputTokensSource = "estimate"
 	}
 }
 
 // KiroStreamToClaudeSSE converts Kiro stream events to Claude SSE format
 func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]string, error) {
 	var outputs []string
-
-	flushToolArgsDeltaIfValid := func() {
-		if state == nil || !state.ToolBlockOpen {
-			return
-		}
-		if strings.TrimSpace(state.ToolUseArgs) == "" {
-			return
-		}
-
-		// Match the expected output fixture: emit a single input_json_delta only when the
-		// accumulated argument string is valid JSON (so we don't stream broken fragments).
-		var tmp any
-		if err := json.Unmarshal([]byte(state.ToolUseArgs), &tmp); err != nil {
-			return
-		}
-		outputs = append(outputs, buildToolUseInputDelta(state.CurrentToolBlock, state.ToolUseArgs))
-	}
 
 	finalizeToolUse := func() {
 		if state == nil {
@@ -1065,32 +1076,6 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		state.CurrentToolUseID = ""
 		state.CurrentToolName = ""
 		state.ToolUseArgs = ""
-	}
-
-	startToolBlock := func(toolUseID, toolName string) {
-		if state == nil {
-			return
-		}
-		if state.ToolBlockOpen {
-			return
-		}
-		if strings.TrimSpace(toolUseID) == "" {
-			return
-		}
-		outputs = append(outputs, buildToolUseBlockStart(state.ContentIndex, toolUseID, toolName))
-		state.CurrentToolBlock = state.ContentIndex
-		state.ToolBlockOpen = true
-		state.ToolBlocksStreamed = true
-	}
-
-	stopToolBlock := func() {
-		if state == nil || !state.ToolBlockOpen {
-			return
-		}
-		outputs = append(outputs, buildContentBlockStop(state.CurrentToolBlock))
-		state.ToolBlockOpen = false
-		state.CurrentToolBlock = -1
-		state.ContentIndex++
 	}
 
 	switch event.Type {
@@ -1143,7 +1128,8 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		// If a previous tool call didn't emit a stop marker, finalize it before starting a new one.
 		if state.ToolUseBlockOpen {
 			finalizeToolUse()
-			stopToolBlock()
+			// ❌ 不再实时发送 tool block stop
+			// stopToolBlock()
 			state.ToolUseBlockOpen = false
 		}
 
@@ -1151,7 +1137,8 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		state.CurrentToolName = shared.StringFromAny(data["name"])
 		state.ToolUseArgs = ""
 		state.ToolUseBlockOpen = true
-		startToolBlock(state.CurrentToolUseID, state.CurrentToolName)
+		// ❌ 不再实时发送 tool block start
+		// startToolBlock(state.CurrentToolUseID, state.CurrentToolName)
 
 	case kirotypes.StreamEventToolInput:
 		if state == nil {
@@ -1171,7 +1158,8 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 
 			if state.ToolUseBlockOpen && incomingID != "" && strings.TrimSpace(state.CurrentToolUseID) != "" && incomingID != state.CurrentToolUseID {
 				finalizeToolUse()
-				stopToolBlock()
+				// ❌ 不再实时发送 tool block stop
+				// stopToolBlock()
 				state.ToolUseBlockOpen = false
 			}
 
@@ -1193,7 +1181,8 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 				state.CurrentToolName = incomingName
 				state.ToolUseArgs = ""
 				state.ToolUseBlockOpen = true
-				startToolBlock(state.CurrentToolUseID, state.CurrentToolName)
+				// ❌ 不再实时发送 tool block start
+				// startToolBlock(state.CurrentToolUseID, state.CurrentToolName)
 			}
 		}
 
@@ -1220,18 +1209,22 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 
 		// Some streams mark tool completion on the final tool_input chunk (`stop: true`).
 		if stopAfter && state.ToolUseBlockOpen {
-			flushToolArgsDeltaIfValid()
+			// ❌ 不再实时发送 tool args delta
+			// flushToolArgsDeltaIfValid()
 			finalizeToolUse()
 			state.ToolUseBlockOpen = false
-			stopToolBlock()
+			// ❌ 不再实时发送 tool block stop
+			// stopToolBlock()
 		}
 
 	case kirotypes.StreamEventToolStop:
 		if state.ToolUseBlockOpen {
-			flushToolArgsDeltaIfValid()
+			// ❌ 不再实时发送 tool args delta
+			// flushToolArgsDeltaIfValid()
 			finalizeToolUse()
 			state.ToolUseBlockOpen = false
-			stopToolBlock()
+			// ❌ 不再实时发送 tool block stop
+			// stopToolBlock()
 		}
 
 	case kirotypes.StreamEventToolUses:
@@ -1406,8 +1399,8 @@ func FinishStream(state *StreamState) []string {
 		state.ContentIndex++
 	}
 
-	// Emit tool_use blocks at the end only when we didn't already stream tool_use blocks.
-	if state != nil && !state.ToolBlocksStreamed && len(state.CollectedToolUses) > 0 {
+	// ✅ 批量发送所有 tool_use blocks，始终在流结束后批量发送
+	if state != nil && len(state.CollectedToolUses) > 0 {
 		// Deduplicate by toolUseId, preferring non-empty args.
 		type chosen struct {
 			firstIdx int
@@ -1595,8 +1588,10 @@ func buildMessageStart(messageID, model string, inputTokens int) string {
 			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage": map[string]interface{}{
-				"input_tokens":  inputTokens,
-				"output_tokens": 0,
+				"input_tokens":                inputTokens,
+				"output_tokens":               0,
+				"cache_creation_input_tokens": 0,
+				"cache_read_input_tokens":     0,
 			},
 		},
 	}
@@ -1722,7 +1717,6 @@ func buildMessageDelta(state *StreamState) string {
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
-			"input_tokens":  state.InputTokens,
 			"output_tokens": state.OutputTokens,
 		},
 	}
