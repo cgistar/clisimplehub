@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -133,6 +134,9 @@ func (t *Transformer) TransformResponseStream(
 				}
 			}
 		}
+		if thinkingEnabled && !isKiroThinkingEnabledByConfig() {
+			thinkingEnabled = false
+		}
 
 		*state = &StreamState{
 			MessageID:           "msg_kiro_" + shared.RandomSuffix(),
@@ -167,6 +171,9 @@ func (t *Transformer) TransformResponseStream(
 					}
 				}
 			}
+		}
+		if thinkingEnabled && !isKiroThinkingEnabledByConfig() {
+			thinkingEnabled = false
 		}
 
 		// Reinitialize if type assertion fails
@@ -247,6 +254,9 @@ func (t *Transformer) TransformResponseNonStream(
 			}
 		}
 	}
+	if thinkingEnabled && !isKiroThinkingEnabledByConfig() {
+		thinkingEnabled = false
+	}
 
 	streamState := &StreamState{
 		MessageID:           "msg_kiro_" + shared.RandomSuffix(),
@@ -284,6 +294,22 @@ func (t *Transformer) TransformResponseNonStream(
 	claudeResp := KiroToClaudeMessage(kiroResp, modelName, streamState)
 
 	return shared.MarshalNoEscapeHTML(claudeResp)
+}
+
+func isKiroThinkingEnabledByConfig() bool {
+	v, err := getConfig("kiro.thinking")
+	if err != nil {
+		return false
+	}
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	b, parseErr := strconv.ParseBool(v)
+	if parseErr != nil {
+		return false
+	}
+	return b
 }
 
 // initialize loads credentials and creates the auth manager

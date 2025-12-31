@@ -24,7 +24,8 @@ func kiroAllEmpty(cfg *config.KiroConfig) bool {
 	return strings.TrimSpace(cfg.ProxyURL) == "" &&
 		strings.TrimSpace(cfg.UserAgent) == "" &&
 		strings.TrimSpace(cfg.Version) == "" &&
-		strings.TrimSpace(cfg.MachineID) == ""
+		strings.TrimSpace(cfg.MachineID) == "" &&
+		!cfg.Thinking
 }
 
 func NewConfigFileStore(loader *config.ConfigLoader) (*ConfigFileStore, error) {
@@ -347,6 +348,13 @@ func (s *ConfigFileStore) GetConfig(key string) (string, error) {
 		if cfg.Kiro != nil {
 			return cfg.Kiro.MachineID, nil
 		}
+	case "kiro.thinking":
+		if cfg.Kiro != nil {
+			if cfg.Kiro.Thinking {
+				return "true", nil
+			}
+			return "false", nil
+		}
 	}
 
 	if cfg.AppConfigKV == nil {
@@ -417,6 +425,20 @@ func (s *ConfigFileStore) SetConfig(key, value string) error {
 			cfg.Kiro = &config.KiroConfig{}
 		}
 		cfg.Kiro.MachineID = strings.TrimSpace(value)
+		if kiroAllEmpty(cfg.Kiro) {
+			cfg.Kiro = nil
+		}
+		return s.saveLocked(cfg)
+	case "kiro.thinking":
+		if cfg.Kiro == nil {
+			cfg.Kiro = &config.KiroConfig{}
+		}
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "true", "1", "yes", "y", "on":
+			cfg.Kiro.Thinking = true
+		default:
+			cfg.Kiro.Thinking = false
+		}
 		if kiroAllEmpty(cfg.Kiro) {
 			cfg.Kiro = nil
 		}

@@ -12,6 +12,10 @@ import (
 )
 
 const defaultToolDescriptionMaxLength = 10000
+const (
+	thinkingBudgetDefaultTokens = 20000
+	thinkingBudgetMaxTokens     = 24576
+)
 
 // ClaudeToKiroRequest converts a Claude API request to Kiro API format
 func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, profileArn string) (*KiroRequest, error) {
@@ -36,6 +40,14 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 	messages := normalizeAndMergeClaudeMessages(rawMessages, &systemPrompt)
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("messages is required and must be non-empty")
+	}
+
+	// If thinking is requested, inject Kiro-side thinking configuration into the system prompt.
+	// Default: disabled via config.json `kiro.thinking=false`.
+	if isKiroThinkingEnabledByConfig() {
+		if prefix := buildKiroThinkingSystemPrefix(claudeReq); prefix != "" && !systemHasKiroThinkingTags(systemPrompt) {
+			systemPrompt = prependSystemPrefix(systemPrompt, prefix)
+		}
 	}
 
 	// Convert tools (and move overlong tool descriptions into the system prompt)
@@ -84,6 +96,63 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 	kiroReq.ConversationState.CurrentMessage = buildCurrentUserMessage(currentContent, kiroModelID, kiroTools, toolResults)
 
 	return kiroReq, nil
+}
+
+func buildKiroThinkingSystemPrefix(claudeReq map[string]interface{}) string {
+	if claudeReq == nil {
+		return ""
+	}
+	raw := claudeReq["thinking"]
+	if raw == nil {
+		return ""
+	}
+
+	enabled := false
+	budgetTokens := thinkingBudgetDefaultTokens
+
+	switch v := raw.(type) {
+	case string:
+		if strings.EqualFold(strings.TrimSpace(v), "enabled") {
+			enabled = true
+		}
+	case map[string]any:
+		if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(v["type"])), "enabled") {
+			enabled = true
+		}
+		if bt := v["budget_tokens"]; bt != nil {
+			if parsed := shared.IntFromAny(bt); parsed > 0 {
+				budgetTokens = parsed
+			}
+		}
+	}
+
+	if !enabled {
+		return ""
+	}
+	if budgetTokens <= 0 {
+		budgetTokens = thinkingBudgetDefaultTokens
+	}
+	if budgetTokens > thinkingBudgetMaxTokens {
+		budgetTokens = thinkingBudgetMaxTokens
+	}
+
+	return fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", budgetTokens)
+}
+
+func systemHasKiroThinkingTags(systemPrompt string) bool {
+	return strings.Contains(systemPrompt, "<thinking_mode>") || strings.Contains(systemPrompt, "<max_thinking_length>")
+}
+
+func prependSystemPrefix(systemPrompt, prefix string) string {
+	prefix = strings.Trim(prefix, "\r\n")
+	systemPrompt = strings.Trim(systemPrompt, "\r\n")
+	if prefix == "" {
+		return systemPrompt
+	}
+	if systemPrompt == "" {
+		return prefix
+	}
+	return prefix + "\n" + systemPrompt
 }
 
 func determineChatTriggerType(claudeReq map[string]interface{}) string {
@@ -811,6 +880,38 @@ func ensureTextBlockOpen(state *StreamState, outputs *[]string) {
 	state.ContentBlockOpen = true
 }
 
+func flushPendingThinkingTextBeforeToolUse(state *StreamState, outputs *[]string) {
+	if state == nil || outputs == nil {
+		return
+	}
+	if !state.ThinkingEnabled || state.InThinkingBlock || state.ThinkingExtracted {
+		return
+	}
+	if state.ToolUseBlockOpen || state.ToolBlockOpen || state.ThinkingBlockOpen {
+		return
+	}
+	if state.ThinkingBuffer == "" {
+		return
+	}
+
+	keep := keepSuffixForPossibleTagPrefix(state.ThinkingBuffer, thinkingStartTag)
+	target := len(state.ThinkingBuffer) - keep
+	if target <= 0 {
+		return
+	}
+	safe := findCharBoundary(state.ThinkingBuffer, target)
+	if safe <= 0 {
+		return
+	}
+	safeText := state.ThinkingBuffer[:safe]
+	state.ThinkingBuffer = state.ThinkingBuffer[safe:]
+
+	ensureMessageStarted(state, outputs)
+	ensureTextBlockOpen(state, outputs)
+	*outputs = append(*outputs, buildContentBlockDelta(state.ContentIndex, safeText))
+	state.TextSoFar += safeText
+}
+
 func processContentWithThinking(state *StreamState, delta string, outputs *[]string) {
 	if state == nil || outputs == nil || delta == "" {
 		return
@@ -895,7 +996,8 @@ func processContentWithThinking(state *StreamState, delta string, outputs *[]str
 			}
 
 			// No start tag found: flush safe prefix but keep enough bytes to detect a partial tag.
-			target := len(state.ThinkingBuffer) - len(thinkingStartTag)
+			keep := keepSuffixForPossibleTagPrefix(state.ThinkingBuffer, thinkingStartTag)
+			target := len(state.ThinkingBuffer) - keep
 			if target <= 0 {
 				break
 			}
@@ -922,7 +1024,8 @@ func processContentWithThinking(state *StreamState, delta string, outputs *[]str
 			}
 
 			// No end tag found: flush safe prefix but keep enough bytes to detect a partial end tag.
-			target := len(state.ThinkingBuffer) - len(thinkingEndTag)
+			keep := keepSuffixForPossibleTagPrefix(state.ThinkingBuffer, thinkingEndTag)
+			target := len(state.ThinkingBuffer) - keep
 			if target <= 0 {
 				break
 			}
@@ -1072,6 +1175,10 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			return nil, nil
 		}
 
+		// thinking 模式下，短尾部可能被暂存在 ThinkingBuffer 以等待 `<thinking>` 跨 chunk 匹配；
+		// 在 tool_use 开始前先 flush 这段文本，避免被 tool_use 打断导致看起来“乱序/吞字”。
+		flushPendingThinkingTextBeforeToolUse(state, &outputs)
+
 		toolUseID := shared.StringFromAny(data["toolUseId"])
 		toolName := shared.StringFromAny(data["name"])
 
@@ -1144,6 +1251,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			// Some streams may deliver input chunks without a preceding explicit tool_start.
 			// When that happens, start tracking the tool call based on the chunk metadata.
 			if !state.ToolUseBlockOpen && incomingID != "" {
+				flushPendingThinkingTextBeforeToolUse(state, &outputs)
 				state.CurrentToolUseID = incomingID
 				state.CurrentToolName = incomingName
 				state.ToolUseArgs = ""
@@ -1232,6 +1340,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			return nil, nil
 		}
 
+		flushPendingThinkingTextBeforeToolUse(state, &outputs)
 		ensureMessageStarted(state, &outputs)
 
 		// 先关闭文本 block（如果有）

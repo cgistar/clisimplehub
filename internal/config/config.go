@@ -70,6 +70,7 @@ type KiroConfig struct {
 	UserAgent string `json:"userAgent,omitempty"`
 	Version   string `json:"version,omitempty"`
 	MachineID string `json:"machineId,omitempty"`
+	Thinking  bool   `json:"thinking"`
 }
 
 // AppConfig represents the complete application configuration

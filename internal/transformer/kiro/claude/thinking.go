@@ -104,3 +104,30 @@ func indexOf(s, sub string, start int) int {
 	}
 	return -1
 }
+
+// keepSuffixForPossibleTagPrefix 返回需要保留在 buffer 末尾的字节数，用于等待可能的 tag 前缀补全。
+// 例如 buffer 以 "<thi" 结尾时，会保留 4 字节；若末尾不可能是 tag 的前缀，则返回 0。
+//
+// 注意：tag 为 ASCII（如 "<thinking>"），因此只需要做字节级匹配即可；若 buffer 末尾落在 UTF-8
+// 多字节 rune 的中间，则不可能匹配到 ASCII 前缀，会自然返回 0。
+func keepSuffixForPossibleTagPrefix(buffer string, tag string) int {
+	if buffer == "" || tag == "" {
+		return 0
+	}
+
+	maxKeep := len(tag) - 1
+	if maxKeep <= 0 {
+		return 0
+	}
+	if len(buffer) < maxKeep {
+		maxKeep = len(buffer)
+	}
+
+	for keep := maxKeep; keep > 0; keep-- {
+		suffix := buffer[len(buffer)-keep:]
+		if tag[:keep] == suffix {
+			return keep
+		}
+	}
+	return 0
+}
