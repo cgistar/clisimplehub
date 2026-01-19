@@ -1066,16 +1066,18 @@ func convertClaudeToolsToKiro(tools []interface{}) []KiroTool {
 			continue
 		}
 
+		schema := map[string]interface{}{}
 		kiroTool := KiroTool{
 			ToolSpecification: ToolSpecification{
 				Name:        shared.StringFromAny(toolMap["name"]),
 				Description: shared.StringFromAny(toolMap["description"]),
+				InputSchema: InputSchema{JSON: schema},
 			},
 		}
 
 		if inputSchema, ok := toolMap["input_schema"].(map[string]interface{}); ok {
-			kiroTool.ToolSpecification.InputSchema = InputSchema{
-				JSON: inputSchema,
+			if inputSchema != nil {
+				kiroTool.ToolSpecification.InputSchema.JSON = inputSchema
 			}
 		}
 
@@ -1125,17 +1127,16 @@ func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength
 
 		description = truncateByRunes(description, maxDescriptionLength)
 
+		schema := map[string]interface{}{}
+		if inputSchema != nil {
+			schema = inputSchema
+		}
 		kiroTool := KiroTool{
 			ToolSpecification: ToolSpecification{
 				Name:        name,
 				Description: description,
+				InputSchema: InputSchema{JSON: schema},
 			},
-		}
-
-		if inputSchema != nil {
-			kiroTool.ToolSpecification.InputSchema = InputSchema{
-				JSON: inputSchema,
-			}
 		}
 
 		kiroTools = append(kiroTools, kiroTool)
@@ -1561,13 +1562,14 @@ func applyTokenAccounting(state *StreamState) {
 		state.OutputTokensSource = "estimate"
 	}
 
-	// 2. 优先使用 context_usage_percentage 计算 input_tokens
-	if state.ContextUsagePct > 0 && state.InputTokens == 0 {
+	// 2. 优先使用 context_usage_percentage 计算 input_tokens（与 kiro.rs 对齐：不减 output_tokens）
+	// 只有当没有明确的上游 token 统计（api）时才覆盖估算值。
+	if state.ContextUsagePct > 0 && state.InputTokensSource != "api" {
 		// 获取模型的最大输入 token 数
 		maxInputTokens := getModelMaxInputTokens(state.Model)
 		if maxInputTokens > 0 {
 			totalTokens := int(float64(maxInputTokens) * state.ContextUsagePct / 100.0)
-			state.InputTokens = totalTokens - state.OutputTokens
+			state.InputTokens = totalTokens
 			if state.InputTokens < 0 {
 				state.InputTokens = 0
 			}
@@ -1824,13 +1826,17 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		// Extract token counts
 		if v := usage["inputTokens"]; v != nil {
 			state.InputTokens = shared.IntFromAny(v)
+			state.InputTokensSource = "api"
 		} else if v := usage["input_tokens"]; v != nil {
 			state.InputTokens = shared.IntFromAny(v)
+			state.InputTokensSource = "api"
 		}
 		if v := usage["outputTokens"]; v != nil {
 			state.OutputTokens = shared.IntFromAny(v)
+			state.OutputTokensSource = "api"
 		} else if v := usage["output_tokens"]; v != nil {
 			state.OutputTokens = shared.IntFromAny(v)
+			state.OutputTokensSource = "api"
 		}
 
 	case kirotypes.StreamEventContextUsage:

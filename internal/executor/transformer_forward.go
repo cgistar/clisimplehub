@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,6 +47,13 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	requestModel := extractModelFromBody(originalBody)
 	upstreamModel := ResolveUpstreamModel(requestModel, endpoint)
 
+	targetInterface := strings.ToLower(strings.TrimSpace(tr.TargetInterfaceType()))
+	if targetInterface == "kiro" && strings.EqualFold(strings.TrimSpace(interfaceType), "claude") {
+		if out := c.tryHandleKiroWebSearchShortCircuit(ctx, w, endpoint, req, tr, requestModel, upstreamModel, originalBody); out != nil {
+			return out
+		}
+	}
+
 	targetPath := tr.TargetPath(req.IsStreaming, upstreamModel)
 	if strings.TrimSpace(targetPath) == "" {
 		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 目标路径为空: endpoint=%s transformer=%q", endpoint.Name, endpoint.Transformer))
@@ -70,8 +79,6 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	if debugLogger != nil {
 		debugLogger.SetSection("TransformedRequest", string(transformedBody))
 	}
-
-	targetInterface := strings.ToLower(strings.TrimSpace(tr.TargetInterfaceType()))
 
 	// Build target URL - special handling for kiro transformer (region-specific URL)
 	var targetURL string
@@ -155,6 +162,9 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		return result
 	}
 	result.TargetHeaders = sanitizeHeaders(proxyReq.Header)
+	if debugLogger != nil {
+		debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(result.TargetHeaders))
+	}
 
 	client := NewHTTPClient(endpoint, 0)
 	if targetInterface == "kiro" {
@@ -167,12 +177,27 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	resp, err := client.Do(proxyReq)
 	if err != nil {
 		result.Error = fmt.Errorf("request failed: %w", err)
+		if debugLogger != nil {
+			debugLogger.SetSection("UpstreamError", formatErrorChain(result.Error))
+		}
 		return result
 	}
 	// when backend returns 401/403, force-refresh token and retry once.
 	if targetInterface == "kiro" && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		var authErrBody []byte
+		if debugLogger != nil {
+			authErrBody, _ = io.ReadAll(io.LimitReader(resp.Body, 4096))
+		} else {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		}
 		_ = resp.Body.Close()
+		if debugLogger != nil {
+			debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(resp.Status, resp.Header))
+			if len(authErrBody) > 0 {
+				debugLogger.SetSection("UpstreamResponseBody", truncateTextForLog(bytesToSafeText(authErrBody), 32*1024))
+				debugLogger.SetRawSection("UpstreamResponseRaw", authErrBody)
+			}
+		}
 		if refresher, ok := tr.(interface{ ForceRefreshKiroToken() error }); ok && refresher != nil {
 			if refreshErr := refresher.ForceRefreshKiroToken(); refreshErr == nil {
 				time.Sleep(50 * time.Millisecond) // small jitter to avoid immediate retry collisions
@@ -180,6 +205,9 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 					resp, err = client.Do(retryReq)
 					if err != nil {
 						result.Error = fmt.Errorf("request failed after kiro token refresh: %w", err)
+						if debugLogger != nil {
+							debugLogger.SetSection("UpstreamError", formatErrorChain(result.Error))
+						}
 						return result
 					}
 				}
@@ -190,6 +218,9 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 
 	result.StatusCode = resp.StatusCode
 	result.Headers = resp.Header.Clone()
+	if debugLogger != nil {
+		debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(resp.Status, resp.Header))
+	}
 
 	// For Kiro upstream errors, pass through the raw upstream body to aid debugging.
 	// Transforming non-200 responses often hides the real error payload.
@@ -207,11 +238,19 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		body, readErr := io.ReadAll(reader)
 		if readErr != nil {
 			result.Error = fmt.Errorf("failed to read response: %w", readErr)
+			if debugLogger != nil {
+				debugLogger.SetSection("UpstreamError", formatErrorChain(result.Error))
+			}
 			return result
 		}
 
 		if shouldCaptureUpstreamResponseBody(ctx) {
 			result.UpstreamResponseBody = capturedUpstreamResponseBody(body)
+		}
+
+		if debugLogger != nil && len(body) > 0 {
+			debugLogger.SetSection("UpstreamResponseBody", truncateTextForLog(bytesToSafeText(body), 32*1024))
+			debugLogger.SetRawSection("UpstreamResponseRaw", body)
 		}
 
 		result.Body = body
@@ -245,6 +284,233 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		c.DebugLog(ctx, level, fmt.Sprintf("[Transformer] 响应片段: endpoint=%s status=%d body=%s", endpoint.Name, out.StatusCode, truncateForLog(out.Body, 2048)))
 	}
 	return out
+}
+
+// tryHandleKiroWebSearchShortCircuit aligns the behavior with `.other/kiro.rs`:
+// If the Claude request contains exactly one tool and it's `web_search`, do NOT call
+// Kiro `/generateAssistantResponse`. Instead, call Kiro MCP (`/mcp`) and synthesize
+// an Anthropic-compatible response directly.
+func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
+	ctx context.Context,
+	w http.ResponseWriter,
+	endpoint *EndpointConfig,
+	req *ForwardRequest,
+	tr transformer.Transformer,
+	requestModel string,
+	upstreamModel string,
+	originalBody []byte,
+) *ForwardResult {
+	result := &ForwardResult{}
+	debugLogger := DebugLoggerFromContext(ctx)
+
+	modelFromReq, query, ok := kiro_claude.ParseClaudeWebSearchOnlyRequest(originalBody)
+	if !ok {
+		return nil
+	}
+
+	model := strings.TrimSpace(modelFromReq)
+	if model == "" {
+		model = strings.TrimSpace(requestModel)
+	}
+	if model == "" {
+		model = strings.TrimSpace(upstreamModel)
+	}
+	if model == "" {
+		model = "claude-sonnet-4"
+	}
+
+	inputTokens := kiro_claude.EstimateClaudeInputTokens(originalBody)
+	if inputTokens < 1 {
+		inputTokens = 1
+	}
+
+	if debugLogger != nil {
+		debugLogger.SetSection("TransformedRequest", "(web_search short-circuit: routed to Kiro MCP /mcp; no /generateAssistantResponse request)")
+	}
+
+	src, ok := tr.(kiroAuth.KiroAuthSource)
+	if !ok || src == nil {
+		result.StatusCode = http.StatusInternalServerError
+		result.Error = fmt.Errorf("kiro auth source not available for transformer=%T", tr)
+		return result
+	}
+
+	region := "us-east-1"
+	if rg, ok := tr.(interface{ GetRegion() string }); ok && rg != nil {
+		if v := strings.TrimSpace(rg.GetRegion()); v != "" {
+			region = v
+		}
+	}
+
+	mcpURL := kiroAuth.KiroMCPURL(region)
+	result.TargetURL = mcpURL
+	if debugLogger != nil {
+		debugLogger.SetMetadata("UpstreamURL", mcpURL)
+	}
+
+	toolUseID, mcpBody, err := kiro_claude.BuildWebSearchMcpRequest(query)
+	if err != nil {
+		result.StatusCode = http.StatusBadRequest
+		result.Error = err
+		return result
+	}
+
+	buildMcpReq := func() (*http.Request, error) {
+		proxyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, mcpURL, bytes.NewReader(mcpBody))
+		if err != nil {
+			return nil, err
+		}
+		authApplier := kiroAuth.NewAuthApplier(src)
+		if err := authApplier.Apply(proxyReq); err != nil {
+			return nil, err
+		}
+		return proxyReq, nil
+	}
+
+	proxyReq, err := buildMcpReq()
+	if err != nil {
+		result.StatusCode = http.StatusInternalServerError
+		result.Error = fmt.Errorf("build mcp request failed: %w", err)
+		return result
+	}
+	result.TargetHeaders = sanitizeHeaders(proxyReq.Header)
+	if debugLogger != nil {
+		debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(result.TargetHeaders))
+		debugLogger.SetSection("UpstreamRequestBody", string(mcpBody))
+	}
+
+	proxyURL := ""
+	if proxyProvider, ok := tr.(interface{ KiroProxyURL() string }); ok && proxyProvider != nil {
+		proxyURL = proxyProvider.KiroProxyURL()
+	}
+	client := NewHTTPClientForcedProxyURL(proxyURL, 0)
+
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		// follow kiro.rs behavior: MCP failure should not crash the whole request; return "no results"
+		if debugLogger != nil {
+			debugLogger.SetSection("UpstreamError", formatErrorChain(err))
+		}
+		return c.writeKiroWebSearchResponse(ctx, w, req, result, model, query, toolUseID, nil, inputTokens, 0)
+	}
+
+	// handle 401/403: best-effort refresh and retry once (same as /generateAssistantResponse)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		if refresher, ok := tr.(interface{ ForceRefreshKiroToken() error }); ok && refresher != nil {
+			if refreshErr := refresher.ForceRefreshKiroToken(); refreshErr == nil {
+				time.Sleep(50 * time.Millisecond)
+				if retryReq, err := buildMcpReq(); err == nil {
+					proxyReq = retryReq
+					resp, err = client.Do(retryReq)
+				}
+			}
+		}
+		if err != nil {
+			if debugLogger != nil {
+				debugLogger.SetSection("UpstreamError", formatErrorChain(err))
+			}
+			return c.writeKiroWebSearchResponse(ctx, w, req, result, model, query, toolUseID, nil, inputTokens, 0)
+		}
+	}
+	defer resp.Body.Close()
+
+	result.StatusCode = resp.StatusCode
+	if debugLogger != nil {
+		debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(resp.Status, resp.Header))
+	}
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if readErr != nil {
+		if debugLogger != nil {
+			debugLogger.SetSection("UpstreamError", formatErrorChain(readErr))
+		}
+		return c.writeKiroWebSearchResponse(ctx, w, req, result, model, query, toolUseID, nil, inputTokens, 0)
+	}
+	if debugLogger != nil && len(body) > 0 {
+		debugLogger.SetSection("UpstreamResponseBody", truncateTextForLog(bytesToSafeText(body), 32*1024))
+		debugLogger.SetRawSection("UpstreamResponseRaw", body)
+	}
+
+	var results *kiro_claude.WebSearchResults
+	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+		if parsed, err := kiro_claude.ParseKiroMcpWebSearchResults(body); err == nil {
+			results = parsed
+		}
+	}
+
+	// always return 200 to match kiro.rs; MCP failures degrade to empty results.
+	return c.writeKiroWebSearchResponse(ctx, w, req, result, model, query, toolUseID, results, inputTokens, 0)
+}
+
+func (c *ExecutionContext) writeKiroWebSearchResponse(
+	ctx context.Context,
+	w http.ResponseWriter,
+	req *ForwardRequest,
+	result *ForwardResult,
+	model string,
+	query string,
+	toolUseID string,
+	results *kiro_claude.WebSearchResults,
+	inputTokens int,
+	outputTokens int,
+) *ForwardResult {
+	_ = ctx
+
+	if req == nil || w == nil || result == nil {
+		return result
+	}
+
+	// Always return OK, even when MCP fails, to match `.other/kiro.rs` behavior.
+	result.StatusCode = http.StatusOK
+
+	if req.IsStreaming {
+		events, outTokens := kiro_claude.BuildWebSearchSSEEvents(model, query, toolUseID, results, inputTokens)
+		if outTokens > 0 {
+			outputTokens = outTokens
+		}
+		var capture strings.Builder
+		for _, e := range events {
+			capture.WriteString(e)
+		}
+		result.ResponseStream = capture.String()
+		result.Streamed = true
+		result.Tokens = &TokenUsage{InputTokens: int64(inputTokens), OutputTokens: int64(outputTokens)}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, _ := w.(http.Flusher)
+		for _, e := range events {
+			_, _ = io.WriteString(w, e)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return result
+	}
+
+	body, outTokens, err := kiro_claude.BuildWebSearchNonStreamMessage(model, query, toolUseID, results, inputTokens)
+	if err != nil {
+		result.StatusCode = http.StatusInternalServerError
+		result.Error = err
+		return result
+	}
+	if outTokens > 0 {
+		outputTokens = outTokens
+	}
+	result.Body = body
+	result.Tokens = &TokenUsage{InputTokens: int64(inputTokens), OutputTokens: int64(outputTokens)}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+	return result
 }
 
 func shouldTreatAsStreaming(resp *http.Response, tr transformer.Transformer) bool {
@@ -670,4 +936,64 @@ func extractModelFromBody(body []byte) string {
 	}
 	model, _ := payload["model"].(string)
 	return strings.TrimSpace(model)
+}
+
+func formatHeaderMap(h map[string]string) string {
+	if len(h) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteString(": ")
+		b.WriteString(h[k])
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func formatHTTPHeaders(statusLine string, headers http.Header) string {
+	h := sanitizeHeaders(headers)
+	var b strings.Builder
+	if strings.TrimSpace(statusLine) != "" {
+		b.WriteString("Status: ")
+		b.WriteString(statusLine)
+		b.WriteByte('\n')
+	}
+	b.WriteString(formatHeaderMap(h))
+	return b.String()
+}
+
+func formatErrorChain(err error) string {
+	if err == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%T: %v\n", err, err))
+
+	visited := 0
+	for unwrapped := errors.Unwrap(err); unwrapped != nil && visited < 16; unwrapped = errors.Unwrap(unwrapped) {
+		visited++
+		b.WriteString(fmt.Sprintf("caused by %T: %v\n", unwrapped, unwrapped))
+	}
+	return b.String()
+}
+
+func bytesToSafeText(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return strings.ToValidUTF8(string(b), "�")
+}
+
+func truncateTextForLog(s string, maxLen int) string {
+	if maxLen <= 0 || len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "\n...(truncated)\n"
 }

@@ -34,6 +34,11 @@ func KiroGenerateURL(region string) string {
 	return "https://" + KiroQHost(region) + "/generateAssistantResponse"
 }
 
+// KiroMCPURL returns the region-specific MCP endpoint URL (used by web_search).
+func KiroMCPURL(region string) string {
+	return "https://" + KiroQHost(region) + "/mcp"
+}
+
 // KiroUsageURL 返回指定 region 的用量查询 URL。
 func KiroUsageURL(region string) string {
 	return "https://" + KiroQHost(region) + "/getUsageLimits"

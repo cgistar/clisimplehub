@@ -5,6 +5,14 @@ Thumbs.db
 # Node
 node_modules/
 
+# Rust
+**/target/
+
+# Python
+**/bin
+**/__pycache__/
+**/.venv
+
 # Logs
 *.log
 
@@ -36,3 +44,4 @@ desktop/build/windows/*
 config.json
 data.sqlite
 .other
+test

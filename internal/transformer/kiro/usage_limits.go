@@ -41,7 +41,7 @@ func ComputeMachineID(refreshToken string) string {
 	if refreshToken == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte("KotlinNativeAPI/" + refreshToken))
+	sum := sha256.Sum256([]byte("NativeAPI/" + refreshToken))
 	return fmt.Sprintf("%x", sum[:])
 }
 

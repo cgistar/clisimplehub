@@ -93,11 +93,11 @@ func (d *DebugFileLogger) GetLogDir() string {
 // NewRequestDebugLogger 创建请求级别的调试日志记录器
 func NewRequestDebugLogger(requestID string) *RequestDebugLogger {
 	return &RequestDebugLogger{
-		requestID:  requestID,
-		startTime:  time.Now(),
-		entries:    make([]string, 0),
-		metadata:   make(map[string]string),
-		sections:   make(map[string]string),
+		requestID:   requestID,
+		startTime:   time.Now(),
+		entries:     make([]string, 0),
+		metadata:    make(map[string]string),
+		sections:    make(map[string]string),
 		rawSections: make(map[string][]byte),
 	}
 }
@@ -109,8 +109,8 @@ type RequestDebugLogger struct {
 	startTime   time.Time
 	entries     []string
 	metadata    map[string]string
-	sections    map[string]string   // 文本段落
-	rawSections map[string][]byte   // 二进制段落（会 base64 编码）
+	sections    map[string]string // 文本段落
+	rawSections map[string][]byte // 二进制段落（会 base64 编码）
 }
 
 // SetMetadata 设置元数据
@@ -254,10 +254,14 @@ func (r *RequestDebugLogger) buildContent() string {
 
 	// 写入文本段落（按固定顺序）
 	sectionOrder := []string{
-		"OriginalRequest",      // 原始访问请求
-		"TransformedRequest",   // 转换器转换后的请求
-		"UpstreamResponseRaw",  // 上游返回原始数据（文本形式，如果是二进制则在 rawSections）
-		"TransformedResponse",  // 转换器转换后的响应（SSE）
+		"OriginalRequest",    // 原始访问请求
+		"TransformedRequest", // 转换器转换后的请求
+		"UpstreamRequestHeaders",
+		"UpstreamResponseHeaders",
+		"UpstreamError",
+		"UpstreamResponseBody",
+		"UpstreamResponseRaw", // 上游返回原始数据（文本形式，如果是二进制则在 rawSections）
+		"TransformedResponse", // 转换器转换后的响应（SSE）
 	}
 	writtenSections := make(map[string]bool)
 	for _, name := range sectionOrder {

@@ -94,13 +94,13 @@ type KiroTool struct {
 // ToolSpecification represents the specification of a tool
 type ToolSpecification struct {
 	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	InputSchema InputSchema `json:"inputSchema,omitempty"`
+	Description string      `json:"description"`
+	InputSchema InputSchema `json:"inputSchema"`
 }
 
 // InputSchema represents the input schema for a tool
 type InputSchema struct {
-	JSON map[string]interface{} `json:"json,omitempty"`
+	JSON map[string]interface{} `json:"json"`
 }
 
 // ToolUse represents a tool use in assistant response
