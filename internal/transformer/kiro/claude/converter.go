@@ -17,6 +17,12 @@ const (
 	thinkingBudgetMaxTokens     = 24576
 )
 
+const (
+	systemAssistantAck = "I will follow these instructions."
+	systemOrphanOK     = "OK"
+	agentTaskTypeVibe  = "vibe"
+)
+
 // ClaudeToKiroRequest converts a Claude API request to Kiro API format
 func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, profileArn string) (*KiroRequest, error) {
 	kiroReq := &KiroRequest{
@@ -25,6 +31,8 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 
 	kiroReq.ConversationState.ConversationID = generateConversationID(claudeReq)
 	kiroReq.ConversationState.ChatTriggerType = determineChatTriggerType(claudeReq)
+	kiroReq.ConversationState.AgentContinuationID = uuid.NewString()
+	kiroReq.ConversationState.AgentTaskType = agentTaskTypeVibe
 
 	// Get Kiro model ID
 	kiroModelID := GetKiroModelID(modelName)
@@ -35,82 +43,334 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 		return nil, fmt.Errorf("messages is required and must be non-empty")
 	}
 
-	// Extract system prompt (Claude top-level `system`) and merge in any role=system messages.
 	systemPrompt := extractSystemPrompt(claudeReq)
-	messages := normalizeAndMergeClaudeMessages(rawMessages, &systemPrompt)
-	if len(messages) == 0 {
+	conversationMsgs, mergedSystem := splitSystemFromMessages(rawMessages)
+	if strings.TrimSpace(mergedSystem) != "" {
+		if strings.TrimSpace(systemPrompt) == "" {
+			systemPrompt = strings.TrimSpace(mergedSystem)
+		} else {
+			systemPrompt = strings.TrimSpace(systemPrompt) + "\n" + strings.TrimSpace(mergedSystem)
+		}
+	}
+	if len(conversationMsgs) == 0 {
 		return nil, fmt.Errorf("messages is required and must be non-empty")
 	}
 
-	// If thinking is requested, inject Kiro-side thinking configuration into the system prompt.
-	// Default: disabled via config.json `kiro.thinking=false`.
-	if isKiroThinkingEnabledByConfig() {
-		if prefix := buildKiroThinkingSystemPrefix(claudeReq); prefix != "" && !systemHasKiroThinkingTags(systemPrompt) {
-			systemPrompt = prependSystemPrefix(systemPrompt, prefix)
-		}
+	thinkingPrefix := buildKiroThinkingSystemPrefix(claudeReq)
+	if strings.TrimSpace(thinkingPrefix) != "" && !systemHasKiroThinkingTags(systemPrompt) {
+		systemPrompt = prependSystemPrefix(systemPrompt, thinkingPrefix)
 	}
 
-	// Convert tools (and move overlong tool descriptions into the system prompt)
+	// Convert tools
 	var kiroTools []KiroTool
 	if tools, ok := claudeReq["tools"].([]interface{}); ok && len(tools) > 0 {
-		converted, toolDoc := convertClaudeToolsToKiroWithToolDocs(tools, defaultToolDescriptionMaxLength)
-		kiroTools = converted
-		if strings.TrimSpace(toolDoc) != "" {
-			systemPrompt = appendToolDocumentationToSystemPrompt(systemPrompt, toolDoc)
+		kiroTools = convertClaudeToolsToKiroTruncated(tools, defaultToolDescriptionMaxLength)
+	}
+
+	history := buildHistoryAligned(conversationMsgs, kiroModelID, systemPrompt, thinkingPrefix)
+
+	currentText, currentImages, currentToolResults := processMessageContentForCurrent(conversationMsgs[len(conversationMsgs)-1])
+	validatedToolResults := validateToolPairing(history, currentToolResults)
+
+	kiroTools = addMissingHistoryToolsAsPlaceholders(kiroTools, history)
+
+	kiroReq.ConversationState.History = history
+	kiroReq.ConversationState.CurrentMessage = buildCurrentUserMessageWithImages(currentText, currentImages, kiroModelID, kiroTools, validatedToolResults)
+
+	return kiroReq, nil
+}
+
+func splitSystemFromMessages(rawMessages []interface{}) ([]map[string]interface{}, string) {
+	var conversation []map[string]interface{}
+	var systemParts []string
+
+	for _, msgRaw := range rawMessages {
+		msg, ok := msgRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		role := strings.ToLower(strings.TrimSpace(shared.StringFromAny(msg["role"])))
+		if role == "" {
+			continue
+		}
+
+		if role == "system" {
+			systemParts = append(systemParts, extractMessageContent(msg))
+			continue
+		}
+
+		conversation = append(conversation, msg)
+	}
+
+	return conversation, strings.TrimSpace(strings.Join(systemParts, "\n"))
+}
+
+func buildHistoryAligned(conversationMsgs []map[string]interface{}, modelID string, systemPrompt string, thinkingPrefix string) []KiroHistoryMessage {
+	var history []KiroHistoryMessage
+
+	systemContent := strings.TrimSpace(systemPrompt)
+	if systemContent == "" && strings.TrimSpace(thinkingPrefix) != "" && !systemHasKiroThinkingTags(systemContent) {
+		systemContent = strings.TrimSpace(thinkingPrefix)
+	}
+
+	if systemContent != "" {
+		history = append(history, buildHistoryUserMessage(systemContent, modelID, nil, nil))
+		history = append(history, buildHistoryAssistantMessage(systemAssistantAck, nil))
+	}
+
+	if len(conversationMsgs) == 0 {
+		return history
+	}
+
+	last := conversationMsgs[len(conversationMsgs)-1]
+	lastIsAssistant := strings.EqualFold(strings.TrimSpace(shared.StringFromAny(last["role"])), "assistant")
+
+	historyEndIndex := len(conversationMsgs) - 1
+	if lastIsAssistant {
+		historyEndIndex = len(conversationMsgs)
+	}
+
+	var userBuffer []map[string]interface{}
+
+	for i := 0; i < historyEndIndex; i++ {
+		msg := conversationMsgs[i]
+		role := strings.ToLower(strings.TrimSpace(shared.StringFromAny(msg["role"])))
+
+		switch role {
+		case "user", "tool":
+			userBuffer = append(userBuffer, msg)
+		case "assistant":
+			if len(userBuffer) == 0 {
+				continue
+			}
+
+			userHistory := mergeUserMessagesToHistory(userBuffer, modelID)
+			history = append(history, userHistory)
+			userBuffer = nil
+
+			history = append(history, convertAssistantToHistoryMessage(msg))
 		}
 	}
 
-	// - history = all messages except last
-	// - system prompt is injected ONLY into the first history message IF it is a user message
-	// - if there is no history, inject system prompt into current message
-	historyMsgs := messages[:len(messages)-1]
-	currentMsg := messages[len(messages)-1]
-
-	if systemPrompt != "" && len(historyMsgs) > 0 && historyMsgs[0].Role == "user" {
-		historyMsgs[0].Text = systemPrompt + "\n\n" + historyMsgs[0].Text
+	if len(userBuffer) > 0 {
+		history = append(history, mergeUserMessagesToHistory(userBuffer, modelID))
+		history = append(history, buildHistoryAssistantMessage(systemOrphanOK, nil))
 	}
 
-	for _, msg := range historyMsgs {
-		kiroReq.ConversationState.History = append(kiroReq.ConversationState.History, buildHistoryMessage(msg, kiroModelID, ""))
+	return history
+}
+
+func mergeUserMessagesToHistory(messages []map[string]interface{}, modelID string) KiroHistoryMessage {
+	var contentParts []string
+	var images []KiroImage
+	var toolResults []ToolResult
+
+	for _, msg := range messages {
+		role := strings.ToLower(strings.TrimSpace(shared.StringFromAny(msg["role"])))
+		if role == "tool" {
+			if r := toolMessageToToolResult(msg); r != nil {
+				toolResults = append(toolResults, *r)
+			}
+			continue
+		}
+
+		text, msgImages := extractMessageContentWithImages(msg)
+		if strings.TrimSpace(text) != "" {
+			contentParts = append(contentParts, text)
+		}
+		if len(msgImages) > 0 {
+			images = append(images, msgImages...)
+		}
+		if results := extractToolResults(msg); len(results) > 0 {
+			toolResults = append(toolResults, results...)
+		}
 	}
 
-	historyToolNames := collectHistoryToolNames(historyMsgs)
+	content := strings.Join(contentParts, "\n")
+	return buildHistoryUserMessage(content, modelID, images, toolResults)
+}
+
+func toolMessageToToolResult(msg map[string]interface{}) *ToolResult {
+	toolCallID := strings.TrimSpace(shared.StringFromAny(msg["tool_call_id"]))
+	if toolCallID == "" {
+		return nil
+	}
+	resultText := extractMessageContent(msg)
+	if strings.TrimSpace(resultText) == "" {
+		resultText = "(empty result)"
+	}
+	return &ToolResult{
+		ToolUseID: toolCallID,
+		Status:    "success",
+		Content:   []ToolResultContent{{Text: resultText}},
+		IsError:   false,
+	}
+}
+
+func buildHistoryUserMessage(content string, modelID string, images []KiroImage, toolResults []ToolResult) KiroHistoryMessage {
+	userInput := &UserInputMessage{
+		Content: content,
+		ModelID: modelID,
+		Origin:  "AI_EDITOR",
+	}
+
+	if len(images) > 0 {
+		userInput.Images = images
+	}
+	if len(toolResults) > 0 {
+		userInput.UserInputMessageContext = &UserInputMessageContext{
+			ToolResults: toolResults,
+		}
+	}
+
+	return KiroHistoryMessage{
+		UserInputMessage: userInput,
+	}
+}
+
+func buildHistoryAssistantMessage(content string, toolUses []ToolUse) KiroHistoryMessage {
+	resp := &AssistantResponseMessage{
+		Content: content,
+	}
+	if len(toolUses) > 0 {
+		resp.ToolUses = toolUses
+	}
+	return KiroHistoryMessage{
+		AssistantResponseMessage: resp,
+	}
+}
+
+func convertAssistantToHistoryMessage(msg map[string]interface{}) KiroHistoryMessage {
+	content, _ := extractAssistantContentWithImages(msg)
+	toolUses := extractToolUses(msg)
+	if strings.TrimSpace(content) == "" && len(toolUses) > 0 {
+		content = "There is a tool use."
+	}
+	return buildHistoryAssistantMessage(content, toolUses)
+}
+
+func processMessageContentForCurrent(msg map[string]interface{}) (string, []KiroImage, []ToolResult) {
+	role := strings.ToLower(strings.TrimSpace(shared.StringFromAny(msg["role"])))
+	if role == "tool" {
+		if r := toolMessageToToolResult(msg); r != nil {
+			return "", nil, []ToolResult{*r}
+		}
+		return "", nil, nil
+	}
+
+	content := msg["content"]
+	if content == nil {
+		return "", nil, nil
+	}
+
+	switch c := content.(type) {
+	case string:
+		return c, nil, nil
+	case []interface{}:
+		var textParts []string
+		var images []KiroImage
+		var toolResults []ToolResult
+
+		for _, part := range c {
+			partMap, ok := part.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			partType := shared.StringFromAny(partMap["type"])
+			switch partType {
+			case "text":
+				if text, ok := partMap["text"].(string); ok && text != "" {
+					textParts = append(textParts, text)
+				}
+			case "image":
+				if source, ok := partMap["source"].(map[string]interface{}); ok {
+					if shared.StringFromAny(source["type"]) == "base64" {
+						mediaType := shared.StringFromAny(source["media_type"])
+						data := shared.StringFromAny(source["data"])
+						format := getImageFormatFromMediaType(mediaType)
+						if format != "" && data != "" {
+							images = append(images, NewKiroImageFromBase64(format, data))
+						}
+					}
+				}
+			case "tool_result":
+				results := extractToolResults(map[string]interface{}{"content": []interface{}{partMap}})
+				if len(results) > 0 {
+					toolResults = append(toolResults, results...)
+				}
+			}
+		}
+
+		return strings.Join(textParts, "\n"), images, toolResults
+	}
+
+	return "", nil, nil
+}
+
+func addMissingHistoryToolsAsPlaceholders(tools []KiroTool, history []KiroHistoryMessage) []KiroTool {
+	historyToolNames := collectHistoryToolNamesFromKiroHistory(history)
 	existingToolNames := make(map[string]struct{})
-	for _, tool := range kiroTools {
+	for _, tool := range tools {
 		existingToolNames[strings.ToLower(tool.ToolSpecification.Name)] = struct{}{}
 	}
 
 	for _, toolName := range historyToolNames {
 		if _, exists := existingToolNames[strings.ToLower(toolName)]; !exists {
-			kiroTools = append(kiroTools, createPlaceholderTool(toolName))
+			tools = append(tools, createPlaceholderTool(toolName))
 		}
 	}
 
-	currentContent := currentMsg.Text
-	if systemPrompt != "" && len(historyMsgs) == 0 {
-		currentContent = systemPrompt + "\n\n" + currentContent
+	return tools
+}
+
+func collectHistoryToolNamesFromKiroHistory(history []KiroHistoryMessage) []string {
+	var toolNames []string
+	seen := make(map[string]struct{})
+
+	for _, msg := range history {
+		if msg.AssistantResponseMessage == nil || len(msg.AssistantResponseMessage.ToolUses) == 0 {
+			continue
+		}
+		for _, toolUse := range msg.AssistantResponseMessage.ToolUses {
+			name := toolUse.Name
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			toolNames = append(toolNames, name)
+		}
 	}
 
-	if currentMsg.Role == "assistant" {
-		kiroReq.ConversationState.History = append(kiroReq.ConversationState.History, buildHistoryMessage(currentMsg, kiroModelID, ""))
-		currentContent = "Continue"
+	return toolNames
+}
+
+func buildCurrentUserMessageWithImages(content string, images []KiroImage, modelID string, tools []KiroTool, toolResults []ToolResult) KiroCurrentMessage {
+	userInput := &UserInputMessage{
+		Content:                 content,
+		ModelID:                 modelID,
+		Origin:                  "AI_EDITOR",
+		UserInputMessageContext: &UserInputMessageContext{},
 	}
 
-	// If content is empty (e.g., message with only tool_result), set to "Continue"
-	if strings.TrimSpace(currentContent) == "" {
-		currentContent = "Continue"
+	if len(images) > 0 {
+		userInput.Images = images
 	}
 
-	toolResults := []ToolResult(nil)
-	if currentMsg.Role == "user" {
-		toolResults = currentMsg.ToolResults
-		// Validate and filter tool_use/tool_result pairing
-		// Remove orphaned tool_result (no corresponding tool_use)
-		toolResults = validateToolPairing(kiroReq.ConversationState.History, toolResults)
+	if len(tools) > 0 {
+		userInput.UserInputMessageContext.Tools = tools
 	}
-	kiroReq.ConversationState.CurrentMessage = buildCurrentUserMessage(currentContent, kiroModelID, kiroTools, toolResults)
+	if len(toolResults) > 0 {
+		userInput.UserInputMessageContext.ToolResults = toolResults
+	}
 
-	return kiroReq, nil
+	return KiroCurrentMessage{
+		UserInputMessage: userInput,
+	}
 }
 
 func buildKiroThinkingSystemPrefix(claudeReq map[string]interface{}) string {
@@ -223,13 +483,20 @@ func normalizeAndMergeClaudeMessages(rawMessages []interface{}, systemPrompt *st
 					ToolUseID: toolCallID,
 					Status:    "success",
 					Content:   []ToolResultContent{{Text: resultText}},
+					IsError:   false,
 				}},
 			}
 			out = append(out, n)
 			continue
 		}
 
-		text, images := extractMessageContentWithImages(msg)
+		var text string
+		var images []KiroImage
+		if role == "assistant" {
+			text, images = extractAssistantContentWithImages(msg)
+		} else {
+			text, images = extractMessageContentWithImages(msg)
+		}
 		if role == "system" {
 			flushSystem(text)
 			continue
@@ -271,25 +538,90 @@ func normalizeAndMergeClaudeMessages(rawMessages []interface{}, systemPrompt *st
 	return out
 }
 
+func extractAssistantContentWithImages(msg map[string]interface{}) (string, []KiroImage) {
+	content := msg["content"]
+	if content == nil {
+		return "", nil
+	}
+
+	switch c := content.(type) {
+	case string:
+		return c, nil
+	case []interface{}:
+		var thinkingParts []string
+		var textParts []string
+		var images []KiroImage
+
+		for _, part := range c {
+			switch v := part.(type) {
+			case map[string]interface{}:
+				partType := shared.StringFromAny(v["type"])
+				switch partType {
+				case "text":
+					if text, ok := v["text"].(string); ok && text != "" {
+						textParts = append(textParts, text)
+					}
+				case "thinking":
+					if thinking, ok := v["thinking"].(string); ok && thinking != "" {
+						thinkingParts = append(thinkingParts, thinking)
+					}
+				case "image":
+					if source, ok := v["source"].(map[string]interface{}); ok {
+						if shared.StringFromAny(source["type"]) == "base64" {
+							mediaType := shared.StringFromAny(source["media_type"])
+							data := shared.StringFromAny(source["data"])
+							format := getImageFormatFromMediaType(mediaType)
+							if format != "" && data != "" {
+								images = append(images, NewKiroImageFromBase64(format, data))
+							}
+						}
+					}
+				case "image_url":
+					if imageURL, ok := v["image_url"].(map[string]interface{}); ok {
+						if img := convertImageURLToKiroImage(imageURL); img != nil {
+							images = append(images, *img)
+						}
+					}
+				}
+			case string:
+				if v != "" {
+					textParts = append(textParts, v)
+				}
+			}
+		}
+
+		thinking := strings.Join(thinkingParts, "")
+		text := strings.Join(textParts, "")
+
+		if thinking != "" {
+			if text != "" {
+				return "<thinking>" + thinking + "</thinking>\n\n" + text, images
+			}
+			return "<thinking>" + thinking + "</thinking>", images
+		}
+		return text, images
+	}
+
+	return "", nil
+}
+
 func buildCurrentUserMessage(content string, modelID string, tools []KiroTool, toolResults []ToolResult) KiroCurrentMessage {
 	if strings.TrimSpace(content) == "" && len(toolResults) == 0 {
 		content = "Continue"
 	}
 
 	userInput := &UserInputMessage{
-		Content: content,
-		ModelID: modelID,
-		Origin:  "AI_EDITOR",
+		Content:                 content,
+		ModelID:                 modelID,
+		Origin:                  "AI_EDITOR",
+		UserInputMessageContext: &UserInputMessageContext{},
 	}
 
-	if len(tools) > 0 || len(toolResults) > 0 {
-		userInput.UserInputMessageContext = &UserInputMessageContext{}
-		if len(tools) > 0 {
-			userInput.UserInputMessageContext.Tools = tools
-		}
-		if len(toolResults) > 0 {
-			userInput.UserInputMessageContext.ToolResults = toolResults
-		}
+	if len(tools) > 0 {
+		userInput.UserInputMessageContext.Tools = tools
+	}
+	if len(toolResults) > 0 {
+		userInput.UserInputMessageContext.ToolResults = toolResults
 	}
 
 	return KiroCurrentMessage{
@@ -465,15 +797,12 @@ func extractMessageContentWithImages(msg map[string]interface{}) (string, []Kiro
 	case []interface{}:
 		var parts []string
 		var images []KiroImage
-		hasToolResult := false
 
 		for _, part := range c {
 			switch v := part.(type) {
 			case map[string]interface{}:
 				partType := shared.StringFromAny(v["type"])
 				switch partType {
-				case "tool_result":
-					hasToolResult = true
 				case "text":
 					if text, ok := v["text"].(string); ok && text != "" {
 						parts = append(parts, text)
@@ -507,10 +836,6 @@ func extractMessageContentWithImages(msg map[string]interface{}) (string, []Kiro
 					parts = append(parts, v)
 				}
 			}
-		}
-
-		if hasToolResult {
-			return "", images
 		}
 
 		return strings.Join(parts, "\n"), images
@@ -685,6 +1010,7 @@ func extractToolResults(msg map[string]interface{}) []ToolResult {
 			result := ToolResult{
 				ToolUseID: shared.StringFromAny(partMap["tool_use_id"]),
 				Status:    status,
+				IsError:   isError,
 			}
 
 			result.Content = []ToolResultContent{{Text: extractToolResultText(partMap["content"])}}
@@ -730,7 +1056,7 @@ func extractToolResultText(content any) string {
 }
 
 // convertClaudeToolsToKiro converts Claude tools to Kiro format.
-// Note: it does not apply any description-length limits; use convertClaudeToolsToKiroWithToolDocs when forwarding to Kiro.
+// Note: it does not apply any description-length limits.
 func convertClaudeToolsToKiro(tools []interface{}) []KiroTool {
 	var kiroTools []KiroTool
 
@@ -759,18 +1085,14 @@ func convertClaudeToolsToKiro(tools []interface{}) []KiroTool {
 	return kiroTools
 }
 
-func convertClaudeToolsToKiroWithToolDocs(tools []interface{}, maxDescriptionLength int) ([]KiroTool, string) {
+func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength int) []KiroTool {
 	var kiroTools []KiroTool
 	if len(tools) == 0 {
-		return nil, ""
+		return nil
 	}
-
 	if maxDescriptionLength < 0 {
 		maxDescriptionLength = 0
 	}
-
-	var toolDocumentationParts []string
-
 	for _, tool := range tools {
 		toolMap, ok := tool.(map[string]interface{})
 		if !ok {
@@ -801,10 +1123,7 @@ func convertClaudeToolsToKiroWithToolDocs(tools []interface{}, maxDescriptionLen
 			}
 		}
 
-		if maxDescriptionLength > 0 && len(description) > maxDescriptionLength && strings.TrimSpace(name) != "" {
-			toolDocumentationParts = append(toolDocumentationParts, "## Tool: "+name+"\n\n"+description)
-			description = "[Full documentation in system prompt under '## Tool: " + name + "']"
-		}
+		description = truncateByRunes(description, maxDescriptionLength)
 
 		kiroTool := KiroTool{
 			ToolSpecification: ToolSpecification{
@@ -821,29 +1140,25 @@ func convertClaudeToolsToKiroWithToolDocs(tools []interface{}, maxDescriptionLen
 
 		kiroTools = append(kiroTools, kiroTool)
 	}
-
-	if len(toolDocumentationParts) == 0 {
-		return kiroTools, ""
-	}
-
-	toolDoc := "\n\n---\n" +
-		"# Tool Documentation\n" +
-		"The following tools have detailed documentation that couldn't fit in the tool definition.\n\n" +
-		strings.Join(toolDocumentationParts, "\n\n---\n\n")
-	return kiroTools, toolDoc
+	return kiroTools
 }
 
-func appendToolDocumentationToSystemPrompt(systemPrompt string, toolDoc string) string {
-	toolDoc = strings.Trim(toolDoc, "\r\n")
-	systemPrompt = strings.Trim(systemPrompt, "\r\n")
+func truncateByRunes(s string, max int) string {
+	if max <= 0 || s == "" {
+		if max <= 0 {
+			return ""
+		}
+		return s
+	}
 
-	if strings.TrimSpace(toolDoc) == "" {
-		return systemPrompt
+	count := 0
+	for i := range s {
+		if count == max {
+			return s[:i]
+		}
+		count++
 	}
-	if strings.TrimSpace(systemPrompt) == "" {
-		return toolDoc
-	}
-	return systemPrompt + "\n\n" + toolDoc
+	return s
 }
 
 // collectHistoryToolNames collects all tool names used in history messages

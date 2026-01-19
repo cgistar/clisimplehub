@@ -25,10 +25,12 @@ type KiroRequest struct {
 
 // ConversationState represents the conversation state in Kiro API
 type ConversationState struct {
-	ConversationID  string               `json:"conversationId"`
-	CurrentMessage  KiroCurrentMessage   `json:"currentMessage"`
-	History         []KiroHistoryMessage `json:"history,omitempty"`
-	ChatTriggerType string               `json:"chatTriggerType"`
+	ConversationID      string               `json:"conversationId"`
+	AgentContinuationID string               `json:"agentContinuationId,omitempty"`
+	AgentTaskType       string               `json:"agentTaskType,omitempty"`
+	CurrentMessage      KiroCurrentMessage   `json:"currentMessage"`
+	History             []KiroHistoryMessage `json:"history,omitempty"`
+	ChatTriggerType     string               `json:"chatTriggerType"`
 }
 
 // KiroCurrentMessage represents the current message in Kiro API
@@ -113,6 +115,7 @@ type ToolResult struct {
 	Content   []ToolResultContent `json:"content"`
 	Status    string              `json:"status"`
 	ToolUseID string              `json:"toolUseId"`
+	IsError   bool                `json:"isError,omitempty"`
 }
 
 // ToolResultContent represents the content of a tool result
@@ -180,8 +183,8 @@ var KiroModelMapping = map[string]string{
 	"claude-haiku-4-5":          "claude-haiku-4.5",
 	"claude-haiku-4-5-20251001": "claude-haiku-4.5",
 
-	"claude-sonnet-4-5":          "CLAUDE_SONNET_4_5_20250929_V1_0",
-	"claude-sonnet-4-5-20250929": "CLAUDE_SONNET_4_5_20250929_V1_0",
+	"claude-sonnet-4-5":          "claude-sonnet-4.5",
+	"claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
 
 	"claude-sonnet-4":          "CLAUDE_SONNET_4_20250514_V1_0",
 	"claude-sonnet-4-20250514": "CLAUDE_SONNET_4_20250514_V1_0",
