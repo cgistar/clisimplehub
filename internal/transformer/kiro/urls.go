@@ -31,7 +31,7 @@ func KiroRefreshURL(region string) string {
 
 // KiroGenerateURL 返回指定 region 的 generateAssistantResponse URL。
 func KiroGenerateURL(region string) string {
-	return "https://" + KiroAPIHost(region) + "/generateAssistantResponse"
+	return "https://" + KiroQHost(region) + "/generateAssistantResponse"
 }
 
 // KiroUsageURL 返回指定 region 的用量查询 URL。

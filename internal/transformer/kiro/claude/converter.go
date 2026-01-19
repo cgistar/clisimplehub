@@ -23,7 +23,7 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 		ProfileArn: profileArn,
 	}
 
-	kiroReq.ConversationState.ConversationID = generateConversationID()
+	kiroReq.ConversationState.ConversationID = generateConversationID(claudeReq)
 	kiroReq.ConversationState.ChatTriggerType = determineChatTriggerType(claudeReq)
 
 	// Get Kiro model ID
@@ -74,6 +74,18 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 		kiroReq.ConversationState.History = append(kiroReq.ConversationState.History, buildHistoryMessage(msg, kiroModelID, ""))
 	}
 
+	historyToolNames := collectHistoryToolNames(historyMsgs)
+	existingToolNames := make(map[string]struct{})
+	for _, tool := range kiroTools {
+		existingToolNames[strings.ToLower(tool.ToolSpecification.Name)] = struct{}{}
+	}
+
+	for _, toolName := range historyToolNames {
+		if _, exists := existingToolNames[strings.ToLower(toolName)]; !exists {
+			kiroTools = append(kiroTools, createPlaceholderTool(toolName))
+		}
+	}
+
 	currentContent := currentMsg.Text
 	if systemPrompt != "" && len(historyMsgs) == 0 {
 		currentContent = systemPrompt + "\n\n" + currentContent
@@ -92,6 +104,9 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 	toolResults := []ToolResult(nil)
 	if currentMsg.Role == "user" {
 		toolResults = currentMsg.ToolResults
+		// Validate and filter tool_use/tool_result pairing
+		// Remove orphaned tool_result (no corresponding tool_use)
+		toolResults = validateToolPairing(kiroReq.ConversationState.History, toolResults)
 	}
 	kiroReq.ConversationState.CurrentMessage = buildCurrentUserMessage(currentContent, kiroModelID, kiroTools, toolResults)
 
@@ -155,26 +170,9 @@ func prependSystemPrefix(systemPrompt, prefix string) string {
 	return prefix + "\n" + systemPrompt
 }
 
+// determineChatTriggerType determines the chat trigger type
+// "AUTO" mode may cause 400 Bad Request errors, so always return "MANUAL"
 func determineChatTriggerType(claudeReq map[string]interface{}) string {
-	tools, ok := claudeReq["tools"].([]interface{})
-	if !ok || len(tools) == 0 {
-		return "MANUAL"
-	}
-
-	toolChoice := claudeReq["tool_choice"]
-	switch tc := toolChoice.(type) {
-	case map[string]interface{}:
-		typ := strings.ToLower(strings.TrimSpace(shared.StringFromAny(tc["type"])))
-		if typ == "any" || typ == "tool" {
-			return "AUTO"
-		}
-	case string:
-		typ := strings.ToLower(strings.TrimSpace(tc))
-		if typ == "any" || typ == "tool" {
-			return "AUTO"
-		}
-	}
-
 	return "MANUAL"
 }
 
@@ -303,6 +301,10 @@ func buildHistoryMessage(msg normalizedClaudeMessage, modelID string, systemPref
 	switch msg.Role {
 	case "assistant":
 		content := msg.Text
+		// If content is empty and there are tool uses, add placeholder
+		if strings.TrimSpace(content) == "" && len(msg.ToolUses) > 0 {
+			content = "There is a tool use."
+		}
 		return KiroHistoryMessage{
 			AssistantResponseMessage: &AssistantResponseMessage{
 				Content:  content,
@@ -594,10 +596,6 @@ func extractToolUses(msg map[string]interface{}) []ToolUse {
 
 			if shared.StringFromAny(partMap["type"]) == "tool_use" {
 				name := shared.StringFromAny(partMap["name"])
-				// 过滤不支持的工具：web_search (静默过滤，不发送到上游)
-				if name == "web_search" || name == "websearch" {
-					continue
-				}
 				toolUse := ToolUse{
 					Name:      name,
 					ToolUseID: shared.StringFromAny(partMap["id"]),
@@ -631,10 +629,6 @@ func extractToolUses(msg map[string]interface{}) []ToolUse {
 
 			fn, _ := tcMap["function"].(map[string]interface{})
 			name := shared.StringFromAny(fn["name"])
-			// 过滤不支持的工具：web_search (静默过滤，不发送到上游)
-			if name == "web_search" || name == "websearch" {
-				continue
-			}
 			argsStr := shared.StringFromAny(fn["arguments"])
 
 			toolUse := ToolUse{
@@ -807,11 +801,6 @@ func convertClaudeToolsToKiroWithToolDocs(tools []interface{}, maxDescriptionLen
 			}
 		}
 
-		// 过滤不支持的工具：web_search (静默过滤，不发送到上游)
-		if name == "web_search" || name == "websearch" {
-			continue
-		}
-
 		if maxDescriptionLength > 0 && len(description) > maxDescriptionLength && strings.TrimSpace(name) != "" {
 			toolDocumentationParts = append(toolDocumentationParts, "## Tool: "+name+"\n\n"+description)
 			description = "[Full documentation in system prompt under '## Tool: " + name + "']"
@@ -857,8 +846,143 @@ func appendToolDocumentationToSystemPrompt(systemPrompt string, toolDoc string) 
 	return systemPrompt + "\n\n" + toolDoc
 }
 
+// collectHistoryToolNames collects all tool names used in history messages
+func collectHistoryToolNames(messages []normalizedClaudeMessage) []string {
+	var toolNames []string
+	seen := make(map[string]struct{})
+
+	for _, msg := range messages {
+		if msg.Role == "assistant" && len(msg.ToolUses) > 0 {
+			for _, toolUse := range msg.ToolUses {
+				if _, exists := seen[toolUse.Name]; !exists {
+					toolNames = append(toolNames, toolUse.Name)
+					seen[toolUse.Name] = struct{}{}
+				}
+			}
+		}
+	}
+
+	return toolNames
+}
+
+// createPlaceholderTool creates a placeholder tool definition for tools used in history
+func createPlaceholderTool(name string) KiroTool {
+	return KiroTool{
+		ToolSpecification: ToolSpecification{
+			Name:        name,
+			Description: "Tool used in conversation history",
+			InputSchema: InputSchema{
+				JSON: map[string]interface{}{
+					"$schema":              "http://json-schema.org/draft-07/schema#",
+					"type":                 "object",
+					"properties":           map[string]interface{}{},
+					"required":             []interface{}{},
+					"additionalProperties": true,
+				},
+			},
+		},
+	}
+}
+
+// validateToolPairing validates and filters tool_use/tool_result pairing
+//
+// Collects all tool_use_ids, validates if tool_result matches
+// Silently skips orphaned tool_use and tool_result, outputs warning logs
+func validateToolPairing(history []KiroHistoryMessage, toolResults []ToolResult) []ToolResult {
+	// 1. Collect all tool_use_ids from history
+	allToolUseIDs := make(map[string]struct{})
+
+	for _, msg := range history {
+		if msg.AssistantResponseMessage != nil && len(msg.AssistantResponseMessage.ToolUses) > 0 {
+			for _, toolUse := range msg.AssistantResponseMessage.ToolUses {
+				allToolUseIDs[toolUse.ToolUseID] = struct{}{}
+			}
+		}
+	}
+
+	// 2. Collect tool_use_ids that already have tool_result in history
+	historyToolResultIDs := make(map[string]struct{})
+
+	for _, msg := range history {
+		if msg.UserInputMessage != nil && msg.UserInputMessage.UserInputMessageContext != nil {
+			for _, result := range msg.UserInputMessage.UserInputMessageContext.ToolResults {
+				historyToolResultIDs[result.ToolUseID] = struct{}{}
+			}
+		}
+	}
+
+	// 3. Calculate truly unpaired tool_use_ids (excluding those already paired in history)
+	unpairedToolUseIDs := make(map[string]struct{})
+	for id := range allToolUseIDs {
+		if _, exists := historyToolResultIDs[id]; !exists {
+			unpairedToolUseIDs[id] = struct{}{}
+		}
+	}
+
+	// 4. Validate and filter tool_result
+	var filteredResults []ToolResult
+
+	for _, result := range toolResults {
+		if _, exists := unpairedToolUseIDs[result.ToolUseID]; exists {
+			// Pairing successful
+			filteredResults = append(filteredResults, result)
+			delete(unpairedToolUseIDs, result.ToolUseID)
+		} else if _, exists := allToolUseIDs[result.ToolUseID]; exists {
+			// tool_use exists but already paired in history
+			// Skip duplicate tool_result (silently, as per Rust implementation)
+		} else {
+			// Orphaned tool_result
+			// Skip orphaned tool_result (silently, as per Rust implementation)
+		}
+	}
+
+	// 5. Check for orphaned tool_use (has tool_use but no tool_result)
+	// Note: We silently skip these as per the Rust implementation
+
+	return filteredResults
+}
+
+// extractSessionID extracts session UUID from metadata.user_id
+//
+// user_id format: user_xxx_account__session_0b4445e1-f5be-49e1-87ce-62bbc28ad705
+// Extract the UUID after "session_" as conversationId
+func extractSessionID(userID string) string {
+	if userID == "" {
+		return ""
+	}
+
+	pos := strings.Index(userID, "session_")
+	if pos == -1 {
+		return ""
+	}
+
+	sessionPart := userID[pos+8:]
+	if len(sessionPart) < 36 {
+		return ""
+	}
+
+	uuidStr := sessionPart[:36]
+	// Validate UUID format (should have 4 hyphens)
+	if strings.Count(uuidStr, "-") != 4 {
+		return ""
+	}
+
+	return uuidStr
+}
+
 // generateConversationID generates a unique conversation ID
-func generateConversationID() string {
+// Priority: extract from metadata.user_id, otherwise generate new UUID
+func generateConversationID(claudeReq map[string]interface{}) string {
+	// Try to extract session UUID from metadata.user_id
+	if metadata, ok := claudeReq["metadata"].(map[string]interface{}); ok {
+		if userID, ok := metadata["user_id"].(string); ok {
+			if sessionID := extractSessionID(userID); sessionID != "" {
+				return sessionID
+			}
+		}
+	}
+
+	// Fallback: generate new UUID
 	return uuid.NewString()
 }
 

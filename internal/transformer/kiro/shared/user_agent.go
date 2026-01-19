@@ -4,7 +4,7 @@ import "strings"
 
 const (
 	// DefaultKiroUserAgentBase is the default AWS SDK style User-Agent prefix used by Kiro clients.
-	DefaultKiroUserAgentBase = "aws-sdk-js/1.0.27 ua/2.1 os/win32#10.0.22631 lang/js md/nodejs#22.21.1 api/codewhispererstreaming#1.0.27 m/E"
+	DefaultKiroUserAgentBase = "aws-sdk-js/1.0.27 ua/2.1 os/win32#10.0.22631 lang/js md/nodejs#22.21.1 api/codewhispererstreaming#1.0.27 m/N,E"
 	// DefaultKiroVersion is the default Kiro client version token appended to user agent headers.
 	DefaultKiroVersion = "KiroIDE-0.8.0"
 	// DefaultKiroXAmzUserAgentBase is the default `x-amz-user-agent` base prefix.

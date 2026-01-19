@@ -86,6 +86,8 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 	req.Header.Set("x-amzn-kiro-agent-mode", "vibe")
 	req.Header.Set("amz-sdk-invocation-id", uuid.NewString())
 	req.Header.Set("amz-sdk-request", "attempt=1; max=3")
+	req.Header.Set("Host", req.URL.Host)
+	req.Header.Set("Connection", "close")
 
 	return nil
 }
