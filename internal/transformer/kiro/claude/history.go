@@ -240,25 +240,6 @@ func appendThinkingHint(text, hint string) string {
 	return text + "\n\n" + hint
 }
 
-func normalizeHistoryToolResults(history []KiroHistoryMessage) []KiroHistoryMessage {
-	var lastToolUseOrder []string
-	for i := range history {
-		if arm := history[i].AssistantResponseMessage; arm != nil {
-			lastToolUseOrder = toolUseIDOrder(arm.ToolUses)
-			continue
-		}
-		u := history[i].UserInputMessage
-		if u == nil || u.UserInputMessageContext == nil || len(u.UserInputMessageContext.ToolResults) == 0 {
-			continue
-		}
-		u.UserInputMessageContext.ToolResults = mergeToolResultsByToolUseID(u.UserInputMessageContext.ToolResults)
-		if len(lastToolUseOrder) > 0 {
-			u.UserInputMessageContext.ToolResults = reorderToolResultsByToolUses(u.UserInputMessageContext.ToolResults, lastToolUseOrder)
-		}
-	}
-	return history
-}
-
 func validateHistoryAlternation(history []KiroHistoryMessage) error {
 	prevRole := ""
 	for i := 0; i < len(history); i++ {

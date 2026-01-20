@@ -178,6 +178,7 @@ var KiroModelMapping = map[string]string{
 	// MODEL_MAPPING.
 	"claude-opus-4-5":          "claude-opus-4.5",
 	"claude-opus-4-5-20251101": "claude-opus-4.5",
+	"claude-opus-4-5-20250514":   "claude-opus-4.5",
 
 	"claude-haiku-4.5":          "claude-haiku-4.5",
 	"claude-haiku-4-5":          "claude-haiku-4.5",
@@ -185,23 +186,15 @@ var KiroModelMapping = map[string]string{
 
 	"claude-sonnet-4-5":          "claude-sonnet-4.5",
 	"claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
+	"claude-sonnet-4-5-20250514": "claude-sonnet-4.5",
 
-	"claude-sonnet-4":          "CLAUDE_SONNET_4_20250514_V1_0",
-	"claude-sonnet-4-20250514": "CLAUDE_SONNET_4_20250514_V1_0",
+	"claude-sonnet-4":          "claude-sonnet-4",
+	"claude-sonnet-4-20250514": "claude-sonnet-4",
 
 	"claude-3-7-sonnet-20250219": "CLAUDE_3_7_SONNET_20250219_V1_0",
 
 	// Convenience aliases
 	"auto": "claude-sonnet-4.5",
-
-	// Backward-compatible mappings (kept to avoid breaking existing configs).
-	"claude-opus-4-5-20250514":   "CLAUDE_OPUS_4_5_20250514_V1_0",
-	"claude-sonnet-4-5-20250514": "CLAUDE_SONNET_4_5_20250929_V1_0",
-	"claude-3-5-sonnet-20241022": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-	"claude-3-5-haiku-20241022":  "anthropic.claude-3-5-haiku-20241022-v1:0",
-	"claude-3-opus-20240229":     "anthropic.claude-3-opus-20240229-v1:0",
-	"claude-3-sonnet-20240229":   "anthropic.claude-3-sonnet-20240229-v1:0",
-	"claude-3-haiku-20240307":    "anthropic.claude-3-haiku-20240307-v1:0",
 }
 
 // GetKiroModelID returns the Kiro model ID for a given Claude model name

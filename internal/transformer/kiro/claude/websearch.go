@@ -66,6 +66,12 @@ func ParseClaudeWebSearchOnlyRequest(body []byte) (model string, query string, o
 		return "", "", false
 	}
 
+	// 验证工具名必须是 web_search
+	toolName := strings.TrimSpace(shared.StringFromAny(tool0["name"]))
+	if toolName != "web_search" {
+		return "", "", false
+	}
+
 	rawMessages, _ := req["messages"].([]any)
 	if len(rawMessages) == 0 {
 		return "", "", false

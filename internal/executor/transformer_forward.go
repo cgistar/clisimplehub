@@ -573,7 +573,51 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 	)
 	consecutiveTimeouts := 0
 
-	buf := make([]byte, 32*1024)
+	// 创建可取消的上下文用于控制读取 goroutine
+	readCtx, cancelRead := context.WithCancel(ctx)
+	defer cancelRead()
+
+	// 单一读取 goroutine，避免泄漏
+	type readResult struct {
+		n    int
+		err  error
+		data []byte
+	}
+	readChan := make(chan readResult, 1)
+	go func() {
+		for {
+			select {
+			case <-readCtx.Done():
+				return
+			default:
+			}
+
+			buf := make([]byte, 32*1024)
+			n, err := reader.Read(buf)
+
+			// 复制数据以避免 buf 被重用
+			var data []byte
+			if n > 0 {
+				data = make([]byte, n)
+				copy(data, buf[:n])
+			}
+
+			select {
+			case readChan <- readResult{n: n, err: err, data: data}:
+				if err != nil {
+					return
+				}
+			case <-readCtx.Done():
+				return
+			}
+		}
+	}()
+
+	// 使用可重置的 timer 避免重复分配
+	timer := time.NewTimer(readTimeout)
+	defer timer.Stop()
+
+readLoop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -584,30 +628,58 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
 			}
 			return result
-		default:
-		}
-
-		// 使用带超时的读取
-		type readResult struct {
-			n   int
-			err error
-		}
-		readChan := make(chan readResult, 1)
-		go func() {
-			n, err := reader.Read(buf)
-			readChan <- readResult{n: n, err: err}
-		}()
-
-		var n int
-		var err error
-		select {
 		case res := <-readChan:
-			n, err = res.n, res.err
+			n, err := res.n, res.err
 			consecutiveTimeouts = 0 // 成功读取，重置计数器
-		case <-time.After(readTimeout):
+			timer.Reset(readTimeout)
+
+			if n > 0 {
+				chunk := res.data
+				if captureUpstream {
+					upstream.Append(chunk)
+				}
+				// 调试日志：追加原始二进制数据
+				if debugLogger != nil {
+					debugUpstreamRaw = append(debugUpstreamRaw, chunk...)
+				}
+				outs, trErr := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, &state)
+				if trErr != nil {
+					result.Error = trErr
+					break readLoop
+				}
+				for _, out := range outs {
+					if out == "" {
+						continue
+					}
+					if _, err := w.Write([]byte(out)); err != nil {
+						result.Error = context.Canceled
+						break readLoop
+					}
+					capture.WriteString(out)
+					flusher.Flush()
+				}
+
+				if tok, ok := state.(interface{ TokenUsage() (int, int) }); ok && tok != nil {
+					in, out := tok.TokenUsage()
+					if in != 0 || out != 0 {
+						result.Tokens = &TokenUsage{InputTokens: int64(in), OutputTokens: int64(out)}
+					}
+				}
+			}
+
+			if err == io.EOF {
+				break readLoop
+			}
+			if err != nil {
+				result.Error = err
+				break readLoop
+			}
+
+		case <-timer.C:
 			consecutiveTimeouts++
 			if consecutiveTimeouts <= maxConsecutiveTimeouts {
 				// 记录警告但继续
+				timer.Reset(readTimeout)
 				continue
 			}
 			// 超过最大连续超时次数，退出
@@ -618,48 +690,6 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
 			}
 			return result
-		}
-
-		if n > 0 {
-			chunk := buf[:n]
-			if captureUpstream {
-				upstream.Append(chunk)
-			}
-			// 调试日志：追加原始二进制数据
-			if debugLogger != nil {
-				debugUpstreamRaw = append(debugUpstreamRaw, chunk...)
-			}
-			outs, trErr := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, &state)
-			if trErr != nil {
-				result.Error = trErr
-				break
-			}
-			for _, out := range outs {
-				if out == "" {
-					continue
-				}
-				if _, err := w.Write([]byte(out)); err != nil {
-					result.Error = context.Canceled
-					break
-				}
-				capture.WriteString(out)
-				flusher.Flush()
-			}
-
-			if tok, ok := state.(interface{ TokenUsage() (int, int) }); ok && tok != nil {
-				in, out := tok.TokenUsage()
-				if in != 0 || out != 0 {
-					result.Tokens = &TokenUsage{InputTokens: int64(in), OutputTokens: int64(out)}
-				}
-			}
-		}
-
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			result.Error = err
-			break
 		}
 	}
 
