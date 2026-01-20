@@ -3,7 +3,9 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -139,6 +141,7 @@ func (r *RetryExecutor) executeWithRetry(ctx context.Context, req *ForwardReques
 			// 端点被断路器临时禁用：将其标记为耗尽并静默切换到下一个端点（保持与旧 proxy 行为一致）
 			tracker.MarkEndpointExhausted(currentKey)
 			endpoint = r.execCtx.FindNextEndpoint(interfaceType, endpoint, tracker.ExhaustedEndpoints())
+			r.maybeBackoffBeforeRetry(ctx, attempts, endpoint, result.Error, tracker.CanRetry())
 			continue
 		}
 
@@ -174,6 +177,8 @@ func (r *RetryExecutor) executeWithRetry(ctx context.Context, req *ForwardReques
 			r.execCtx.NotifySwitch(endpoint, nextEndpoint, req.Path, result.StatusCode, errMsg)
 			endpoint = nextEndpoint
 		}
+
+		r.maybeBackoffBeforeRetry(ctx, attempts, endpoint, result.Error, tracker.CanRetry())
 	}
 
 	// 所有重试耗尽
@@ -186,6 +191,55 @@ func (r *RetryExecutor) executeWithRetry(ctx context.Context, req *ForwardReques
 		InterfaceType: interfaceType,
 		Attempts:      attempts,
 		LastError:     lastErr,
+	}
+}
+
+func (r *RetryExecutor) maybeBackoffBeforeRetry(ctx context.Context, attempts int, endpoint *EndpointConfig, err error, canRetry bool) {
+	if attempts < 1 || !canRetry || err == nil || !isRetryableEOF(err) {
+		return
+	}
+
+	backoff := eofBackoffDuration(attempts)
+	if backoff <= 0 {
+		return
+	}
+
+	endpointName := ""
+	if endpoint != nil {
+		endpointName = endpoint.Name
+	}
+	if dbg := DebugLoggerFromContext(ctx); dbg != nil {
+		dbg.Log("EOF 重试退避: attempt=%d endpoint=%s backoff=%s err=%T", attempts, endpointName, backoff, err)
+	}
+	r.execCtx.DebugLog(ctx, 2, fmt.Sprintf("EOF 重试退避: attempt=%d endpoint=%s backoff=%s err=%T", attempts, endpointName, backoff, err))
+	sleepWithContext(ctx, backoff)
+}
+
+func isRetryableEOF(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func eofBackoffDuration(attempts int) time.Duration {
+	// 短退避：避免立刻重试造成碰撞/拥塞，且不引入复杂的指数/抖动策略（KISS）。
+	switch {
+	case attempts <= 1:
+		return 50 * time.Millisecond
+	case attempts == 2:
+		return 100 * time.Millisecond
+	default:
+		return 200 * time.Millisecond
+	}
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
 	}
 }
 

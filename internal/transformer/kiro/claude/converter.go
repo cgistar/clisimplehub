@@ -11,7 +11,9 @@ import (
 	"github.com/google/uuid"
 )
 
-const defaultToolDescriptionMaxLength = 10000
+const defaultToolDescriptionMaxLength = 10240
+const toolDescriptionTruncateThreshold = 10240
+const toolDescriptionTruncateLength = 10100
 const (
 	thinkingBudgetDefaultTokens = 20000
 	thinkingBudgetMaxTokens     = 24576
@@ -56,26 +58,47 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 		return nil, fmt.Errorf("messages is required and must be non-empty")
 	}
 
-	thinkingPrefix := buildKiroThinkingSystemPrefix(claudeReq)
-	if strings.TrimSpace(thinkingPrefix) != "" && !systemHasKiroThinkingTags(systemPrompt) {
-		systemPrompt = prependSystemPrefix(systemPrompt, thinkingPrefix)
-	}
-
-	// Convert tools
+	// Convert tools and collect long description tools
 	var kiroTools []KiroTool
+	var longDescTools []LongDescTool
 	if tools, ok := claudeReq["tools"].([]interface{}); ok && len(tools) > 0 {
-		kiroTools = convertClaudeToolsToKiroTruncated(tools, defaultToolDescriptionMaxLength)
+		kiroTools, longDescTools = convertClaudeToolsToKiroTruncated(tools, defaultToolDescriptionMaxLength)
 	}
 
-	history := buildHistoryAligned(conversationMsgs, kiroModelID, systemPrompt, thinkingPrefix)
+	// buildHistory 内部会处理 thinking 标签注入
+	history, err := buildHistory(conversationMsgs, kiroModelID, systemPrompt, claudeReq)
+	if err != nil {
+		return nil, err
+	}
 
-	currentText, currentImages, currentToolResults := processMessageContentForCurrent(conversationMsgs[len(conversationMsgs)-1])
+	lastMsg := conversationMsgs[len(conversationMsgs)-1]
+	lastRole := strings.ToLower(strings.TrimSpace(shared.StringFromAny(lastMsg["role"])))
+	currentText, currentImages, currentToolResults := processMessageContentForCurrent(lastMsg)
+	if lastRole == "assistant" {
+		currentText, currentImages, currentToolResults = "Continue", nil, nil
+	}
+	currentToolResults = mergeToolResultsByToolUseID(currentToolResults)
+	if order := lastToolUseOrderFromHistory(history); len(order) > 0 {
+		currentToolResults = reorderToolResultsByToolUses(currentToolResults, order)
+	}
 	validatedToolResults := validateToolPairing(history, currentToolResults)
 
 	kiroTools = addMissingHistoryToolsAsPlaceholders(kiroTools, history)
 
+	// 如果有超长描述工具，在 currentText 前注入 TOOL DOCUMENTATION
+	if len(longDescTools) > 0 {
+		toolDoc := buildToolDocumentation(longDescTools)
+		if toolDoc != "" {
+			if strings.TrimSpace(currentText) == "" {
+				currentText = toolDoc
+			} else {
+				currentText = toolDoc + "\n\n" + currentText
+			}
+		}
+	}
+
 	kiroReq.ConversationState.History = history
-	kiroReq.ConversationState.CurrentMessage = buildCurrentUserMessageWithImages(currentText, currentImages, kiroModelID, kiroTools, validatedToolResults)
+	kiroReq.ConversationState.CurrentMessage = buildCurrentUserMessage(currentText, currentImages, kiroModelID, kiroTools, validatedToolResults)
 
 	return kiroReq, nil
 }
@@ -104,150 +127,6 @@ func splitSystemFromMessages(rawMessages []interface{}) ([]map[string]interface{
 	}
 
 	return conversation, strings.TrimSpace(strings.Join(systemParts, "\n"))
-}
-
-func buildHistoryAligned(conversationMsgs []map[string]interface{}, modelID string, systemPrompt string, thinkingPrefix string) []KiroHistoryMessage {
-	var history []KiroHistoryMessage
-
-	systemContent := strings.TrimSpace(systemPrompt)
-	if systemContent == "" && strings.TrimSpace(thinkingPrefix) != "" && !systemHasKiroThinkingTags(systemContent) {
-		systemContent = strings.TrimSpace(thinkingPrefix)
-	}
-
-	if systemContent != "" {
-		history = append(history, buildHistoryUserMessage(systemContent, modelID, nil, nil))
-		history = append(history, buildHistoryAssistantMessage(systemAssistantAck, nil))
-	}
-
-	if len(conversationMsgs) == 0 {
-		return history
-	}
-
-	last := conversationMsgs[len(conversationMsgs)-1]
-	lastIsAssistant := strings.EqualFold(strings.TrimSpace(shared.StringFromAny(last["role"])), "assistant")
-
-	historyEndIndex := len(conversationMsgs) - 1
-	if lastIsAssistant {
-		historyEndIndex = len(conversationMsgs)
-	}
-
-	var userBuffer []map[string]interface{}
-
-	for i := 0; i < historyEndIndex; i++ {
-		msg := conversationMsgs[i]
-		role := strings.ToLower(strings.TrimSpace(shared.StringFromAny(msg["role"])))
-
-		switch role {
-		case "user", "tool":
-			userBuffer = append(userBuffer, msg)
-		case "assistant":
-			if len(userBuffer) == 0 {
-				continue
-			}
-
-			userHistory := mergeUserMessagesToHistory(userBuffer, modelID)
-			history = append(history, userHistory)
-			userBuffer = nil
-
-			history = append(history, convertAssistantToHistoryMessage(msg))
-		}
-	}
-
-	if len(userBuffer) > 0 {
-		history = append(history, mergeUserMessagesToHistory(userBuffer, modelID))
-		history = append(history, buildHistoryAssistantMessage(systemOrphanOK, nil))
-	}
-
-	return history
-}
-
-func mergeUserMessagesToHistory(messages []map[string]interface{}, modelID string) KiroHistoryMessage {
-	var contentParts []string
-	var images []KiroImage
-	var toolResults []ToolResult
-
-	for _, msg := range messages {
-		role := strings.ToLower(strings.TrimSpace(shared.StringFromAny(msg["role"])))
-		if role == "tool" {
-			if r := toolMessageToToolResult(msg); r != nil {
-				toolResults = append(toolResults, *r)
-			}
-			continue
-		}
-
-		text, msgImages := extractMessageContentWithImages(msg)
-		if strings.TrimSpace(text) != "" {
-			contentParts = append(contentParts, text)
-		}
-		if len(msgImages) > 0 {
-			images = append(images, msgImages...)
-		}
-		if results := extractToolResults(msg); len(results) > 0 {
-			toolResults = append(toolResults, results...)
-		}
-	}
-
-	content := strings.Join(contentParts, "\n")
-	return buildHistoryUserMessage(content, modelID, images, toolResults)
-}
-
-func toolMessageToToolResult(msg map[string]interface{}) *ToolResult {
-	toolCallID := strings.TrimSpace(shared.StringFromAny(msg["tool_call_id"]))
-	if toolCallID == "" {
-		return nil
-	}
-	resultText := extractMessageContent(msg)
-	if strings.TrimSpace(resultText) == "" {
-		resultText = "(empty result)"
-	}
-	return &ToolResult{
-		ToolUseID: toolCallID,
-		Status:    "success",
-		Content:   []ToolResultContent{{Text: resultText}},
-		IsError:   false,
-	}
-}
-
-func buildHistoryUserMessage(content string, modelID string, images []KiroImage, toolResults []ToolResult) KiroHistoryMessage {
-	userInput := &UserInputMessage{
-		Content: content,
-		ModelID: modelID,
-		Origin:  "AI_EDITOR",
-	}
-
-	if len(images) > 0 {
-		userInput.Images = images
-	}
-	if len(toolResults) > 0 {
-		userInput.UserInputMessageContext = &UserInputMessageContext{
-			ToolResults: toolResults,
-		}
-	}
-
-	return KiroHistoryMessage{
-		UserInputMessage: userInput,
-	}
-}
-
-func buildHistoryAssistantMessage(content string, toolUses []ToolUse) KiroHistoryMessage {
-	resp := &AssistantResponseMessage{
-		Content: content,
-	}
-	if len(toolUses) > 0 {
-		resp.ToolUses = toolUses
-	}
-	return KiroHistoryMessage{
-		AssistantResponseMessage: resp,
-	}
-}
-
-func convertAssistantToHistoryMessage(msg map[string]interface{}) KiroHistoryMessage {
-	content, _ := extractAssistantContentWithImages(msg)
-	toolUses := extractToolUses(msg)
-	if strings.TrimSpace(content) == "" && len(toolUses) > 0 {
-		content = "There is a tool use."
-	}
-	return buildHistoryAssistantMessage(content, toolUses)
 }
 
 func processMessageContentForCurrent(msg map[string]interface{}) (string, []KiroImage, []ToolResult) {
@@ -310,7 +189,7 @@ func processMessageContentForCurrent(msg map[string]interface{}) (string, []Kiro
 }
 
 func addMissingHistoryToolsAsPlaceholders(tools []KiroTool, history []KiroHistoryMessage) []KiroTool {
-	historyToolNames := collectHistoryToolNamesFromKiroHistory(history)
+	historyToolNames := collectHistoryToolNames(history)
 	existingToolNames := make(map[string]struct{})
 	for _, tool := range tools {
 		existingToolNames[strings.ToLower(tool.ToolSpecification.Name)] = struct{}{}
@@ -325,7 +204,7 @@ func addMissingHistoryToolsAsPlaceholders(tools []KiroTool, history []KiroHistor
 	return tools
 }
 
-func collectHistoryToolNamesFromKiroHistory(history []KiroHistoryMessage) []string {
+func collectHistoryToolNames(history []KiroHistoryMessage) []string {
 	var toolNames []string
 	seen := make(map[string]struct{})
 
@@ -349,7 +228,7 @@ func collectHistoryToolNamesFromKiroHistory(history []KiroHistoryMessage) []stri
 	return toolNames
 }
 
-func buildCurrentUserMessageWithImages(content string, images []KiroImage, modelID string, tools []KiroTool, toolResults []ToolResult) KiroCurrentMessage {
+func buildCurrentUserMessage(content string, images []KiroImage, modelID string, tools []KiroTool, toolResults []ToolResult) KiroCurrentMessage {
 	userInput := &UserInputMessage{
 		Content:                 content,
 		ModelID:                 modelID,
@@ -393,10 +272,10 @@ func buildKiroThinkingSystemPrefix(claudeReq map[string]interface{}) string {
 	case map[string]any:
 		if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(v["type"])), "enabled") {
 			enabled = true
-		}
-		if bt := v["budget_tokens"]; bt != nil {
-			if parsed := shared.IntFromAny(bt); parsed > 0 {
-				budgetTokens = parsed
+			if bt := v["budget_tokens"]; bt != nil {
+				if parsed := shared.IntFromAny(bt); parsed > 0 {
+					budgetTokens = parsed
+				}
 			}
 		}
 	}
@@ -416,18 +295,6 @@ func buildKiroThinkingSystemPrefix(claudeReq map[string]interface{}) string {
 
 func systemHasKiroThinkingTags(systemPrompt string) bool {
 	return strings.Contains(systemPrompt, "<thinking_mode>") || strings.Contains(systemPrompt, "<max_thinking_length>")
-}
-
-func prependSystemPrefix(systemPrompt, prefix string) string {
-	prefix = strings.Trim(prefix, "\r\n")
-	systemPrompt = strings.Trim(systemPrompt, "\r\n")
-	if prefix == "" {
-		return systemPrompt
-	}
-	if systemPrompt == "" {
-		return prefix
-	}
-	return prefix + "\n" + systemPrompt
 }
 
 // determineChatTriggerType determines the chat trigger type
@@ -493,7 +360,7 @@ func normalizeAndMergeClaudeMessages(rawMessages []interface{}, systemPrompt *st
 		var text string
 		var images []KiroImage
 		if role == "assistant" {
-			text, images = extractAssistantContentWithImages(msg)
+			text, images = extractAssistantContent(msg)
 		} else {
 			text, images = extractMessageContentWithImages(msg)
 		}
@@ -538,7 +405,7 @@ func normalizeAndMergeClaudeMessages(rawMessages []interface{}, systemPrompt *st
 	return out
 }
 
-func extractAssistantContentWithImages(msg map[string]interface{}) (string, []KiroImage) {
+func extractAssistantContent(msg map[string]interface{}) (string, []KiroImage) {
 	content := msg["content"]
 	if content == nil {
 		return "", nil
@@ -605,75 +472,6 @@ func extractAssistantContentWithImages(msg map[string]interface{}) (string, []Ki
 	return "", nil
 }
 
-func buildCurrentUserMessage(content string, modelID string, tools []KiroTool, toolResults []ToolResult) KiroCurrentMessage {
-	if strings.TrimSpace(content) == "" && len(toolResults) == 0 {
-		content = "Continue"
-	}
-
-	userInput := &UserInputMessage{
-		Content:                 content,
-		ModelID:                 modelID,
-		Origin:                  "AI_EDITOR",
-		UserInputMessageContext: &UserInputMessageContext{},
-	}
-
-	if len(tools) > 0 {
-		userInput.UserInputMessageContext.Tools = tools
-	}
-	if len(toolResults) > 0 {
-		userInput.UserInputMessageContext.ToolResults = toolResults
-	}
-
-	return KiroCurrentMessage{
-		UserInputMessage: userInput,
-	}
-}
-
-func buildHistoryMessage(msg normalizedClaudeMessage, modelID string, systemPrefix string) KiroHistoryMessage {
-	switch msg.Role {
-	case "assistant":
-		content := msg.Text
-		// If content is empty and there are tool uses, add placeholder
-		if strings.TrimSpace(content) == "" && len(msg.ToolUses) > 0 {
-			content = "There is a tool use."
-		}
-		return KiroHistoryMessage{
-			AssistantResponseMessage: &AssistantResponseMessage{
-				Content:  content,
-				ToolUses: msg.ToolUses,
-			},
-		}
-
-	default:
-		// Treat any non-assistant history as a user message.
-		content := msg.Text
-		if systemPrefix != "" {
-			content = systemPrefix + "\n\n" + content
-		}
-
-		userInput := &UserInputMessage{
-			Content: content,
-			ModelID: modelID,
-			Origin:  "AI_EDITOR",
-		}
-
-		if len(msg.ToolResults) > 0 {
-			userInput.UserInputMessageContext = &UserInputMessageContext{
-				ToolResults: msg.ToolResults,
-			}
-		}
-
-		// 添加图片
-		if len(msg.Images) > 0 {
-			userInput.Images = msg.Images
-		}
-
-		return KiroHistoryMessage{
-			UserInputMessage: userInput,
-		}
-	}
-}
-
 // extractSystemPrompt extracts system prompt from Claude request
 func extractSystemPrompt(claudeReq map[string]interface{}) string {
 	system := claudeReq["system"]
@@ -699,83 +497,6 @@ func extractSystemPrompt(claudeReq map[string]interface{}) string {
 		return strings.TrimSpace(strings.Join(parts, "\n"))
 	}
 	return ""
-}
-
-// convertToCurrentMessage converts a Claude message to Kiro current message format
-func convertToCurrentMessage(msg map[string]interface{}, modelID string, systemPrompt string, claudeReq map[string]interface{}) KiroCurrentMessage {
-	content := extractMessageContent(msg)
-
-	// Prepend system prompt if present
-	if systemPrompt != "" {
-		content = systemPrompt + "\n\n" + content
-	}
-	if strings.TrimSpace(content) == "" {
-		content = "Continue"
-	}
-
-	userInput := &UserInputMessage{
-		Content: content,
-		ModelID: modelID,
-		Origin:  "AI_EDITOR",
-	}
-
-	// Add tools if present
-	if tools, ok := claudeReq["tools"].([]interface{}); ok && len(tools) > 0 {
-		userInput.UserInputMessageContext = &UserInputMessageContext{
-			Tools: convertClaudeToolsToKiro(tools),
-		}
-	}
-
-	// Check for tool results in the message
-	if toolResults := extractToolResults(msg); len(toolResults) > 0 {
-		if userInput.UserInputMessageContext == nil {
-			userInput.UserInputMessageContext = &UserInputMessageContext{}
-		}
-		userInput.UserInputMessageContext.ToolResults = toolResults
-	}
-
-	return KiroCurrentMessage{
-		UserInputMessage: userInput,
-	}
-}
-
-// convertToHistoryMessage converts a Claude message to Kiro history message format
-func convertToHistoryMessage(msg map[string]interface{}, modelID string) KiroHistoryMessage {
-	role := shared.StringFromAny(msg["role"])
-
-	if role == "assistant" {
-		content := extractMessageContent(msg)
-		toolUses := extractToolUses(msg)
-
-		return KiroHistoryMessage{
-			AssistantResponseMessage: &AssistantResponseMessage{
-				Content:  content,
-				ToolUses: toolUses,
-			},
-		}
-	}
-
-	// User message
-	content := extractMessageContent(msg)
-	if strings.TrimSpace(content) == "" {
-		content = "Continue"
-	}
-	userInput := &UserInputMessage{
-		Content: content,
-		ModelID: modelID,
-		Origin:  "AI_EDITOR",
-	}
-
-	// Check for tool results
-	if toolResults := extractToolResults(msg); len(toolResults) > 0 {
-		userInput.UserInputMessageContext = &UserInputMessageContext{
-			ToolResults: toolResults,
-		}
-	}
-
-	return KiroHistoryMessage{
-		UserInputMessage: userInput,
-	}
 }
 
 // extractMessageContent extracts text content from a Claude message
@@ -806,10 +527,6 @@ func extractMessageContentWithImages(msg map[string]interface{}) (string, []Kiro
 				case "text":
 					if text, ok := v["text"].(string); ok && text != "" {
 						parts = append(parts, text)
-					}
-				case "thinking":
-					if thinking, ok := v["thinking"].(string); ok && thinking != "" {
-						parts = append(parts, "<thinking>"+thinking+"</thinking>")
 					}
 				case "image":
 					// 提取图片数据而不是生成占位符
@@ -1087,10 +804,20 @@ func convertClaudeToolsToKiro(tools []interface{}) []KiroTool {
 	return kiroTools
 }
 
-func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength int) []KiroTool {
+// LongDescTool 保存超长描述工具的完整信息
+type LongDescTool struct {
+	Name            string
+	FullDescription string
+}
+
+// convertClaudeToolsToKiroTruncated 转换工具并收集超长描述工具
+// 返回：(kiroTools, longDescTools)
+func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength int) ([]KiroTool, []LongDescTool) {
 	var kiroTools []KiroTool
+	var longDescTools []LongDescTool
+
 	if len(tools) == 0 {
-		return nil
+		return nil, nil
 	}
 	if maxDescriptionLength < 0 {
 		maxDescriptionLength = 0
@@ -1125,7 +852,19 @@ func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength
 			}
 		}
 
-		description = truncateByRunes(description, maxDescriptionLength)
+		// 检查是否需要收集到 longDescTools
+		originalDesc := description
+		if len(description) > toolDescriptionTruncateThreshold {
+			longDescTools = append(longDescTools, LongDescTool{
+				Name:            name,
+				FullDescription: description,
+			})
+			// 截断并添加提示
+			description = truncateByRunes(description, toolDescriptionTruncateLength) +
+				"...(Full description provided in TOOL DOCUMENTATION section)"
+		} else if maxDescriptionLength > 0 && maxDescriptionLength < len(originalDesc) {
+			description = truncateByRunes(description, maxDescriptionLength)
+		}
 
 		schema := map[string]interface{}{}
 		if inputSchema != nil {
@@ -1141,7 +880,23 @@ func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength
 
 		kiroTools = append(kiroTools, kiroTool)
 	}
-	return kiroTools
+	return kiroTools, longDescTools
+}
+
+// buildToolDocumentation 生成 TOOL DOCUMENTATION 块
+func buildToolDocumentation(longDescTools []LongDescTool) string {
+	if len(longDescTools) == 0 {
+		return ""
+	}
+
+	var parts []string
+	for _, tool := range longDescTools {
+		doc := fmt.Sprintf("--- TOOL DOCUMENTATION BEGIN ---\nTool: %s\nFull Description:\n%s\n--- TOOL DOCUMENTATION END ---",
+			tool.Name, tool.FullDescription)
+		parts = append(parts, doc)
+	}
+
+	return strings.Join(parts, "\n\n")
 }
 
 func truncateByRunes(s string, max int) string {
@@ -1160,25 +915,6 @@ func truncateByRunes(s string, max int) string {
 		count++
 	}
 	return s
-}
-
-// collectHistoryToolNames collects all tool names used in history messages
-func collectHistoryToolNames(messages []normalizedClaudeMessage) []string {
-	var toolNames []string
-	seen := make(map[string]struct{})
-
-	for _, msg := range messages {
-		if msg.Role == "assistant" && len(msg.ToolUses) > 0 {
-			for _, toolUse := range msg.ToolUses {
-				if _, exists := seen[toolUse.Name]; !exists {
-					toolNames = append(toolNames, toolUse.Name)
-					seen[toolUse.Name] = struct{}{}
-				}
-			}
-		}
-	}
-
-	return toolNames
 }
 
 // createPlaceholderTool creates a placeholder tool definition for tools used in history
@@ -1562,7 +1298,7 @@ func applyTokenAccounting(state *StreamState) {
 		state.OutputTokensSource = "estimate"
 	}
 
-	// 2. 优先使用 context_usage_percentage 计算 input_tokens（与 kiro.rs 对齐：不减 output_tokens）
+	// 2. 优先使用 context_usage_percentage 计算 input_tokens
 	// 只有当没有明确的上游 token 统计（api）时才覆盖估算值。
 	if state.ContextUsagePct > 0 && state.InputTokensSource != "api" {
 		// 获取模型的最大输入 token 数

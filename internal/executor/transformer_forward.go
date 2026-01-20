@@ -286,7 +286,6 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	return out
 }
 
-// tryHandleKiroWebSearchShortCircuit aligns the behavior with `.other/kiro.rs`:
 // If the Claude request contains exactly one tool and it's `web_search`, do NOT call
 // Kiro `/generateAssistantResponse`. Instead, call Kiro MCP (`/mcp`) and synthesize
 // an Anthropic-compatible response directly.
@@ -387,7 +386,7 @@ func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
 
 	resp, err := client.Do(proxyReq)
 	if err != nil {
-		// follow kiro.rs behavior: MCP failure should not crash the whole request; return "no results"
+		// MCP failure should not crash the whole request; return "no results"
 		if debugLogger != nil {
 			debugLogger.SetSection("UpstreamError", formatErrorChain(err))
 		}
@@ -440,7 +439,7 @@ func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
 		}
 	}
 
-	// always return 200 to match kiro.rs; MCP failures degrade to empty results.
+	// MCP failures degrade to empty results.
 	return c.writeKiroWebSearchResponse(ctx, w, req, result, model, query, toolUseID, results, inputTokens, 0)
 }
 
@@ -462,7 +461,6 @@ func (c *ExecutionContext) writeKiroWebSearchResponse(
 		return result
 	}
 
-	// Always return OK, even when MCP fails, to match `.other/kiro.rs` behavior.
 	result.StatusCode = http.StatusOK
 
 	if req.IsStreaming {

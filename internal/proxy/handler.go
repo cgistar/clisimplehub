@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -235,6 +236,11 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if debugLogger != nil {
 			debugLogger.SetMetadata("UpstreamURL", result.TargetURL)
 			debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", result.StatusCode))
+			if result.Error != nil {
+				debugLogger.SetMetadata("UpstreamErrorStage", inferUpstreamErrorStage(result))
+				debugLogger.SetMetadata("UpstreamErrorTypeChain", formatErrorTypeChain(result.Error))
+				debugLogger.SetMetadata("UpstreamErrorIsEOF", fmt.Sprintf("%v", errors.Is(result.Error, io.EOF) || errors.Is(result.Error, io.ErrUnexpectedEOF)))
+			}
 		}
 	}
 
@@ -287,6 +293,33 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
+}
+
+func inferUpstreamErrorStage(result *executor.ForwardResult) string {
+	if result == nil || result.Error == nil {
+		return ""
+	}
+	if result.Streamed {
+		return "stream_body"
+	}
+	// 未收到 HTTP 响应（无 status code）时，通常意味着在“读响应头阶段”就失败了。
+	if result.StatusCode == 0 {
+		return "before_response_headers"
+	}
+	return "response_body"
+}
+
+func formatErrorTypeChain(err error) string {
+	if err == nil {
+		return ""
+	}
+	chain := []string{fmt.Sprintf("%T", err)}
+	visited := 0
+	for unwrapped := errors.Unwrap(err); unwrapped != nil && visited < 16; unwrapped = errors.Unwrap(unwrapped) {
+		visited++
+		chain = append(chain, fmt.Sprintf("%T", unwrapped))
+	}
+	return strings.Join(chain, " -> ")
 }
 
 func vendorStatsRequestBody(capture bool, rawBody []byte) string {
