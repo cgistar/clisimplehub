@@ -285,10 +285,22 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.Error != nil && result.StatusCode == 0 {
+		// 检测 EOF 错误（连接在收到响应头之前就被关闭）
+		isEOFError := errors.Is(result.Error, io.EOF) || errors.Is(result.Error, io.ErrUnexpectedEOF)
+
 		if isAnthropic {
-			writeAnthropicError(w, http.StatusBadGateway, "api_error", fmt.Sprintf("Upstream request failed: %v", result.Error))
+			if isEOFError {
+				// EOF 错误返回 overloaded_error，提示 Claude Code 可以重试
+				writeAnthropicError(w, 529, "overloaded_error", "The API is temporarily overloaded. Please retry your request after a brief wait.")
+			} else {
+				writeAnthropicError(w, http.StatusBadGateway, "api_error", fmt.Sprintf("Upstream request failed: %v", result.Error))
+			}
 		} else {
-			http.Error(w, fmt.Sprintf("Request failed: %v", result.Error), http.StatusBadGateway)
+			if isEOFError {
+				http.Error(w, "Service temporarily unavailable. Please retry.", http.StatusServiceUnavailable)
+			} else {
+				http.Error(w, fmt.Sprintf("Request failed: %v", result.Error), http.StatusBadGateway)
+			}
 		}
 		return
 	}

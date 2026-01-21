@@ -199,7 +199,15 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 			}
 		}
 		if refresher, ok := tr.(interface{ ForceRefreshKiroToken() error }); ok && refresher != nil {
-			if refreshErr := refresher.ForceRefreshKiroToken(); refreshErr == nil {
+			refreshErr := refresher.ForceRefreshKiroToken()
+			if debugLogger != nil {
+				if refreshErr == nil {
+					debugLogger.SetSection("KiroTokenRefresh", "forced refresh: ok; retrying once")
+				} else {
+					debugLogger.SetSection("KiroTokenRefresh", "forced refresh: failed: "+formatErrorChain(refreshErr))
+				}
+			}
+			if refreshErr == nil {
 				time.Sleep(50 * time.Millisecond) // small jitter to avoid immediate retry collisions
 				if retryReq, err := buildProxyReq(); err == nil {
 					resp, err = client.Do(retryReq)
@@ -613,14 +621,31 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 		}
 	}()
 
+	// stopAndDrain 确保 timer 在 Reset 前处于干净状态
+	stopAndDrain := func(t *time.Timer) {
+		if !t.Stop() {
+			// timer 已触发，drain 掉可能残留的 tick
+			select {
+			case <-t.C:
+			default:
+			}
+		}
+	}
+
 	// 使用可重置的 timer 避免重复分配
 	timer := time.NewTimer(readTimeout)
 	defer timer.Stop()
 
 readLoop:
 	for {
+		// ====== WAIT_UPSTREAM: 只在这里计 read timeout ======
+		// 每次循环开始前，确保 timer 干净并重新武装
+		stopAndDrain(timer)
+		timer.Reset(readTimeout)
+
 		select {
 		case <-ctx.Done():
+			stopAndDrain(timer)
 			result.Error = ctx.Err()
 			result.Streamed = true
 			result.ResponseStream = capture.String()
@@ -628,11 +653,37 @@ readLoop:
 				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
 			}
 			return result
-		case res := <-readChan:
-			n, err := res.n, res.err
-			consecutiveTimeouts = 0 // 成功读取，重置计数器
-			timer.Reset(readTimeout)
 
+		case <-timer.C:
+			// 上游读取超时
+			consecutiveTimeouts++
+			if consecutiveTimeouts <= maxConsecutiveTimeouts {
+				// 容忍超时，继续等待
+				if debugLogger != nil {
+					debugLogger.Log("Kiro 流式读取超时 %d/%d，继续等待", consecutiveTimeouts, maxConsecutiveTimeouts)
+				}
+				continue
+			}
+			// 超过最大连续超时次数，退出
+			result.Error = fmt.Errorf("kiro stream: consecutive read timeout (%d times)", maxConsecutiveTimeouts)
+			result.Streamed = true
+			result.ResponseStream = capture.String()
+			if captureUpstream {
+				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+			}
+			return result
+
+		case res := <-readChan:
+			// 收到上游数据，立即解除 timer 武装
+			stopAndDrain(timer)
+
+			n, err := res.n, res.err
+
+			// 成功读取，重置超时计数器
+			consecutiveTimeouts = 0
+
+			// ====== PROCESS_AND_WRITE: 这里不触发 read timeout ======
+			// 先处理数据（即使有错误，也要处理已读取的数据）
 			if n > 0 {
 				chunk := res.data
 				if captureUpstream {
@@ -642,6 +693,13 @@ readLoop:
 				if debugLogger != nil {
 					debugUpstreamRaw = append(debugUpstreamRaw, chunk...)
 				}
+
+				// 在处理前快速检查 ctx，提高取消响应性
+				if err := ctx.Err(); err != nil {
+					result.Error = err
+					break readLoop
+				}
+
 				outs, trErr := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, &state)
 				if trErr != nil {
 					result.Error = trErr
@@ -667,6 +725,7 @@ readLoop:
 				}
 			}
 
+			// 处理完数据后，再检查错误
 			if err == io.EOF {
 				break readLoop
 			}
@@ -674,22 +733,7 @@ readLoop:
 				result.Error = err
 				break readLoop
 			}
-
-		case <-timer.C:
-			consecutiveTimeouts++
-			if consecutiveTimeouts <= maxConsecutiveTimeouts {
-				// 记录警告但继续
-				timer.Reset(readTimeout)
-				continue
-			}
-			// 超过最大连续超时次数，退出
-			result.Error = fmt.Errorf("kiro stream: consecutive read timeout (%d times)", maxConsecutiveTimeouts)
-			result.Streamed = true
-			result.ResponseStream = capture.String()
-			if captureUpstream {
-				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
-			}
-			return result
+			// 回到循环顶部，重新进入 WAIT_UPSTREAM
 		}
 	}
 

@@ -20,13 +20,22 @@ func KiroQHost(region string) string {
 	return "q." + region + ".amazonaws.com"
 }
 
-// KiroRefreshURL 返回指定 region 的 token refresh URL。
+// KiroRefreshURL 返回指定 region 的 token refresh URL (Social 认证)。
 func KiroRefreshURL(region string) string {
 	region = strings.TrimSpace(region)
 	if region == "" {
 		region = "us-east-1"
 	}
 	return "https://prod." + region + ".auth.desktop.kiro.dev/refreshToken"
+}
+
+// KiroIdcRefreshURL 返回指定 region 的 IdC token refresh URL (AWS SSO OIDC)。
+func KiroIdcRefreshURL(region string) string {
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = "us-east-1"
+	}
+	return "https://oidc." + region + ".amazonaws.com/token"
 }
 
 // KiroGenerateURL 返回指定 region 的 generateAssistantResponse URL。

@@ -478,6 +478,23 @@ export function initUI() {
 	                </div>
 	                <div class="modal-body">
 		                    <div class="form-group">
+		                        <label>${t('kiro.authMethod')}</label>
+		                        <div class="model-select-container kiro-auth-method-select">
+		                            <input type="text" id="kiroAuthMethodDisplay" readonly onclick="toggleKiroAuthMethodDropdown()">
+		                            <button type="button" class="model-dropdown-toggle" onclick="toggleKiroAuthMethodDropdown()">
+		                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+		                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+		                                </svg>
+		                            </button>
+		                            <div class="model-dropdown" id="kiroAuthMethodDropdown"></div>
+		                        </div>
+		                        <select id="kiroAuthMethod" style="display:none;" onchange="onKiroAuthMethodChange()">
+		                            <option value="social">Social (默认)</option>
+		                            <option value="idc">IdC (企业)</option>
+		                        </select>
+		                        <small>${t('kiro.authMethodHelp')}</small>
+		                    </div>
+		                    <div class="form-group">
 		                        <label>${t('kiro.refreshToken')}</label>
 		                        <div class="model-input-wrapper">
 		                            <input type="text" id="kiroRefreshToken" placeholder="${t(
@@ -488,6 +505,16 @@ export function initUI() {
 		                            </button>
 		                        </div>
 		                        <small>${t('kiro.refreshTokenHelp')}</small>
+		                    </div>
+		                    <div class="form-group" id="kiroIdcFields" style="display:none;">
+		                        <label>${t('kiro.clientId')}</label>
+		                        <input type="text" id="kiroClientId" placeholder="${t('kiro.clientIdPlaceholder')}" oninput="onKiroIdcFieldsInput()">
+		                        <small>${t('kiro.clientIdHelp')}</small>
+		                    </div>
+		                    <div class="form-group" id="kiroIdcSecretField" style="display:none;">
+		                        <label>${t('kiro.clientSecret')}</label>
+		                        <input type="password" id="kiroClientSecret" placeholder="${t('kiro.clientSecretPlaceholder')}" oninput="onKiroIdcFieldsInput()">
+		                        <small>${t('kiro.clientSecretHelp')}</small>
 		                    </div>
 		                    <div class="form-group">
 		                        <label>${t('kiro.accessToken')}</label>

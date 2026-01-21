@@ -473,6 +473,9 @@ export namespace main {
 	    proxyUrl: string;
 	    userAgent: string;
 	    version: string;
+	    authMethod: string;
+	    clientId: string;
+	    clientSecret: string;
 	    accessToken?: string;
 	    expiresAt?: string;
 	
@@ -488,6 +491,9 @@ export namespace main {
 	        this.proxyUrl = source["proxyUrl"];
 	        this.userAgent = source["userAgent"];
 	        this.version = source["version"];
+	        this.authMethod = source["authMethod"];
+	        this.clientId = source["clientId"];
+	        this.clientSecret = source["clientSecret"];
 	        this.accessToken = source["accessToken"];
 	        this.expiresAt = source["expiresAt"];
 	    }

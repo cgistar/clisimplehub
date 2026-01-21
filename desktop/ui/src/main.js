@@ -76,8 +76,11 @@ import {
     saveKiroConfig,
     testKiroRefreshToken,
     onKiroRefreshTokenInput,
+    onKiroIdcFieldsInput,
+    onKiroAuthMethodChange,
     fetchKiroUsage,
-    toggleKiroRegionDropdown
+    toggleKiroRegionDropdown,
+    toggleKiroAuthMethodDropdown
 } from './modules/kiro.js';
 
 // Initialize the application
@@ -191,6 +194,9 @@ window.closeKiroConfigModal = closeKiroConfigModal;
 window.saveKiroConfig = saveKiroConfig;
 window.testKiroRefreshToken = testKiroRefreshToken;
 window.onKiroRefreshTokenInput = onKiroRefreshTokenInput;
+window.onKiroIdcFieldsInput = onKiroIdcFieldsInput;
+window.onKiroAuthMethodChange = onKiroAuthMethodChange;
 window.fetchKiroUsage = fetchKiroUsage;
 window.toggleKiroRegionDropdown = toggleKiroRegionDropdown;
+window.toggleKiroAuthMethodDropdown = toggleKiroAuthMethodDropdown;
 window.toggleDebugModeDropdown = toggleDebugModeDropdown;

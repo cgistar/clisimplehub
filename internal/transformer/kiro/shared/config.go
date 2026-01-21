@@ -46,6 +46,8 @@ func LoadKiroCredentials(path string) (*KiroCredentials, error) {
 		Region:       raw.Region,
 		AuthMethod:   raw.AuthMethod,
 		Provider:     raw.Provider,
+		ClientId:     raw.ClientId,
+		ClientSecret: raw.ClientSecret,
 	}
 
 	// Parse expiresAt
@@ -98,12 +100,22 @@ func SaveKiroCredentials(path string, creds *KiroCredentials) error {
 		if strings.TrimSpace(creds.Provider) == "" {
 			existingData["provider"] = ""
 		}
+		if strings.TrimSpace(creds.ClientId) == "" {
+			existingData["clientId"] = ""
+		}
+		if strings.TrimSpace(creds.ClientSecret) == "" {
+			existingData["clientSecret"] = ""
+		}
 	}
 
 	// Update fields
 	existingData["accessToken"] = creds.AccessToken
 	existingData["refreshToken"] = creds.RefreshToken
-	if creds.ProfileArn != "" {
+	authMethod := strings.ToLower(strings.TrimSpace(creds.AuthMethod))
+	if (authMethod == "idc" || authMethod == "builder-id") && strings.TrimSpace(creds.ProfileArn) == "" {
+		// IdC does not rely on profileArn; clear any stale values from previous auth methods.
+		existingData["profileArn"] = ""
+	} else if creds.ProfileArn != "" {
 		existingData["profileArn"] = creds.ProfileArn
 	}
 	if !creds.ExpiresAt.IsZero() {
@@ -120,6 +132,12 @@ func SaveKiroCredentials(path string, creds *KiroCredentials) error {
 	}
 	if creds.Provider != "" {
 		existingData["provider"] = creds.Provider
+	}
+	if creds.ClientId != "" {
+		existingData["clientId"] = creds.ClientId
+	}
+	if creds.ClientSecret != "" {
+		existingData["clientSecret"] = creds.ClientSecret
 	}
 
 	// Ensure directory exists

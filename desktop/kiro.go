@@ -25,6 +25,9 @@ type KiroConfig struct {
 	ProxyURL     string `json:"proxyUrl"`
 	UserAgent    string `json:"userAgent"`
 	Version      string `json:"version"`
+	AuthMethod   string `json:"authMethod"`
+	ClientId     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
 	AccessToken  string `json:"accessToken,omitempty"`
 	ExpiresAt    string `json:"expiresAt,omitempty"`
 }
@@ -45,7 +48,8 @@ func (a *App) GetKiroConfig() (*KiroConfig, error) {
 	}
 
 	config := &KiroConfig{
-		Region: "us-east-1",
+		Region:     "us-east-1",
+		AuthMethod: "social",
 	}
 
 	credsPath := a.getKiroAuthTokenPath()
@@ -53,11 +57,17 @@ func (a *App) GetKiroConfig() (*KiroConfig, error) {
 		config.RefreshToken = creds.RefreshToken
 		config.ProfileArn = creds.ProfileArn
 		config.AccessToken = creds.AccessToken
+		config.AuthMethod = creds.AuthMethod
+		config.ClientId = creds.ClientId
+		config.ClientSecret = creds.ClientSecret
 		if !creds.ExpiresAt.IsZero() {
 			config.ExpiresAt = creds.ExpiresAt.Format(time.RFC3339Nano)
 		}
 		if strings.TrimSpace(creds.Region) != "" {
 			config.Region = creds.Region
+		}
+		if strings.TrimSpace(config.AuthMethod) == "" {
+			config.AuthMethod = "social"
 		}
 	}
 	if proxy, err := a.storage.GetConfig("kiro.proxyUrl"); err == nil {
@@ -81,6 +91,14 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 
 	if strings.TrimSpace(config.RefreshToken) == "" {
 		return fmt.Errorf("refresh token is required")
+	}
+
+	// Validate IdC fields
+	authMethod := strings.ToLower(strings.TrimSpace(config.AuthMethod))
+	if authMethod == "idc" {
+		if strings.TrimSpace(config.ClientId) == "" || strings.TrimSpace(config.ClientSecret) == "" {
+			return fmt.Errorf("clientId and clientSecret are required for IdC authentication")
+		}
 	}
 
 	// Persist to credentials file next to config.json (single source of truth for Kiro auth).
@@ -111,6 +129,9 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 	if creds.Region == "" {
 		creds.Region = "us-east-1"
 	}
+	creds.AuthMethod = config.AuthMethod
+	creds.ClientId = config.ClientId
+	creds.ClientSecret = config.ClientSecret
 
 	accessToken := strings.TrimSpace(config.AccessToken)
 	expiresAtStr := strings.TrimSpace(config.ExpiresAt)
@@ -141,13 +162,18 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 			return fmt.Errorf("expiresAt is required when refreshToken changes; please test first")
 		}
 		creds.ProfileArn = strings.TrimSpace(config.ProfileArn)
-		creds.AuthMethod = ""
 		creds.Provider = ""
 	} else {
 		// Keep/overwrite profileArn only if explicitly provided.
 		if newProfileArn != "" && newProfileArn != oldProfileArn {
 			creds.ProfileArn = newProfileArn
 		}
+	}
+
+	// IdC tokens do not require (and typically do not return) a CodeWhisperer profileArn.
+	// Keeping a stale profileArn (e.g. from a prior Social login) can cause confusing upstream auth errors.
+	if authMethod == "idc" || authMethod == "builder-id" {
+		creds.ProfileArn = ""
 	}
 	if err := kiroShared.SaveKiroCredentials(credsPath, creds); err != nil {
 		return fmt.Errorf("failed to save kiro credentials: %w", err)
@@ -205,6 +231,14 @@ func (a *App) TestKiroRefreshToken(config *KiroConfig) (*KiroTestResult, error) 
 		return nil, fmt.Errorf("refresh token is required")
 	}
 
+	// Validate IdC fields
+	authMethod := strings.ToLower(strings.TrimSpace(config.AuthMethod))
+	if authMethod == "idc" {
+		if strings.TrimSpace(config.ClientId) == "" || strings.TrimSpace(config.ClientSecret) == "" {
+			return nil, fmt.Errorf("clientId and clientSecret are required for IdC authentication")
+		}
+	}
+
 	region := strings.TrimSpace(config.Region)
 	if region == "" {
 		region = "us-east-1"
@@ -213,6 +247,9 @@ func (a *App) TestKiroRefreshToken(config *KiroConfig) (*KiroTestResult, error) 
 	creds := &kiroShared.KiroCredentials{
 		RefreshToken: refreshToken,
 		Region:       region,
+		AuthMethod:   config.AuthMethod,
+		ClientId:     config.ClientId,
+		ClientSecret: config.ClientSecret,
 	}
 
 	mgr := kiroClaude.NewKiroAuthManager(creds, "", strings.TrimSpace(config.ProxyURL), strings.TrimSpace(config.Version))

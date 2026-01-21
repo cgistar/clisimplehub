@@ -14,7 +14,7 @@ import (
 )
 
 // DefaultHTTPTimeout 默认 HTTP 超时时间
-const DefaultHTTPTimeout = 3000 * time.Second
+const DefaultHTTPTimeout = 300 * time.Second
 
 // NewHTTPClient 创建 HTTP 客户端，支持代理配置
 // 优先级: endpoint.ProxyURL > 默认直连

@@ -67,10 +67,10 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 		fp = k.source.MachineID()
 	}
 	if fp == "" {
-		// Keep a stable fallback value; the backend only needs "some" identifier.
+		// Keep a stable fallback value; Kiro clients typically use a stable 64-hex machine id.
 		fp = "unknown"
 	}
-	fp = kiroShared.TruncateFingerprint(fp, 32)
+	fp = kiroShared.TruncateFingerprint(fp, 64)
 
 	userAgentBase := kiroShared.DefaultKiroUserAgentBase
 	kiroVersion := kiroShared.DefaultKiroVersion

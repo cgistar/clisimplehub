@@ -31,6 +31,11 @@ const (
 	BaseRetryDelay = 1 * time.Second
 )
 
+const (
+	// IDCAmzUserAgent is the x-amz-user-agent value used by AWS SSO OIDC (IdC) token refresh.
+	IDCAmzUserAgent = "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE"
+)
+
 // KiroAuthManager manages Kiro API authentication and token lifecycle
 type KiroAuthManager struct {
 	mu            sync.RWMutex
@@ -134,6 +139,10 @@ func (m *KiroAuthManager) GetProfileArn() string {
 	if m.creds == nil {
 		return ""
 	}
+	authMethod := strings.ToLower(strings.TrimSpace(m.creds.AuthMethod))
+	if authMethod == "idc" || authMethod == "builder-id" {
+		return ""
+	}
 	return m.creds.ProfileArn
 }
 
@@ -194,7 +203,17 @@ func (m *KiroAuthManager) retryDelay(attempt int, resp *http.Response) time.Dura
 
 // userAgent generates the User-Agent string
 func (m *KiroAuthManager) userAgent() string {
-	return kiroShared.KiroVersionOrDefault(m.clientVersion) + "-unknown"
+	if m == nil {
+		return kiroShared.DefaultKiroVersion + "-unknown"
+	}
+	version := kiroShared.KiroVersionOrDefault(m.clientVersion)
+	refreshToken := ""
+	if m.creds != nil {
+		refreshToken = m.creds.RefreshToken
+	}
+	fp := kiroapi.ComputeMachineID(refreshToken)
+	fp = kiroShared.TruncateFingerprint(fp, 64)
+	return version + "-" + fp
 }
 
 // refreshTokenLocked performs the token refresh request with exponential backoff. Caller must hold Lock.
@@ -206,23 +225,85 @@ func (m *KiroAuthManager) refreshTokenLocked() error {
 		return errors.New("refresh token is not set")
 	}
 
-	payload := map[string]string{
-		"refreshToken": m.creds.RefreshToken,
+	// Determine auth method and build appropriate request
+	authMethod := strings.ToLower(strings.TrimSpace(m.creds.AuthMethod))
+	if authMethod == "" {
+		// Auto-detect: if clientId and clientSecret exist, assume IdC
+		if m.creds.ClientId != "" && m.creds.ClientSecret != "" {
+			authMethod = "idc"
+		} else {
+			authMethod = "social"
+		}
 	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal refresh payload: %w", err)
+
+	var payloadBytes []byte
+	var refreshURL string
+	var err error
+
+	if authMethod == "idc" || authMethod == "builder-id" {
+		// IdC authentication
+		if m.creds.ClientId == "" || m.creds.ClientSecret == "" {
+			return errors.New("IdC auth method requires clientId and clientSecret")
+		}
+
+		payload := map[string]string{
+			"clientId":     m.creds.ClientId,
+			"clientSecret": m.creds.ClientSecret,
+			"refreshToken": m.creds.RefreshToken,
+			"grantType":    "refresh_token",
+		}
+		payloadBytes, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal IdC refresh payload: %w", err)
+		}
+
+		region := m.creds.Region
+		if region == "" {
+			region = "us-east-1"
+		}
+		refreshURL = kiroapi.KiroIdcRefreshURL(region)
+	} else {
+		// Social authentication (default)
+		payload := map[string]string{
+			"refreshToken": m.creds.RefreshToken,
+		}
+		payloadBytes, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal refresh payload: %w", err)
+		}
+		refreshURL = kiroapi.KiroRefreshURL(m.creds.Region)
 	}
 
 	var lastErr error
 	for attempt := 0; attempt < MaxRetries; attempt++ {
-		req, err := http.NewRequest("POST", m.refreshURL, bytes.NewReader(payloadBytes))
+		req, err := http.NewRequest("POST", refreshURL, bytes.NewReader(payloadBytes))
 		if err != nil {
 			return fmt.Errorf("failed to create refresh request: %w", err)
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", m.userAgent())
+		if authMethod == "idc" || authMethod == "builder-id" {
+			region := m.creds.Region
+			if strings.TrimSpace(region) == "" {
+				region = "us-east-1"
+			}
+			req.Header.Set("Host", "oidc."+region+".amazonaws.com")
+			req.Header.Set("Connection", "keep-alive")
+			req.Header.Set("x-amz-user-agent", IDCAmzUserAgent)
+			req.Header.Set("Accept", "*/*")
+			req.Header.Set("Accept-Language", "*")
+			req.Header.Set("sec-fetch-mode", "cors")
+			req.Header.Set("User-Agent", "node")
+		} else {
+			region := m.creds.Region
+			if strings.TrimSpace(region) == "" {
+				region = "us-east-1"
+			}
+			req.Header.Set("Accept", "application/json, text/plain, */*")
+			req.Header.Set("User-Agent", m.userAgent())
+			req.Header.Set("Host", "prod."+region+".auth.desktop.kiro.dev")
+			req.Header.Set("Connection", "close")
+		}
 
 		resp, err := m.httpClient.Do(req)
 		if err != nil {

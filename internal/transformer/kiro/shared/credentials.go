@@ -11,6 +11,8 @@ type KiroCredentials struct {
 	Region       string    `json:"region,omitempty"`
 	AuthMethod   string    `json:"authMethod,omitempty"`
 	Provider     string    `json:"provider,omitempty"`
+	ClientId     string    `json:"clientId,omitempty"`
+	ClientSecret string    `json:"clientSecret,omitempty"`
 }
 
 // credentialsJSON is used for JSON unmarshaling with string expiresAt.
@@ -22,4 +24,6 @@ type credentialsJSON struct {
 	Region       string `json:"region,omitempty"`
 	AuthMethod   string `json:"authMethod,omitempty"`
 	Provider     string `json:"provider,omitempty"`
+	ClientId     string `json:"clientId,omitempty"`
+	ClientSecret string `json:"clientSecret,omitempty"`
 }

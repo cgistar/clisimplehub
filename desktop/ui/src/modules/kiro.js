@@ -72,9 +72,16 @@ export async function showKiroConfigModal() {
       document.getElementById('kiroProxyUrl').value = config.proxyUrl || ''
       document.getElementById('kiroUserAgent').value = config.userAgent || ''
       document.getElementById('kiroVersion').value = config.version || ''
+      document.getElementById('kiroAuthMethod').value = config.authMethod || 'social'
+      document.getElementById('kiroClientId').value = config.clientId || ''
+      document.getElementById('kiroClientSecret').value = config.clientSecret || ''
 
       // Sync region dropdown display
       syncKiroRegionDisplay()
+      // Sync auth method dropdown display
+      syncKiroAuthMethodDisplay()
+      // Update IdC fields visibility
+      updateIdcFieldsVisibility()
 
       initialRefreshToken = (config.refreshToken || '').trim()
       testedRefreshToken = ''
@@ -107,6 +114,40 @@ export function onKiroRefreshTokenInput() {
   updateKiroConfigButtons()
 }
 
+export function onKiroIdcFieldsInput() {
+  // Reset tested state when IdC fields change
+  const current = (document.getElementById('kiroRefreshToken')?.value || '').trim()
+  if (current === testedRefreshToken) {
+    testedRefreshToken = ''
+    testedKiroCreds = null
+    setKiroUsageInfoText('')
+    const accessTokenEl = document.getElementById('kiroAccessToken')
+    if (accessTokenEl) accessTokenEl.value = ''
+    const profileArnEl = document.getElementById('kiroProfileArn')
+    if (profileArnEl) profileArnEl.value = ''
+  }
+  updateKiroConfigButtons()
+}
+
+export function onKiroAuthMethodChange() {
+  updateIdcFieldsVisibility()
+  onKiroIdcFieldsInput()
+}
+
+function updateIdcFieldsVisibility() {
+  const authMethod = (document.getElementById('kiroAuthMethod')?.value || 'social').trim().toLowerCase()
+  const idcFields = document.getElementById('kiroIdcFields')
+  const idcSecretField = document.getElementById('kiroIdcSecretField')
+
+  if (authMethod === 'idc') {
+    if (idcFields) idcFields.style.display = ''
+    if (idcSecretField) idcSecretField.style.display = ''
+  } else {
+    if (idcFields) idcFields.style.display = 'none'
+    if (idcSecretField) idcSecretField.style.display = 'none'
+  }
+}
+
 function isRefreshTokenChanged() {
   const current = (document.getElementById('kiroRefreshToken')?.value || '').trim()
   return current !== initialRefreshToken
@@ -135,15 +176,29 @@ export async function testKiroRefreshToken() {
   const regionEl = document.getElementById('kiroRegion')
   const proxyUrlEl = document.getElementById('kiroProxyUrl')
   const versionEl = document.getElementById('kiroVersion')
+  const authMethodEl = document.getElementById('kiroAuthMethod')
+  const clientIdEl = document.getElementById('kiroClientId')
+  const clientSecretEl = document.getElementById('kiroClientSecret')
 
   const refreshToken = (refreshTokenEl?.value || '').trim()
   const region = (regionEl?.value || 'us-east-1').trim()
   const proxyUrl = (proxyUrlEl?.value || '').trim()
   const version = (versionEl?.value || '').trim()
+  const authMethod = (authMethodEl?.value || 'social').trim()
+  const clientId = (clientIdEl?.value || '').trim()
+  const clientSecret = (clientSecretEl?.value || '').trim()
 
   if (!refreshToken) {
     showError(t('kiro.refreshTokenRequired'))
     return
+  }
+
+  // Validate IdC fields
+  if (authMethod.toLowerCase() === 'idc') {
+    if (!clientId || !clientSecret) {
+      showError(t('kiro.idcFieldsRequired'))
+      return
+    }
   }
 
   const btn = document.getElementById('testKiroRefreshTokenBtn')
@@ -163,6 +218,9 @@ export async function testKiroRefreshToken() {
       region,
       proxyUrl,
       version,
+      authMethod,
+      clientId,
+      clientSecret,
     })
 
     if (!result?.accessToken) {
@@ -182,6 +240,9 @@ export async function testKiroRefreshToken() {
       profileArn: result.profileArn || '',
       region: result.region || region,
       refreshToken: refreshTokenToSave,
+      authMethod,
+      clientId,
+      clientSecret,
     }
 
     const accessTokenEl = document.getElementById('kiroAccessToken')
@@ -285,10 +346,21 @@ export async function saveKiroConfig() {
   const proxyUrl = document.getElementById('kiroProxyUrl').value.trim()
   const userAgent = document.getElementById('kiroUserAgent').value.trim()
   const version = document.getElementById('kiroVersion').value.trim()
+  const authMethod = document.getElementById('kiroAuthMethod').value.trim()
+  const clientId = document.getElementById('kiroClientId').value.trim()
+  const clientSecret = document.getElementById('kiroClientSecret').value.trim()
 
   if (!refreshToken) {
     showError(t('kiro.refreshTokenRequired'))
     return
+  }
+
+  // Validate IdC fields
+  if (authMethod.toLowerCase() === 'idc') {
+    if (!clientId || !clientSecret) {
+      showError(t('kiro.idcFieldsRequired'))
+      return
+    }
   }
 
   const changed = isRefreshTokenChanged()
@@ -309,6 +381,9 @@ export async function saveKiroConfig() {
         proxyUrl,
         userAgent,
         version,
+        authMethod,
+        clientId,
+        clientSecret,
         accessToken: shouldPersistAuthState ? testedKiroCreds?.accessToken || '' : '',
         expiresAt: shouldPersistAuthState ? testedKiroCreds?.expiresAt || '' : '',
         profileArn: shouldPersistAuthState ? testedKiroCreds?.profileArn || '' : '',
@@ -383,6 +458,69 @@ export function toggleKiroRegionDropdown() {
     dropdown.classList.remove('show')
   } else {
     renderKiroRegionDropdown()
+    dropdown.classList.add('show')
+  }
+}
+
+// Sync auth method dropdown display
+function syncKiroAuthMethodDisplay() {
+  const select = document.getElementById('kiroAuthMethod')
+  const display = document.getElementById('kiroAuthMethodDisplay')
+  if (!select || !display) return
+
+  const selectedOption = select.options[select.selectedIndex]
+  if (selectedOption) {
+    display.value = selectedOption.textContent.trim()
+  }
+
+  renderKiroAuthMethodDropdown()
+}
+
+// Render auth method dropdown options
+function renderKiroAuthMethodDropdown() {
+  const select = document.getElementById('kiroAuthMethod')
+  const dropdown = document.getElementById('kiroAuthMethodDropdown')
+  if (!select || !dropdown) return
+
+  dropdown.innerHTML = ''
+  Array.from(select.options).forEach(option => {
+    const item = document.createElement('div')
+    item.className = 'model-dropdown-item'
+    if (option.selected) {
+      item.classList.add('selected')
+    }
+    item.textContent = option.textContent.trim()
+    item.onclick = () => selectKiroAuthMethod(option.value)
+    dropdown.appendChild(item)
+  })
+}
+
+// Select auth method from dropdown
+function selectKiroAuthMethod(value) {
+  const select = document.getElementById('kiroAuthMethod')
+  if (!select) return
+
+  select.value = value
+  syncKiroAuthMethodDisplay()
+  onKiroAuthMethodChange()
+
+  // Close dropdown
+  const dropdown = document.getElementById('kiroAuthMethodDropdown')
+  if (dropdown) {
+    dropdown.classList.remove('show')
+  }
+}
+
+// Toggle auth method dropdown
+export function toggleKiroAuthMethodDropdown() {
+  const dropdown = document.getElementById('kiroAuthMethodDropdown')
+  const select = document.getElementById('kiroAuthMethod')
+  if (!dropdown || !select) return
+
+  if (dropdown.classList.contains('show')) {
+    dropdown.classList.remove('show')
+  } else {
+    renderKiroAuthMethodDropdown()
     dropdown.classList.add('show')
   }
 }
