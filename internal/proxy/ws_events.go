@@ -30,9 +30,7 @@ func (p *ProxyServer) broadcastFallbackSwitch(fromEndpoint, toEndpoint *executor
 	}
 
 	payload := &FallbackSwitchPayload{
-		FromVendor:   p.getVendorNameByID(vendorIDOf(fromEndpoint)),
 		FromEndpoint: "",
-		ToVendor:     p.getVendorNameByID(vendorIDOf(toEndpoint)),
 		ToEndpoint:   "",
 		Path:         path,
 		StatusCode:   statusCode,
@@ -59,11 +57,4 @@ func (p *ProxyServer) broadcastEndpointTempDisabled(interfaceType string, endpoi
 		EndpointName:  endpoint.Name,
 		DisabledUntil: unixMillis(disabledUntil),
 	})
-}
-
-func vendorIDOf(endpoint *executor.EndpointConfig) int64 {
-	if endpoint == nil {
-		return 0
-	}
-	return endpoint.VendorID
 }

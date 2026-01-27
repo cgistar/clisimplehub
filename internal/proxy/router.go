@@ -530,9 +530,9 @@ func IsRetryablePath(path string) bool {
 	return false
 }
 
-// ShouldRecordVendorStats checks if the request should be recorded to vendor_stats.
+// ShouldRecordUsageStats checks if the request should be recorded to usage_stats.
 // Only Claude/Codex interface types with retryable paths should be recorded.
-func ShouldRecordVendorStats(interfaceType InterfaceType, path string) bool {
+func ShouldRecordUsageStats(interfaceType InterfaceType, path string) bool {
 	// Only Claude and Codex interface types
 	if interfaceType == InterfaceTypeClaude || interfaceType == InterfaceTypeCodex {
 		lowerPath := strings.ToLower(path)

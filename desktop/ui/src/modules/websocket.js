@@ -92,16 +92,16 @@ function handleWebSocketMessage(message) {
  */
 function handleFallbackSwitch(payload) {
     if (!payload) return;
-    
-    const { fromVendor, fromEndpoint, toVendor, toEndpoint, path, statusCode, errorMessage } = payload;
-    
+
+    const { fromEndpoint, toEndpoint, path, statusCode, errorMessage } = payload;
+
     // Log failure info
-    const failureInfo = statusCode > 0 
-        ? `状态码: ${statusCode}` 
+    const failureInfo = statusCode > 0
+        ? `状态码: ${statusCode}`
         : (errorMessage || '请求失败');
-    
-    logInfo(`请求失败: ${fromVendor}-${fromEndpoint}, 路径: ${path}, ${failureInfo}`);
-    logInfo(`当前端点故障，转到 ${toVendor}-${toEndpoint}`);
+
+    logInfo(`请求失败: ${fromEndpoint}, 路径: ${path}, ${failureInfo}`);
+    logInfo(`当前端点故障，转到 ${toEndpoint}`);
 }
 
 async function refreshCurrentTabEndpointsDebounced() {

@@ -14,7 +14,7 @@ type EndpointAdapter interface {
 	GetInterfaceType() string
 	GetTransformer() string
 	GetModel() string
-	GetVendorID() int64
+	GetProviderName() string
 	GetProxyURL() string
 	GetModels() []ModelMapping
 	GetHeaders() map[string]string
@@ -33,7 +33,7 @@ func EndpointFromAdapter(ep EndpointAdapter) *EndpointConfig {
 		APIKey:        ep.GetAPIKey(),
 		InterfaceType: ep.GetInterfaceType(),
 		Transformer:   ep.GetTransformer(),
-		VendorID:      ep.GetVendorID(),
+		ProviderName:  ep.GetProviderName(),
 		Model:         ep.GetModel(),
 		ProxyURL:      ep.GetProxyURL(),
 		Models:        ep.GetModels(),

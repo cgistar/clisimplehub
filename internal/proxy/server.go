@@ -15,15 +15,15 @@ import (
 
 // ProxyServer represents the main proxy server implementation
 type ProxyServer struct {
-	port        int
-	router      Router
-	server      *http.Server
-	stats       *StatsManager
-	wsHub       *WSHub
-	mu          sync.RWMutex
-	authKey     string
-	store       storage.Storage
-	vendorStats statsdb.VendorStatsStore
+	port       int
+	router     Router
+	server     *http.Server
+	stats      *StatsManager
+	wsHub      *WSHub
+	mu         sync.RWMutex
+	authKey    string
+	store      storage.Storage
+	usageStats statsdb.UsageStatsStore
 
 	fallbackEnabled bool
 	exec            *proxyExecutor
@@ -73,10 +73,10 @@ func (p *ProxyServer) SetStorage(store storage.Storage) {
 	}
 }
 
-func (p *ProxyServer) SetVendorStatsStore(store statsdb.VendorStatsStore) {
+func (p *ProxyServer) SetUsageStatsStore(store statsdb.UsageStatsStore) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.vendorStats = store
+	p.usageStats = store
 }
 
 // GetWSHub returns the WebSocket hub

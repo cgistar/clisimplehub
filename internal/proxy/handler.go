@@ -53,7 +53,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	isAnthropic := isAnthropicClaudeCompatiblePath(r.URL.Path)
 
 	isRetryable := IsRetryablePath(r.URL.Path)
-	shouldRecordStats := ShouldRecordVendorStats(interfaceType, r.URL.Path)
+	shouldRecordStats := ShouldRecordUsageStats(interfaceType, r.URL.Path)
 	fallbackEnabled := p.IsFallbackEnabled()
 
 	if required := p.getAuthKey(); required != "" && !isAuthorized(r, required) {
@@ -264,12 +264,12 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if isRetryable {
 		p.recordTokens(execResult.Endpoint, result)
 		if shouldRecordStats {
-			requestBody := vendorStatsRequestBody(captureUpstreamRequestBody, bodyBytes)
+			requestBody := usageStatsRequestBody(captureUpstreamRequestBody, bodyBytes)
 			responseBody := ""
 			if captureUpstreamResponseBody && result != nil {
 				responseBody = result.UpstreamResponseBody
 			}
-			p.insertVendorStat(r.Context(), interfaceType, execResult.Endpoint, r.URL.Path, targetHeadersFromResult(result), requestBody, responseBody, runTime, statusCodeFromResult(result), status, tokensFromResult(result))
+			p.insertUsageStat(r.Context(), interfaceType, execResult.Endpoint, r.URL.Path, targetHeadersFromResult(result), requestBody, responseBody, runTime, statusCodeFromResult(result), status, tokensFromResult(result))
 		}
 	}
 
@@ -334,7 +334,7 @@ func formatErrorTypeChain(err error) string {
 	return strings.Join(chain, " -> ")
 }
 
-func vendorStatsRequestBody(capture bool, rawBody []byte) string {
+func usageStatsRequestBody(capture bool, rawBody []byte) string {
 	if !capture || len(rawBody) == 0 {
 		return ""
 	}

@@ -4,6 +4,8 @@ package executor
 import (
 	"context"
 	"net/http"
+	
+	"clisimplehub/internal/storage"
 )
 
 // ForwardRequest 表示转发请求的输入
@@ -48,26 +50,12 @@ type TokenUsage struct {
 	Reasoning    int64 `json:"reasoning,omitempty"`
 }
 
-// EndpointConfig 端点配置
-type EndpointConfig struct {
-	ID            int64             `json:"id"`
-	Name          string            `json:"name"`
-	APIURL        string            `json:"api_url"`
-	APIKey        string            `json:"api_key"`
-	InterfaceType string            `json:"interface_type"`
-	Transformer   string            `json:"transformer,omitempty"`
-	VendorID      int64             `json:"vendor_id,omitempty"`
-	Model         string            `json:"model,omitempty"`
-	ProxyURL      string            `json:"proxy_url,omitempty"`
-	Models        []ModelMapping    `json:"models,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
-}
+// EndpointConfig is an alias for storage.Endpoint
+// executor 使用完整的端点配置（包括 Active, Enabled, Priority 等字段）
+type EndpointConfig = storage.Endpoint
 
-// ModelMapping 模型映射配置
-type ModelMapping struct {
-	Name  string `json:"name"`  // 实际模型名（上游模型名）
-	Alias string `json:"alias"` // API 使用的别名（客户端传入的 model）
-}
+// ModelMapping is an alias for storage.ModelMapping
+type ModelMapping = storage.ModelMapping
 
 // Executor 定义执行器接口
 type Executor interface {

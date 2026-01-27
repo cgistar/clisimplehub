@@ -17,18 +17,18 @@ import { initRealTime, cleanupRealTime } from './modules/realtime.js';
 import {
     showManageModal,
     closeManageModal,
-    selectVendor,
     showVendorForm,
     closeVendorForm,
     editVendor,
     saveVendor,
     deleteVendor,
-    deleteVendorById,
+    deleteVendorById
+} from './modules/vendors.js';
+import {
     showEndpointForm,
     closeEndpointForm,
     editEndpoint,
     editEndpointFromList,
-    closeEndpointDetailModal,
     saveEndpoint,
     deleteEndpoint,
     deleteEndpointById,
@@ -40,10 +40,11 @@ import {
     fetchModels,
     toggleModelDropdown,
     toggleTransformerDropdown,
+    toggleVendorDropdown,
     addModelMapping,
     removeModelMapping,
     applyQuickModelMappings
-} from './modules/vendors.js';
+} from './modules/endpoint-form.js';
 import {
     toggleConsolePanel,
     toggleBottomConsole,
@@ -139,7 +140,6 @@ window.refreshConfig = refreshConfig;
 window.changeLanguage = changeLanguage;
 window.showManageModal = showManageModal;
 window.closeManageModal = closeManageModal;
-window.selectVendor = selectVendor;
 window.showVendorForm = showVendorForm;
 window.closeVendorForm = closeVendorForm;
 window.editVendor = editVendor;
@@ -150,7 +150,6 @@ window.showEndpointForm = showEndpointForm;
 window.closeEndpointForm = closeEndpointForm;
 window.editEndpoint = editEndpoint;
 window.editEndpointFromList = editEndpointFromList;
-window.closeEndpointDetailModal = closeEndpointDetailModal;
 window.saveEndpoint = saveEndpoint;
 window.deleteEndpoint = deleteEndpoint;
 window.deleteEndpointById = deleteEndpointById;
@@ -160,6 +159,7 @@ window.toggleRealtimeConnection = toggleRealtimeConnection;
 window.toggleApiKeyVisibility = toggleApiKeyVisibility;
 window.toggleInterfaceTypeDropdown = toggleInterfaceTypeDropdown;
 window.onEndpointInterfaceTypeChange = onEndpointInterfaceTypeChange;
+window.toggleVendorDropdown = toggleVendorDropdown;
 window.toggleConsolePanel = toggleConsolePanel;
 window.toggleBottomConsole = toggleBottomConsole;
 window.changeConsoleLogLevel = changeConsoleLogLevel;

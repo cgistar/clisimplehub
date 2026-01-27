@@ -96,7 +96,7 @@ function updateRecentLog(request) {
     const log = {
         id: request.request_id,
         interfaceType: request.interfaceType,
-        vendorName: request.vendorName,
+        providerName: request.providerName,
         endpointName: request.endpointName,
         path: request.path,
         runTime: request.runTime,
@@ -272,7 +272,7 @@ export async function showLogDetail(logId) {
                     log = {
                         request_id: detail.id,
                         interfaceType: detail.interfaceType,
-                        vendorName: detail.vendorName,
+                        providerName: detail.providerName,
                         endpointName: detail.endpointName,
                         method: detail.method,
                         path: detail.path,
@@ -298,7 +298,7 @@ export async function showLogDetail(logId) {
                 log = {
                     request_id: stateLog.id,
                     interfaceType: stateLog.interfaceType,
-                    vendorName: stateLog.vendorName,
+                    providerName: stateLog.providerName,
                     endpointName: stateLog.endpointName,
                     method: stateLog.method || 'POST',
                     path: stateLog.path,
@@ -356,7 +356,7 @@ function renderLogDetailModal(log) {
                         </tr>
                         <tr>
                             <td class="label">${t('logs.vendor')}</td>
-                            <td class="value">${log.vendorName || log.endpointName || '-'}</td>
+                            <td class="value">${log.providerName || log.endpointName || '-'}</td>
                             <td class="label">${t('logs.statusLabel')}</td>
                             <td class="value"><span class="log-status-badge ${statusClass}">${statusText}</span></td>
                         </tr>
@@ -457,16 +457,16 @@ function formatHeaders(headers) {
 
 function formatService(log) {
     const endpointName = log.endpointName || '';
-    const vendorName = log.vendorName || '';
-    if (endpointName && vendorName) return `${endpointName} (${vendorName})`;
-    return endpointName || vendorName || 'Unknown';
+    const providerName = log.providerName || '';
+    if (endpointName && providerName) return `${endpointName} (${providerName})`;
+    return endpointName || providerName || 'Unknown';
 }
 
 function formatEndpoint(req) {
-    if (req.endpointName && req.vendorName) {
-        return `${req.endpointName} (${req.vendorName})`;
+    if (req.endpointName && req.providerName) {
+        return `${req.endpointName} (${req.providerName})`;
     }
-    return req.endpointName || req.vendorName || 'Unknown';
+    return req.endpointName || req.providerName || 'Unknown';
 }
 
 function formatStatus(log) {

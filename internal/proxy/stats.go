@@ -53,14 +53,9 @@ func (s *StatsManager) RecordRequest(log *RequestLog) {
 		return
 	}
 
-	if log.VendorName == "" && log.VendorID != 0 && s.storage != nil {
-		if vendor, err := s.storage.GetVendorByID(log.VendorID); err == nil && vendor != nil {
-			log.VendorName = vendor.Name
-		}
-	}
-	if log.EndpointName != "" && log.VendorName != "" {
+	if log.EndpointName != "" && log.ProviderName != "" {
 		if stats, exists := s.tokenStats[log.EndpointName]; exists {
-			stats.VendorName = log.VendorName
+			stats.ProviderName = log.ProviderName
 		}
 	}
 

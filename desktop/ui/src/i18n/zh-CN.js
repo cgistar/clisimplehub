@@ -162,6 +162,10 @@ export default {
   manage: {
     title: '管理端点',
     vendors: '供应商',
+    vendor: '供应商',
+    selectVendor: '选择供应商（可选）',
+    vendorHelp: '选择供应商后将自动填充 API URL',
+    clearVendor: '(清空)',
     addVendor: '添加供应商',
     editVendor: '编辑供应商',
     noVendors: '没有配置供应商。请先添加供应商。',
@@ -220,7 +224,6 @@ export default {
     confirmDeleteEndpoint: '确定要删除此端点吗？',
     saveFailed: '保存失败',
     deleteFailed: '删除失败',
-    activeEndpointNote: '活动端点无法编辑。请先切换到其他端点。',
     proxyUrl: '代理 URL',
     proxyUrlPlaceholder: '例如：socks5://proxy.example.com:1080',
     proxyUrlHelp: '可选，用于通过代理访问上游 API',
@@ -263,7 +266,7 @@ export default {
   cliConfig: {
     title: '配置编辑器',
     save: '保存',
-    process: '处理',
+    process: '自动修改',
     processHelp: '将本地代理地址和API密钥替换到配置文件中',
     saveSuccess: '配置保存成功',
     saveFailed: '保存配置失败',

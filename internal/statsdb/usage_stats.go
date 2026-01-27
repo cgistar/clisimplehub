@@ -19,11 +19,11 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-type VendorStat struct {
-	VendorID      string
-	VendorName    string
+// UsageStat 使用统计记录
+type UsageStat struct {
 	EndpointID    string
 	EndpointName  string
+	ProviderName  string
 	Path          string
 	Date          string
 	InterfaceType string
@@ -41,16 +41,19 @@ type VendorStat struct {
 	Reasoning    int64
 }
 
-type VendorStatsStore interface {
-	InsertVendorStat(ctx context.Context, stat VendorStat) error
+// UsageStatsStore 使用统计存储接口
+type UsageStatsStore interface {
+	InsertUsageStat(ctx context.Context, stat UsageStat) error
 	Close() error
 }
 
-type SQLiteVendorStatsStore struct {
+// SQLiteUsageStatsStore SQLite 实现
+type SQLiteUsageStatsStore struct {
 	db *sql.DB
 }
 
-func OpenSQLiteVendorStatsStore(path string) (*SQLiteVendorStatsStore, error) {
+// OpenSQLiteUsageStatsStore 打开 SQLite 统计存储
+func OpenSQLiteUsageStatsStore(path string) (*SQLiteUsageStatsStore, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("empty sqlite path")
 	}
@@ -68,7 +71,7 @@ func OpenSQLiteVendorStatsStore(path string) (*SQLiteVendorStatsStore, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 
-	store := &SQLiteVendorStatsStore{db: db}
+	store := &SQLiteUsageStatsStore{db: db}
 	if err := store.initSchema(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -76,20 +79,20 @@ func OpenSQLiteVendorStatsStore(path string) (*SQLiteVendorStatsStore, error) {
 	return store, nil
 }
 
-func (s *SQLiteVendorStatsStore) initSchema(ctx context.Context) error {
+func (s *SQLiteUsageStatsStore) initSchema(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("nil sqlite store")
 	}
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
-	if err := s.ensureVendorStatsColumns(ctx); err != nil {
+	if err := s.ensureUsageStatsColumns(ctx); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *SQLiteVendorStatsStore) ensureVendorStatsColumns(ctx context.Context) error {
+func (s *SQLiteUsageStatsStore) ensureUsageStatsColumns(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("nil sqlite store")
 	}
@@ -116,53 +119,53 @@ func (s *SQLiteVendorStatsStore) ensureVendorStatsColumns(ctx context.Context) e
 		return false, rows.Err()
 	}
 
-	ok, err := hasColumn("vendor_stats", "request_body")
+	ok, err := hasColumn("usage_stats", "request_body")
 	if err != nil {
-		return fmt.Errorf("check vendor_stats columns: %w", err)
+		return fmt.Errorf("check usage_stats columns: %w", err)
 	}
 	if !ok {
-		if _, err := s.db.ExecContext(ctx, "ALTER TABLE vendor_stats ADD COLUMN request_body TEXT"); err != nil {
-			return fmt.Errorf("add vendor_stats.request_body: %w", err)
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE usage_stats ADD COLUMN request_body TEXT"); err != nil {
+			return fmt.Errorf("add usage_stats.request_body: %w", err)
 		}
 	}
 
-	ok, err = hasColumn("vendor_stats", "response_body")
+	ok, err = hasColumn("usage_stats", "response_body")
 	if err != nil {
-		return fmt.Errorf("check vendor_stats columns: %w", err)
+		return fmt.Errorf("check usage_stats columns: %w", err)
 	}
 	if !ok {
-		if _, err := s.db.ExecContext(ctx, "ALTER TABLE vendor_stats ADD COLUMN response_body TEXT"); err != nil {
-			return fmt.Errorf("add vendor_stats.response_body: %w", err)
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE usage_stats ADD COLUMN response_body TEXT"); err != nil {
+			return fmt.Errorf("add usage_stats.response_body: %w", err)
 		}
 	}
 	return nil
 }
 
-func (s *SQLiteVendorStatsStore) Close() error {
+func (s *SQLiteUsageStatsStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 	return s.db.Close()
 }
 
-func (s *SQLiteVendorStatsStore) InsertVendorStat(ctx context.Context, stat VendorStat) error {
+// InsertUsageStat 插入使用统计记录
+func (s *SQLiteUsageStatsStore) InsertUsageStat(ctx context.Context, stat UsageStat) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 
-	normalized := normalizeVendorStat(stat)
+	normalized := normalizeUsageStat(stat)
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO vendor_stats(
-  vendor_id, vendor_name, endpoint_id, endpoint_name,
+INSERT INTO usage_stats(
+  endpoint_id, endpoint_name, provider_name,
   path, date, interface_type, target_headers,
   request_body, response_body,
   duration_ms, status_code, status,
   input_tokens, output_tokens, cached_create, cached_read, reasoning
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		normalized.VendorID,
-		normalized.VendorName,
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.EndpointID,
 		normalized.EndpointName,
+		normalized.ProviderName,
 		normalized.Path,
 		normalized.Date,
 		normalized.InterfaceType,
@@ -179,12 +182,13 @@ INSERT INTO vendor_stats(
 		normalized.Reasoning,
 	)
 	if err != nil {
-		return fmt.Errorf("insert vendor_stats: %w", err)
+		return fmt.Errorf("insert usage_stats: %w", err)
 	}
 	return nil
 }
 
-func (s *SQLiteVendorStatsStore) DeleteStatsByEndpointID(ctx context.Context, endpointID int64) error {
+// DeleteStatsByEndpointID 删除指定端点的统计记录
+func (s *SQLiteUsageStatsStore) DeleteStatsByEndpointID(ctx context.Context, endpointID int64) error {
 	if s == nil || s.db == nil {
 		return errors.New("nil sqlite store")
 	}
@@ -192,36 +196,32 @@ func (s *SQLiteVendorStatsStore) DeleteStatsByEndpointID(ctx context.Context, en
 		return nil
 	}
 
-	_, err := s.db.ExecContext(ctx, `DELETE FROM vendor_stats WHERE endpoint_id = ?`, strconv.FormatInt(endpointID, 10))
+	_, err := s.db.ExecContext(ctx, `DELETE FROM usage_stats WHERE endpoint_id = ?`, strconv.FormatInt(endpointID, 10))
 	if err != nil {
-		return fmt.Errorf("delete vendor_stats by endpoint_id=%d: %w", endpointID, err)
+		return fmt.Errorf("delete usage_stats by endpoint_id=%d: %w", endpointID, err)
 	}
 	return nil
 }
 
-func normalizeVendorStat(stat VendorStat) VendorStat {
+func normalizeUsageStat(stat UsageStat) UsageStat {
 	out := stat
-	out.VendorID = strings.TrimSpace(out.VendorID)
-	out.VendorName = strings.TrimSpace(out.VendorName)
 	out.EndpointID = strings.TrimSpace(out.EndpointID)
 	out.EndpointName = strings.TrimSpace(out.EndpointName)
+	out.ProviderName = strings.TrimSpace(out.ProviderName)
 	out.Path = strings.TrimSpace(out.Path)
 	out.Date = strings.TrimSpace(out.Date)
 	out.InterfaceType = strings.TrimSpace(out.InterfaceType)
 	out.TargetHeaders = strings.TrimSpace(out.TargetHeaders)
 	out.Status = strings.TrimSpace(out.Status)
 
-	if out.VendorID == "" {
-		out.VendorID = "0"
-	}
-	if out.VendorName == "" {
-		out.VendorName = "unknown"
-	}
 	if out.EndpointID == "" {
 		out.EndpointID = "0"
 	}
 	if out.EndpointName == "" {
 		out.EndpointName = "unknown"
+	}
+	if out.ProviderName == "" {
+		out.ProviderName = "unknown"
 	}
 	if out.Path == "" {
 		out.Path = "/"
@@ -259,10 +259,9 @@ func MustJSON(v any) string {
 	return string(b)
 }
 
-// VendorStatsSummary represents aggregated stats for a vendor
-type VendorStatsSummary struct {
-	VendorID     string                 `json:"vendorId"`
-	VendorName   string                 `json:"vendorName"`
+// ProviderStatsSummary 提供商统计汇总
+type ProviderStatsSummary struct {
+	ProviderName string                 `json:"providerName"`
 	InputTokens  int64                  `json:"inputTokens"`
 	OutputTokens int64                  `json:"outputTokens"`
 	CachedCreate int64                  `json:"cachedCreate"`
@@ -272,11 +271,11 @@ type VendorStatsSummary struct {
 	Endpoints    []EndpointStatsSummary `json:"endpoints"`
 }
 
-// EndpointStatsSummary represents aggregated stats for an endpoint
+// EndpointStatsSummary 端点统计汇总
 type EndpointStatsSummary struct {
 	EndpointID   string `json:"endpointId"`
 	EndpointName string `json:"endpointName"`
-	VendorName   string `json:"vendorName"`
+	ProviderName string `json:"providerName"`
 	Date         string `json:"date,omitempty"`
 	InputTokens  int64  `json:"inputTokens"`
 	OutputTokens int64  `json:"outputTokens"`
@@ -287,7 +286,7 @@ type EndpointStatsSummary struct {
 	RequestCount int64  `json:"requestCount"`
 }
 
-// InterfaceTypeStatsSummary represents aggregated stats grouped by interface type
+// InterfaceTypeStatsSummary 接口类型统计汇总
 type InterfaceTypeStatsSummary struct {
 	InterfaceType string                 `json:"interfaceType"`
 	InputTokens   int64                  `json:"inputTokens"`
@@ -300,7 +299,7 @@ type InterfaceTypeStatsSummary struct {
 	Endpoints     []EndpointStatsSummary `json:"endpoints"`
 }
 
-// TimeRange represents a time range for querying stats
+// TimeRange 时间范围
 type TimeRange string
 
 const (
@@ -311,27 +310,26 @@ const (
 	TimeRangeAll       TimeRange = "all"
 )
 
-// GetStatsByTimeRange returns aggregated stats grouped by vendor for the given time range
-func (s *SQLiteVendorStatsStore) GetStatsByTimeRange(ctx context.Context, timeRange TimeRange) ([]VendorStatsSummary, error) {
+// GetStatsByTimeRange 按时间范围获取统计（按提供商分组）
+func (s *SQLiteUsageStatsStore) GetStatsByTimeRange(ctx context.Context, timeRange TimeRange) ([]ProviderStatsSummary, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("nil sqlite store")
 	}
 
 	dateCondition := buildDateCondition(timeRange)
 
-	// Query aggregated stats grouped by vendor and endpoint
 	query := fmt.Sprintf(`
-		SELECT 
-			vendor_id, vendor_name, endpoint_id, endpoint_name,
+		SELECT
+			provider_name, endpoint_id, endpoint_name,
 			COALESCE(SUM(input_tokens), 0) as input_tokens,
 			COALESCE(SUM(output_tokens), 0) as output_tokens,
 			COALESCE(SUM(cached_create), 0) as cached_create,
 			COALESCE(SUM(cached_read), 0) as cached_read,
 			COALESCE(SUM(reasoning), 0) as reasoning
-		FROM vendor_stats
+		FROM usage_stats
 		WHERE %s
-		GROUP BY vendor_id, vendor_name, endpoint_id, endpoint_name
-		ORDER BY vendor_name, endpoint_name
+		GROUP BY provider_name, endpoint_id, endpoint_name
+		ORDER BY provider_name, endpoint_name
 	`, dateCondition)
 
 	rows, err := s.db.QueryContext(ctx, query)
@@ -340,15 +338,14 @@ func (s *SQLiteVendorStatsStore) GetStatsByTimeRange(ctx context.Context, timeRa
 	}
 	defer rows.Close()
 
-	// Build vendor map
-	vendorMap := make(map[string]*VendorStatsSummary)
-	var vendorOrder []string
+	providerMap := make(map[string]*ProviderStatsSummary)
+	var providerOrder []string
 
 	for rows.Next() {
-		var vendorID, vendorName, endpointID, endpointName string
+		var providerName, endpointID, endpointName string
 		var input, output, cachedCreate, cachedRead, reasoning int64
 
-		if err := rows.Scan(&vendorID, &vendorName, &endpointID, &endpointName, &input, &output, &cachedCreate, &cachedRead, &reasoning); err != nil {
+		if err := rows.Scan(&providerName, &endpointID, &endpointName, &input, &output, &cachedCreate, &cachedRead, &reasoning); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
 
@@ -357,6 +354,7 @@ func (s *SQLiteVendorStatsStore) GetStatsByTimeRange(ctx context.Context, timeRa
 		endpointSummary := EndpointStatsSummary{
 			EndpointID:   endpointID,
 			EndpointName: endpointName,
+			ProviderName: providerName,
 			InputTokens:  input,
 			OutputTokens: output,
 			CachedCreate: cachedCreate,
@@ -365,18 +363,17 @@ func (s *SQLiteVendorStatsStore) GetStatsByTimeRange(ctx context.Context, timeRa
 			Total:        total,
 		}
 
-		if vendor, exists := vendorMap[vendorID]; exists {
-			vendor.InputTokens += input
-			vendor.OutputTokens += output
-			vendor.CachedCreate += cachedCreate
-			vendor.CachedRead += cachedRead
-			vendor.Reasoning += reasoning
-			vendor.Total += total
-			vendor.Endpoints = append(vendor.Endpoints, endpointSummary)
+		if provider, exists := providerMap[providerName]; exists {
+			provider.InputTokens += input
+			provider.OutputTokens += output
+			provider.CachedCreate += cachedCreate
+			provider.CachedRead += cachedRead
+			provider.Reasoning += reasoning
+			provider.Total += total
+			provider.Endpoints = append(provider.Endpoints, endpointSummary)
 		} else {
-			vendorMap[vendorID] = &VendorStatsSummary{
-				VendorID:     vendorID,
-				VendorName:   vendorName,
+			providerMap[providerName] = &ProviderStatsSummary{
+				ProviderName: providerName,
 				InputTokens:  input,
 				OutputTokens: output,
 				CachedCreate: cachedCreate,
@@ -385,31 +382,30 @@ func (s *SQLiteVendorStatsStore) GetStatsByTimeRange(ctx context.Context, timeRa
 				Total:        total,
 				Endpoints:    []EndpointStatsSummary{endpointSummary},
 			}
-			vendorOrder = append(vendorOrder, vendorID)
+			providerOrder = append(providerOrder, providerName)
 		}
 	}
 
-	// Convert to slice maintaining order
-	result := make([]VendorStatsSummary, 0, len(vendorOrder))
-	for _, vendorID := range vendorOrder {
-		result = append(result, *vendorMap[vendorID])
+	result := make([]ProviderStatsSummary, 0, len(providerOrder))
+	for _, providerName := range providerOrder {
+		result = append(result, *providerMap[providerName])
 	}
 
 	return result, nil
 }
 
-// ClearStats clears all stats or stats for a specific time range
-func (s *SQLiteVendorStatsStore) ClearStats(ctx context.Context, timeRange TimeRange) error {
+// ClearStats 清除统计数据
+func (s *SQLiteUsageStatsStore) ClearStats(ctx context.Context, timeRange TimeRange) error {
 	if s == nil || s.db == nil {
 		return errors.New("nil sqlite store")
 	}
 
 	var query string
 	if timeRange == TimeRangeAll {
-		query = "DELETE FROM vendor_stats"
+		query = "DELETE FROM usage_stats"
 	} else {
 		dateCondition := buildDateCondition(timeRange)
-		query = fmt.Sprintf("DELETE FROM vendor_stats WHERE %s", dateCondition)
+		query = fmt.Sprintf("DELETE FROM usage_stats WHERE %s", dateCondition)
 	}
 
 	fmt.Printf("[ClearStats] Executing query: %s\n", query)
@@ -423,47 +419,45 @@ func (s *SQLiteVendorStatsStore) ClearStats(ctx context.Context, timeRange TimeR
 	return nil
 }
 
-// GetStatsByInterfaceType returns aggregated stats grouped by interface type for the given time range
-func (s *SQLiteVendorStatsStore) GetStatsByInterfaceType(ctx context.Context, timeRange TimeRange) ([]InterfaceTypeStatsSummary, error) {
+// GetStatsByInterfaceType 按接口类型获取统计
+func (s *SQLiteUsageStatsStore) GetStatsByInterfaceType(ctx context.Context, timeRange TimeRange) ([]InterfaceTypeStatsSummary, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("nil sqlite store")
 	}
 
 	dateCondition := buildDateCondition(timeRange)
-
-	// For "all" time range, include date in grouping
 	includeDate := timeRange == TimeRangeAll
 
 	var query string
 	if includeDate {
 		query = fmt.Sprintf(`
-			SELECT 
-				interface_type, vendor_id, vendor_name, endpoint_id, endpoint_name, date,
+			SELECT
+				interface_type, provider_name, endpoint_id, endpoint_name, date,
 				COALESCE(SUM(input_tokens), 0) as input_tokens,
 				COALESCE(SUM(output_tokens), 0) as output_tokens,
 				COALESCE(SUM(cached_create), 0) as cached_create,
 				COALESCE(SUM(cached_read), 0) as cached_read,
 				COALESCE(SUM(reasoning), 0) as reasoning,
 				COUNT(*) as request_count
-			FROM vendor_stats
+			FROM usage_stats
 			WHERE %s
-			GROUP BY interface_type, vendor_id, vendor_name, endpoint_id, endpoint_name, date
-			ORDER BY interface_type, date DESC, vendor_name, endpoint_name
+			GROUP BY interface_type, provider_name, endpoint_id, endpoint_name, date
+			ORDER BY interface_type, date DESC, provider_name, endpoint_name
 		`, dateCondition)
 	} else {
 		query = fmt.Sprintf(`
-			SELECT 
-				interface_type, vendor_id, vendor_name, endpoint_id, endpoint_name, '' as date,
+			SELECT
+				interface_type, provider_name, endpoint_id, endpoint_name, '' as date,
 				COALESCE(SUM(input_tokens), 0) as input_tokens,
 				COALESCE(SUM(output_tokens), 0) as output_tokens,
 				COALESCE(SUM(cached_create), 0) as cached_create,
 				COALESCE(SUM(cached_read), 0) as cached_read,
 				COALESCE(SUM(reasoning), 0) as reasoning,
 				COUNT(*) as request_count
-			FROM vendor_stats
+			FROM usage_stats
 			WHERE %s
-			GROUP BY interface_type, vendor_id, vendor_name, endpoint_id, endpoint_name
-			ORDER BY interface_type, vendor_name, endpoint_name
+			GROUP BY interface_type, provider_name, endpoint_id, endpoint_name
+			ORDER BY interface_type, provider_name, endpoint_name
 		`, dateCondition)
 	}
 
@@ -473,15 +467,14 @@ func (s *SQLiteVendorStatsStore) GetStatsByInterfaceType(ctx context.Context, ti
 	}
 	defer rows.Close()
 
-	// Build interface type map
 	typeMap := make(map[string]*InterfaceTypeStatsSummary)
 	var typeOrder []string
 
 	for rows.Next() {
-		var interfaceType, vendorID, vendorName, endpointID, endpointName, date string
+		var interfaceType, providerName, endpointID, endpointName, date string
 		var input, output, cachedCreate, cachedRead, reasoning, requestCount int64
 
-		if err := rows.Scan(&interfaceType, &vendorID, &vendorName, &endpointID, &endpointName, &date, &input, &output, &cachedCreate, &cachedRead, &reasoning, &requestCount); err != nil {
+		if err := rows.Scan(&interfaceType, &providerName, &endpointID, &endpointName, &date, &input, &output, &cachedCreate, &cachedRead, &reasoning, &requestCount); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
 
@@ -490,7 +483,7 @@ func (s *SQLiteVendorStatsStore) GetStatsByInterfaceType(ctx context.Context, ti
 		endpointSummary := EndpointStatsSummary{
 			EndpointID:   endpointID,
 			EndpointName: endpointName,
-			VendorName:   vendorName,
+			ProviderName: providerName,
 			Date:         date,
 			InputTokens:  input,
 			OutputTokens: output,
@@ -526,7 +519,6 @@ func (s *SQLiteVendorStatsStore) GetStatsByInterfaceType(ctx context.Context, ti
 		}
 	}
 
-	// Convert to slice maintaining order
 	result := make([]InterfaceTypeStatsSummary, 0, len(typeOrder))
 	for _, interfaceType := range typeOrder {
 		result = append(result, *typeMap[interfaceType])
@@ -554,7 +546,7 @@ func buildDateCondition(timeRange TimeRange) string {
 	}
 }
 
-// EndpointDailyStats represents daily stats for an endpoint
+// EndpointDailyStats 端点每日统计
 type EndpointDailyStats struct {
 	EndpointID   string `json:"endpointId"`
 	RequestCount int64  `json:"requestCount"`
@@ -563,21 +555,21 @@ type EndpointDailyStats struct {
 	OutputTokens int64  `json:"outputTokens"`
 }
 
-// GetTodayStatsByEndpoints returns today's request count and error count for each endpoint
-func (s *SQLiteVendorStatsStore) GetTodayStatsByEndpoints(ctx context.Context) (map[string]*EndpointDailyStats, error) {
+// GetTodayStatsByEndpoints 获取今日各端点统计
+func (s *SQLiteUsageStatsStore) GetTodayStatsByEndpoints(ctx context.Context) (map[string]*EndpointDailyStats, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("nil sqlite store")
 	}
 
 	today := time.Now().Format("2006-01-02")
 	query := `
-		SELECT 
+		SELECT
 			endpoint_id,
 			COUNT(*) as request_count,
 			SUM(CASE WHEN status_code >= 400 OR status = 'error' THEN 1 ELSE 0 END) as error_count,
 			COALESCE(SUM(input_tokens), 0) as input_tokens,
 			COALESCE(SUM(output_tokens), 0) as output_tokens
-		FROM vendor_stats
+		FROM usage_stats
 		WHERE date = ?
 		GROUP BY endpoint_id
 	`

@@ -73,14 +73,14 @@ func main() {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
 
-	// Initialize vendor stats SQLite store (best-effort; never blocks proxy startup).
-	vendorStatsPath := filepath.Join(dataDir, "data.sqlite")
-	var vendorStatsStore statsdb.VendorStatsStore
-	if db, err := statsdb.OpenSQLiteVendorStatsStore(vendorStatsPath); err != nil {
-		log.Printf("Warning: Failed to initialize vendor stats db (%s): %v", vendorStatsPath, err)
+	// Initialize usage stats SQLite store (best-effort; never blocks proxy startup).
+	usageStatsPath := filepath.Join(dataDir, "data.sqlite")
+	var usageStatsStore statsdb.UsageStatsStore
+	if db, err := statsdb.OpenSQLiteUsageStatsStore(usageStatsPath); err != nil {
+		log.Printf("Warning: Failed to initialize usage stats db (%s): %v", usageStatsPath, err)
 	} else {
-		vendorStatsStore = db
-		log.Printf("Vendor stats db: %s", vendorStatsPath)
+		usageStatsStore = db
+		log.Printf("Usage stats db: %s", usageStatsPath)
 	}
 
 	// Load port configuration with priority:
@@ -97,6 +97,11 @@ func main() {
 		if p, err := strconv.Atoi(savedPort); err == nil {
 			port = p
 		}
+	}
+
+	// 检查端口是否可用
+	if err := config.IsPortAvailable(port); err != nil {
+		log.Fatalf("启动失败: %v\n请检查端口是否被其他程序占用，或尝试使用其他端口", err)
 	}
 
 	// Load endpoints from config.json
@@ -129,7 +134,7 @@ func main() {
 	// Requirements: 1.1, 5.1, 7.1, 8.5
 	proxyServer := proxy.NewProxyServerWithWSHub(port, router, wsHub)
 	proxyServer.SetStorage(store)
-	proxyServer.SetVendorStatsStore(vendorStatsStore)
+	proxyServer.SetUsageStatsStore(usageStatsStore)
 
 	// Initialize kiro transformer config getter
 	kiro_claude.SetConfigGetter(func(key string) (string, error) {
@@ -158,8 +163,8 @@ func main() {
 	app.SetRouter(router)
 	app.SetWSHub(wsHub)
 	app.SetConfigLoader(configLoader)
-	if sqliteStore, ok := vendorStatsStore.(*statsdb.SQLiteVendorStatsStore); ok {
-		app.SetVendorStats(sqliteStore)
+	if sqliteStore, ok := usageStatsStore.(*statsdb.SQLiteUsageStatsStore); ok {
+		app.SetUsageStats(sqliteStore)
 	}
 
 	// Start proxy server in background
@@ -197,9 +202,9 @@ func main() {
 			if err := store.Close(); err != nil {
 				log.Printf("Error closing storage: %v", err)
 			}
-			if vendorStatsStore != nil {
-				if err := vendorStatsStore.Close(); err != nil {
-					log.Printf("Error closing vendor stats db: %v", err)
+			if usageStatsStore != nil {
+				if err := usageStatsStore.Close(); err != nil {
+					log.Printf("Error closing usage stats db: %v", err)
 				}
 			}
 			log.Println("Shutdown complete")

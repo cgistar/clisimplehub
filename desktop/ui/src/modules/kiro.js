@@ -3,7 +3,7 @@
  */
 import { showError, showSuccess } from './utils.js'
 import { t } from '../i18n/index.js'
-import { clearTransformersCache } from './vendors.js'
+import { clearTransformersCache } from './endpoint-form.js'
 import { logError, logKiroUsageDetails } from './console.js'
 
 let initialRefreshToken = ''

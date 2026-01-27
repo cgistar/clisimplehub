@@ -381,12 +381,27 @@ async function mergeConfigs(remoteConfig) {
     remoteVendors.forEach(v => vendorMap.set(v.name, v)); // 远程覆盖同名
     const mergedVendors = Array.from(vendorMap.values());
 
-    // 合并 endpoints：按 vendor+name 去重，远程优先
+    // 合并 endpoints：按 id 去重，远程优先
+    // endpoints 不关联 vendors，独立同步
+    // 必须有 id 字段，没有 id 的端点将被丢弃
     const localEndpoints = localConfig.endpoints || [];
     const remoteEndpoints = remoteConfig.endpoints || [];
     const endpointMap = new Map();
-    localEndpoints.forEach(e => endpointMap.set(`${e.vendor}:${e.name}`, e));
-    remoteEndpoints.forEach(e => endpointMap.set(`${e.vendor}:${e.name}`, e)); // 远程覆盖同名
+
+    // 本地端点：只保留有 id 的端点
+    localEndpoints.forEach(e => {
+        if (e.id) {
+            endpointMap.set(e.id, e);
+        }
+    });
+
+    // 远程端点：只保留有 id 的端点，远程覆盖本地
+    remoteEndpoints.forEach(e => {
+        if (e.id) {
+            endpointMap.set(e.id, e);
+        }
+    });
+
     const mergedEndpoints = Array.from(endpointMap.values());
 
     return {

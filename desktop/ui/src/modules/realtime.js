@@ -176,7 +176,7 @@ class RealTimeManager {
         const request = {
             request_id: requestId,
             interfaceType: log.interfaceType || '',
-            vendorName: log.vendorName || '',
+            providerName: log.providerName || '',
             endpointName: log.endpointName || '',
             transformer: log.transformer || '',
             method: log.method || 'POST',

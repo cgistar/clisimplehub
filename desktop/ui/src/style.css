@@ -2010,7 +2010,9 @@ input:disabled + .slider {
     display: flex;
 }
 
-.model-select-container.kiro-region-select input {
+.model-select-container.kiro-region-select input,
+.model-select-container.kiro-auth-method-select input,
+.model-select-container.interface-type-select input {
     border-top-right-radius: var(--radius-sm);
     border-bottom-right-radius: var(--radius-sm);
     border-right: 1px solid var(--border-color);

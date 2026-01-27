@@ -102,13 +102,13 @@ export function renderEndpointList(endpoints) {
         const priorityA = a.priority || 5;
         const priorityB = b.priority || 5;
         if (priorityA !== priorityB) return priorityB - priorityA;
-        const nameA = a.vendorName ? `${a.vendorName} / ${a.name}` : a.name;
-        const nameB = b.vendorName ? `${b.vendorName} / ${b.name}` : b.name;
+        const nameA = a.providerName ? `${a.providerName} / ${a.name}` : a.name;
+        const nameB = b.providerName ? `${b.providerName} / ${b.name}` : b.name;
         return nameA.localeCompare(nameB);
     });
     
     container.innerHTML = sortedEndpoints.map(ep => {
-        const displayName = ep.vendorName ? `${ep.vendorName} - ${ep.name}` : ep.name;
+        const displayName = ep.providerName ? `${ep.providerName} - ${ep.name}` : ep.name;
         // Enabled switch: active endpoints cannot be disabled
         const canToggleEnabled = !ep.active;
         // Active button: show "当前使用" if active, "切换" if not
@@ -130,8 +130,8 @@ export function renderEndpointList(endpoints) {
         }
         
         return `
-        <div class="endpoint-item ${ep.active ? 'active' : ''} ${!ep.enabled ? 'disabled' : ''}" 
-            onclick="editEndpointFromList(${ep.id}, ${ep.vendorId})">
+        <div class="endpoint-item ${ep.active ? 'active' : ''} ${!ep.enabled ? 'disabled' : ''}"
+            onclick="editEndpointFromList(${ep.id})">
             <div class="endpoint-header">
                 <div class="endpoint-title">
                     <span class="endpoint-name">${displayName}</span>
@@ -169,7 +169,7 @@ export function updateActiveSelector(endpoints) {
     
     select.innerHTML = `<option value="">${t('endpoints.selectActive')}</option>` +
         enabledEndpoints.map(ep => {
-            const displayName = ep.vendorName ? `${ep.vendorName} - ${ep.name}` : ep.name;
+            const displayName = ep.providerName ? `${ep.providerName} - ${ep.name}` : ep.name;
             return `<option value="${ep.id}" ${ep.active ? 'selected' : ''}>${displayName}</option>`;
         }).join('');
 }
@@ -222,10 +222,10 @@ export async function setActiveEndpointById(endpointId) {
 // Log endpoint switch to console
 function logEndpointSwitch(prevEndpoint, newEndpoint) {
     const prevName = prevEndpoint 
-        ? `${prevEndpoint.vendorName || 'unknown'}-${prevEndpoint.name}` 
+        ? `${prevEndpoint.providerName || 'unknown'}-${prevEndpoint.name}` 
         : '无';
     const newName = newEndpoint 
-        ? `${newEndpoint.vendorName || 'unknown'}-${newEndpoint.name}` 
+        ? `${newEndpoint.providerName || 'unknown'}-${newEndpoint.name}` 
         : '无';
     
     if (prevName !== newName) {

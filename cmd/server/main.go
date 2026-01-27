@@ -58,16 +58,16 @@ func main() {
 	defer store.Close()
 	log.Println("Storage initialized successfully")
 
-	// Initialize vendor stats SQLite store (best-effort; never blocks proxy startup).
+	// Initialize usage stats SQLite store (best-effort; never blocks proxy startup).
 	dataDir := filepath.Dir(configLoader.GetPath())
-	vendorStatsPath := filepath.Join(dataDir, "data.sqlite")
-	var vendorStatsStore statsdb.VendorStatsStore
-	if db, err := statsdb.OpenSQLiteVendorStatsStore(vendorStatsPath); err != nil {
-		log.Printf("Warning: Failed to initialize vendor stats db (%s): %v", vendorStatsPath, err)
+	usageStatsPath := filepath.Join(dataDir, "data.sqlite")
+	var usageStatsStore statsdb.UsageStatsStore
+	if db, err := statsdb.OpenSQLiteUsageStatsStore(usageStatsPath); err != nil {
+		log.Printf("Warning: Failed to initialize usage stats db (%s): %v", usageStatsPath, err)
 	} else {
-		vendorStatsStore = db
-		defer vendorStatsStore.Close()
-		log.Printf("Vendor stats db: %s", vendorStatsPath)
+		usageStatsStore = db
+		defer usageStatsStore.Close()
+		log.Printf("Usage stats db: %s", usageStatsPath)
 	}
 
 	// Load port from config.json if not set via environment
@@ -78,6 +78,11 @@ func main() {
 				log.Printf("Using port from config.json app_config: %d", port)
 			}
 		}
+	}
+
+	// 检查端口是否可用
+	if err := config.IsPortAvailable(port); err != nil {
+		log.Fatalf("启动失败: %v\n请检查端口是否被其他程序占用，或尝试使用其他端口", err)
 	}
 
 	// Load endpoints from config.json
@@ -109,7 +114,7 @@ func main() {
 	// Requirements: 5.1
 	proxyServer := proxy.NewProxyServerWithWSHub(port, router, wsHub)
 	proxyServer.SetStorage(store)
-	proxyServer.SetVendorStatsStore(vendorStatsStore)
+	proxyServer.SetUsageStatsStore(usageStatsStore)
 
 	// Initialize kiro transformer config getter
 	kiro_claude.SetConfigGetter(func(key string) (string, error) {
@@ -195,7 +200,7 @@ func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 			Enabled:       e.Enabled,
 			InterfaceType: e.InterfaceType,
 			Transformer:   e.Transformer,
-			VendorID:      e.VendorID,
+			ProviderName:  e.ProviderName,
 			Model:         e.Model,
 			Remark:        e.Remark,
 			Priority:      e.Priority,

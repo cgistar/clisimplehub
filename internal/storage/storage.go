@@ -25,7 +25,7 @@ type Endpoint struct {
 	Enabled       bool              `json:"enabled"`
 	InterfaceType string            `json:"interfaceType"`
 	Transformer   string            `json:"transformer,omitempty"`
-	VendorID      int64             `json:"vendorId"`
+	ProviderName  string            `json:"providerName,omitempty"`
 	Model         string            `json:"model,omitempty"`
 	Remark        string            `json:"remark,omitempty"`
 	Priority      int               `json:"priority,omitempty"`
@@ -53,7 +53,6 @@ type Storage interface {
 	// Endpoint operations
 	GetEndpoints() ([]*Endpoint, error)
 	GetEndpointsByType(interfaceType string) ([]*Endpoint, error)
-	GetEndpointsByVendorID(vendorID int64) ([]*Endpoint, error)
 	GetEndpointByID(id int64) (*Endpoint, error)
 	SaveEndpoint(endpoint *Endpoint) error
 	UpdateEndpoint(endpoint *Endpoint) error

@@ -150,7 +150,8 @@ export default {
     debugModeNone: 'None',
     debugModeDb: 'Log to Database',
     debugModeFile: 'Log to File',
-    debugModeHelp: 'Select debug logging mode: db logs upstream request bodies for debugging/replay, file logs full request/response to files',
+    debugModeHelp:
+      'Select debug logging mode: db logs upstream request bodies for debugging/replay, file logs full request/response to files',
     claudeConfigDir: 'Claude Code Config Dir',
     claudeConfigDirHelp: 'Configuration directory for Claude Code CLI',
     codexConfigDir: 'Codex Config Dir',
@@ -163,6 +164,10 @@ export default {
   manage: {
     title: 'Manage Endpoints',
     vendors: 'Vendors',
+    vendor: 'Vendor',
+    selectVendor: 'Select vendor (optional)',
+    vendorHelp: 'Select a vendor to auto-fill API URL',
+    clearVendor: '(Clear)',
     addVendor: 'Add Vendor',
     editVendor: 'Edit Vendor',
     noVendors: 'No vendors configured. Add a vendor first.',
@@ -221,7 +226,6 @@ export default {
     confirmDeleteEndpoint: 'Are you sure you want to delete this endpoint?',
     saveFailed: 'Failed to save',
     deleteFailed: 'Failed to delete',
-    activeEndpointNote: 'Active endpoint cannot be edited. Please switch to another endpoint first.',
     proxyUrl: 'Proxy URL',
     proxyUrlPlaceholder: 'e.g., socks5://proxy.example.com:1080',
     proxyUrlHelp: 'Optional, use proxy to access upstream API',
@@ -264,7 +268,7 @@ export default {
   cliConfig: {
     title: 'Config Editor',
     save: 'Save',
-    process: 'Process',
+    process: 'auto Process',
     processHelp: 'Replace local proxy URL and API key in config files',
     saveSuccess: 'Config saved successfully',
     saveFailed: 'Failed to save config',

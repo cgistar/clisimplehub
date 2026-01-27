@@ -205,9 +205,7 @@ type EndpointTempDisabledPayload struct {
 
 // FallbackSwitchPayload represents the payload for fallback switch events
 type FallbackSwitchPayload struct {
-	FromVendor   string `json:"fromVendor"`
 	FromEndpoint string `json:"fromEndpoint"`
-	ToVendor     string `json:"toVendor"`
 	ToEndpoint   string `json:"toEndpoint"`
 	Path         string `json:"path"`
 	StatusCode   int    `json:"statusCode"`

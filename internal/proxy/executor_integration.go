@@ -175,7 +175,7 @@ func toExecutorEndpointConfig(ep *Endpoint) *executor.EndpointConfig {
 		APIKey:        ep.APIKey,
 		InterfaceType: ep.InterfaceType,
 		Transformer:   ep.Transformer,
-		VendorID:      ep.VendorID,
+		ProviderName:  ep.ProviderName,
 		Model:         ep.Model,
 		ProxyURL:      ep.ProxyURL,
 		Models:        toExecutorModelMappings(ep.Models),

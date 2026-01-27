@@ -112,12 +112,11 @@ func (s *ConfigFileStore) SaveVendor(vendor *Vendor) error {
 	if vendor.ID <= 0 {
 		vendor.ID = nextVendorID(cfg)
 		cfg.Vendors = append(cfg.Vendors, config.VendorConfig{
-			ID:        vendor.ID,
-			Name:      vendor.Name,
-			HomeURL:   vendor.HomeURL,
-			APIURL:    vendor.APIURL,
-			Remark:    vendor.Remark,
-			Endpoints: []config.EndpointConfig{},
+			ID:      vendor.ID,
+			Name:    vendor.Name,
+			HomeURL: vendor.HomeURL,
+			APIURL:  vendor.APIURL,
+			Remark:  vendor.Remark,
 		})
 		return s.saveLocked(cfg)
 	}
@@ -195,31 +194,6 @@ func (s *ConfigFileStore) GetEndpointsByType(interfaceType string) ([]*Endpoint,
 	return result, nil
 }
 
-func (s *ConfigFileStore) GetEndpointsByVendorID(vendorID int64) ([]*Endpoint, error) {
-	if vendorID <= 0 {
-		return []*Endpoint{}, nil
-	}
-	endpoints, err := s.GetEndpoints()
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*Endpoint, 0)
-	for _, ep := range endpoints {
-		if ep.VendorID == vendorID {
-			result = append(result, ep)
-		}
-	}
-
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Priority != result[j].Priority {
-			return result[i].Priority < result[j].Priority
-		}
-		return result[i].Name < result[j].Name
-	})
-	return result, nil
-}
-
 func (s *ConfigFileStore) GetEndpointByID(id int64) (*Endpoint, error) {
 	if id <= 0 {
 		return nil, nil
@@ -239,9 +213,6 @@ func (s *ConfigFileStore) GetEndpointByID(id int64) (*Endpoint, error) {
 func (s *ConfigFileStore) SaveEndpoint(endpoint *Endpoint) error {
 	if endpoint == nil {
 		return errors.New("endpoint is nil")
-	}
-	if endpoint.VendorID <= 0 {
-		return errors.New("vendor_id is required")
 	}
 	if endpoint.Name == "" {
 		return errors.New("endpoint name is required")
@@ -263,7 +234,7 @@ func (s *ConfigFileStore) SaveEndpoint(endpoint *Endpoint) error {
 
 	if endpoint.ID <= 0 {
 		endpoint.ID = nextEndpointID(cfg)
-		if err := addEndpointToVendor(cfg, endpoint); err != nil {
+		if err := addEndpointToConfig(cfg, endpoint); err != nil {
 			return err
 		}
 		return s.saveLocked(cfg)
@@ -302,17 +273,15 @@ func (s *ConfigFileStore) DeleteEndpoint(id int64) error {
 		return err
 	}
 
-	for vi := range cfg.Vendors {
-		eps := cfg.Vendors[vi].Endpoints
-		kept := eps[:0]
-		for _, ep := range eps {
-			if ep.ID == id {
-				continue
-			}
-			kept = append(kept, ep)
+	// 从顶层 endpoints 中删除
+	kept := cfg.Endpoints[:0]
+	for _, ep := range cfg.Endpoints {
+		if ep.ID == id {
+			continue
 		}
-		cfg.Vendors[vi].Endpoints = kept
+		kept = append(kept, ep)
 	}
+	cfg.Endpoints = kept
 
 	return s.saveLocked(cfg)
 }
@@ -539,29 +508,33 @@ func ensureIDs(cfg *config.AppConfig) bool {
 	nextVendor := int64(1)
 	nextEndpoint := int64(1)
 
+	// 找到最大的 vendor ID 和 endpoint ID
 	for _, v := range cfg.Vendors {
 		if v.ID >= nextVendor {
 			nextVendor = v.ID + 1
 		}
-		for _, ep := range v.Endpoints {
-			if ep.ID >= nextEndpoint {
-				nextEndpoint = ep.ID + 1
-			}
+	}
+	for _, ep := range cfg.Endpoints {
+		if ep.ID >= nextEndpoint {
+			nextEndpoint = ep.ID + 1
 		}
 	}
 
+	// 为没有 ID 的 vendor 分配 ID
 	for vi := range cfg.Vendors {
 		if cfg.Vendors[vi].ID == 0 {
 			cfg.Vendors[vi].ID = nextVendor
 			nextVendor++
 			changed = true
 		}
-		for ei := range cfg.Vendors[vi].Endpoints {
-			if cfg.Vendors[vi].Endpoints[ei].ID == 0 {
-				cfg.Vendors[vi].Endpoints[ei].ID = nextEndpoint
-				nextEndpoint++
-				changed = true
-			}
+	}
+
+	// 为没有 ID 的 endpoint 分配 ID
+	for ei := range cfg.Endpoints {
+		if cfg.Endpoints[ei].ID == 0 {
+			cfg.Endpoints[ei].ID = nextEndpoint
+			nextEndpoint++
+			changed = true
 		}
 	}
 
@@ -580,11 +553,9 @@ func nextVendorID(cfg *config.AppConfig) int64 {
 
 func nextEndpointID(cfg *config.AppConfig) int64 {
 	maxID := int64(0)
-	for _, v := range cfg.Vendors {
-		for _, ep := range v.Endpoints {
-			if ep.ID > maxID {
-				maxID = ep.ID
-			}
+	for _, ep := range cfg.Endpoints {
+		if ep.ID > maxID {
+			maxID = ep.ID
 		}
 	}
 	return maxID + 1
@@ -595,74 +566,68 @@ func flattenEndpoints(cfg *config.AppConfig) []*Endpoint {
 		return []*Endpoint{}
 	}
 
-	out := make([]*Endpoint, 0)
-	for _, v := range cfg.Vendors {
-		for _, ep := range v.Endpoints {
-			// Convert config.ModelMapping to storage.ModelMapping
-			var models []ModelMapping
-			for _, m := range ep.Models {
-				models = append(models, ModelMapping{
-					Name:  m.Name,
-					Alias: m.Alias,
-				})
-			}
+	out := make([]*Endpoint, 0, len(cfg.Endpoints))
 
-			out = append(out, &Endpoint{
-				ID:            ep.ID,
-				Name:          ep.Name,
-				APIURL:        ep.APIURL,
-				APIKey:        ep.APIKey,
-				Active:        ep.Active,
-				Enabled:       ep.Enabled,
-				InterfaceType: ep.InterfaceType,
-				Transformer:   ep.Transformer,
-				VendorID:      v.ID,
-				Model:         ep.Model,
-				Remark:        ep.Remark,
-				Priority:      ep.Priority,
-				ProxyURL:      ep.ProxyURL,
-				Models:        models,
-				Headers:       ep.Headers,
-			})
-		}
-	}
-	return out
-}
-
-func addEndpointToVendor(cfg *config.AppConfig, endpoint *Endpoint) error {
-	for i := range cfg.Vendors {
-		if cfg.Vendors[i].ID != endpoint.VendorID {
-			continue
-		}
-
-		// Convert storage.ModelMapping to config.ModelMapping
-		var models []config.ModelMapping
-		for _, m := range endpoint.Models {
-			models = append(models, config.ModelMapping{
+	for _, ep := range cfg.Endpoints {
+		// Convert config.ModelMapping to storage.ModelMapping
+		var models []ModelMapping
+		for _, m := range ep.Models {
+			models = append(models, ModelMapping{
 				Name:  m.Name,
 				Alias: m.Alias,
 			})
 		}
 
-		cfg.Vendors[i].Endpoints = append(cfg.Vendors[i].Endpoints, config.EndpointConfig{
-			ID:            endpoint.ID,
-			Name:          endpoint.Name,
-			APIURL:        endpoint.APIURL,
-			APIKey:        endpoint.APIKey,
-			Active:        endpoint.Active,
-			Enabled:       endpoint.Enabled,
-			InterfaceType: endpoint.InterfaceType,
-			Transformer:   endpoint.Transformer,
-			Model:         endpoint.Model,
-			Remark:        endpoint.Remark,
-			Priority:      endpoint.Priority,
-			ProxyURL:      endpoint.ProxyURL,
+		out = append(out, &Endpoint{
+			ID:            ep.ID,
+			Name:          ep.Name,
+			APIURL:        ep.APIURL,
+			APIKey:        ep.APIKey,
+			Active:        ep.Active,
+			Enabled:       ep.Enabled,
+			InterfaceType: ep.InterfaceType,
+			Transformer:   ep.Transformer,
+			ProviderName:  ep.ProviderName,
+			Model:         ep.Model,
+			Remark:        ep.Remark,
+			Priority:      ep.Priority,
+			ProxyURL:      ep.ProxyURL,
 			Models:        models,
-			Headers:       endpoint.Headers,
+			Headers:       ep.Headers,
 		})
-		return nil
 	}
-	return fmt.Errorf("vendor not found: %d", endpoint.VendorID)
+	return out
+}
+
+func addEndpointToConfig(cfg *config.AppConfig, endpoint *Endpoint) error {
+	// Convert storage.ModelMapping to config.ModelMapping
+	var models []config.ModelMapping
+	for _, m := range endpoint.Models {
+		models = append(models, config.ModelMapping{
+			Name:  m.Name,
+			Alias: m.Alias,
+		})
+	}
+
+	// 添加到顶层 endpoints
+	cfg.Endpoints = append(cfg.Endpoints, config.EndpointConfig{
+		ID:            endpoint.ID,
+		Name:          endpoint.Name,
+		APIURL:        endpoint.APIURL,
+		APIKey:        endpoint.APIKey,
+		Active:        endpoint.Active,
+		Enabled:       endpoint.Enabled,
+		InterfaceType: endpoint.InterfaceType,
+		Transformer:   endpoint.Transformer,
+		Model:         endpoint.Model,
+		Remark:        endpoint.Remark,
+		Priority:      endpoint.Priority,
+		ProxyURL:      endpoint.ProxyURL,
+		Models:        models,
+		Headers:       endpoint.Headers,
+		ProviderName:  endpoint.ProviderName,
+	})
+	return nil
 }
 
 func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error) {
@@ -675,58 +640,30 @@ func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error)
 		})
 	}
 
-	for vi := range cfg.Vendors {
-		eps := cfg.Vendors[vi].Endpoints
-		for ei := range eps {
-			if eps[ei].ID != endpoint.ID {
-				continue
-			}
-
-			if endpoint.VendorID > 0 && cfg.Vendors[vi].ID != endpoint.VendorID {
-				moved := eps[ei]
-				moved.Name = endpoint.Name
-				moved.APIURL = endpoint.APIURL
-				if endpoint.APIKey != "" {
-					moved.APIKey = endpoint.APIKey
-				}
-				moved.Active = endpoint.Active
-				moved.Enabled = endpoint.Enabled
-				moved.InterfaceType = endpoint.InterfaceType
-				moved.Transformer = endpoint.Transformer
-				moved.Model = endpoint.Model
-				moved.Remark = endpoint.Remark
-				moved.Priority = endpoint.Priority
-				moved.ProxyURL = endpoint.ProxyURL
-				moved.Models = models
-				moved.Headers = endpoint.Headers
-
-				cfg.Vendors[vi].Endpoints = append(eps[:ei], eps[ei+1:]...)
-				for dest := range cfg.Vendors {
-					if cfg.Vendors[dest].ID == endpoint.VendorID {
-						cfg.Vendors[dest].Endpoints = append(cfg.Vendors[dest].Endpoints, moved)
-						return true, nil
-					}
-				}
-				return false, fmt.Errorf("vendor not found: %d", endpoint.VendorID)
-			}
-
-			eps[ei].Name = endpoint.Name
-			eps[ei].APIURL = endpoint.APIURL
-			if endpoint.APIKey != "" {
-				eps[ei].APIKey = endpoint.APIKey
-			}
-			eps[ei].Active = endpoint.Active
-			eps[ei].Enabled = endpoint.Enabled
-			eps[ei].InterfaceType = endpoint.InterfaceType
-			eps[ei].Transformer = endpoint.Transformer
-			eps[ei].Model = endpoint.Model
-			eps[ei].Remark = endpoint.Remark
-			eps[ei].Priority = endpoint.Priority
-			eps[ei].ProxyURL = endpoint.ProxyURL
-			eps[ei].Models = models
-			eps[ei].Headers = endpoint.Headers
-			return true, nil
+	// 在顶层 endpoints 中查找并更新
+	for i := range cfg.Endpoints {
+		if cfg.Endpoints[i].ID != endpoint.ID {
+			continue
 		}
+
+		cfg.Endpoints[i].Name = endpoint.Name
+		cfg.Endpoints[i].APIURL = endpoint.APIURL
+		if endpoint.APIKey != "" {
+			cfg.Endpoints[i].APIKey = endpoint.APIKey
+		}
+		cfg.Endpoints[i].Active = endpoint.Active
+		cfg.Endpoints[i].Enabled = endpoint.Enabled
+		cfg.Endpoints[i].InterfaceType = endpoint.InterfaceType
+		cfg.Endpoints[i].Transformer = endpoint.Transformer
+		cfg.Endpoints[i].Model = endpoint.Model
+		cfg.Endpoints[i].Remark = endpoint.Remark
+		cfg.Endpoints[i].Priority = endpoint.Priority
+		cfg.Endpoints[i].ProxyURL = endpoint.ProxyURL
+		cfg.Endpoints[i].Models = models
+		cfg.Endpoints[i].Headers = endpoint.Headers
+		cfg.Endpoints[i].ProviderName = endpoint.ProviderName
+		return true, nil
 	}
+
 	return false, nil
 }

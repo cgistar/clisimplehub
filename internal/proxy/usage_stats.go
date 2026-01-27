@@ -11,38 +11,32 @@ import (
 	"clisimplehub/internal/statsdb"
 )
 
-func (p *ProxyServer) insertVendorStat(ctx context.Context, interfaceType InterfaceType, endpoint *executor.EndpointConfig, path string, targetHeaders map[string]string, requestBody string, responseBody string, durationMs int64, statusCode int, status string, tokens *executor.TokenUsage) {
+func (p *ProxyServer) insertUsageStat(ctx context.Context, interfaceType InterfaceType, endpoint *executor.EndpointConfig, path string, targetHeaders map[string]string, requestBody string, responseBody string, durationMs int64, statusCode int, status string, tokens *executor.TokenUsage) {
 	p.mu.RLock()
-	store := p.store
-	vendorStats := p.vendorStats
+	usageStats := p.usageStats
 	p.mu.RUnlock()
 
-	if vendorStats == nil {
+	if usageStats == nil {
 		return
 	}
 	if endpoint == nil {
 		return
 	}
 
-	vendorID := endpoint.VendorID
 	endpointID := endpoint.ID
-	vendorName := "unknown"
+	providerName := strings.TrimSpace(endpoint.ProviderName)
+	if providerName == "" {
+		providerName = "unknown"
+	}
 	endpointName := strings.TrimSpace(endpoint.Name)
 	if endpointName == "" {
 		endpointName = "unknown"
 	}
 
-	if store != nil && vendorID != 0 {
-		if vendor, err := store.GetVendorByID(vendorID); err == nil && vendor != nil && strings.TrimSpace(vendor.Name) != "" {
-			vendorName = vendor.Name
-		}
-	}
-
-	stat := statsdb.VendorStat{
-		VendorID:      strconv.FormatInt(vendorID, 10),
-		VendorName:    vendorName,
+	stat := statsdb.UsageStat{
 		EndpointID:    strconv.FormatInt(endpointID, 10),
 		EndpointName:  endpointName,
+		ProviderName:  providerName,
 		Path:          path,
 		Date:          time.Now().Format("2006-01-02"),
 		InterfaceType: string(interfaceType),
@@ -65,7 +59,7 @@ func (p *ProxyServer) insertVendorStat(ctx context.Context, interfaceType Interf
 	insertCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if err := vendorStats.InsertVendorStat(insertCtx, stat); err != nil {
-		log.Printf("Warning: insert vendor_stats failed: %v", err)
+	if err := usageStats.InsertUsageStat(insertCtx, stat); err != nil {
+		log.Printf("Warning: insert usage_stats failed: %v", err)
 	}
 }

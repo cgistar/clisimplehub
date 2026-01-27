@@ -7,8 +7,7 @@ import "time"
 type RequestLog struct {
 	ID            string    `json:"id"`
 	InterfaceType string    `json:"interfaceType"`
-	VendorName    string    `json:"vendorName"`
-	VendorID      int64     `json:"vendorId,omitempty"`
+	ProviderName  string    `json:"providerName"`
 	EndpointName  string    `json:"endpointName"`
 	Transformer   string    `json:"transformer,omitempty"`
 	Path          string    `json:"path"`
@@ -28,7 +27,7 @@ type RequestLog struct {
 // TokenStats represents token usage statistics
 type TokenStats struct {
 	EndpointName string `json:"endpointName"`
-	VendorName   string `json:"vendorName"`
+	ProviderName string `json:"providerName"`
 	InputTokens  int64  `json:"inputTokens"`
 	CachedCreate int64  `json:"cachedCreate"`
 	CachedRead   int64  `json:"cachedRead"`

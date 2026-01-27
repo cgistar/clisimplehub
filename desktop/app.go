@@ -44,12 +44,12 @@ type EndpointInfo struct {
 	Active        bool                   `json:"active"`
 	Enabled       bool                   `json:"enabled"`
 	InterfaceType string                 `json:"interfaceType"`
-	VendorID      int64                  `json:"vendorId"`
-	VendorName    string                 `json:"vendorName,omitempty"`
+	ProviderName  string                 `json:"providerName,omitempty"`
 	Model         string                 `json:"model,omitempty"`
 	Transformer   string                 `json:"transformer,omitempty"`
 	ProxyURL      string                 `json:"proxyUrl,omitempty"`
 	Models        []storage.ModelMapping `json:"models,omitempty"`
+	Headers       map[string]string      `json:"headers,omitempty"`
 	Remark        string                 `json:"remark,omitempty"`
 	Priority      int                    `json:"priority"`
 	// Daily stats
@@ -68,7 +68,7 @@ type App struct {
 	router       *proxy.DefaultRouter
 	wsHub        *proxy.WSHub
 	configLoader *config.ConfigLoader
-	vendorStats  *statsdb.SQLiteVendorStatsStore
+	usageStats   *statsdb.SQLiteUsageStatsStore
 }
 
 // NewApp creates a new App application struct
@@ -102,9 +102,9 @@ func (a *App) SetWSHub(hub *proxy.WSHub) {
 	a.wsHub = hub
 }
 
-// SetVendorStats sets the vendor stats store instance for the app
-func (a *App) SetVendorStats(store *statsdb.SQLiteVendorStatsStore) {
-	a.vendorStats = store
+// SetUsageStats sets the usage stats store instance for the app
+func (a *App) SetUsageStats(store *statsdb.SQLiteUsageStatsStore) {
+	a.usageStats = store
 }
 
 // SetConfigLoader sets the config loader instance for the app
@@ -275,8 +275,8 @@ func (a *App) GetEndpointsByType(interfaceType string) ([]*EndpointInfo, error) 
 
 	// Get today's stats for all endpoints
 	var todayStats map[string]*statsdb.EndpointDailyStats
-	if a.vendorStats != nil {
-		todayStats, _ = a.vendorStats.GetTodayStatsByEndpoints(a.ctx)
+	if a.usageStats != nil {
+		todayStats, _ = a.usageStats.GetTodayStatsByEndpoints(a.ctx)
 	}
 
 	// Get active endpoint from router to mark it
@@ -310,9 +310,9 @@ func (a *App) GetEndpointsByType(interfaceType string) ([]*EndpointInfo, error) 
 			Active:        activeEndpointID != 0 && ep.ID == activeEndpointID,
 			Enabled:       enabled,
 			InterfaceType: ep.InterfaceType,
-			VendorID:      ep.VendorID,
-			VendorName:    vendorMap[ep.VendorID],
+			ProviderName:  ep.ProviderName,
 			Model:         ep.Model,
+			Headers:       ep.Headers,
 			Remark:        ep.Remark,
 			Priority:      ep.Priority,
 		}
@@ -360,8 +360,9 @@ func (a *App) GetActiveEndpoint(interfaceType string) (*EndpointInfo, error) {
 		Active:        true,
 		Enabled:       ep.Enabled,
 		InterfaceType: ep.InterfaceType,
-		VendorID:      ep.VendorID,
+		ProviderName:  ep.ProviderName,
 		Model:         ep.Model,
+		Headers:       ep.Headers,
 		Remark:        ep.Remark,
 		Priority:      ep.Priority,
 	}, nil
@@ -480,8 +481,9 @@ func (a *App) GetAllEndpoints() ([]*EndpointInfo, error) {
 			Active:        ep.Active,
 			Enabled:       ep.Enabled,
 			InterfaceType: ep.InterfaceType,
-			VendorID:      ep.VendorID,
+			ProviderName:  ep.ProviderName,
 			Model:         ep.Model,
+			Headers:       ep.Headers,
 			Remark:        ep.Remark,
 			Priority:      ep.Priority,
 		}
@@ -497,6 +499,38 @@ func (a *App) GetAllEndpoints() ([]*EndpointInfo, error) {
 	})
 
 	return result, nil
+}
+
+// GetEndpointByID returns a single endpoint by ID
+func (a *App) GetEndpointByID(endpointID int64) (*EndpointInfo, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+
+	ep, err := a.storage.GetEndpointByID(endpointID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get endpoint: %w", err)
+	}
+
+	info := &EndpointInfo{
+		ID:            ep.ID,
+		Name:          ep.Name,
+		APIURL:        ep.APIURL,
+		APIKey:        ep.APIKey,
+		Active:        ep.Active,
+		Enabled:       ep.Enabled,
+		InterfaceType: ep.InterfaceType,
+		ProviderName:  ep.ProviderName,
+		Model:         ep.Model,
+		Transformer:   ep.Transformer,
+		ProxyURL:      ep.ProxyURL,
+		Models:        ep.Models,
+		Headers:       ep.Headers,
+		Remark:        ep.Remark,
+		Priority:      ep.Priority,
+	}
+
+	return info, nil
 }
 
 // GetInterfaceTypes returns the list of supported interface types
@@ -525,7 +559,7 @@ func (a *App) GetTransformers() map[string][]string {
 type RequestLogInfo struct {
 	ID            string `json:"id"`
 	InterfaceType string `json:"interfaceType"`
-	VendorName    string `json:"vendorName"`
+	ProviderName  string `json:"providerName"`
 	EndpointName  string `json:"endpointName"`
 	Path          string `json:"path"`
 	RunTime       int64  `json:"runTime"` // milliseconds
@@ -537,7 +571,7 @@ type RequestLogInfo struct {
 // Requirements: 8.1, 8.2
 type TokenStatsInfo struct {
 	EndpointName string `json:"endpointName"`
-	VendorName   string `json:"vendorName"`
+	ProviderName string `json:"providerName"`
 	InputTokens  int64  `json:"inputTokens"`
 	CachedCreate int64  `json:"cachedCreate"`
 	CachedRead   int64  `json:"cachedRead"`
@@ -566,7 +600,7 @@ func (a *App) GetRecentLogs() ([]*RequestLogInfo, error) {
 		info := &RequestLogInfo{
 			ID:            log.ID,
 			InterfaceType: log.InterfaceType,
-			VendorName:    log.VendorName,
+			ProviderName:  log.ProviderName,
 			EndpointName:  log.EndpointName,
 			Path:          log.Path,
 			RunTime:       log.RunTime,
@@ -583,7 +617,7 @@ func (a *App) GetRecentLogs() ([]*RequestLogInfo, error) {
 type RequestLogDetailInfo struct {
 	ID             string            `json:"id"`
 	InterfaceType  string            `json:"interfaceType"`
-	VendorName     string            `json:"vendorName"`
+	ProviderName   string            `json:"providerName"`
 	EndpointName   string            `json:"endpointName"`
 	Path           string            `json:"path"`
 	RunTime        int64             `json:"runTime"`
@@ -616,7 +650,7 @@ func (a *App) GetLogDetail(logID string) (*RequestLogDetailInfo, error) {
 			return &RequestLogDetailInfo{
 				ID:             log.ID,
 				InterfaceType:  log.InterfaceType,
-				VendorName:     log.VendorName,
+				ProviderName:   log.ProviderName,
 				EndpointName:   log.EndpointName,
 				Path:           log.Path,
 				RunTime:        log.RunTime,
@@ -654,7 +688,7 @@ func (a *App) GetTokenStats() ([]*TokenStatsInfo, error) {
 	for _, ts := range tokenStats {
 		info := &TokenStatsInfo{
 			EndpointName: ts.EndpointName,
-			VendorName:   ts.VendorName,
+			ProviderName: ts.ProviderName,
 			InputTokens:  ts.InputTokens,
 			CachedCreate: ts.CachedCreate,
 			CachedRead:   ts.CachedRead,
@@ -687,7 +721,7 @@ func (a *App) GetTokenStatsForEndpoint(endpointName string) (*TokenStatsInfo, er
 
 	return &TokenStatsInfo{
 		EndpointName: ts.EndpointName,
-		VendorName:   ts.VendorName,
+		ProviderName: ts.ProviderName,
 		InputTokens:  ts.InputTokens,
 		CachedCreate: ts.CachedCreate,
 		CachedRead:   ts.CachedRead,
@@ -845,37 +879,6 @@ func (a *App) DeleteVendor(id int64) error {
 	return a.storage.DeleteVendor(id)
 }
 
-// GetEndpointsByVendorID returns endpoints for a specific vendor
-func (a *App) GetEndpointsByVendorID(vendorID int64) ([]*EndpointInfo, error) {
-	if a.storage == nil {
-		return nil, fmt.Errorf("storage not initialized")
-	}
-	endpoints, err := a.storage.GetEndpointsByVendorID(vendorID)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]*EndpointInfo, 0, len(endpoints))
-	for _, ep := range endpoints {
-		result = append(result, &EndpointInfo{
-			ID:            ep.ID,
-			Name:          ep.Name,
-			APIURL:        ep.APIURL,
-			APIKey:        ep.APIKey,
-			Active:        ep.Active,
-			Enabled:       ep.Enabled,
-			InterfaceType: ep.InterfaceType,
-			VendorID:      ep.VendorID,
-			Model:         ep.Model,
-			Transformer:   ep.Transformer,
-			ProxyURL:      ep.ProxyURL,
-			Models:        ep.Models,
-			Remark:        ep.Remark,
-			Priority:      ep.Priority,
-		})
-	}
-	return result, nil
-}
-
 // EndpointInput represents endpoint input from frontend
 type EndpointInput struct {
 	ID             int64                  `json:"id"`
@@ -885,7 +888,7 @@ type EndpointInput struct {
 	Active         bool                   `json:"active"`
 	Enabled        bool                   `json:"enabled"`
 	InterfaceType  string                 `json:"interfaceType"`
-	VendorID       int64                  `json:"vendorId"`
+	ProviderName   string                 `json:"providerName,omitempty"`
 	Model          string                 `json:"model,omitempty"`
 	Transformer    string                 `json:"transformer,omitempty"`
 	TransformerSet bool                   `json:"transformerSet,omitempty"`
@@ -923,7 +926,7 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		Active:        endpoint.Active,
 		Enabled:       endpoint.Enabled,
 		InterfaceType: endpoint.InterfaceType,
-		VendorID:      endpoint.VendorID,
+		ProviderName:  endpoint.ProviderName,
 		Model:         endpoint.Model,
 		Transformer:   endpoint.Transformer,
 		ProxyURL:      endpoint.ProxyURL,
@@ -932,6 +935,9 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		Priority:      priority,
 	}
 	if existing != nil {
+		// Active 由 SetActiveEndpoint 管理；编辑端点时应保留当前 active 状态，避免表单保存意外取消活动端点。
+		ep.Active = existing.Active
+
 		// transformer 支持显式清空：前端会发送 transformerSet=true，
 		// 只有当旧客户端未发送该字段时才走“空值保留”逻辑，避免误清空。
 		if !endpoint.TransformerSet && ep.Transformer == "" {
@@ -968,8 +974,9 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		Active:        ep.Active,
 		Enabled:       ep.Enabled,
 		InterfaceType: ep.InterfaceType,
-		VendorID:      ep.VendorID,
+		ProviderName:  ep.ProviderName,
 		Model:         ep.Model,
+		Headers:       ep.Headers,
 		Remark:        ep.Remark,
 		Priority:      ep.Priority,
 	}, nil
@@ -993,11 +1000,11 @@ func (a *App) DeleteEndpoint(id int64) error {
 		}
 	}
 
-	// Also cleanup vendor_stats logs for this endpoint.
-	if a.vendorStats != nil {
+	// Also cleanup usage_stats logs for this endpoint.
+	if a.usageStats != nil {
 		deleteCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		if err := a.vendorStats.DeleteStatsByEndpointID(deleteCtx, id); err != nil {
+		if err := a.usageStats.DeleteStatsByEndpointID(deleteCtx, id); err != nil {
 			return err
 		}
 	}
@@ -1068,10 +1075,9 @@ func (a *App) GetWebSocketURL() string {
 // SQLite Token Statistics Methods (New Design)
 // =============================================================================
 
-// VendorStatsSummaryInfo represents aggregated stats for a vendor (frontend)
-type VendorStatsSummaryInfo struct {
-	VendorID     string                     `json:"vendorId"`
-	VendorName   string                     `json:"vendorName"`
+// ProviderStatsSummaryInfo represents aggregated stats for a provider (frontend)
+type ProviderStatsSummaryInfo struct {
+	ProviderName string                     `json:"providerName"`
 	InputTokens  int64                      `json:"inputTokens"`
 	OutputTokens int64                      `json:"outputTokens"`
 	CachedCreate int64                      `json:"cachedCreate"`
@@ -1085,7 +1091,7 @@ type VendorStatsSummaryInfo struct {
 type EndpointStatsSummaryInfo struct {
 	EndpointID   string `json:"endpointId"`
 	EndpointName string `json:"endpointName"`
-	VendorName   string `json:"vendorName"`
+	ProviderName string `json:"providerName"`
 	Date         string `json:"date,omitempty"`
 	InputTokens  int64  `json:"inputTokens"`
 	OutputTokens int64  `json:"outputTokens"`
@@ -1109,25 +1115,26 @@ type InterfaceTypeStatsSummaryInfo struct {
 	Endpoints     []EndpointStatsSummaryInfo `json:"endpoints"`
 }
 
-// GetTokenStatsByTimeRange returns token statistics grouped by vendor for the given time range
-func (a *App) GetTokenStatsByTimeRange(timeRange string) ([]*VendorStatsSummaryInfo, error) {
-	if a.vendorStats == nil {
-		return []*VendorStatsSummaryInfo{}, nil
+// GetTokenStatsByTimeRange returns token statistics grouped by provider for the given time range
+func (a *App) GetTokenStatsByTimeRange(timeRange string) ([]*ProviderStatsSummaryInfo, error) {
+	if a.usageStats == nil {
+		return []*ProviderStatsSummaryInfo{}, nil
 	}
 
 	tr := statsdb.TimeRange(timeRange)
-	stats, err := a.vendorStats.GetStatsByTimeRange(a.ctx, tr)
+	stats, err := a.usageStats.GetStatsByTimeRange(a.ctx, tr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stats: %w", err)
 	}
 
-	result := make([]*VendorStatsSummaryInfo, 0, len(stats))
+	result := make([]*ProviderStatsSummaryInfo, 0, len(stats))
 	for _, s := range stats {
 		endpoints := make([]EndpointStatsSummaryInfo, 0, len(s.Endpoints))
 		for _, ep := range s.Endpoints {
 			endpoints = append(endpoints, EndpointStatsSummaryInfo{
 				EndpointID:   ep.EndpointID,
 				EndpointName: ep.EndpointName,
+				ProviderName: ep.ProviderName,
 				InputTokens:  ep.InputTokens,
 				OutputTokens: ep.OutputTokens,
 				CachedCreate: ep.CachedCreate,
@@ -1136,9 +1143,8 @@ func (a *App) GetTokenStatsByTimeRange(timeRange string) ([]*VendorStatsSummaryI
 				Total:        ep.Total,
 			})
 		}
-		result = append(result, &VendorStatsSummaryInfo{
-			VendorID:     s.VendorID,
-			VendorName:   s.VendorName,
+		result = append(result, &ProviderStatsSummaryInfo{
+			ProviderName: s.ProviderName,
 			InputTokens:  s.InputTokens,
 			OutputTokens: s.OutputTokens,
 			CachedCreate: s.CachedCreate,
@@ -1154,12 +1160,12 @@ func (a *App) GetTokenStatsByTimeRange(timeRange string) ([]*VendorStatsSummaryI
 
 // GetStatsByInterfaceType returns token statistics grouped by interface type for the given time range
 func (a *App) GetStatsByInterfaceType(timeRange string) ([]*InterfaceTypeStatsSummaryInfo, error) {
-	if a.vendorStats == nil {
+	if a.usageStats == nil {
 		return []*InterfaceTypeStatsSummaryInfo{}, nil
 	}
 
 	tr := statsdb.TimeRange(timeRange)
-	stats, err := a.vendorStats.GetStatsByInterfaceType(a.ctx, tr)
+	stats, err := a.usageStats.GetStatsByInterfaceType(a.ctx, tr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stats by interface type: %w", err)
 	}
@@ -1171,7 +1177,7 @@ func (a *App) GetStatsByInterfaceType(timeRange string) ([]*InterfaceTypeStatsSu
 			endpoints = append(endpoints, EndpointStatsSummaryInfo{
 				EndpointID:   ep.EndpointID,
 				EndpointName: ep.EndpointName,
-				VendorName:   ep.VendorName,
+				ProviderName: ep.ProviderName,
 				Date:         ep.Date,
 				InputTokens:  ep.InputTokens,
 				OutputTokens: ep.OutputTokens,
@@ -1202,15 +1208,15 @@ func (a *App) GetStatsByInterfaceType(timeRange string) ([]*InterfaceTypeStatsSu
 func (a *App) ClearTokenStats(timeRange string) error {
 	fmt.Printf("[ClearTokenStats] Called with timeRange: %s\n", timeRange)
 
-	if a.vendorStats == nil {
-		fmt.Println("[ClearTokenStats] Error: vendor stats store not initialized")
-		return fmt.Errorf("vendor stats store not initialized")
+	if a.usageStats == nil {
+		fmt.Println("[ClearTokenStats] Error: usage stats store not initialized")
+		return fmt.Errorf("usage stats store not initialized")
 	}
 
 	tr := statsdb.TimeRange(timeRange)
 	fmt.Printf("[ClearTokenStats] Calling ClearStats with TimeRange: %s\n", tr)
 
-	if err := a.vendorStats.ClearStats(a.ctx, tr); err != nil {
+	if err := a.usageStats.ClearStats(a.ctx, tr); err != nil {
 		fmt.Printf("[ClearTokenStats] Error: %v\n", err)
 		return fmt.Errorf("failed to clear stats: %w", err)
 	}
@@ -2216,11 +2222,26 @@ func (a *App) getDefaultCodexAuth() string {
 // WebDAV Sync Methods
 // =============================================================================
 
+// convertModelMappings converts storage.ModelMapping to config.ModelMapping
+func convertModelMappings(storageModels []storage.ModelMapping) []config.ModelMapping {
+	if len(storageModels) == 0 {
+		return nil
+	}
+	configModels := make([]config.ModelMapping, len(storageModels))
+	for i, m := range storageModels {
+		configModels[i] = config.ModelMapping{
+			Name:  m.Name,
+			Alias: m.Alias,
+		}
+	}
+	return configModels
+}
+
 // FullConfig represents the complete application configuration for backup/restore
 type FullConfig struct {
 	AppConfig   map[string]interface{} `json:"appConfig,omitempty"`
 	Vendors     []*VendorInfo          `json:"vendors"`
-	Endpoints   []*EndpointInfo        `json:"endpoints"`
+	Endpoints   []*config.EndpointConfig `json:"endpoints"`
 	ReplaceMode bool                   `json:"replaceMode,omitempty"` // If true, clear existing config before saving
 }
 
@@ -2248,19 +2269,10 @@ func (a *App) GetFullConfig() (*FullConfig, error) {
 		return nil, fmt.Errorf("failed to get endpoints: %w", err)
 	}
 
-	// Convert endpoints to frontend format
-	endpoints := make([]*EndpointInfo, 0, len(allEndpoints))
+	// Convert storage.Endpoint to config.EndpointConfig (for backup, exclude timestamps and stats)
+	endpoints := make([]*config.EndpointConfig, 0, len(allEndpoints))
 	for _, ep := range allEndpoints {
-		// Find vendor name
-		var vendorName string
-		for _, v := range vendors {
-			if v.ID == ep.VendorID {
-				vendorName = v.Name
-				break
-			}
-		}
-
-		endpoints = append(endpoints, &EndpointInfo{
+		endpoints = append(endpoints, &config.EndpointConfig{
 			ID:            ep.ID,
 			Name:          ep.Name,
 			APIURL:        ep.APIURL,
@@ -2268,11 +2280,14 @@ func (a *App) GetFullConfig() (*FullConfig, error) {
 			Active:        ep.Active,
 			Enabled:       ep.Enabled,
 			InterfaceType: ep.InterfaceType,
-			VendorID:      ep.VendorID,
-			VendorName:    vendorName,
+			ProviderName:  ep.ProviderName,
 			Model:         ep.Model,
+			Transformer:   ep.Transformer,
 			Remark:        ep.Remark,
 			Priority:      ep.Priority,
+			ProxyURL:      ep.ProxyURL,
+			Models:        convertModelMappings(ep.Models),
+			Headers:       ep.Headers,
 		})
 	}
 
@@ -2410,24 +2425,21 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 
 		existingEndpointMap := make(map[string]*storage.Endpoint)
 		for _, ep := range existingEndpoints {
-			var vendorName string
-			for _, v := range vendors {
-				if v.ID == ep.VendorID {
-					vendorName = v.Name
-					break
-				}
-			}
-			key := fmt.Sprintf("%s-%s", vendorName, ep.Name)
+			key := fmt.Sprintf("%s-%s", ep.ProviderName, ep.Name)
 			existingEndpointMap[key] = ep
 		}
 
 		for _, ep := range config.Endpoints {
-			vendorID, ok := vendorNameToID[ep.VendorName]
-			if !ok {
-				return fmt.Errorf("vendor not found: %s", ep.VendorName)
-			}
+			key := fmt.Sprintf("%s-%s", ep.ProviderName, ep.Name)
 
-			key := fmt.Sprintf("%s-%s", ep.VendorName, ep.Name)
+			// Convert config.ModelMapping to storage.ModelMapping
+			storageModels := make([]storage.ModelMapping, len(ep.Models))
+			for i, m := range ep.Models {
+				storageModels[i] = storage.ModelMapping{
+					Name:  m.Name,
+					Alias: m.Alias,
+				}
+			}
 
 			if existing, exists := existingEndpointMap[key]; exists {
 				// Update existing endpoint
@@ -2437,11 +2449,12 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 				existing.Active = ep.Active
 				existing.Enabled = ep.Enabled
 				existing.InterfaceType = ep.InterfaceType
-				existing.VendorID = vendorID
+				existing.ProviderName = ep.ProviderName
 				existing.Model = ep.Model
 				existing.Transformer = ep.Transformer
 				existing.ProxyURL = ep.ProxyURL
-				existing.Models = ep.Models
+				existing.Models = storageModels
+				existing.Headers = ep.Headers
 				existing.Remark = ep.Remark
 				existing.Priority = ep.Priority
 				if err := a.storage.UpdateEndpoint(existing); err != nil {
@@ -2456,11 +2469,12 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 					Active:        ep.Active,
 					Enabled:       ep.Enabled,
 					InterfaceType: ep.InterfaceType,
-					VendorID:      vendorID,
+					ProviderName:  ep.ProviderName,
 					Model:         ep.Model,
 					Transformer:   ep.Transformer,
 					ProxyURL:      ep.ProxyURL,
-					Models:        ep.Models,
+					Models:        storageModels,
+					Headers:       ep.Headers,
 					Remark:        ep.Remark,
 					Priority:      ep.Priority,
 				}
@@ -2847,7 +2861,7 @@ func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 			Enabled:       e.Enabled,
 			InterfaceType: e.InterfaceType,
 			Transformer:   e.Transformer,
-			VendorID:      e.VendorID,
+			ProviderName:  e.ProviderName,
 			Model:         e.Model,
 			Remark:        e.Remark,
 			Priority:      e.Priority,

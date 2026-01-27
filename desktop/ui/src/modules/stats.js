@@ -127,7 +127,7 @@ function renderEndpointTable(endpoints) {
             <tbody>
                 ${endpoints.map(ep => `
                     <tr>
-                        <td class="endpoint-name-cell">${ep.vendorName} - ${ep.endpointName}</td>
+                        <td class="endpoint-name-cell">${ep.providerName || 'unknown'} - ${ep.endpointName}</td>
                         ${showDate ? `<td>${ep.date || ''}</td>` : ''}
                         <td>${ep.requestCount || 0}</td>
                         <td>${formatTokensWithUnit(ep.inputTokens)}</td>

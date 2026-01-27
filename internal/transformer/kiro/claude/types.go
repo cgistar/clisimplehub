@@ -178,8 +178,6 @@ var KiroModelMapping = map[string]string{
 	"claude-sonnet-4":          "claude-sonnet-4",
 	"claude-sonnet-4-20250514": "claude-sonnet-4",
 
-	"claude-3-7-sonnet-20250219": "CLAUDE_3_7_SONNET_20250219_V1_0",
-
 	// Convenience aliases
 	"auto": "claude-sonnet-4.5",
 }
@@ -190,5 +188,5 @@ func GetKiroModelID(claudeModel string) string {
 		return kiroModel
 	}
 	// Default to the input model name if no mapping found
-	return claudeModel
+	return "claude-sonnet-4.5"
 }

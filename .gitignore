@@ -39,6 +39,7 @@ desktop/build/windows/*
 !desktop/build/windows/icon.ico
 !desktop/build/windows/wails.exe.manifest
 **/dist
+desktop/ui/wailsjs
 
 # Config
 config.json
