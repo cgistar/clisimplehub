@@ -280,7 +280,9 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 				},
 			}, nil
 		}
-		return nil, nil
+		// 注意：Claude/Anthropic 风格的 `message_delta` 事件也带 `delta`，
+		// 但 token 统计通常放在顶层 `usage` 字段里（例如 output_tokens）。
+		// 这里不能直接返回，否则会错过后续的 usage / stop_reason 等信息。
 	}
 
 	// content（部分流直接把文本增量放在顶层 content 字段）

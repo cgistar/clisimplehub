@@ -27,9 +27,9 @@ const (
 
 // Config keys for config.json appConfig
 const (
-	ConfigKeyPort     = "port"
-	ConfigKeyAPIKey   = "apiKey"
-	ConfigKeyFallback = "fallback"
+	ConfigKeyPort      = "port"
+	ConfigKeyAPIKey    = "apiKey"
+	ConfigKeyFallback  = "fallback"
 	ConfigKeyDebugMode = "debugMode"
 	// Temporary disable TTL for failed endpoints (minutes)
 	ConfigKeyTempDisableMinutes = "tempDisableMinutes"

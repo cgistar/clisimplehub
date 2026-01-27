@@ -108,7 +108,7 @@ func processHistoryMessages(messages []map[string]interface{}, modelID string) (
 			content, _ := extractAssistantContent(msg)
 			toolUses := extractToolUses(msg)
 			if strings.TrimSpace(content) == "" && len(toolUses) > 0 {
-				content = "There is a tool use."
+				content = " "
 			}
 			history = append(history, buildHistoryAssistantMessage(content, toolUses))
 			lastToolUseOrder = toolUseIDOrder(toolUses)

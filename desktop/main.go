@@ -41,6 +41,13 @@ const (
 	ConfigKeyCodexConfigDir  = "codexConfigDir"
 )
 
+// onSecondInstanceLaunch 当检测到第二个实例启动时的回调函数
+func onSecondInstanceLaunch(data options.SecondInstanceData) {
+	log.Printf("检测到第二个实例启动，参数: %v", data.Args)
+	// 注意：此时 app.ctx 尚未初始化，无法使用 runtime 激活窗口
+	// Wails 会自动处理窗口激活（Windows/macOS）
+}
+
 func main() {
 	log.SetPrefix("[clisimplehub] ")
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -174,7 +181,11 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        app.startup,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "com.clisimplehub.app",
+			OnSecondInstanceLaunch: onSecondInstanceLaunch,
+		},
+		OnStartup: app.startup,
 		OnShutdown: func(ctx context.Context) {
 			// Graceful shutdown
 			// Requirements: 5.4

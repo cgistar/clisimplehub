@@ -1265,25 +1265,78 @@ func getModelMaxInputTokens(model string) int {
 	}
 }
 
+// isNonWesternChar 判断字符是否为非西文字符
+// 西文字符包括：ASCII、拉丁字母扩展等
+// 返回 true 表示该字符是非西文字符（如中文、日文、韩文、阿拉伯文等）
+func isNonWesternChar(r rune) bool {
+	// 基本 ASCII
+	if r >= 0x0000 && r <= 0x007F {
+		return false
+	}
+	// 拉丁字母扩展-A (Latin Extended-A)
+	if r >= 0x0080 && r <= 0x00FF {
+		return false
+	}
+	// 拉丁字母扩展-B (Latin Extended-B)
+	if r >= 0x0100 && r <= 0x024F {
+		return false
+	}
+	// 拉丁字母扩展附加 (Latin Extended Additional)
+	if r >= 0x1E00 && r <= 0x1EFF {
+		return false
+	}
+	// 拉丁字母扩展-C/D/E
+	if r >= 0x2C60 && r <= 0x2C7F {
+		return false
+	}
+	if r >= 0xA720 && r <= 0xA7FF {
+		return false
+	}
+	if r >= 0xAB30 && r <= 0xAB6F {
+		return false
+	}
+	return true
+}
+
+// estimateTokens 估算文本的 token 数量
+// 算法对齐 Rust 项目 (kiro.rs)：
+// - 非西文字符：每个计 4 个字符单位
+// - 西文字符：每个计 1 个字符单位
+// - 4 个字符单位 = 1 token
+// - 根据文本长度应用动态修正系数（短文本修正系数更高）
 func estimateTokens(text string) int {
 	if strings.TrimSpace(text) == "" {
 		return 0
 	}
-	ascii := 0
-	nonASCII := 0
+
+	// 计算字符单位
+	charUnits := 0.0
 	for _, r := range text {
-		if r <= 0x7f {
-			ascii++
+		if isNonWesternChar(r) {
+			charUnits += 4.0
 		} else {
-			nonASCII++
+			charUnits += 1.0
 		}
 	}
-	// Heuristic token estimate:
-	// - ASCII-heavy text ~ 4 chars/token
-	// - Non-ASCII (e.g., CJK) ~ 2 chars/token
-	tokens := (ascii + 3) / 4
-	tokens += (nonASCII + 1) / 2
-	return tokens
+
+	// 基础 token 数
+	tokens := charUnits / 4.0
+
+	// 动态修正系数：短文本需要更高的修正系数
+	var accToken float64
+	if tokens < 100.0 {
+		accToken = tokens * 1.5
+	} else if tokens < 200.0 {
+		accToken = tokens * 1.3
+	} else if tokens < 300.0 {
+		accToken = tokens * 1.25
+	} else if tokens < 800.0 {
+		accToken = tokens * 1.2
+	} else {
+		accToken = tokens * 1.0
+	}
+
+	return int(accToken)
 }
 
 func applyTokenAccounting(state *StreamState) {
@@ -1554,43 +1607,47 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		}
 
 	case kirotypes.StreamEventUsage:
-		usage, ok := event.Data.(map[string]interface{})
-		if !ok {
-			return nil, nil
-		}
-
-		// Extract token counts
-		if v := usage["inputTokens"]; v != nil {
-			state.InputTokens = shared.IntFromAny(v)
-			state.InputTokensSource = "api"
-		} else if v := usage["input_tokens"]; v != nil {
-			state.InputTokens = shared.IntFromAny(v)
-			state.InputTokensSource = "api"
-		}
-		if v := usage["outputTokens"]; v != nil {
-			state.OutputTokens = shared.IntFromAny(v)
-			state.OutputTokensSource = "api"
-		} else if v := usage["output_tokens"]; v != nil {
-			state.OutputTokens = shared.IntFromAny(v)
-			state.OutputTokensSource = "api"
-		}
+		// 注意：完全忽略 meteringEvent
+		// 原因：
+		// 1. meteringEvent 只包含 inputTokens，不包含 outputTokens
+		// 2. contextUsageEvent 提供了更准确的 input_tokens 计算方式
+		// 3. output_tokens 完全依赖本地估算（在 applyTokenAccounting 中计算）
+		// 因此 meteringEvent 中的数据没有实际用途
+		return nil, nil
 
 	case kirotypes.StreamEventContextUsage:
 		if state == nil {
 			return nil, nil
 		}
+		var percentage float64
 		switch v := event.Data.(type) {
 		case float64:
-			state.ContextUsagePct = v
+			percentage = v
 		case float32:
-			state.ContextUsagePct = float64(v)
+			percentage = float64(v)
 		case int:
-			state.ContextUsagePct = float64(v)
+			percentage = float64(v)
 		case int64:
-			state.ContextUsagePct = float64(v)
+			percentage = float64(v)
 		case json.Number:
 			if f, err := v.Float64(); err == nil {
-				state.ContextUsagePct = f
+				percentage = f
+			}
+		}
+		state.ContextUsagePct = percentage
+
+		// 从上下文使用百分比计算实际的 input_tokens
+		// 这是 Kiro API 返回真实 token 数据的主要方式
+		// 公式: percentage * 200000 / 100 (200k 是 Claude 的上下文窗口大小)
+		if percentage > 0 {
+			const contextWindowSize = 200000
+			actualInputTokens := int(percentage * contextWindowSize / 100.0)
+
+			// 优先使用从 contextUsagePercentage 计算的精确值
+			// 这比估算值和 meteringEvent 都更准确
+			if actualInputTokens > 0 {
+				state.InputTokens = actualInputTokens
+				state.InputTokensSource = "context_usage"
 			}
 		}
 
@@ -1936,6 +1993,7 @@ func buildMessageDelta(state *StreamState) string {
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
+			"input_tokens":  state.InputTokens,
 			"output_tokens": state.OutputTokens,
 		},
 	}
