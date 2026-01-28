@@ -35,12 +35,19 @@ func (o *proxyExecutionObserver) OnEndpointDisabled(interfaceType string, endpoi
 }
 
 func (o *proxyExecutionObserver) OnDebugLog(requestID string, level int, message string) {
-	if o == nil || o.server == nil || o.server.wsHub == nil {
+	if o == nil || o.server == nil {
 		return
 	}
-	o.server.wsHub.BroadcastDebugLog(&DebugLogPayload{
-		RequestID: strings.TrimSpace(requestID),
-		Level:     level,
-		Message:   strings.TrimSpace(message),
-	})
+
+	// 输出到控制台（无头模式）
+	logDebugToConsole(requestID, level, message)
+
+	// 广播到 WebSocket（GUI模式）
+	if o.server.wsHub != nil {
+		o.server.wsHub.BroadcastDebugLog(&DebugLogPayload{
+			RequestID: strings.TrimSpace(requestID),
+			Level:     level,
+			Message:   strings.TrimSpace(message),
+		})
+	}
 }

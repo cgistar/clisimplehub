@@ -175,6 +175,24 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		client = NewHTTPClientForcedProxyURL(proxyURL, 0)
 	}
 	resp, err := client.Do(proxyReq)
+	if err != nil && isRetryableEOF(err) {
+		// 对于 AWS/Kiro 的偶发 EOF，做一次轻量级重试（不依赖 fallback 开关）
+		// 目标：避免将 529/EOF 暴露给上层客户端（如 Claude Code），提升稳定性。
+		if debugLogger != nil {
+			debugLogger.Log("上游请求 EOF，重试一次: err=%T %v", err, err)
+		}
+		sleepWithContext(ctx, eofBackoffDuration(2))
+		if retryReq, buildErr := buildProxyReq(); buildErr == nil {
+			resp, err = client.Do(retryReq)
+			if debugLogger != nil {
+				if err == nil {
+					debugLogger.Log("上游请求 EOF 重试成功")
+				} else {
+					debugLogger.Log("上游请求 EOF 重试失败: err=%T %v", err, err)
+				}
+			}
+		}
+	}
 	if err != nil {
 		result.Error = fmt.Errorf("request failed: %w", err)
 		if debugLogger != nil {

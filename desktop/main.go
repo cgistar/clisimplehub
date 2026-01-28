@@ -30,15 +30,17 @@ const (
 
 // Config keys for config.json appConfig
 const (
-	ConfigKeyPort     = "port"
-	ConfigKeyAPIKey   = "apiKey"
-	ConfigKeyFallback = "fallback"
+	ConfigKeyPort      = "port"
+	ConfigKeyAPIKey    = "apiKey"
+	ConfigKeyFallback  = "fallback"
 	ConfigKeyDebugMode = "debugMode"
 	// Temporary disable TTL for failed endpoints (minutes)
 	ConfigKeyTempDisableMinutes = "tempDisableMinutes"
 	// CLI config directories
 	ConfigKeyClaudeConfigDir = "claudeConfigDir"
 	ConfigKeyCodexConfigDir  = "codexConfigDir"
+	// Listen address for proxy server
+	ConfigKeyListenAddr = "listenAddr"
 )
 
 // onSecondInstanceLaunch 当检测到第二个实例启动时的回调函数
@@ -99,9 +101,21 @@ func main() {
 		}
 	}
 
-	// 检查端口是否可用
-	if err := config.IsPortAvailable(port); err != nil {
-		log.Fatalf("启动失败: %v\n请检查端口是否被其他程序占用，或尝试使用其他端口", err)
+	// 仅校验端口合法性：端口是否被占用交给 ProxyServer.Start() 处理（失败只影响代理服务，不阻塞 UI 启动）。
+	if err := config.ValidatePort(port); err != nil {
+		log.Fatalf("启动失败: %v\n请检查端口配置是否正确(1-65535)", err)
+	}
+
+	// Load listen address configuration
+	// Default to 127.0.0.1 for security (localhost only)
+	listenAddr := "127.0.0.1"
+	if savedAddr, err := store.GetConfig(ConfigKeyListenAddr); err == nil && savedAddr != "" {
+		if err := config.ValidateListenAddr(savedAddr); err != nil {
+			log.Printf("Warning: Invalid listen address '%s': %v, using default 127.0.0.1", savedAddr, err)
+		} else {
+			listenAddr = savedAddr
+			log.Printf("Using listen address from config: %s", listenAddr)
+		}
 	}
 
 	// Load endpoints from config.json
@@ -133,6 +147,7 @@ func main() {
 	// Initialize proxy server with WebSocket hub
 	// Requirements: 1.1, 5.1, 7.1, 8.5
 	proxyServer := proxy.NewProxyServerWithWSHub(port, router, wsHub)
+	proxyServer.SetListenAddr(listenAddr)
 	proxyServer.SetStorage(store)
 	proxyServer.SetUsageStatsStore(usageStatsStore)
 
@@ -170,7 +185,7 @@ func main() {
 	// Start proxy server in background
 	// Requirements: 5.1
 	go func() {
-		log.Printf("Starting proxy server on port %d...", port)
+		log.Printf("Starting proxy server on %s:%d...", listenAddr, port)
 		if err := proxyServer.Start(); err != nil {
 			log.Printf("Proxy server error: %v", err)
 		}

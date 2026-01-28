@@ -93,3 +93,220 @@ CLI API服务简易切换器
 - 软件不会保存 webdav 服务器配置到配置文件
 
 <img src="docs/images/webdav同步.png" alt="webdav同步" width="400">
+
+## 无头模式（Headless Server）
+
+无头模式允许在没有图形界面的环境（如服务器、Docker）中运行代理服务。
+
+### 启动无头模式
+
+```bash
+# 使用默认配置启动
+go run ./cmd/server
+
+# 或使用环境变量配置
+PORT=5600 CONFIG_PATH=/path/to/config.json go run ./cmd/server
+```
+
+### 环境变量
+
+- `PORT`: 代理服务器端口（默认：5600）
+- `CONFIG_PATH`: config.json 文件路径
+- `LISTEN_ADDR`: 监听地址（默认：0.0.0.0，Docker 环境推荐）
+- `DATA`: 数据目录（配置文件备用位置）
+
+### Kiro 配置热重载 API
+
+无头模式提供了 Kiro 配置更新接口，支持**无需重启服务器**即可更新配置。
+
+#### 接口规格
+
+**请求**：`POST /kiro/config`
+
+```bash
+# Social 认证（只需 refreshToken）
+curl -X POST http://localhost:5600/kiro/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refreshToken": "your-refresh-token"
+  }'
+
+# IdC 认证（需要 clientId 和 clientSecret）
+curl -X POST http://localhost:5600/kiro/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refreshToken": "your-refresh-token",
+    "authMethod": "idc",
+    "clientId": "your-client-id",
+    "clientSecret": "your-client-secret"
+  }'
+```
+
+**请求参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `refreshToken` | string | ✅ | Kiro refresh token |
+| `region` | string | ❌ | AWS 区域（默认：us-east-1） |
+| `authMethod` | string | ❌ | 认证方式：`social`（默认）或 `idc` |
+| `clientId` | string | ⚠️ | IdC 认证时必填 |
+| `clientSecret` | string | ⚠️ | IdC 认证时必填 |
+| `proxyUrl` | string | ❌ | 代理地址 |
+
+**注意**：`version`、`userAgent`、`machineId` 等参数从 `config.json` 中读取，无需在请求中提供。
+
+**响应示例**：
+
+```json
+{
+  "accessToken": "eyJhbGc...",
+  "expiresAt": "2024-01-28T12:00:00Z",
+  "profileArn": "arn:aws:codewhisperer:us-east-1:...",
+  "usage": {
+    "used": 123,
+    "limit": 1000
+  }
+}
+```
+
+#### 工作原理
+
+1. **接收配置**：接口验证并获取新的 accessToken
+2. **保存到文件**：更新 `kiro-auth-token.json`
+3. **自动热重载**：通知所有 Kiro Transformer 实例重新加载配置
+4. **立即生效**：下次 Kiro 请求自动使用新配置，无需重启服务器
+
+#### 认证方式说明
+
+- **Social 认证**：适用于个人账户，只需提供 `refreshToken`
+- **IdC 认证**：适用于企业账户，需要提供 `refreshToken`、`clientId` 和 `clientSecret`
+- **自动判断**：如果未指定 `authMethod`，系统会根据是否提供 `clientId` 和 `clientSecret` 自动判断
+
+#### 注意事项
+
+- ✅ 配置更新后**立即生效**，无需重启服务器
+- ✅ 正在进行的请求不受影响
+- ✅ 线程安全，支持并发请求
+- ⚠️ IdC 认证时，`profileArn` 会被自动清空（避免认证错误）
+- ⚠️ 建议在生产环境中配置 `apiKey` 保护此接口
+
+### 端点管理 API
+
+无头模式提供了端点管理接口，支持通过 HTTP API 动态添加或更新端点配置。
+
+#### 接口规格
+
+**请求**：`POST /endpoint`
+
+```bash
+curl -X POST http://localhost:5600/endpoint \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "claude",
+    "apiUrl": "https://abc.com",
+    "apiKey": "sk-xxx",
+    "active": false,
+    "enabled": true,
+    "interfaceType": "claude",
+    "providerName": "abc",
+    "priority": 5
+  }'
+```
+
+**请求参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | ✅ | 端点名称 |
+| `apiUrl` | string | ✅ | API 地址 |
+| `apiKey` | string | ✅ | API 密钥 |
+| `interfaceType` | string | ✅ | 接口类型（claude/openai/gemini） |
+| `active` | boolean | ❌ | 是否激活（默认 false，特殊规则见下） |
+| `enabled` | boolean | ❌ | 是否启用（默认 true） |
+| `providerName` | string | ❌ | 供应商名称 |
+| `priority` | int | ❌ | 优先级（默认 5） |
+
+**响应示例**：
+
+```json
+{
+  "message": "endpoint created successfully",
+  "endpoint": {
+    "id": 1,
+    "name": "claude",
+    "apiUrl": "https://abc.com",
+    "apiKey": "sk-xxx",
+    "active": true,
+    "enabled": true,
+    "interfaceType": "claude",
+    "providerName": "abc",
+    "priority": 5
+  }
+}
+```
+
+#### 工作原理
+
+1. **查找匹配**：根据 `apiUrl`、`apiKey`、`interfaceType` 三个字段查找是否存在相同端点
+2. **更新或创建**：
+   - 如果找到匹配项，更新该端点
+   - 如果未找到，创建新端点
+3. **Active 状态管理**：
+   - 默认为 `false`
+   - 如果该 `interfaceType` 只有一个端点，自动设为 `true`
+   - 如果设为 `true`，会将同一 `interfaceType` 的其他端点设为 `false`（保证同类型只有一个激活端点）
+4. **供应商自动创建**：
+   - 如果提供了 `providerName` 但供应商不存在，会自动创建
+   - `homeUrl` 自动从 `apiUrl` 提取（协议+域名部分）
+5. **立即生效**：配置保存后自动触发重载，无需重启服务器
+
+#### 注意事项
+
+- ✅ 端点配置**立即生效**，无需重启服务器
+- ✅ 支持幂等操作（相同配置多次调用结果一致）
+- ✅ 自动管理 active 状态，避免冲突
+- ⚠️ 建议在生产环境中配置 `apiKey` 保护此接口
+
+### config.json 配置重载
+
+无头模式支持两种方式重载 `config.json` 配置：
+
+#### 方式 1：HTTP 接口
+
+```bash
+# GET 请求触发重载（推荐，可直接在浏览器访问）
+curl http://localhost:5600/reload
+
+# 或使用 POST 请求
+curl -X POST http://localhost:5600/reload
+
+# 响应示例
+{
+  "message": "config reloaded successfully"
+}
+```
+
+#### 方式 2：SIGHUP 信号
+
+```bash
+# 发送 SIGHUP 信号重载配置
+kill -HUP <pid>
+
+# 或使用 pkill
+pkill -HUP -f "cmd/server"
+```
+
+**重载内容**：
+- ✅ 端点配置（endpoints）
+- ✅ API Key（apiKey）
+- ✅ 自动故障转移设置（fallback）
+- ✅ Debug 模式（debugMode）
+- ✅ 临时禁用时长（tempDisableMinutes）
+- ⚠️ 监听地址（listenAddr）- 需要重启服务器生效
+- ⚠️ 端口（port）- 需要重启服务器生效
+
+**注意**：
+- Kiro 配置（`kiro-auth-token.json`）通过 API 接口更新，会自动热重载
+- `config.json` 配置可通过 HTTP 接口或 SIGHUP 信号重载
+- 端点管理（`POST /endpoint`）会自动触发配置重载
+- 三种机制互不影响，可以独立使用

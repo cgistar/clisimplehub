@@ -307,3 +307,20 @@ func IsPortAvailable(port int) error {
 	listener.Close()
 	return nil
 }
+
+// ValidateListenAddr validates a listen address
+// Only allows 127.0.0.1, 0.0.0.0, ::1, and ::
+func ValidateListenAddr(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return errors.New("listen address cannot be empty")
+	}
+
+	// Allow specific addresses only
+	switch addr {
+	case "127.0.0.1", "0.0.0.0", "::1", "::":
+		return nil
+	default:
+		return fmt.Errorf("invalid listen address '%s': only 127.0.0.1, 0.0.0.0, ::1, and :: are allowed", addr)
+	}
+}

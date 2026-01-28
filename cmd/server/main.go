@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,8 +22,7 @@ import (
 
 // Default configuration values
 const (
-	DefaultPort       = 5600
-	DefaultConfigPath = "config.json"
+	DefaultPort = 5600
 )
 
 // Config keys for config.json appConfig
@@ -33,6 +33,8 @@ const (
 	ConfigKeyDebugMode = "debugMode"
 	// Temporary disable TTL for failed endpoints (minutes)
 	ConfigKeyTempDisableMinutes = "tempDisableMinutes"
+	// Listen address for proxy server
+	ConfigKeyListenAddr = "listenAddr"
 )
 
 func main() {
@@ -43,7 +45,7 @@ func main() {
 
 	// Get configuration from environment variables or defaults
 	port := getEnvInt("PORT", DefaultPort)
-	configPath := getEnvString("CONFIG_PATH", DefaultConfigPath)
+	configPath := resolveConfigPath()
 
 	log.Printf("Configuration: port=%d, configPath=%s", port, configPath)
 
@@ -85,6 +87,25 @@ func main() {
 		log.Fatalf("启动失败: %v\n请检查端口是否被其他程序占用，或尝试使用其他端口", err)
 	}
 
+	// Load listen address configuration
+	// Default to 0.0.0.0 for security (localhost only)
+	listenAddr := "0.0.0.0"
+	if envListenAddr := strings.TrimSpace(os.Getenv("LISTEN_ADDR")); envListenAddr != "" {
+		if err := config.ValidateListenAddr(envListenAddr); err != nil {
+			log.Printf("Warning: Invalid listen address from LISTEN_ADDR '%s': %v, using default 0.0.0.0", envListenAddr, err)
+		} else {
+			listenAddr = envListenAddr
+			log.Printf("Using listen address from LISTEN_ADDR: %s", listenAddr)
+		}
+	} else if savedAddr, err := store.GetConfig(ConfigKeyListenAddr); err == nil && savedAddr != "" {
+		if err := config.ValidateListenAddr(savedAddr); err != nil {
+			log.Printf("Warning: Invalid listen address '%s': %v, using default 0.0.0.0", savedAddr, err)
+		} else {
+			listenAddr = savedAddr
+			log.Printf("Using listen address from config: %s", listenAddr)
+		}
+	}
+
 	// Load endpoints from config.json
 	endpoints, err := store.GetEndpoints()
 	if err != nil {
@@ -113,8 +134,10 @@ func main() {
 	// Initialize proxy server
 	// Requirements: 5.1
 	proxyServer := proxy.NewProxyServerWithWSHub(port, router, wsHub)
+	proxyServer.SetListenAddr(listenAddr)
 	proxyServer.SetStorage(store)
 	proxyServer.SetUsageStatsStore(usageStatsStore)
+	proxyServer.SetConfigPath(configPath)
 
 	// Initialize kiro transformer config getter
 	kiro_claude.SetConfigGetter(func(key string) (string, error) {
@@ -129,30 +152,53 @@ func main() {
 		}
 	}
 	// Load fallback setting from config
-	if fallbackStr, err := store.GetConfig(ConfigKeyFallback); err == nil && fallbackStr == "true" {
+	if fallbackStr, err := store.GetConfig(ConfigKeyFallback); err == nil && strings.TrimSpace(fallbackStr) == "true" {
 		proxyServer.SetFallbackEnabled(true)
 		log.Println("Fallback mode enabled")
 	}
 
-	// Set up signal handling for graceful shutdown
+	// Set reload function for HTTP /reload endpoint
+	proxyServer.SetReloadFunc(func() {
+		reloadConfig(store, router, proxyServer)
+	})
+
+	// Set up signal handling for graceful shutdown and config reload
 	// Requirements: 5.4
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+	// Error channel for server startup failures
+	errChan := make(chan error, 1)
 
 	// Start proxy server in a goroutine
 	go func() {
-		log.Printf("Proxy server starting on port %d...", port)
+		log.Printf("Proxy server starting on %s:%d...", listenAddr, port)
 		if err := proxyServer.Start(); err != nil {
 			log.Printf("Proxy server error: %v", err)
+			errChan <- err
 		}
 	}()
 
 	log.Println("Cli Simple Hub is running. Press Ctrl+C to stop.")
 
-	// Wait for shutdown signal
+	// Wait for shutdown signal, config reload signal, or startup error
 	// Requirements: 5.4
-	sig := <-sigChan
-	log.Printf("Received signal %v, shutting down...", sig)
+	for {
+		select {
+		case err := <-errChan:
+			log.Fatalf("Server startup failed: %v", err)
+		case sig := <-sigChan:
+			if sig == syscall.SIGHUP {
+				log.Println("Received SIGHUP, reloading config...")
+				reloadConfig(store, router, proxyServer)
+				continue
+			}
+			log.Printf("Received signal %v, shutting down...", sig)
+			goto shutdown
+		}
+	}
+
+shutdown:
 
 	// Graceful shutdown
 	if err := proxyServer.Stop(); err != nil {
@@ -162,12 +208,127 @@ func main() {
 	log.Println("Cli Simple Hub stopped.")
 }
 
-// getEnvString returns the environment variable value or the default
-func getEnvString(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+var executablePath = os.Executable
+var reloadMu sync.Mutex
+
+func reloadConfig(store storage.Storage, router *proxy.DefaultRouter, proxyServer *proxy.ProxyServer) {
+	reloadMu.Lock()
+	defer reloadMu.Unlock()
+
+	if store == nil {
+		log.Println("Config reload skipped: storage not initialized")
+		return
 	}
-	return defaultValue
+
+	startTime := time.Now()
+	log.Println("Config reload started")
+
+	// Reload router settings and endpoints
+	if router != nil {
+		if v, err := store.GetConfig(ConfigKeyTempDisableMinutes); err != nil {
+			log.Printf("Config reload: failed to read %s: %v (keeping previous TTL)", ConfigKeyTempDisableMinutes, err)
+		} else if strings.TrimSpace(v) != "" {
+			if minutes, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && minutes > 0 {
+				router.SetTempDisableTTL(time.Duration(minutes) * time.Minute)
+				log.Printf("Config reload: tempDisableTTL=%dm", minutes)
+			} else {
+				log.Printf("Config reload: invalid %s=%q (keeping previous TTL)", ConfigKeyTempDisableMinutes, v)
+			}
+		}
+
+		endpoints, err := store.GetEndpoints()
+		if err != nil {
+			log.Printf("Config reload: failed to reload endpoints: %v (keeping existing endpoints)", err)
+		} else {
+			router.LoadEndpoints(convertEndpoints(endpoints))
+			log.Printf("Config reload: endpoints reloaded (%d)", len(endpoints))
+		}
+	}
+
+	// Reload runtime proxy settings
+	if proxyServer != nil {
+		// Update debug logger
+		proxyServer.UpdateDebugFileLogger()
+		log.Println("Config reload: debug logger updated")
+
+		// listenAddr: respect LISTEN_ADDR env priority
+		if os.Getenv("LISTEN_ADDR") == "" {
+			if v, err := store.GetConfig(ConfigKeyListenAddr); err != nil {
+				log.Printf("Config reload: failed to read %s: %v (keeping current listen address)", ConfigKeyListenAddr, err)
+			} else {
+				target := strings.TrimSpace(v)
+				if target == "" {
+					target = "0.0.0.0"
+				}
+				if err := config.ValidateListenAddr(target); err != nil {
+					log.Printf("Config reload: invalid %s=%q: %v (keeping current listen address)", ConfigKeyListenAddr, v, err)
+				} else {
+					current := strings.TrimSpace(proxyServer.GetListenAddr())
+					if current == "" {
+						current = "0.0.0.0"
+					}
+					if target != current {
+						proxyServer.SetListenAddr(target)
+						log.Printf("Config reload: listenAddr=%s (restart required to take effect)", target)
+					} else {
+						log.Printf("Config reload: listenAddr unchanged (%s)", target)
+					}
+				}
+			}
+		} else {
+			log.Println("Config reload: listenAddr skipped (LISTEN_ADDR env set)")
+		}
+
+		if v, err := store.GetConfig(ConfigKeyAPIKey); err != nil {
+			log.Printf("Config reload: failed to read %s: %v (keeping current auth key)", ConfigKeyAPIKey, err)
+		} else {
+			key := strings.TrimSpace(v)
+			proxyServer.SetAuthKey(key)
+			if key == "" {
+				log.Println("Config reload: auth disabled (empty apiKey)")
+			} else {
+				log.Println("Config reload: auth enabled (apiKey set)")
+			}
+		}
+
+		if v, err := store.GetConfig(ConfigKeyFallback); err != nil {
+			log.Printf("Config reload: failed to read %s: %v (keeping current fallback setting)", ConfigKeyFallback, err)
+		} else {
+			enabled := strings.TrimSpace(v) == "true"
+			proxyServer.SetFallbackEnabled(enabled)
+			log.Printf("Config reload: fallbackEnabled=%v", enabled)
+		}
+	}
+
+	log.Printf("Config reload finished in %s", time.Since(startTime))
+}
+
+func resolveConfigPath() string {
+	if envPath := strings.TrimSpace(os.Getenv("CONFIG_PATH")); envPath != "" {
+		return envPath
+	}
+
+	if exePath, err := executablePath(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		exeConfig := filepath.Join(exeDir, config.ConfigFileName)
+		if fileExists(exeConfig) {
+			return exeConfig
+		}
+	}
+
+	if fileExists(config.ConfigFileName) {
+		return config.ConfigFileName
+	}
+
+	return config.FindOrCreateConfigPath()
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }
 
 // getEnvInt returns the environment variable value as int or the default
@@ -218,8 +379,16 @@ func printUsage() {
 	fmt.Println("")
 	fmt.Println("Environment Variables:")
 	fmt.Println("  PORT         - Proxy server port (default: 5600)")
-	fmt.Println("  CONFIG_PATH  - Path to config.json file (default: config.json)")
+	fmt.Println("  CONFIG_PATH  - Path to config.json file (highest priority)")
+	fmt.Println("  LISTEN_ADDR  - Listen address (e.g. 0.0.0.0 for Docker)")
+	fmt.Println("  DATA         - Data dir (fallback config location if no local config.json)")
+	fmt.Println("")
+	fmt.Println("Config path resolution order:")
+	fmt.Println("  1) CONFIG_PATH")
+	fmt.Println("  2) <executable_dir>/config.json")
+	fmt.Println("  3) ./config.json")
+	fmt.Println("  4) $DATA/config.json or $HOME/.clisimplehub/config.json (auto-create if missing)")
 	fmt.Println("")
 	fmt.Println("Example:")
-	fmt.Println("  PORT=9090 CONFIG_PATH=/etc/proxy/config.json ./server")
+	fmt.Println("  PORT=9090 CONFIG_PATH=/etc/proxy/config.json ./cliSimpleHub-server")
 }

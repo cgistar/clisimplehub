@@ -23,6 +23,10 @@ const DefaultContextWindow = 200000
 var (
 	globalConfigGetter func(key string) (string, error)
 	globalConfigMu     sync.RWMutex
+
+	// Global transformer registry for hot reload
+	transformerRegistry   = make(map[*Transformer]struct{})
+	transformerRegistryMu sync.RWMutex
 )
 
 // SetConfigGetter sets the global config getter function
@@ -51,11 +55,19 @@ type Transformer struct {
 	machineID         string
 	initOnce          sync.Once
 	initErr           error
+	mu                sync.RWMutex
 }
 
 // NewTransformer creates a new Kiro to Claude transformer
 func NewTransformer() *Transformer {
-	return &Transformer{}
+	t := &Transformer{}
+
+	// 注册到全局注册表
+	transformerRegistryMu.Lock()
+	transformerRegistry[t] = struct{}{}
+	transformerRegistryMu.Unlock()
+
+	return t
 }
 
 // TargetInterfaceType returns the target interface type
@@ -472,4 +484,37 @@ func flushBufferedStream(s *StreamState) []string {
 	result := s.BufferedOutputs
 	s.BufferedOutputs = nil // 清空缓冲区
 	return result
+}
+
+// Reload 重新加载 Kiro 配置
+// 此方法会重置初始化状态，下次调用时会重新读取 kiro-auth-token.json
+func (t *Transformer) Reload() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// 重置 sync.Once，允许重新初始化
+	t.initOnce = sync.Once{}
+	t.initErr = nil
+	t.authManager = nil
+	t.kiroUserAgentBase = ""
+	t.kiroVersion = ""
+	t.kiroProxyURL = ""
+	t.machineID = ""
+
+	return nil
+}
+
+// ReloadAllTransformers 重新加载所有已注册的 Kiro Transformer
+// 此函数应在 kiro-auth-token.json 更新后调用
+func ReloadAllTransformers() error {
+	transformerRegistryMu.RLock()
+	defer transformerRegistryMu.RUnlock()
+
+	for t := range transformerRegistry {
+		if err := t.Reload(); err != nil {
+			return fmt.Errorf("failed to reload transformer: %w", err)
+		}
+	}
+
+	return nil
 }

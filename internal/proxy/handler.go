@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -42,6 +44,88 @@ func isAnthropicClaudeCompatiblePath(path string) bool {
 	return strings.HasPrefix(lower, "/v1/messages") || lower == "/v1/models"
 }
 
+// logRequestToConsole 输出请求日志到控制台（无头模式）
+func logRequestToConsole(requestID, method, path string, interfaceType InterfaceType, endpoint *executor.EndpointConfig, statusCode int, status string, runTime int64) {
+	// now := time.Now()
+	// timestamp := fmt.Sprintf("[%04d%02d%02d %02d:%02d:%02d]",
+	// 	now.Year(), now.Month(), now.Day(),
+	// 	now.Hour(), now.Minute(), now.Second())
+
+	// 根据状态码确定日志级别
+	level := "INFO"
+	if strings.HasPrefix(status, "error") {
+		level = "WARN"
+		if statusCode == 0 || statusCode >= 500 {
+			level = "ERROR"
+		}
+	} else if statusCode >= 500 {
+		level = "ERROR"
+	} else if statusCode >= 400 {
+		level = "WARN"
+	}
+
+	// 构建端点信息
+	endpointInfo := "no-endpoint"
+	if endpoint != nil {
+		endpointInfo = endpoint.Name
+		if endpoint.ProviderName != "" {
+			endpointInfo = endpoint.ProviderName + "/" + endpoint.Name
+		}
+	}
+
+	// 格式化请求ID（取前8位）
+	shortID := strings.TrimSpace(requestID)
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	if shortID == "" {
+		shortID = "-"
+	}
+
+	// 构建状态信息
+	statusInfo := status
+	if statusCode > 0 {
+		statusInfo = fmt.Sprintf("%s (%d)", status, statusCode)
+	}
+
+	// 输出日志：[时间] [级别] 方法 路径 | 接口类型 | 端点 | 状态 | 用时
+	log.Printf("[%s] [%s] %s %s | %s | %s | %s | %.3fs",
+		level, shortID, method, path, interfaceType, endpointInfo, statusInfo, float64(runTime)/1000.0)
+}
+
+// logDebugToConsole 输出调试日志到控制台（无头模式）
+// level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR
+func logDebugToConsole(requestID string, level int, message string) {
+	// now := time.Now()
+	// timestamp := fmt.Sprintf("%04d%02d%02d %02d:%02d:%02d",
+	// 	now.Year(), now.Month(), now.Day(),
+	// 	now.Hour(), now.Minute(), now.Second())
+
+	// 日志级别映射
+	levelNames := []string{"DEBUG", "INFO", "WARN", "ERROR"}
+	levelIcons := []string{"🔍", "ℹ️", "⚠️", "❌"}
+
+	levelName := "INFO"
+	levelIcon := "ℹ️"
+	if level >= 0 && level < len(levelNames) {
+		levelName = levelNames[level]
+		levelIcon = levelIcons[level]
+	}
+
+	// 格式化请求ID（取前8位）
+	shortID := requestID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+
+	// 输出格式：20260128 12:52:02 ℹ️ INFO  [requestID] message
+	if shortID != "" {
+		log.Printf("%s %-5s [%s] %s", levelIcon, levelName, shortID, message)
+	} else {
+		log.Printf("%s %-5s %s", levelIcon, levelName, message)
+	}
+}
+
 // handleProxy handles the main proxy logic
 // Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +149,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		detail := &RequestDetail{Method: r.Method, StatusCode: http.StatusUnauthorized, RequestHeaders: reqHeaders}
 		runTime := time.Since(startTime).Milliseconds()
 		p.recordRequestWithDetail(requestID, interfaceType, nil, r.URL.Path, startTime, "error_401", runTime, detail)
+		logRequestToConsole(requestID, r.Method, r.URL.Path, interfaceType, nil, http.StatusUnauthorized, "error_401", runTime)
 		return
 	}
 
@@ -155,6 +240,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		runTime := time.Since(startTime).Milliseconds()
 		p.recordRequestWithDetail(requestID, interfaceType, nil, r.URL.Path, startTime, "error_503", runTime, detail)
+		logRequestToConsole(requestID, r.Method, r.URL.Path, interfaceType, nil, http.StatusServiceUnavailable, "error_503", runTime)
 		return
 	}
 
@@ -240,6 +326,8 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 				debugLogger.SetMetadata("UpstreamErrorStage", inferUpstreamErrorStage(result))
 				debugLogger.SetMetadata("UpstreamErrorTypeChain", formatErrorTypeChain(result.Error))
 				debugLogger.SetMetadata("UpstreamErrorIsEOF", fmt.Sprintf("%v", errors.Is(result.Error, io.EOF) || errors.Is(result.Error, io.ErrUnexpectedEOF)))
+				debugLogger.SetMetadata("UpstreamErrorIsCanceled", fmt.Sprintf("%v", isClientCanceledError(result.Error)))
+				debugLogger.SetMetadata("UpstreamErrorMessage", formatErrorMessageForMetadata(result.Error))
 			}
 		}
 	}
@@ -248,14 +336,24 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	status := statusFromExecuteResult(result)
 	p.recordRequestWithDetail(requestID, interfaceType, execResult.Endpoint, r.URL.Path, startTime, status, runTime, detail)
 
+	// 输出请求日志到控制台
+	logRequestToConsole(requestID, r.Method, r.URL.Path, interfaceType, execResult.Endpoint, detail.StatusCode, status, runTime)
+
 	// 写入调试日志文件
 	if debugLogger != nil {
 		debugLogger.Log("请求完成: status=%s, runTime=%dms", status, runTime)
-		// 记录转换后的响应（SSE）
+		// 记录转换后的响应
 		if result != nil {
-			debugLogger.Log("ResponseStream长度: %d, Streamed=%v", len(result.ResponseStream), result.Streamed)
-			if result.ResponseStream != "" {
-				debugLogger.SetSection("TransformedResponse", result.ResponseStream)
+			if result.Streamed {
+				debugLogger.Log("ResponseStream长度: %d, Streamed=%v", len(result.ResponseStream), result.Streamed)
+				if result.ResponseStream != "" {
+					debugLogger.SetSection("TransformedResponse", result.ResponseStream)
+				}
+			} else {
+				debugLogger.Log("ResponseBody长度: %d, Streamed=%v", len(result.Body), result.Streamed)
+				if len(result.Body) > 0 {
+					debugLogger.SetSection("TransformedResponse", string(result.Body))
+				}
 			}
 		}
 		_ = debugLogger.Flush()
@@ -305,6 +403,21 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeResponseWithHeaders(w, result.StatusCode, result.Headers, result.Body)
+}
+
+func writeResponseWithHeaders(w http.ResponseWriter, statusCode int, headers http.Header, body []byte) {
+	if headers != nil {
+		for key, values := range headers {
+			if strings.EqualFold(key, "Content-Length") {
+				continue
+			}
+			for _, v := range values {
+				w.Header().Add(key, v)
+			}
+		}
+	}
+	w.WriteHeader(statusCode)
+	_, _ = w.Write(body)
 }
 
 func inferUpstreamErrorStage(result *executor.ForwardResult) string {
@@ -383,6 +496,12 @@ func statusFromExecuteResult(result *executor.ForwardResult) string {
 		return "error"
 	}
 	if result.Error != nil {
+		if isClientCanceledError(result.Error) {
+			if isStreamCompleted(result) {
+				return "success"
+			}
+			return "canceled"
+		}
 		if result.StatusCode > 0 {
 			return fmt.Sprintf("error_%d", result.StatusCode)
 		}
@@ -392,6 +511,58 @@ func statusFromExecuteResult(result *executor.ForwardResult) string {
 		return fmt.Sprintf("error_%d", result.StatusCode)
 	}
 	return "success"
+}
+
+func isClientCanceledError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	if errors.Is(err, io.ErrClosedPipe) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer")
+}
+
+func isStreamCompleted(result *executor.ForwardResult) bool {
+	if result == nil || !result.Streamed || strings.TrimSpace(result.ResponseStream) == "" {
+		return false
+	}
+	if result.StatusCode != http.StatusOK {
+		return false
+	}
+
+	// 只检查尾部，避免全量扫描大响应
+	tail := result.ResponseStream
+	const maxTail = 8 * 1024
+	if len(tail) > maxTail {
+		tail = tail[len(tail)-maxTail:]
+	}
+
+	// OpenAI Responses SSE
+	if strings.Contains(tail, "event: response.completed") || strings.Contains(tail, "\"type\":\"response.completed\"") {
+		return true
+	}
+
+	// Chat Completions SSE
+	if strings.Contains(tail, "data: [DONE]") {
+		return true
+	}
+
+	return false
+}
+
+func formatErrorMessageForMetadata(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	msg = strings.ReplaceAll(msg, "\r", "\\r")
+	msg = strings.ReplaceAll(msg, "\n", "\\n")
+	return msg
 }
 
 func statusCodeFromResult(result *executor.ForwardResult) int {

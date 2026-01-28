@@ -20,18 +20,27 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             arch: amd64
+            desktop: true
+          - os: ubuntu-latest
+            platform: linux
+            arch: arm64
+            desktop: false
           - os: macos-latest
             platform: darwin
             arch: amd64
+            desktop: true
           - os: macos-latest
             platform: darwin
             arch: arm64
+            desktop: true
           - os: windows-latest
             platform: windows
             arch: amd64
+            desktop: true
           - os: windows-latest
             platform: windows
             arch: arm64
+            desktop: true
 
     runs-on: ${{ matrix.os }}
 
@@ -46,17 +55,20 @@ jobs:
           cache: true
 
       - name: Setup Node.js
+        if: matrix.desktop
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
       - name: Install npm dependencies
+        if: matrix.desktop
         run: |
           cd desktop/ui
           npm install
         shell: bash
 
       - name: Cache Wails CLI
+        if: matrix.desktop
         id: cache-wails
         uses: actions/cache@v4
         with:
@@ -74,7 +86,7 @@ jobs:
         shell: bash
 
       - name: Install Wails (Linux)
-        if: matrix.platform == 'linux' && steps.cache-wails.outputs.cache-hit != 'true'
+        if: matrix.desktop && matrix.platform == 'linux' && steps.cache-wails.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
@@ -91,7 +103,7 @@ jobs:
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Install Linux dependencies (cached)
-        if: matrix.platform == 'linux' && steps.cache-wails.outputs.cache-hit == 'true'
+        if: matrix.desktop && matrix.platform == 'linux' && steps.cache-wails.outputs.cache-hit == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
@@ -105,18 +117,18 @@ jobs:
           pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 found" || echo "✗ webkit2gtk-4.0 NOT found"
 
       - name: Install Wails (macOS)
-        if: matrix.platform == 'darwin' && steps.cache-wails.outputs.cache-hit != 'true'
+        if: matrix.desktop && matrix.platform == 'darwin' && steps.cache-wails.outputs.cache-hit != 'true'
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Install Wails (Windows)
-        if: matrix.platform == 'windows' && steps.cache-wails.outputs.cache-hit != 'true'
+        if: matrix.desktop && matrix.platform == 'windows' && steps.cache-wails.outputs.cache-hit != 'true'
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
         shell: pwsh
 
       - name: Build application (Linux/macOS)
-        if: matrix.platform != 'windows'
+        if: matrix.desktop && matrix.platform != 'windows'
         env:
           CGO_ENABLED: 1
         run: |
@@ -138,22 +150,42 @@ jobs:
           wails build -platform ${{ matrix.platform }}/${{ matrix.arch }}
 
       - name: Build application (Windows)
-        if: matrix.platform == 'windows'
+        if: matrix.desktop && matrix.platform == 'windows'
         run: |
           $env:PATH += ";$(go env GOPATH)\bin"
           cd desktop
           wails build -platform ${{ matrix.platform }}/${{ matrix.arch }}
         shell: pwsh
 
+      - name: Build headless server (Linux/macOS)
+        if: matrix.platform != 'windows'
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.platform }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -trimpath -ldflags "-s -w" -o cliSimpleHub-server ./cmd/server
+
+      - name: Build headless server (Windows)
+        if: matrix.platform == 'windows'
+        env:
+          CGO_ENABLED: 0
+        run: |
+          $env:GOOS = "${{ matrix.platform }}"
+          $env:GOARCH = "${{ matrix.arch }}"
+          $env:CGO_ENABLED = "0"
+          go build -trimpath -ldflags "-s -w" -o cliSimpleHub-server.exe .\cmd\server
+        shell: pwsh
+
       - name: Package application (Linux)
-        if: matrix.platform == 'linux'
+        if: matrix.desktop && matrix.platform == 'linux'
         run: |
           cd desktop/build/bin
           tar -czf cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub
           mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../
 
       - name: Package application (macOS)
-        if: matrix.platform == 'darwin'
+        if: matrix.desktop && matrix.platform == 'darwin'
         run: |
           cd desktop/build/bin
           if [ -d "CliSimpleHub.app" ]; then
@@ -164,10 +196,21 @@ jobs:
           mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.* ../../../
 
       - name: Package application (Windows)
-        if: matrix.platform == 'windows'
+        if: matrix.desktop && matrix.platform == 'windows'
         run: |
           cd desktop/build/bin
           Compress-Archive -Path cliSimpleHub.exe -DestinationPath ../../../cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
+        shell: pwsh
+
+      - name: Package headless server (Linux/macOS)
+        if: matrix.platform != 'windows'
+        run: |
+          tar -czf cliSimpleHub-server-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-server
+
+      - name: Package headless server (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          Compress-Archive -Path cliSimpleHub-server.exe -DestinationPath cliSimpleHub-server-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
         shell: pwsh
 
       - name: Upload artifacts

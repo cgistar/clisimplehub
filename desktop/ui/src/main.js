@@ -52,15 +52,13 @@ import {
     copyConsoleLogs,
     clearConsoleLogs,
     initConsole,
-    logInfo,
-    logError
 } from './modules/console.js';
 import {
     openCLIConfigEditor,
     closeCLIConfigEditor,
     saveCLIConfig,
     processCLIConfig,
-    updateCLIConfigEditorButton,
+    updateProxyStatus,
 } from './modules/cliconfig.js';
 import {
     showWebDAVModal,
@@ -182,6 +180,7 @@ window.openCLIConfigEditor = openCLIConfigEditor;
 window.closeCLIConfigEditor = closeCLIConfigEditor;
 window.saveCLIConfig = saveCLIConfig;
 window.processCLIConfig = processCLIConfig;
+window.updateProxyStatus = updateProxyStatus;
 window.showWebDAVModal = showWebDAVModal;
 window.closeWebDAVModal = closeWebDAVModal;
 window.testWebDAVConnection = testWebDAVConnection;

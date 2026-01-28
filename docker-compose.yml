@@ -1,0 +1,16 @@
+services:
+  clisimplehub-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clisimplehub-server
+    ports:
+      - "5600:5600"
+    environment:
+      PORT: "5600"
+      LISTEN_ADDR: "0.0.0.0"
+      DATA: "/data"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+

@@ -165,6 +165,11 @@ func (a *App) SaveSettings(settings *Settings) error {
 		return fmt.Errorf("storage not initialized")
 	}
 
+	oldPort := 0
+	if a.proxyServer != nil {
+		oldPort = a.proxyServer.GetPort()
+	}
+
 	// Validate port
 	if err := config.ValidatePort(settings.Port); err != nil {
 		return fmt.Errorf("invalid port: %w", err)
@@ -197,6 +202,11 @@ func (a *App) SaveSettings(settings *Settings) error {
 		a.proxyServer.SetFallbackEnabled(settings.Fallback)
 		// 热更新调试日志配置
 		a.proxyServer.UpdateDebugFileLogger()
+
+		// 端口变化需要重启代理服务才能生效
+		if oldPort != 0 && oldPort != settings.Port {
+			a.restartProxyServerAsync()
+		}
 	}
 
 	return nil
@@ -225,6 +235,11 @@ func (a *App) SetPort(port int) error {
 		return fmt.Errorf("storage not initialized")
 	}
 
+	oldPort := 0
+	if a.proxyServer != nil {
+		oldPort = a.proxyServer.GetPort()
+	}
+
 	// Save to storage
 	// Requirements: 1.3
 	if err := a.storage.SetConfig(ConfigKeyPort, strconv.Itoa(port)); err != nil {
@@ -234,9 +249,54 @@ func (a *App) SetPort(port int) error {
 	// Update proxy server
 	if a.proxyServer != nil {
 		a.proxyServer.SetPort(port)
+		if oldPort != 0 && oldPort != port {
+			a.restartProxyServerAsync()
+		}
 	}
 
 	return nil
+}
+
+// SaveListenAddr saves the listen address to config
+func (a *App) SaveListenAddr(addr string) error {
+	if a.storage == nil {
+		return fmt.Errorf("storage not initialized")
+	}
+
+	// Validate listen address
+	if err := config.ValidateListenAddr(addr); err != nil {
+		return fmt.Errorf("invalid listen address: %w", err)
+	}
+
+	// Save to storage
+	if err := a.storage.SetConfig(ConfigKeyListenAddr, addr); err != nil {
+		return fmt.Errorf("failed to save listen address: %w", err)
+	}
+
+	// Update proxy server
+	if a.proxyServer != nil {
+		oldAddr := a.proxyServer.GetListenAddr()
+		a.proxyServer.SetListenAddr(addr)
+		// Listen address change requires restart
+		if oldAddr != "" && oldAddr != addr {
+			a.restartProxyServerAsync()
+		}
+	}
+
+	return nil
+}
+
+func (a *App) restartProxyServerAsync() {
+	if a.proxyServer == nil {
+		return
+	}
+
+	_ = a.proxyServer.Stop()
+	go func() {
+		if err := a.proxyServer.Start(); err != nil {
+			fmt.Printf("Proxy server error: %v\n", err)
+		}
+	}()
 }
 
 // GetConfigPath returns the current config file path
@@ -2239,10 +2299,10 @@ func convertModelMappings(storageModels []storage.ModelMapping) []config.ModelMa
 
 // FullConfig represents the complete application configuration for backup/restore
 type FullConfig struct {
-	AppConfig   map[string]interface{} `json:"appConfig,omitempty"`
-	Vendors     []*VendorInfo          `json:"vendors"`
+	AppConfig   map[string]interface{}   `json:"appConfig,omitempty"`
+	Vendors     []*VendorInfo            `json:"vendors"`
 	Endpoints   []*config.EndpointConfig `json:"endpoints"`
-	ReplaceMode bool                   `json:"replaceMode,omitempty"` // If true, clear existing config before saving
+	ReplaceMode bool                     `json:"replaceMode,omitempty"` // If true, clear existing config before saving
 }
 
 // GetFullConfig returns the complete configuration for backup
