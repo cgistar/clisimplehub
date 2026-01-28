@@ -113,7 +113,81 @@ PORT=5600 CONFIG_PATH=/path/to/config.json go run ./cmd/server
 - `PORT`: 代理服务器端口（默认：5600）
 - `CONFIG_PATH`: config.json 文件路径
 - `LISTEN_ADDR`: 监听地址（默认：0.0.0.0，Docker 环境推荐）
+- `API_KEY`: API 认证密钥（**最高优先级**，覆盖 config.json 中的配置）
 - `DATA`: 数据目录（配置文件备用位置）
+
+**优先级说明**：
+- `API_KEY` 环境变量优先级高于 `config.json` 中的 `appConfig.apiKey`
+- 如果设置了 `API_KEY` 环境变量，将忽略配置文件中的 apiKey
+- 适用于 Docker 部署或需要动态配置的场景
+
+### API 认证
+
+无头模式支持通过 API Key 保护管理接口。可以通过以下两种方式配置：
+
+**方式 1：环境变量（推荐用于 Docker）**
+```bash
+API_KEY=your-secret-key go run ./cmd/server
+```
+
+**方式 2：config.json 配置**
+```json
+{
+  "appConfig": {
+    "apiKey": "your-secret-key"
+  }
+}
+```
+
+**优先级**：环境变量 `API_KEY` > `config.json` 中的 `appConfig.apiKey`
+
+**需要认证的接口**：
+
+- `POST /kiro/config` - Kiro 配置更新
+- `GET /kiro/getUsage` - Kiro 使用量查询
+- `GET/POST /reload` - 配置重载
+- `POST /endpoint` - 端点管理
+
+**认证方式**：在请求头中添加 `Authorization: Bearer <apiKey>`
+
+**示例**：
+
+```bash
+# 配置 apiKey（在 config.json 中）
+{
+  "appConfig": {
+    "apiKey": "your-secret-key"
+  }
+}
+
+# 使用 apiKey 调用接口
+curl -X POST http://localhost:5600/kiro/config \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"refreshToken": "your-token"}'
+```
+
+**注意**：
+- ✅ 如果未配置 `apiKey`，接口无需认证（向后兼容）
+- ✅ 其他接口（如 `/health`、`/stats`、`/`）不受影响
+- ⚠️ 生产环境强烈建议配置 `apiKey` 保护管理接口
+- ⚠️ 认证失败返回 `401 Unauthorized`
+
+**Docker Compose 示例**：
+
+```yaml
+services:
+  clisimplehub-server:
+    image: clisimplehub:latest
+    ports:
+      - "5600:5600"
+    environment:
+      PORT: "5600"
+      LISTEN_ADDR: "0.0.0.0"
+      API_KEY: "your-secret-key-here"  # 设置 API Key
+    volumes:
+      - ./data:/data
+```
 
 ### Kiro 配置热重载 API
 
@@ -127,6 +201,7 @@ PORT=5600 CONFIG_PATH=/path/to/config.json go run ./cmd/server
 # Social 认证（只需 refreshToken）
 curl -X POST http://localhost:5600/kiro/config \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
   -d '{
     "refreshToken": "your-refresh-token"
   }'
@@ -134,6 +209,7 @@ curl -X POST http://localhost:5600/kiro/config \
 # IdC 认证（需要 clientId 和 clientSecret）
 curl -X POST http://localhost:5600/kiro/config \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
   -d '{
     "refreshToken": "your-refresh-token",
     "authMethod": "idc",
@@ -141,6 +217,8 @@ curl -X POST http://localhost:5600/kiro/config \
     "clientSecret": "your-client-secret"
   }'
 ```
+
+**注意**：如果配置了 `appConfig.apiKey`，需要添加 `Authorization` 头。
 
 **请求参数**：
 
@@ -152,6 +230,7 @@ curl -X POST http://localhost:5600/kiro/config \
 | `clientId` | string | ⚠️ | IdC 认证时必填 |
 | `clientSecret` | string | ⚠️ | IdC 认证时必填 |
 | `proxyUrl` | string | ❌ | 代理地址 |
+| `bufferedStream` | boolean | ❌ | 是否启用缓冲流模式（默认：false） |
 
 **注意**：`version`、`userAgent`、`machineId` 等参数从 `config.json` 中读取，无需在请求中提供。
 
@@ -172,9 +251,13 @@ curl -X POST http://localhost:5600/kiro/config \
 #### 工作原理
 
 1. **接收配置**：接口验证并获取新的 accessToken
-2. **保存到文件**：更新 `kiro-auth-token.json`
+2. **保存到文件**：更新 `kiro-auth-token.json` 和 `config.json`（machineId、bufferedStream）
 3. **自动热重载**：通知所有 Kiro Transformer 实例重新加载配置
 4. **立即生效**：下次 Kiro 请求自动使用新配置，无需重启服务器
+5. **智能更新**：
+   - 如果 `refreshToken` 未变化且 `bufferedStream` 未变化，直接返回现有凭证
+   - 如果只有 `bufferedStream` 变化，仅更新配置，不刷新 token
+   - 如果 `refreshToken` 变化，执行完整的 token 刷新流程
 
 #### 认证方式说明
 
@@ -190,6 +273,63 @@ curl -X POST http://localhost:5600/kiro/config \
 - ⚠️ IdC 认证时，`profileArn` 会被自动清空（避免认证错误）
 - ⚠️ 建议在生产环境中配置 `apiKey` 保护此接口
 
+### Kiro 使用量查询 API
+
+无头模式提供了 Kiro 使用量查询接口，可以快速获取当前配置的使用情况。
+
+#### 接口规格
+
+**请求**：`GET /kiro/getUsage`
+
+```bash
+curl http://localhost:5600/kiro/getUsage \
+  -H "Authorization: Bearer your-api-key"
+```
+
+**注意**：如果配置了 `appConfig.apiKey`，需要添加 `Authorization` 头。
+
+**无需参数**：接口会自动从配置文件中读取所有必要信息。
+
+**响应示例**：
+
+```json
+{
+  "subscriptionTitle": "Pro Plan",
+  "usageLimit": 1000000,
+  "currentUsage": 250000,
+  "balance": 750000,
+  "usagePct": 25.0,
+  "isLowBalance": false
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `subscriptionTitle` | string | 订阅计划名称 |
+| `usageLimit` | number | 使用限额 |
+| `currentUsage` | number | 当前使用量 |
+| `balance` | number | 剩余额度 |
+| `usagePct` | number | 使用百分比 |
+| `isLowBalance` | boolean | 是否低余额 |
+
+**错误响应示例**：
+
+```json
+{
+  "error": "No access token available, please configure Kiro first"
+}
+```
+
+#### 注意事项
+
+- ✅ 无需任何请求参数，自动从配置中读取
+- ✅ 返回完整的使用量统计信息
+- ⚠️ 需要先通过 `POST /kiro/config` 配置 Kiro 才能使用
+- ⚠️ 如果 accessToken 过期，需要重新配置
+- ⚠️ 建议在生产环境中配置 `apiKey` 保护此接口
+
 ### 端点管理 API
 
 无头模式提供了端点管理接口，支持通过 HTTP API 动态添加或更新端点配置。
@@ -201,6 +341,7 @@ curl -X POST http://localhost:5600/kiro/config \
 ```bash
 curl -X POST http://localhost:5600/endpoint \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
   -d '{
     "name": "claude",
     "apiUrl": "https://abc.com",
@@ -212,6 +353,8 @@ curl -X POST http://localhost:5600/endpoint \
     "priority": 5
   }'
 ```
+
+**注意**：如果配置了 `appConfig.apiKey`，需要添加 `Authorization` 头。
 
 **请求参数**：
 
@@ -275,16 +418,20 @@ curl -X POST http://localhost:5600/endpoint \
 
 ```bash
 # GET 请求触发重载（推荐，可直接在浏览器访问）
-curl http://localhost:5600/reload
+curl http://localhost:5600/reload \
+  -H "Authorization: Bearer your-api-key"
 
 # 或使用 POST 请求
-curl -X POST http://localhost:5600/reload
+curl -X POST http://localhost:5600/reload \
+  -H "Authorization: Bearer your-api-key"
 
 # 响应示例
 {
   "message": "config reloaded successfully"
 }
 ```
+
+**注意**：如果配置了 `appConfig.apiKey`，需要添加 `Authorization` 头。
 
 #### 方式 2：SIGHUP 信号
 

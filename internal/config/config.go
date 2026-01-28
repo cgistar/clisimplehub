@@ -21,6 +21,8 @@ const (
 	EnvDataDir = "DATA"
 	// EnvPort is the environment variable for proxy port (highest priority)
 	EnvPort = "PORT"
+	// EnvAPIKey is the environment variable for API key (highest priority)
+	EnvAPIKey = "API_KEY"
 )
 
 // Validation errors

@@ -18,12 +18,13 @@ import (
 
 // KiroConfigRequest 请求结构
 type KiroConfigRequest struct {
-	RefreshToken string `json:"refreshToken"`
-	Region       string `json:"region"`
-	AuthMethod   string `json:"authMethod"`
-	ClientId     string `json:"clientId"`
-	ClientSecret string `json:"clientSecret"`
-	ProxyURL     string `json:"proxyUrl"`
+	RefreshToken   string `json:"refreshToken"`
+	Region         string `json:"region"`
+	AuthMethod     string `json:"authMethod"`
+	ClientId       string `json:"clientId"`
+	ClientSecret   string `json:"clientSecret"`
+	ProxyURL       string `json:"proxyUrl"`
+	BufferedStream bool   `json:"bufferedStream"`
 }
 
 // KiroConfigResponse 响应结构
@@ -114,6 +115,7 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 
 	version := ""
 	userAgent := ""
+	oldBufferedStream := false
 	if store != nil {
 		if v, err := store.GetConfig("kiro.version"); err == nil {
 			version = strings.TrimSpace(v)
@@ -121,13 +123,84 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		if ua, err := store.GetConfig("kiro.userAgent"); err == nil {
 			userAgent = strings.TrimSpace(ua)
 		}
+		if bs, err := store.GetConfig("kiro.bufferedStream"); err == nil {
+			oldBufferedStream = (bs == "true")
+		}
 	}
 
 	// 应用默认值
 	version = kiroShared.KiroVersionOrDefault(version)
 	userAgent = kiroShared.KiroUserAgentBaseOrDefault(userAgent)
-	// machineId，根据 refreshToken 计算
+
+	// 加载现有凭证
+	var existingCreds *kiroShared.KiroCredentials
+	if creds, err := kiroShared.LoadKiroCredentials(credsPath); err == nil {
+		existingCreds = creds
+	}
+
+	// 检查 refreshToken 是否变化
+	oldRefreshToken := ""
+	if existingCreds != nil {
+		oldRefreshToken = strings.TrimSpace(existingCreds.RefreshToken)
+	}
+	refreshTokenChanged := oldRefreshToken != "" && refreshToken != "" && oldRefreshToken != refreshToken
+
+	// 计算新的 machineId
 	machineID := kiro.ComputeMachineID(refreshToken)
+
+	// 检查 bufferedStream 是否变化
+	bufferedStreamChanged := req.BufferedStream != oldBufferedStream
+
+	// 如果 refreshToken 未变化，检查是否只需要更新 bufferedStream
+	if !refreshTokenChanged && !bufferedStreamChanged {
+		// 配置未变化，直接返回现有信息
+		response := KiroConfigResponse{
+			AccessToken: "",
+			ExpiresAt:   "",
+			ProfileArn:  "",
+			Usage:       nil,
+		}
+		if existingCreds != nil {
+			response.AccessToken = existingCreds.AccessToken
+			if !existingCreds.ExpiresAt.IsZero() {
+				response.ExpiresAt = existingCreds.ExpiresAt.Format(time.RFC3339Nano)
+			}
+			response.ProfileArn = existingCreds.ProfileArn
+		}
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	// 如果只是 bufferedStream 变化，更新配置但不刷新 token
+	if !refreshTokenChanged && bufferedStreamChanged {
+		// 更新 bufferedStream 配置
+		if store != nil {
+			if req.BufferedStream {
+				_ = store.SetConfig("kiro.bufferedStream", "true")
+			} else {
+				_ = store.SetConfig("kiro.bufferedStream", "false")
+			}
+		}
+
+		// 返回现有凭证信息
+		response := KiroConfigResponse{
+			AccessToken: "",
+			ExpiresAt:   "",
+			ProfileArn:  "",
+			Usage:       nil,
+		}
+		if existingCreds != nil {
+			response.AccessToken = existingCreds.AccessToken
+			if !existingCreds.ExpiresAt.IsZero() {
+				response.ExpiresAt = existingCreds.ExpiresAt.Format(time.RFC3339Nano)
+			}
+			response.ProfileArn = existingCreds.ProfileArn
+		}
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	// refreshToken 变化了，需要刷新 token
 
 	// 创建临时凭证用于测试
 	creds := &kiroShared.KiroCredentials{
@@ -204,6 +277,25 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("Failed to save credentials: %v", err),
 		})
 		return
+	}
+
+	// 更新 config.json 中的 machineId 和 bufferedStream
+	if store != nil {
+		// 保存 machineId
+		if err := store.SetConfig("kiro.machineId", machineID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save machine id: %v\n", err)
+		}
+
+		// 保存 bufferedStream
+		if req.BufferedStream {
+			if err := store.SetConfig("kiro.bufferedStream", "true"); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save bufferedStream: %v\n", err)
+			}
+		} else {
+			if err := store.SetConfig("kiro.bufferedStream", "false"); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save bufferedStream: %v\n", err)
+			}
+		}
 	}
 
 	// 触发所有 Kiro Transformer 重新加载配置
@@ -298,4 +390,119 @@ func (p *ProxyServer) ensureKiroEndpoint() error {
 	}
 
 	return nil
+}
+
+// handleKiroGetUsage 处理获取 Kiro 使用量请求
+func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request) {
+	// 仅允许 GET 请求
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 获取配置路径
+	p.mu.RLock()
+	configPath := p.configPath
+	store := p.store
+	p.mu.RUnlock()
+
+	if configPath == "" {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "config path not set",
+		})
+		return
+	}
+
+	// 加载凭证文件
+	credsPath := filepath.Join(filepath.Dir(configPath), "kiro-auth-token.json")
+	creds, err := kiroShared.LoadKiroCredentials(credsPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": fmt.Sprintf("Failed to load credentials: %v", err),
+		})
+		return
+	}
+
+	// 检查 accessToken 是否存在
+	accessToken := strings.TrimSpace(creds.AccessToken)
+	if accessToken == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "No access token available, please configure Kiro first",
+		})
+		return
+	}
+
+	// 获取配置信息
+	region := strings.TrimSpace(creds.Region)
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	profileArn := strings.TrimSpace(creds.ProfileArn)
+	refreshToken := strings.TrimSpace(creds.RefreshToken)
+
+	// 从 storage 读取 version, userAgent, machineId
+	version := ""
+	userAgent := ""
+	machineID := ""
+	if store != nil {
+		if v, err := store.GetConfig("kiro.version"); err == nil {
+			version = strings.TrimSpace(v)
+		}
+		if ua, err := store.GetConfig("kiro.userAgent"); err == nil {
+			userAgent = strings.TrimSpace(ua)
+		}
+		if mid, err := store.GetConfig("kiro.machineId"); err == nil {
+			machineID = strings.TrimSpace(mid)
+		}
+	}
+
+	// 应用默认值
+	version = kiroShared.KiroVersionOrDefault(version)
+	userAgent = kiroShared.KiroUserAgentBaseOrDefault(userAgent)
+
+	// 如果 machineId 为空，从 refreshToken 计算
+	if machineID == "" && refreshToken != "" {
+		machineID = kiro.ComputeMachineID(refreshToken)
+	}
+
+	// 获取使用量信息
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	usageQuery := kiro.UsageQuery{
+		AccessToken:   accessToken,
+		ProfileArn:    profileArn,
+		Region:        region,
+		MachineID:     machineID,
+		UserAgentBase: userAgent,
+		Version:       version,
+	}
+
+	usageResult, err := kiro.FetchUsage(ctx, http.DefaultClient, usageQuery)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": fmt.Sprintf("Failed to fetch usage: %v", err),
+		})
+		return
+	}
+
+	if usageResult == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "No usage data returned",
+		})
+		return
+	}
+
+	// 返回使用量信息
+	response := map[string]interface{}{
+		"subscriptionTitle": usageResult.SubscriptionTitle,
+		"usageLimit":        usageResult.UsageLimit,
+		"currentUsage":      usageResult.CurrentUsage,
+		"balance":           usageResult.Balance,
+		"usagePct":          usageResult.UsagePct,
+		"isLowBalance":      usageResult.IsLowBalance,
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }

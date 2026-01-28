@@ -146,11 +146,22 @@ func main() {
 		}
 		return store.GetConfig(key)
 	})
-	if key, err := store.GetConfig(ConfigKeyAPIKey); err == nil {
-		if key = strings.TrimSpace(key); key != "" {
-			proxyServer.SetAuthKey(key)
+
+	// Load API Key from environment variable (highest priority) or config.json
+	apiKey := strings.TrimSpace(os.Getenv(config.EnvAPIKey))
+	if apiKey == "" {
+		// Fallback to config.json
+		if key, err := store.GetConfig(ConfigKeyAPIKey); err == nil {
+			apiKey = strings.TrimSpace(key)
 		}
 	}
+	if apiKey != "" {
+		proxyServer.SetAuthKey(apiKey)
+		log.Println("API authentication enabled")
+	} else {
+		log.Println("API authentication disabled (no API key configured)")
+	}
+
 	// Load fallback setting from config
 	if fallbackStr, err := store.GetConfig(ConfigKeyFallback); err == nil && strings.TrimSpace(fallbackStr) == "true" {
 		proxyServer.SetFallbackEnabled(true)
@@ -282,9 +293,14 @@ func reloadConfig(store storage.Storage, router *proxy.DefaultRouter, proxyServe
 		if v, err := store.GetConfig(ConfigKeyAPIKey); err != nil {
 			log.Printf("Config reload: failed to read %s: %v (keeping current auth key)", ConfigKeyAPIKey, err)
 		} else {
-			key := strings.TrimSpace(v)
-			proxyServer.SetAuthKey(key)
-			if key == "" {
+			// Environment variable has highest priority
+			apiKey := strings.TrimSpace(os.Getenv(config.EnvAPIKey))
+			if apiKey == "" {
+				// Fallback to config.json
+				apiKey = strings.TrimSpace(v)
+			}
+			proxyServer.SetAuthKey(apiKey)
+			if apiKey == "" {
 				log.Println("Config reload: auth disabled (empty apiKey)")
 			} else {
 				log.Println("Config reload: auth enabled (apiKey set)")
@@ -381,6 +397,7 @@ func printUsage() {
 	fmt.Println("  PORT         - Proxy server port (default: 5600)")
 	fmt.Println("  CONFIG_PATH  - Path to config.json file (highest priority)")
 	fmt.Println("  LISTEN_ADDR  - Listen address (e.g. 0.0.0.0 for Docker)")
+	fmt.Println("  API_KEY      - API key for authentication (highest priority)")
 	fmt.Println("  DATA         - Data dir (fallback config location if no local config.json)")
 	fmt.Println("")
 	fmt.Println("Config path resolution order:")
@@ -390,5 +407,5 @@ func printUsage() {
 	fmt.Println("  4) $DATA/config.json or $HOME/.clisimplehub/config.json (auto-create if missing)")
 	fmt.Println("")
 	fmt.Println("Example:")
-	fmt.Println("  PORT=9090 CONFIG_PATH=/etc/proxy/config.json ./cliSimpleHub-server")
+	fmt.Println("  PORT=9090 API_KEY=secret CONFIG_PATH=/etc/proxy/config.json ./cliSimpleHub-server")
 }
