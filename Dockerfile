@@ -2,8 +2,8 @@ FROM --platform=$BUILDPLATFORM golang:1.21 AS builder
 
 WORKDIR /src
 
-COPY go.mod go.sum ./
-RUN go mod download
+COPY go.mod ./
+RUN GOFLAGS=-mod=mod go mod download && go mod verify
 
 COPY . .
 
@@ -22,4 +22,3 @@ COPY --from=builder /out/cliSimpleHub-server /app/cliSimpleHub-server
 EXPOSE 5600
 
 ENTRYPOINT ["/app/cliSimpleHub-server"]
-
