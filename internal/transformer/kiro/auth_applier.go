@@ -68,7 +68,7 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 	}
 	if fp == "" {
 		// Keep a stable fallback value; Kiro clients typically use a stable 64-hex machine id.
-		fp = "unknown"
+		fp = "33e6db50359eab22e8c82e76d7f9e2f76e16daca79c68c1b1addcb011efe87b5"
 	}
 	fp = kiroShared.TruncateFingerprint(fp, 64)
 
@@ -81,7 +81,7 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 
 	userAgent := strings.TrimSpace(userAgentBase) + " " + strings.TrimSpace(kiroVersion) + "-" + fp
 	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("x-amz-user-agent", kiroShared.DefaultKiroXAmzUserAgentBase+" "+strings.TrimSpace(kiroVersion)+"-"+fp)
+	req.Header.Set("x-amz-user-agent", kiroShared.KiroXAmzUserAgentBase(userAgentBase)+" "+strings.TrimSpace(kiroVersion)+"-"+fp)
 	req.Header.Set("x-amzn-codewhisperer-optout", "true")
 	req.Header.Set("x-amzn-kiro-agent-mode", "vibe")
 	req.Header.Set("amz-sdk-invocation-id", uuid.NewString())

@@ -7,11 +7,9 @@ import (
 
 const (
 	// DefaultKiroUserAgentBase is the default AWS SDK style User-Agent prefix used by Kiro clients.
-	DefaultKiroUserAgentBase = "aws-sdk-js/1.0.27 ua/2.1 os/win32#10.0.22631 lang/js md/nodejs#22.21.1 api/codewhispererstreaming#1.0.27 m/E"
+	DefaultKiroUserAgentBase = "aws-sdk-js/1.0.27 ua/2.1 os/darwin#24.6.0 lang/js md/nodejs#22.21.1 api/codewhispererstreaming#1.0.27 m/E"
 	// DefaultKiroVersion is the default Kiro client version token appended to user agent headers.
 	DefaultKiroVersion = "KiroIDE-0.8.0"
-	// DefaultKiroXAmzUserAgentBase is the default `x-amz-user-agent` base prefix.
-	DefaultKiroXAmzUserAgentBase = "aws-sdk-js/1.0.27"
 )
 
 func KiroUserAgentBaseOrDefault(userAgentBase string) string {
@@ -19,6 +17,17 @@ func KiroUserAgentBaseOrDefault(userAgentBase string) string {
 		return v
 	}
 	return DefaultKiroUserAgentBase
+}
+
+// KiroXAmzUserAgentBase 从完整的 User-Agent 中提取 x-amz-user-agent 基础部分
+// 提取第一个空格之前的部分（例如 "aws-sdk-js/1.0.27"）
+func KiroXAmzUserAgentBase(userAgentBase string) string {
+	fullUA := KiroUserAgentBaseOrDefault(userAgentBase)
+	// 提取第一个空格之前的部分
+	if idx := strings.Index(fullUA, " "); idx > 0 {
+		return fullUA[:idx]
+	}
+	return fullUA
 }
 
 func KiroVersionOrDefault(version string) string {

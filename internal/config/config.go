@@ -67,10 +67,11 @@ type ModelMapping struct {
 
 // KiroConfig represents top-level Kiro settings in config.json.
 type KiroConfig struct {
-	ProxyURL  string `json:"proxyUrl,omitempty"`
-	UserAgent string `json:"userAgent,omitempty"`
-	Version   string `json:"version,omitempty"`
-	MachineID string `json:"machineId,omitempty"`
+	ProxyURL       string `json:"proxyUrl,omitempty"`
+	UserAgent      string `json:"userAgent,omitempty"`
+	Version        string `json:"version,omitempty"`
+	MachineID      string `json:"machineId,omitempty"`
+	BufferedStream bool   `json:"bufferedStream,omitempty"`
 }
 
 // AppConfig represents the complete application configuration

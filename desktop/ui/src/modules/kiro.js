@@ -72,6 +72,7 @@ export async function showKiroConfigModal() {
       document.getElementById('kiroProxyUrl').value = config.proxyUrl || ''
       document.getElementById('kiroUserAgent').value = config.userAgent || ''
       document.getElementById('kiroVersion').value = config.version || ''
+      document.getElementById('kiroBufferedStream').checked = config.bufferedStream || false
       document.getElementById('kiroAuthMethod').value = config.authMethod || 'social'
       document.getElementById('kiroClientId').value = config.clientId || ''
       document.getElementById('kiroClientSecret').value = config.clientSecret || ''
@@ -346,6 +347,7 @@ export async function saveKiroConfig() {
   const proxyUrl = document.getElementById('kiroProxyUrl').value.trim()
   const userAgent = document.getElementById('kiroUserAgent').value.trim()
   const version = document.getElementById('kiroVersion').value.trim()
+  const bufferedStream = document.getElementById('kiroBufferedStream').checked
   const authMethod = document.getElementById('kiroAuthMethod').value.trim()
   const clientId = document.getElementById('kiroClientId').value.trim()
   const clientSecret = document.getElementById('kiroClientSecret').value.trim()
@@ -381,6 +383,7 @@ export async function saveKiroConfig() {
         proxyUrl,
         userAgent,
         version,
+        bufferedStream,
         authMethod,
         clientId,
         clientSecret,

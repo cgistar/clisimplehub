@@ -570,6 +570,14 @@ export function initUI() {
 	                        <input type="text" id="kiroVersion" placeholder="${t('kiro.versionPlaceholder')}">
 	                        <small>${t('kiro.versionHelp')}</small>
 	                    </div>
+	                    <div class="form-group switch-form-group">
+	                        <label class="switch-label-inline">${t('kiro.bufferedStream')}</label>
+	                        <label class="switch">
+	                            <input type="checkbox" id="kiroBufferedStream">
+	                            <span class="slider"></span>
+	                        </label>
+	                        <small>${t('kiro.bufferedStreamHelp')}</small>
+	                    </div>
 	                </div>
 	                <div class="modal-footer">
 	                    <button class="btn btn-secondary" onclick="closeKiroConfigModal()">${t('settings.cancel')}</button>

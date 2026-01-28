@@ -150,6 +150,12 @@ type StreamState struct {
 	// Token 来源追踪（用于调试和日志）
 	InputTokensSource  string // "context_usage" | "estimate" | "api"
 	OutputTokensSource string // "estimate" | "api"
+
+	// 缓冲流式模式相关字段
+	BufferedStreamingEnabled  bool     // 是否启用缓冲流式模式
+	EstimatedInputTokens      int      // 初始估算的 input_tokens（用于回退）
+	BufferedOutputs           []string // 缓冲的 SSE 事件
+	BufferedMessageStartIndex int      // message_start 在缓冲区的位置（-1 表示未找到）
 }
 
 // TokenUsage returns the best-known input/output token counts for this stream.

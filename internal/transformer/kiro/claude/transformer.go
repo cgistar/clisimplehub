@@ -15,6 +15,10 @@ import (
 	"clisimplehub/internal/transformer/shared"
 )
 
+// DefaultContextWindow 是 Claude 模型的默认上下文窗口大小（200k tokens）
+// TODO: 支持不同模型的上下文窗口大小（如 500k, 1M）
+const DefaultContextWindow = 200000
+
 // Global storage accessor - set by proxy server at startup
 var (
 	globalConfigGetter func(key string) (string, error)
@@ -103,6 +107,53 @@ func (t *Transformer) TransformRequest(modelName string, rawJSON []byte, stream 
 	return shared.MarshalNoEscapeHTML(kiroReq)
 }
 
+// newStreamState 创建一个新的 StreamState 实例
+// 提取公共初始化逻辑，避免代码重复
+func newStreamState(modelName string, originalRequestRawJSON []byte) *StreamState {
+	thinkingEnabled := false
+	inputTokens := 0
+
+	// 解析请求以提取 thinking 和 token 信息
+	if len(originalRequestRawJSON) > 0 {
+		inputTokens = EstimateClaudeInputTokens(originalRequestRawJSON)
+		if req, err := shared.DecodeJSONMap(originalRequestRawJSON); err == nil {
+			switch v := req["thinking"].(type) {
+			case map[string]any:
+				if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(v["type"])), "enabled") {
+					thinkingEnabled = true
+				}
+			case string:
+				if strings.EqualFold(strings.TrimSpace(v), "enabled") {
+					thinkingEnabled = true
+				}
+			}
+		}
+	}
+
+	// 读取缓冲流式模式配置
+	bufferedStreamingEnabled := false
+	if bs, err := getConfig("kiro.bufferedStream"); err == nil && bs == "true" {
+		bufferedStreamingEnabled = true
+	}
+
+	return &StreamState{
+		MessageID:                 "msg_kiro_" + shared.RandomSuffix(),
+		Model:                     modelName,
+		Parser:                    kiroresponse.NewEventStreamParser(),
+		CurrentToolBlock:          -1,
+		InputTokens:               inputTokens,
+		ThinkingEnabled:           thinkingEnabled,
+		ThinkingBlockIndex:        -1,
+		SSEStateManager:           kiroresponse.NewSSEStateManager(false),
+		StopReasonManager:         kiroresponse.NewStopReasonManager(),
+		CompletedToolUseIds:       make(map[string]bool),
+		BufferedStreamingEnabled:  bufferedStreamingEnabled,
+		EstimatedInputTokens:      inputTokens,
+		BufferedOutputs:           []string{},
+		BufferedMessageStartIndex: -1,
+	}
+}
+
 // TransformResponseStream transforms Kiro streaming response to Claude SSE format
 func (t *Transformer) TransformResponseStream(
 	ctx context.Context,
@@ -116,79 +167,24 @@ func (t *Transformer) TransformResponseStream(
 
 	// Initialize state on first call
 	if *state == nil {
-		thinkingEnabled := false
-		inputTokens := 0
-		if len(originalRequestRawJSON) > 0 {
-			inputTokens = EstimateClaudeInputTokens(originalRequestRawJSON)
-			if req, err := shared.DecodeJSONMap(originalRequestRawJSON); err == nil {
-				switch v := req["thinking"].(type) {
-				case map[string]any:
-					if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(v["type"])), "enabled") {
-						thinkingEnabled = true
-					}
-				case string:
-					if strings.EqualFold(strings.TrimSpace(v), "enabled") {
-						thinkingEnabled = true
-					}
-				}
-			}
-		}
-
-		*state = &StreamState{
-			MessageID:           "msg_kiro_" + shared.RandomSuffix(),
-			Model:               modelName,
-			Parser:              kiroresponse.NewEventStreamParser(),
-			CurrentToolBlock:    -1,
-			InputTokens:         inputTokens,
-			ThinkingEnabled:     thinkingEnabled,
-			ThinkingBlockIndex:  -1,
-			SSEStateManager:     kiroresponse.NewSSEStateManager(false), // 非严格模式
-			StopReasonManager:   kiroresponse.NewStopReasonManager(),
-			CompletedToolUseIds: make(map[string]bool),
-		}
+		*state = newStreamState(modelName, originalRequestRawJSON)
 	}
 
 	// Type assertion with nil state recovery
 	s, ok := (*state).(*StreamState)
 	if !ok || s == nil {
-		thinkingEnabled := false
-		inputTokens := 0
-		if len(originalRequestRawJSON) > 0 {
-			inputTokens = EstimateClaudeInputTokens(originalRequestRawJSON)
-			if req, err := shared.DecodeJSONMap(originalRequestRawJSON); err == nil {
-				switch v := req["thinking"].(type) {
-				case map[string]any:
-					if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(v["type"])), "enabled") {
-						thinkingEnabled = true
-					}
-				case string:
-					if strings.EqualFold(strings.TrimSpace(v), "enabled") {
-						thinkingEnabled = true
-					}
-				}
-			}
-		}
-
 		// Reinitialize if type assertion fails
-		*state = &StreamState{
-			MessageID:           "msg_kiro_" + shared.RandomSuffix(),
-			Model:               modelName,
-			Parser:              kiroresponse.NewEventStreamParser(),
-			CurrentToolBlock:    -1,
-			InputTokens:         inputTokens,
-			ThinkingEnabled:     thinkingEnabled,
-			ThinkingBlockIndex:  -1,
-			SSEStateManager:     kiroresponse.NewSSEStateManager(false),
-			StopReasonManager:   kiroresponse.NewStopReasonManager(),
-			CompletedToolUseIds: make(map[string]bool),
-		}
-
+		*state = newStreamState(modelName, originalRequestRawJSON)
 		s = (*state).(*StreamState)
 	}
 
 	// Upstream can be true SSE (text/event-stream) or AWS EventStream-like binary.
 	// Do not trim/normalize the raw bytes unless we detected an SSE `data:` payload.
 	if len(rawLine) == 0 {
+		// 流结束信号：在缓冲模式下 flush 所有事件
+		if s.BufferedStreamingEnabled && len(s.BufferedOutputs) > 0 {
+			return flushBufferedStream(s), nil
+		}
 		return nil, nil
 	}
 
@@ -200,6 +196,9 @@ func (t *Transformer) TransformResponseStream(
 		}
 		// SSE end marker used by some gateways.
 		if bytes.Equal(payload, []byte("[DONE]")) {
+			if s.BufferedStreamingEnabled {
+				return flushBufferedStream(s), nil
+			}
 			return FinishStream(s), nil
 		}
 	}
@@ -218,6 +217,21 @@ func (t *Transformer) TransformResponseStream(
 			return nil, err
 		}
 		outputs = append(outputs, lines...)
+	}
+
+	// 缓冲模式：追加到缓冲区而不是直接返回
+	if s.BufferedStreamingEnabled {
+		// 记录 message_start 的位置
+		if s.BufferedMessageStartIndex < 0 {
+			for i, output := range outputs {
+				if strings.Contains(output, "event: message_start\n") {
+					s.BufferedMessageStartIndex = len(s.BufferedOutputs) + i
+					break
+				}
+			}
+		}
+		s.BufferedOutputs = append(s.BufferedOutputs, outputs...)
+		return nil, nil // 不输出，等待流结束
 	}
 
 	return outputs, nil
@@ -419,4 +433,43 @@ func (t *Transformer) ForceRefreshKiroToken() error {
 		return err
 	}
 	return fmt.Errorf("auth manager not initialized")
+}
+
+// flushBufferedStream 在缓冲流式模式结束时，修正 token 并一次性返回所有事件
+func flushBufferedStream(s *StreamState) []string {
+	if s == nil || !s.BufferedStreamingEnabled {
+		return nil
+	}
+
+	// 1. 生成最终事件（message_delta, message_stop）
+	if !s.Finished {
+		finalEvents := FinishStream(s)
+		s.BufferedOutputs = append(s.BufferedOutputs, finalEvents...)
+	}
+
+	// 2. 计算最终的 input_tokens（优先使用 contextUsageEvent 计算的值）
+	finalInputTokens := s.InputTokens
+	if s.ContextUsagePct > 0 {
+		// contextUsageEvent 提供了精确值
+		finalInputTokens = int(s.ContextUsagePct * DefaultContextWindow / 100)
+	} else if finalInputTokens == 0 {
+		// 回退到估算值
+		finalInputTokens = s.EstimatedInputTokens
+	}
+
+	// 3. 回溯修正 message_start 中的 input_tokens
+	if s.BufferedMessageStartIndex >= 0 && s.BufferedMessageStartIndex < len(s.BufferedOutputs) {
+		// 重新生成 message_start 事件（使用现有的 buildMessageStart 函数）
+		correctedMessageStart := buildMessageStart(s.MessageID, s.Model, finalInputTokens)
+		s.BufferedOutputs[s.BufferedMessageStartIndex] = correctedMessageStart
+	} else if len(s.BufferedOutputs) > 0 {
+		// message_start 未找到，在开头插入
+		correctedMessageStart := buildMessageStart(s.MessageID, s.Model, finalInputTokens)
+		s.BufferedOutputs = append([]string{correctedMessageStart}, s.BufferedOutputs...)
+	}
+
+	// 4. 返回所有缓冲事件
+	result := s.BufferedOutputs
+	s.BufferedOutputs = nil // 清空缓冲区
+	return result
 }

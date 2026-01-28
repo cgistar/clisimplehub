@@ -19,17 +19,18 @@ import (
 
 // KiroConfig represents Kiro-specific configuration
 type KiroConfig struct {
-	RefreshToken string `json:"refreshToken"`
-	ProfileArn   string `json:"profileArn"`
-	Region       string `json:"region"`
-	ProxyURL     string `json:"proxyUrl"`
-	UserAgent    string `json:"userAgent"`
-	Version      string `json:"version"`
-	AuthMethod   string `json:"authMethod"`
-	ClientId     string `json:"clientId"`
-	ClientSecret string `json:"clientSecret"`
-	AccessToken  string `json:"accessToken,omitempty"`
-	ExpiresAt    string `json:"expiresAt,omitempty"`
+	RefreshToken   string `json:"refreshToken"`
+	ProfileArn     string `json:"profileArn"`
+	Region         string `json:"region"`
+	ProxyURL       string `json:"proxyUrl"`
+	UserAgent      string `json:"userAgent"`
+	Version        string `json:"version"`
+	BufferedStream bool   `json:"bufferedStream"`
+	AuthMethod     string `json:"authMethod"`
+	ClientId       string `json:"clientId"`
+	ClientSecret   string `json:"clientSecret"`
+	AccessToken    string `json:"accessToken,omitempty"`
+	ExpiresAt      string `json:"expiresAt,omitempty"`
 }
 
 func (a *App) getKiroAuthTokenPath() string {
@@ -78,6 +79,9 @@ func (a *App) GetKiroConfig() (*KiroConfig, error) {
 	}
 	if v, err := a.storage.GetConfig("kiro.version"); err == nil {
 		config.Version = v
+	}
+	if bs, err := a.storage.GetConfig("kiro.bufferedStream"); err == nil {
+		config.BufferedStream = bs == "true"
 	}
 
 	return config, nil
@@ -187,6 +191,9 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 	}
 	if err := a.storage.SetConfig("kiro.version", config.Version); err != nil {
 		return fmt.Errorf("failed to save version: %w", err)
+	}
+	if err := a.storage.SetConfig("kiro.bufferedStream", fmt.Sprintf("%v", config.BufferedStream)); err != nil {
+		return fmt.Errorf("failed to save buffered stream: %w", err)
 	}
 
 	return nil
