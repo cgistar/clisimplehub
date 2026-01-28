@@ -98,7 +98,70 @@ CLI API服务简易切换器
 
 无头模式允许在没有图形界面的环境（如服务器、Docker）中运行代理服务。
 
-### 启动无头模式
+### Docker 部署（推荐）
+
+#### 1. 准备工作
+
+在项目根目录创建数据目录并设置权限：
+
+```bash
+# 方式 1：修改目录所有者为 UID 1000（推荐）
+mkdir -p ./data
+sudo chown -R 1000:1000 ./data
+```
+
+**权限说明**：
+- 容器内以 `appuser` (UID 1000) 运行
+- 方式 1 更安全，确保只有 UID 1000 可以写入
+- 方式 2 允许所有用户写入，适合测试环境
+
+#### 2. 构建并启动容器
+
+```bash
+# 使用 docker-compose 启动
+docker-compose up -d --build
+
+# 查看日志
+docker-compose logs -f
+
+# 停止服务
+docker-compose down
+```
+
+#### 3. 配置说明
+
+编辑 `docker-compose.yml` 设置环境变量：
+
+```yaml
+services:
+  clisimplehub-server:
+    environment:
+      PORT: "5600"
+      LISTEN_ADDR: "0.0.0.0"
+      DATA: "/data"
+      API_KEY: "your-secret-key-here"  # 取消注释并设置您的 API Key
+    volumes:
+      - ./data:/data  # 配置文件将保存在 ./data 目录
+```
+
+**重要提示**：
+- ✅ 首次启动前必须创建 `./data` 目录
+- ✅ 配置文件会自动创建在 `./data/config.json`
+- ✅ 统计数据保存在 `./data/data.sqlite`
+- ⚠️ 生产环境强烈建议设置 `API_KEY` 环境变量
+
+#### 4. 验证部署
+
+```bash
+# 检查服务状态
+curl http://localhost:5600/health
+
+# 测试 API（需要 API Key）
+curl http://localhost:5600/kiro/getUsage \
+  -H "Authorization: Bearer your-secret-key"
+```
+
+### 本地启动无头模式
 
 ```bash
 # 使用默认配置启动

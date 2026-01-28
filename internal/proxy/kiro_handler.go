@@ -151,29 +151,24 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	// 检查 bufferedStream 是否变化
 	bufferedStreamChanged := req.BufferedStream != oldBufferedStream
 
-	// 如果 refreshToken 未变化，检查是否只需要更新 bufferedStream
-	if !refreshTokenChanged && !bufferedStreamChanged {
-		// 配置未变化，直接返回现有信息
-		response := KiroConfigResponse{
-			AccessToken: "",
-			ExpiresAt:   "",
-			ProfileArn:  "",
-			Usage:       nil,
-		}
-		if existingCreds != nil {
-			response.AccessToken = existingCreds.AccessToken
+	// 如果 refreshToken 未变化且存在有效凭证，检查是否只需要更新 bufferedStream
+	if !refreshTokenChanged && existingCreds != nil && existingCreds.AccessToken != "" {
+		if !bufferedStreamChanged {
+			// 配置未变化，直接返回现有信息
+			response := KiroConfigResponse{
+				AccessToken: existingCreds.AccessToken,
+				ExpiresAt:   "",
+				ProfileArn:  existingCreds.ProfileArn,
+				Usage:       nil,
+			}
 			if !existingCreds.ExpiresAt.IsZero() {
 				response.ExpiresAt = existingCreds.ExpiresAt.Format(time.RFC3339Nano)
 			}
-			response.ProfileArn = existingCreds.ProfileArn
+			writeJSON(w, http.StatusOK, response)
+			return
 		}
-		writeJSON(w, http.StatusOK, response)
-		return
-	}
 
-	// 如果只是 bufferedStream 变化，更新配置但不刷新 token
-	if !refreshTokenChanged && bufferedStreamChanged {
-		// 更新 bufferedStream 配置
+		// 如果只是 bufferedStream 变化，更新配置但不刷新 token
 		if store != nil {
 			if req.BufferedStream {
 				_ = store.SetConfig("kiro.bufferedStream", "true")
@@ -184,23 +179,19 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 
 		// 返回现有凭证信息
 		response := KiroConfigResponse{
-			AccessToken: "",
+			AccessToken: existingCreds.AccessToken,
 			ExpiresAt:   "",
-			ProfileArn:  "",
+			ProfileArn:  existingCreds.ProfileArn,
 			Usage:       nil,
 		}
-		if existingCreds != nil {
-			response.AccessToken = existingCreds.AccessToken
-			if !existingCreds.ExpiresAt.IsZero() {
-				response.ExpiresAt = existingCreds.ExpiresAt.Format(time.RFC3339Nano)
-			}
-			response.ProfileArn = existingCreds.ProfileArn
+		if !existingCreds.ExpiresAt.IsZero() {
+			response.ExpiresAt = existingCreds.ExpiresAt.Format(time.RFC3339Nano)
 		}
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
 
-	// refreshToken 变化了，需要刷新 token
+	// refreshToken 变化了，或者没有有效凭证，需要刷新 token
 
 	// 创建临时凭证用于测试
 	creds := &kiroShared.KiroCredentials{
@@ -215,8 +206,22 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	mgr := kiroClaude.NewKiroAuthManager(creds, "", strings.TrimSpace(req.ProxyURL), version)
 	accessToken, err := mgr.ForceRefresh()
 	if err != nil {
+		// 记录详细错误信息
+		fmt.Fprintf(os.Stderr, "Kiro token refresh failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Request details: authMethod=%s, region=%s, clientId=%s\n",
+			authMethod, region, req.ClientId)
+
 		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
 			"error": fmt.Sprintf("Failed to refresh token: %v", err),
+		})
+		return
+	}
+
+	// 检查 accessToken 是否为空
+	if accessToken == "" {
+		fmt.Fprintf(os.Stderr, "Warning: accessToken is empty after refresh\n")
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "Access token is empty after refresh",
 		})
 		return
 	}
