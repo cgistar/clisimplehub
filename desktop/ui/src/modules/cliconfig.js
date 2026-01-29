@@ -80,7 +80,7 @@ async function loadClaudeConfig() {
         editorFiles[f.name] = f.content;
     });
 
-    renderCLIConfigEditor('claude', result.files);
+    await renderCLIConfigEditor('claude', result.files);
 }
 
 /**
@@ -104,22 +104,34 @@ async function loadCodexConfig() {
         editorFiles[f.name] = f.content;
     });
 
-    renderCLIConfigEditor('codex', result.files);
+    await renderCLIConfigEditor('codex', result.files);
 }
 
 /**
  * Render CLI config editor content
  */
-function renderCLIConfigEditor(type, files) {
+async function renderCLIConfigEditor(type, files) {
     const modal = document.getElementById('cliConfigModal');
     const title = type === 'claude' ? 'Claude Code' : 'Codex';
 
-    // Generate IP options
+    // Get saved listen address from settings
+    let savedListenAddr = '127.0.0.1'; // Default
+    try {
+        const settings = await window.go.main.App.GetSettings();
+        if (settings && settings.listenAddr) {
+            savedListenAddr = settings.listenAddr;
+        }
+    } catch (error) {
+        console.error('Failed to get settings:', error);
+    }
+
+    // Generate IP options with saved IP selected
     let ipOptionsHtml = localIPs.map(ip => {
         const label = ip.interface === 'localhost'
             ? `${ip.ip} (${t('cliConfig.localhost')})`
             : `${ip.ip} (${ip.interface})`;
-        return `<option value="${ip.ip}">${label}</option>`;
+        const selected = ip.ip === savedListenAddr ? ' selected' : '';
+        return `<option value="${ip.ip}"${selected}>${label}</option>`;
     }).join('');
 
     let editorsHtml = '';
@@ -206,11 +218,25 @@ export async function saveCLIConfig() {
             await window.go.main.App.SaveCodexConfig(files['config.toml'], files['auth.json']);
         }
 
-        // Save selected IP address as listen address
+        // Save listen address based on selected IP
         const ipSelect = document.getElementById('cliConfigIPSelect');
         if (ipSelect && ipSelect.value) {
+            const selectedIP = ipSelect.value;
+            let listenAddr;
+
+            // If 127.0.0.1 is selected, save as 127.0.0.1
+            // Otherwise, save as 0.0.0.0 (listen on all interfaces)
+            if (selectedIP === '127.0.0.1') {
+                listenAddr = '127.0.0.1';
+            } else if (selectedIP === '::1') {
+                listenAddr = '::1';
+            } else {
+                // For any other IP (including LAN IPs), save as 0.0.0.0
+                listenAddr = '0.0.0.0';
+            }
+
             try {
-                await window.go.main.App.SaveListenAddr(ipSelect.value);
+                await window.go.main.App.SaveListenAddr(listenAddr);
             } catch (error) {
                 console.error('Failed to save listen address:', error);
                 // Don't fail the entire save operation if listen address save fails
@@ -252,20 +278,60 @@ export async function processCLIConfig() {
         if (currentEditorType === 'claude') {
             const processed = await window.go.main.App.ProcessClaudeConfigWithIP(files['settings.json'], selectedIP);
 
-            // Update textarea
-            const ta = document.querySelector('[data-filename="settings.json"]');
+            // Update editorFiles with processed content
+            editorFiles['settings.json'] = processed;
+
+            // Update textarea directly without re-rendering modal
+            const ta = document.querySelector('.cli-config-textarea[data-filename="settings.json"]');
             if (ta) {
+                // Store cursor position
+                const cursorPos = ta.selectionStart;
+                const scrollPos = ta.scrollTop;
+
+                // Update content
                 ta.value = processed;
+
+                // Force browser to recognize the change
+                ta.dispatchEvent(new Event('input', { bubbles: true }));
+                ta.dispatchEvent(new Event('change', { bubbles: true }));
+
+                // Restore cursor and scroll position
+                ta.selectionStart = cursorPos;
+                ta.selectionEnd = cursorPos;
+                ta.scrollTop = scrollPos;
+            } else {
+                showError(t('cliConfig.processFailed') + ': Textarea element not found');
+                return;
             }
         } else if (currentEditorType === 'codex') {
             const result = await window.go.main.App.ProcessCodexConfigWithIP(files['config.toml'], files['auth.json'], selectedIP);
 
-            // Update textareas
-            const configTa = document.querySelector('[data-filename="config.toml"]');
-            const authTa = document.querySelector('[data-filename="auth.json"]');
+            // Update editorFiles with processed content
+            editorFiles['config.toml'] = result.configToml;
+            editorFiles['auth.json'] = result.authJson;
 
-            if (configTa) configTa.value = result.configToml;
-            if (authTa) authTa.value = result.authJson;
+            // Update textareas directly without re-rendering modal
+            const configTa = document.querySelector('.cli-config-textarea[data-filename="config.toml"]');
+            const authTa = document.querySelector('.cli-config-textarea[data-filename="auth.json"]');
+
+            if (configTa) {
+                const cursorPos = configTa.selectionStart;
+                const scrollPos = configTa.scrollTop;
+                configTa.value = result.configToml;
+                configTa.dispatchEvent(new Event('input', { bubbles: true }));
+                configTa.selectionStart = cursorPos;
+                configTa.selectionEnd = cursorPos;
+                configTa.scrollTop = scrollPos;
+            }
+            if (authTa) {
+                const cursorPos = authTa.selectionStart;
+                const scrollPos = authTa.scrollTop;
+                authTa.value = result.authJson;
+                authTa.dispatchEvent(new Event('input', { bubbles: true }));
+                authTa.selectionStart = cursorPos;
+                authTa.selectionEnd = cursorPos;
+                authTa.scrollTop = scrollPos;
+            }
         }
 
         // Update proxy status after processing

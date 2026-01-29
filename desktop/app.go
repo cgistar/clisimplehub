@@ -28,10 +28,11 @@ import (
 
 // Settings represents the application settings exposed to frontend
 type Settings struct {
-	Port      int    `json:"port"`
-	APIKey    string `json:"apiKey"`
-	Fallback  bool   `json:"fallback"`
-	DebugMode string `json:"debugMode,omitempty"`
+	Port       int    `json:"port"`
+	APIKey     string `json:"apiKey"`
+	Fallback   bool   `json:"fallback"`
+	DebugMode  string `json:"debugMode,omitempty"`
+	ListenAddr string `json:"listenAddr,omitempty"`
 }
 
 // EndpointInfo represents endpoint information for frontend display
@@ -124,10 +125,11 @@ func (a *App) GetSettings() (*Settings, error) {
 	}
 
 	settings := &Settings{
-		Port:      5600, // Default port
-		APIKey:    "",
-		Fallback:  false, // Default fallback disabled
-		DebugMode: "",
+		Port:       5600, // Default port
+		APIKey:     "",
+		Fallback:   false, // Default fallback disabled
+		DebugMode:  "",
+		ListenAddr: "127.0.0.1", // Default to localhost
 	}
 
 	// Get port from storage
@@ -154,6 +156,12 @@ func (a *App) GetSettings() (*Settings, error) {
 	debugMode, err := a.storage.GetConfig(ConfigKeyDebugMode)
 	if err == nil {
 		settings.DebugMode = debugMode
+	}
+
+	// Get listen address from storage
+	listenAddr, err := a.storage.GetConfig(ConfigKeyListenAddr)
+	if err == nil && listenAddr != "" {
+		settings.ListenAddr = listenAddr
 	}
 
 	return settings, nil
