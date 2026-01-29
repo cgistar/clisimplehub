@@ -36,17 +36,18 @@ function getWebDAVConfig() {
  * Show WebDAV sync modal
  */
 export async function showWebDAVModal() {
-    // Load existing WebDAV settings from state or localStorage
-    const savedSettings = localStorage.getItem('webdavSettings');
-    if (savedSettings) {
-        try {
-            const settings = JSON.parse(savedSettings);
-            webdavState.serverUrl = settings.serverUrl || '';
-            webdavState.username = settings.username || '';
-            webdavState.password = settings.password || '';
-        } catch (e) {
-            console.error('Failed to parse saved WebDAV settings:', e);
+    // Load existing WebDAV settings from backend config.json
+    try {
+        if (window.go?.main?.App?.GetWebDAVConfig) {
+            const settings = await window.go.main.App.GetWebDAVConfig();
+            if (settings) {
+                webdavState.serverUrl = settings.serverUrl || '';
+                webdavState.username = settings.username || '';
+                webdavState.password = settings.password || '';
+            }
         }
+    } catch (e) {
+        console.error('Failed to load WebDAV settings from backend:', e);
     }
 
     // Populate form fields
@@ -180,6 +181,8 @@ export async function backupToWebDAV() {
             throw new Error(result.error);
         } else if (result.statusCode >= 200 && result.statusCode < 300) {
             showSuccess(`配置已备份: ${filename}`);
+            // Save WebDAV settings to config.json after successful backup
+            await saveWebDAVSettings(config.serverUrl, config.username, config.password);
             // Refresh backups list
             await loadBackupsList();
         } else {
@@ -451,18 +454,24 @@ export async function deleteBackupFromWebDAV(filename) {
 }
 
 /**
- * Save WebDAV settings to localStorage
+ * Save WebDAV settings to config.json via backend
  */
-function saveWebDAVSettings(serverUrl, username, password) {
+async function saveWebDAVSettings(serverUrl, username, password) {
     webdavState.serverUrl = serverUrl;
     webdavState.username = username;
     webdavState.password = password;
 
-    localStorage.setItem('webdavSettings', JSON.stringify({
-        serverUrl,
-        username,
-        password
-    }));
+    try {
+        if (window.go?.main?.App?.SaveWebDAVConfig) {
+            await window.go.main.App.SaveWebDAVConfig({
+                serverUrl,
+                username,
+                password
+            });
+        }
+    } catch (error) {
+        console.error('Failed to save WebDAV settings to backend:', error);
+    }
 }
 
 /**

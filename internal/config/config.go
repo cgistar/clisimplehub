@@ -76,10 +76,18 @@ type KiroConfig struct {
 	BufferedStream bool   `json:"bufferedStream,omitempty"`
 }
 
+// WebDAVConfig represents WebDAV sync settings in config.json.
+type WebDAVConfig struct {
+	ServerURL string `json:"serverUrl,omitempty"`
+	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
+}
+
 // AppConfig represents the complete application configuration
 type AppConfig struct {
 	AppConfigKV map[string]interface{} `json:"appConfig,omitempty"`
 	Kiro        *KiroConfig            `json:"kiro,omitempty"`
+	WebDAV      *WebDAVConfig          `json:"webdav,omitempty"`
 	Vendors     []VendorConfig         `json:"vendors"`
 	Endpoints   []EndpointConfig       `json:"endpoints,omitempty"`
 }

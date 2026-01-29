@@ -28,6 +28,15 @@ func kiroAllEmpty(cfg *config.KiroConfig) bool {
 		!cfg.BufferedStream
 }
 
+func webdavAllEmpty(cfg *config.WebDAVConfig) bool {
+	if cfg == nil {
+		return true
+	}
+	return strings.TrimSpace(cfg.ServerURL) == "" &&
+		strings.TrimSpace(cfg.Username) == "" &&
+		strings.TrimSpace(cfg.Password) == ""
+}
+
 func NewConfigFileStore(loader *config.ConfigLoader) (*ConfigFileStore, error) {
 	if loader == nil {
 		return nil, errors.New("config loader is nil")
@@ -324,6 +333,18 @@ func (s *ConfigFileStore) GetConfig(key string) (string, error) {
 			}
 			return "false", nil
 		}
+	case "webdav.serverUrl":
+		if cfg.WebDAV != nil {
+			return cfg.WebDAV.ServerURL, nil
+		}
+	case "webdav.username":
+		if cfg.WebDAV != nil {
+			return cfg.WebDAV.Username, nil
+		}
+	case "webdav.password":
+		if cfg.WebDAV != nil {
+			return cfg.WebDAV.Password, nil
+		}
 	}
 
 	if cfg.AppConfigKV == nil {
@@ -405,6 +426,33 @@ func (s *ConfigFileStore) SetConfig(key, value string) error {
 		cfg.Kiro.BufferedStream = value == "true"
 		if kiroAllEmpty(cfg.Kiro) {
 			cfg.Kiro = nil
+		}
+		return s.saveLocked(cfg)
+	case "webdav.serverUrl":
+		if cfg.WebDAV == nil {
+			cfg.WebDAV = &config.WebDAVConfig{}
+		}
+		cfg.WebDAV.ServerURL = strings.TrimSpace(value)
+		if webdavAllEmpty(cfg.WebDAV) {
+			cfg.WebDAV = nil
+		}
+		return s.saveLocked(cfg)
+	case "webdav.username":
+		if cfg.WebDAV == nil {
+			cfg.WebDAV = &config.WebDAVConfig{}
+		}
+		cfg.WebDAV.Username = strings.TrimSpace(value)
+		if webdavAllEmpty(cfg.WebDAV) {
+			cfg.WebDAV = nil
+		}
+		return s.saveLocked(cfg)
+	case "webdav.password":
+		if cfg.WebDAV == nil {
+			cfg.WebDAV = &config.WebDAVConfig{}
+		}
+		cfg.WebDAV.Password = value
+		if webdavAllEmpty(cfg.WebDAV) {
+			cfg.WebDAV = nil
 		}
 		return s.saveLocked(cfg)
 	}

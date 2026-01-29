@@ -37,7 +37,7 @@ type ProxyServer struct {
 func NewProxyServer(port int, router Router) *ProxyServer {
 	return &ProxyServer{
 		port:       port,
-		listenAddr: "127.0.0.1", // Default to localhost for security
+		listenAddr: "0.0.0.0",
 		router:     router,
 		stats:      NewStatsManager(),
 	}
@@ -51,7 +51,7 @@ func NewProxyServerWithWSHub(port int, router Router, wsHub *WSHub) *ProxyServer
 
 	return &ProxyServer{
 		port:       port,
-		listenAddr: "127.0.0.1", // Default to localhost for security
+		listenAddr: "0.0.0.0",
 		router:     router,
 		stats:      stats,
 		wsHub:      wsHub,
@@ -114,10 +114,10 @@ func (p *ProxyServer) Start() error {
 		mux.HandleFunc("/ws", p.wsHub.HandleWebSocket)
 	}
 
-	// Get listen address (default to 127.0.0.1 if not set)
+	// Get listen address (default to 0.0.0.0 if not set)
 	listenAddr := p.GetListenAddr()
 	if listenAddr == "" {
-		listenAddr = "127.0.0.1"
+		listenAddr = "0.0.0.0"
 	}
 
 	p.server = &http.Server{

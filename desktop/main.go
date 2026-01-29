@@ -107,11 +107,10 @@ func main() {
 	}
 
 	// Load listen address configuration
-	// Default to 127.0.0.1 for security (localhost only)
-	listenAddr := "127.0.0.1"
+	listenAddr := "0.0.0.0"
 	if savedAddr, err := store.GetConfig(ConfigKeyListenAddr); err == nil && savedAddr != "" {
 		if err := config.ValidateListenAddr(savedAddr); err != nil {
-			log.Printf("Warning: Invalid listen address '%s': %v, using default 127.0.0.1", savedAddr, err)
+			log.Printf("Warning: Invalid listen address '%s': %v, using default 0.0.0.0", savedAddr, err)
 		} else {
 			listenAddr = savedAddr
 			log.Printf("Using listen address from config: %s", listenAddr)

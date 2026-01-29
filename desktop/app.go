@@ -129,7 +129,7 @@ func (a *App) GetSettings() (*Settings, error) {
 		APIKey:     "",
 		Fallback:   false, // Default fallback disabled
 		DebugMode:  "",
-		ListenAddr: "127.0.0.1", // Default to localhost
+		ListenAddr: "0.0.0.0",
 	}
 
 	// Get port from storage
@@ -2939,4 +2939,54 @@ func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 		}
 	}
 	return result
+}
+
+// WebDAVConfigInfo represents WebDAV configuration for frontend
+type WebDAVConfigInfo struct {
+	ServerURL string `json:"serverUrl"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+}
+
+// GetWebDAVConfig retrieves WebDAV configuration
+func (a *App) GetWebDAVConfig() (*WebDAVConfigInfo, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+
+	config := &WebDAVConfigInfo{}
+
+	if serverUrl, err := a.storage.GetConfig("webdav.serverUrl"); err == nil {
+		config.ServerURL = serverUrl
+	}
+	if username, err := a.storage.GetConfig("webdav.username"); err == nil {
+		config.Username = username
+	}
+	if password, err := a.storage.GetConfig("webdav.password"); err == nil {
+		config.Password = password
+	}
+
+	return config, nil
+}
+
+// SaveWebDAVConfig saves WebDAV configuration
+func (a *App) SaveWebDAVConfig(config *WebDAVConfigInfo) error {
+	if a.storage == nil {
+		return fmt.Errorf("storage not initialized")
+	}
+	if config == nil {
+		return fmt.Errorf("config is nil")
+	}
+
+	if err := a.storage.SetConfig("webdav.serverUrl", config.ServerURL); err != nil {
+		return fmt.Errorf("failed to save server URL: %w", err)
+	}
+	if err := a.storage.SetConfig("webdav.username", config.Username); err != nil {
+		return fmt.Errorf("failed to save username: %w", err)
+	}
+	if err := a.storage.SetConfig("webdav.password", config.Password); err != nil {
+		return fmt.Errorf("failed to save password: %w", err)
+	}
+
+	return nil
 }
