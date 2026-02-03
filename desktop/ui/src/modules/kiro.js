@@ -279,6 +279,51 @@ function formatUsagePct(value) {
   return `${num.toFixed(1)}%`
 }
 
+function normalizeErrorMessage(error) {
+  if (error === undefined || error === null) return ''
+  if (typeof error === 'string') return error
+  if (typeof error?.message === 'string') return error.message
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+function parseKiroUsageHttpError(error) {
+  const message = normalizeErrorMessage(error)
+  const marker = 'KIRO_USAGE_HTTP_ERROR:'
+  const idx = message.indexOf(marker)
+  if (idx < 0) return null
+
+  const jsonText = message.slice(idx + marker.length).trim()
+  if (!jsonText) return null
+
+  try {
+    const parsed = JSON.parse(jsonText)
+    if (!parsed || typeof parsed !== 'object') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function formatKiroUsageHttpError(detail) {
+  const statusCode = Number(detail?.statusCode)
+  const hasStatusCode = Number.isFinite(statusCode) && statusCode > 0
+  const statusText = hasStatusCode ? `HTTP ${statusCode}` : 'HTTP error'
+
+  const hint = String(detail?.hint || '').trim()
+  const body = String(detail?.body || '').trim()
+
+  let msg = hint || statusText
+  if (hint && hasStatusCode) msg += ` (${statusText})`
+  if (!hint && hasStatusCode) msg = statusText
+  if (body) msg += `: ${body}`
+
+  return msg
+}
+
 export async function fetchKiroUsage() {
   const accessToken = (document.getElementById('kiroAccessToken')?.value || '').trim()
   const refreshToken = (document.getElementById('kiroRefreshToken')?.value || '').trim()
@@ -331,7 +376,9 @@ export async function fetchKiroUsage() {
     logKiroUsageDetails(result)
   } catch (error) {
     console.error('GetKiroUsage error:', error)
-    const msg = t('kiro.usageFailedPrefix') + (error?.message || error || 'Unknown error')
+    const httpDetail = parseKiroUsageHttpError(error)
+    const detailMessage = httpDetail ? formatKiroUsageHttpError(httpDetail) : (normalizeErrorMessage(error) || 'Unknown error')
+    const msg = t('kiro.usageFailedPrefix') + detailMessage
     showError(msg)
     setKiroUsageInfoText(msg)
     logError(`[KiroUsage] ${msg}`)

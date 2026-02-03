@@ -448,7 +448,7 @@ export function initUI() {
                                 <input type="password" id="webdavPassword" placeholder="密码">
                             </div>
                         </div>
-                        <div class="form-row">
+                        <div class="form-row" style="justify-content: flex-end;">
                             <button class="btn btn-primary" onclick="backupToWebDAV()" id="webdavBackupBtn">
                                 💾 备份配置
                             </button>

@@ -237,6 +237,9 @@ class RealTimeManager {
         if (log.status === 'success' || log.statusCode === 200) {
             return 'COMPLETED';
         }
+        if (log.status === 'canceled') {
+            return 'FAILED';
+        }
         if (log.status && log.status.startsWith('error')) {
             return 'FAILED';
         }
