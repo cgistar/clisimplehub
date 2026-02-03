@@ -518,6 +518,12 @@ export function initUI() {
 		                        <input type="password" id="kiroClientSecret" placeholder="${t('kiro.clientSecretPlaceholder')}" oninput="onKiroIdcFieldsInput()">
 		                        <small>${t('kiro.clientSecretHelp')}</small>
 		                    </div>
+		                    <div class="form-group" id="kiroIdcLoginButton" style="display:none;">
+		                        <button type="button" class="btn btn-primary" onclick="startIdcDeviceFlowLogin()" style="width:100%;">
+		                            ${t('kiro.idcLoginButton')}
+		                        </button>
+		                        <small>${t('kiro.idcLoginButtonHelp')}</small>
+		                    </div>
 		                    <div class="form-group">
 		                        <label>${t('kiro.accessToken')}</label>
 		                        <div class="model-input-wrapper">
@@ -584,6 +590,51 @@ export function initUI() {
 	                    <button class="btn btn-primary" id="saveKiroConfigBtn" onclick="saveKiroConfig()">${t(
                         'settings.save',
                       )}</button>
+	                </div>
+	            </div>
+	        </div>
+
+	        <!-- IDC Device Flow Login Modal -->
+	        <div id="idcDeviceFlowModal" class="modal">
+	            <div class="modal-content">
+	                <div class="modal-header">
+	                    <h2>${t('kiro.idcDialogTitle')}</h2>
+	                    <button class="modal-close" onclick="closeIdcDeviceFlowDialog()">&times;</button>
+	                </div>
+	                <div class="modal-body">
+	                    <div class="form-group">
+	                        <label>${t('kiro.idcVerifyUrlLabel')}</label>
+	                        <div class="link-panel">
+	                            <div class="link-text" id="idcVerifyUrl" title="">—</div>
+	                            <div class="link-actions">
+	                                <button type="button" class="btn btn-sm btn-secondary" id="idcCopyLinkBtn" onclick="copyIdcVerifyUrl()" disabled>
+	                                    ${t('kiro.idcCopyLink')}
+	                                </button>
+	                                <button type="button" class="btn btn-sm btn-secondary" id="idcOpenLinkBtn" onclick="openIdcVerifyUrl()" disabled>
+	                                    ${t('kiro.idcOpenLink')}
+	                                </button>
+	                            </div>
+	                        </div>
+	                        <small>${t('kiro.idcVerifyUrlHelp')}</small>
+	                    </div>
+	                    <div class="form-group">
+	                        <div class="status" id="idcStatusBox">
+	                            <div>
+	                                <div style="font-weight:700;font-size:13px">${t('kiro.idcStatusLabel')}</div>
+	                                <div class="muted" id="idcStatusText" style="margin-top:4px">${t('kiro.idcStatusIdle')}</div>
+	                            </div>
+	                            <div class="badge">
+	                                <span class="dot" id="idcStatusDot"></span>
+	                                <span id="idcStatusLabel">IDLE</span>
+	                            </div>
+	                        </div>
+	                    </div>
+	                    <div class="form-group">
+	                        <small class="muted">${t('kiro.idcDialogHelp')}</small>
+	                    </div>
+	                </div>
+	                <div class="modal-footer">
+	                    <button class="btn btn-secondary" onclick="closeIdcDeviceFlowDialog()">${t('kiro.idcDialogClose')}</button>
 	                </div>
 	            </div>
 	        </div>

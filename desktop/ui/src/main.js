@@ -79,7 +79,11 @@ import {
     onKiroAuthMethodChange,
     fetchKiroUsage,
     toggleKiroRegionDropdown,
-    toggleKiroAuthMethodDropdown
+    toggleKiroAuthMethodDropdown,
+    startIdcDeviceFlowLogin,
+    closeIdcDeviceFlowDialog,
+    copyIdcVerifyUrl,
+    openIdcVerifyUrl
 } from './modules/kiro.js';
 
 // Initialize the application
@@ -198,4 +202,8 @@ window.onKiroAuthMethodChange = onKiroAuthMethodChange;
 window.fetchKiroUsage = fetchKiroUsage;
 window.toggleKiroRegionDropdown = toggleKiroRegionDropdown;
 window.toggleKiroAuthMethodDropdown = toggleKiroAuthMethodDropdown;
+window.startIdcDeviceFlowLogin = startIdcDeviceFlowLogin;
+window.closeIdcDeviceFlowDialog = closeIdcDeviceFlowDialog;
+window.copyIdcVerifyUrl = copyIdcVerifyUrl;
+window.openIdcVerifyUrl = openIdcVerifyUrl;
 window.toggleDebugModeDropdown = toggleDebugModeDropdown;

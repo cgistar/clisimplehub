@@ -2769,3 +2769,130 @@ input:disabled + .slider {
 #ipSelectionModal .modal-content {
     max-width: 400px;
 }
+
+/* =============================================================================
+   IDC Device Flow Dialog Styles
+   ============================================================================= */
+.link-panel {
+    position: relative;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    margin-bottom: 8px;
+    transition: all 0.2s ease;
+}
+
+.link-panel:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-color);
+}
+
+.link-text {
+    font-size: 13px;
+    color: var(--text-primary);
+    word-break: break-all;
+    margin-bottom: 8px;
+    font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+}
+
+.link-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.field {
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.field.mono {
+    font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+    font-size: 12px;
+}
+
+.status {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    transition: all 0.3s ease;
+}
+
+.status.ok {
+    border-color: var(--success-color);
+    background: rgba(76, 175, 80, 0.1);
+}
+
+.status.bad {
+    border-color: var(--error-color);
+    background: rgba(244, 67, 54, 0.1);
+}
+
+.status.warn {
+    border-color: var(--warning-color);
+    background: rgba(255, 152, 0, 0.1);
+}
+
+.status .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+}
+
+.status .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    transition: all 0.3s ease;
+}
+
+.status.ok .dot {
+    background: var(--success-color);
+}
+
+.status.bad .dot {
+    background: var(--error-color);
+}
+
+.status.warn .dot {
+    background: var(--warning-color);
+}
+
+.status .dot.ping {
+    animation: ping-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes ping-dot {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.3);
+        opacity: 0.7;
+    }
+}
+
+.muted {
+    color: var(--text-tertiary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
