@@ -83,7 +83,11 @@ import {
     startIdcDeviceFlowLogin,
     closeIdcDeviceFlowDialog,
     copyIdcVerifyUrl,
-    openIdcVerifyUrl
+    openIdcVerifyUrl,
+    startSocialLogin,
+    closeSocialLoginModal,
+    copySocialLoginUrl,
+    openSocialLoginUrl
 } from './modules/kiro.js';
 
 // Initialize the application
@@ -206,4 +210,8 @@ window.startIdcDeviceFlowLogin = startIdcDeviceFlowLogin;
 window.closeIdcDeviceFlowDialog = closeIdcDeviceFlowDialog;
 window.copyIdcVerifyUrl = copyIdcVerifyUrl;
 window.openIdcVerifyUrl = openIdcVerifyUrl;
+window.startSocialLogin = startSocialLogin;
+window.closeSocialLoginModal = closeSocialLoginModal;
+window.copySocialLoginUrl = copySocialLoginUrl;
+window.openSocialLoginUrl = openSocialLoginUrl;
 window.toggleDebugModeDropdown = toggleDebugModeDropdown;

@@ -5,10 +5,46 @@ import { showError, showSuccess } from './utils.js'
 import { t } from '../i18n/index.js'
 import { clearTransformersCache } from './endpoint-form.js'
 import { logError, logKiroUsageDetails } from './console.js'
+import { generateRandomString, generateCodeChallenge, generateUUID } from './utils-crypto.js'
 
 let initialRefreshToken = ''
 let testedRefreshToken = ''
 let testedKiroCreds = null
+
+// Social 登录状态
+const socialLoginState = {
+  provider: '', // 'google' 或 'github'
+  verifier: '', // PKCE code_verifier
+  state: '', // CSRF 防护 state
+  loginUrl: '', // OAuth URL
+  isWaiting: false, // 是否正在等待回调
+  timeoutTimer: null, // 超时定时器
+  originalKiroHandlerBundleId: '', // 登录开始前的 kiro:// 默认 handler（macOS）
+  didOverrideKiroHandler: false, // 本次登录是否临时抢占了 handler
+}
+
+async function isDarwinPlatform() {
+  if (!window.runtime?.Environment) return false
+  try {
+    const env = await window.runtime.Environment()
+    return env?.platform === 'darwin'
+  } catch (e) {
+    console.warn('Failed to detect platform via runtime.Environment:', e)
+    return false
+  }
+}
+
+async function restoreKiroProtocolHandlerIfNeeded() {
+  if (!socialLoginState.didOverrideKiroHandler) return
+  if (!socialLoginState.originalKiroHandlerBundleId) return
+  if (!window.go?.main?.App?.RestoreKiroProtocolHandler) return
+
+  try {
+    await window.go.main.App.RestoreKiroProtocolHandler(socialLoginState.originalKiroHandlerBundleId)
+  } catch (e) {
+    console.warn('RestoreKiroProtocolHandler failed:', e)
+  }
+}
 
 function getKiroUsageInfoEl() {
   return document.getElementById('kiroUsageInfo')
@@ -53,7 +89,7 @@ function trySelectKiroRegion(region) {
   const select = document.getElementById('kiroRegion')
   if (!select) return false
 
-  const hasOption = Array.from(select.options).some(o => o.value === normalized)
+  const hasOption = Array.from(select.options).some((o) => o.value === normalized)
   if (!hasOption) return false
 
   select.value = normalized
@@ -132,6 +168,7 @@ export function onKiroIdcFieldsInput() {
 
 export function onKiroAuthMethodChange() {
   updateIdcFieldsVisibility()
+  updateSocialLoginButtonsVisibility()
   onKiroIdcFieldsInput()
 }
 
@@ -149,6 +186,17 @@ function updateIdcFieldsVisibility() {
     if (idcFields) idcFields.style.display = 'none'
     if (idcSecretField) idcSecretField.style.display = 'none'
     if (idcLoginButton) idcLoginButton.style.display = 'none'
+  }
+}
+
+function updateSocialLoginButtonsVisibility() {
+  const authMethod = (document.getElementById('kiroAuthMethod')?.value || 'social').trim().toLowerCase()
+  const socialButtons = document.getElementById('kiroSocialLoginButtons')
+
+  if (authMethod === 'social') {
+    if (socialButtons) socialButtons.style.display = ''
+  } else {
+    if (socialButtons) socialButtons.style.display = 'none'
   }
 }
 
@@ -380,7 +428,9 @@ export async function fetchKiroUsage() {
   } catch (error) {
     console.error('GetKiroUsage error:', error)
     const httpDetail = parseKiroUsageHttpError(error)
-    const detailMessage = httpDetail ? formatKiroUsageHttpError(httpDetail) : (normalizeErrorMessage(error) || 'Unknown error')
+    const detailMessage = httpDetail
+      ? formatKiroUsageHttpError(httpDetail)
+      : normalizeErrorMessage(error) || 'Unknown error'
     const msg = t('kiro.usageFailedPrefix') + detailMessage
     showError(msg)
     setKiroUsageInfoText(msg)
@@ -474,7 +524,7 @@ function renderKiroRegionDropdown() {
   if (!select || !dropdown) return
 
   dropdown.innerHTML = ''
-  Array.from(select.options).forEach(option => {
+  Array.from(select.options).forEach((option) => {
     const item = document.createElement('div')
     item.className = 'model-dropdown-item'
     if (option.selected) {
@@ -536,7 +586,7 @@ function renderKiroAuthMethodDropdown() {
   if (!select || !dropdown) return
 
   dropdown.innerHTML = ''
-  Array.from(select.options).forEach(option => {
+  Array.from(select.options).forEach((option) => {
     const item = document.createElement('div')
     item.className = 'model-dropdown-item'
     if (option.selected) {
@@ -668,7 +718,7 @@ async function pollIdcTokenOnce() {
       updateIdcDialogStatus(
         'pending',
         `${t('kiro.idcStatusSlowDown')} ${(idcDeviceFlowState.pollIntervalMs / 1000).toFixed(1)}s`,
-        'PENDING'
+        'PENDING',
       )
       return
     }
@@ -874,5 +924,327 @@ export async function openIdcVerifyUrl() {
     // 降级方案：使用普通方式打开
     window.open(idcDeviceFlowState.verifyUrl, '_blank', 'noopener,noreferrer')
     updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING')
+  }
+}
+
+// =============================================================================
+// Social 登录功能 (Google/GitHub OAuth)
+// =============================================================================
+
+/**
+ * 开始 Social 登录流程
+ * @param {string} provider - 'google' 或 'github'
+ */
+export async function startSocialLogin(provider) {
+  try {
+    // 0. 清理旧的监听器（防止重复注册）
+    resetSocialLoginState()
+
+    // 0.1 确保本应用能接收到 kiro:// 回调（macOS 上如果被 kiro.app 抢占，会导致回调落到别的应用）
+    if ((await isDarwinPlatform()) && window.go?.main?.App?.EnsureKiroProtocolHandler) {
+      try {
+        if (window.go?.main?.App?.GetKiroProtocolHandlerStatus) {
+          const existing = await window.go.main.App.GetKiroProtocolHandlerStatus()
+          socialLoginState.originalKiroHandlerBundleId = existing?.defaultHandlerBundleId || ''
+        }
+
+        const status = await window.go.main.App.EnsureKiroProtocolHandler()
+        if (status?.supported === false) {
+          showError(t('kiro.protocolHandlerUnsupported'))
+          return
+        }
+        if (status && !status.isDefaultHandler) {
+          showError(t('kiro.protocolHandlerNotDefault'))
+          return
+        }
+        socialLoginState.didOverrideKiroHandler =
+          !!socialLoginState.originalKiroHandlerBundleId &&
+          !!status?.ourBundleId &&
+          socialLoginState.originalKiroHandlerBundleId !== status.ourBundleId
+      } catch (e) {
+        console.warn('EnsureKiroProtocolHandler failed:', e)
+        showError(t('kiro.protocolHandlerSetFailed') + ': ' + (e?.message || e))
+        return
+      }
+    }
+
+    // 1. 生成 PKCE 参数
+    const verifier = generateRandomString(128)
+    const challenge = await generateCodeChallenge(verifier)
+    const state = generateUUID()
+
+    // 2. 构建 OAuth URL
+    const redirectUri = 'kiro://kiro.kiroAgent/authenticate-success'
+    const loginUrl =
+      `https://prod.us-east-1.auth.desktop.kiro.dev/login?` +
+      `idp=${provider}&` +
+      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+      `code_challenge=${challenge}&` +
+      `code_challenge_method=S256&` +
+      `state=${state}`
+
+    // 3. 保存状态
+    socialLoginState.provider = provider
+    socialLoginState.verifier = verifier
+    socialLoginState.state = state
+    socialLoginState.loginUrl = loginUrl
+    socialLoginState.isWaiting = true
+
+    // 4. 显示等待 Modal
+    showSocialLoginModal()
+
+    // 5. 打开浏览器（带降级方案）
+    try {
+      if (window.go?.main?.App?.OpenURLInIncognito) {
+        await window.go.main.App.OpenURLInIncognito(loginUrl)
+      } else {
+        window.open(loginUrl, '_blank', 'noopener,noreferrer')
+      }
+    } catch (browserError) {
+      console.warn('Failed to open browser, falling back to window.open:', browserError)
+      window.open(loginUrl, '_blank', 'noopener,noreferrer')
+    }
+
+    // 6. 开始监听 deeplink 回调
+    startDeeplinkListener()
+
+    // 7. 设置超时定时器（5 分钟）
+    socialLoginState.timeoutTimer = setTimeout(
+      () => {
+        if (socialLoginState.isWaiting) {
+          console.warn('Social login timeout after 5 minutes')
+          showError(t('kiro.socialLoginTimeout'))
+          closeSocialLoginModal()
+        }
+      },
+      5 * 60 * 1000,
+    ) // 5 分钟
+  } catch (error) {
+    console.error('Failed to start social login:', error)
+    showError(t('kiro.socialLoginFailed') + ': ' + (error?.message || error))
+    closeSocialLoginModal()
+  }
+}
+
+/**
+ * 监听 deeplink 回调
+ */
+function startDeeplinkListener() {
+  // 使用 Wails 的事件系统
+  if (window.runtime?.EventsOn) {
+    window.runtime.EventsOn('deeplink-callback', handleDeeplinkCallback)
+  }
+}
+
+/**
+ * 处理 deeplink 回调
+ * @param {string} url - deeplink URL
+ */
+async function handleDeeplinkCallback(url) {
+  try {
+    console.log('Deeplink callback received:', url)
+
+    // 1. 解析 URL
+    const urlObj = new URL(url)
+    const code = urlObj.searchParams.get('code')
+    const state = urlObj.searchParams.get('state')
+
+    // 2. 验证 state（防止 CSRF）
+    if (state !== socialLoginState.state) {
+      throw new Error('State mismatch - possible CSRF attack')
+    }
+
+    if (!code) {
+      throw new Error('No authorization code received')
+    }
+
+    // 3. 交换 token（获取完整响应）
+    const tokenResponse = await exchangeCodeForToken(code)
+
+    // 4. 回填到配置表单
+    const refreshTokenEl = document.getElementById('kiroRefreshToken')
+    const accessTokenEl = document.getElementById('kiroAccessToken')
+    const profileArnEl = document.getElementById('kiroProfileArn')
+
+    if (refreshTokenEl && tokenResponse.refreshToken) {
+      refreshTokenEl.value = tokenResponse.refreshToken
+    }
+    if (accessTokenEl && tokenResponse.accessToken) {
+      accessTokenEl.value = tokenResponse.accessToken
+    }
+    if (profileArnEl && tokenResponse.profileArn) {
+      profileArnEl.value = tokenResponse.profileArn
+    }
+
+    // 5. 更新 testedKiroCreds 以便保存
+    const regionEl = document.getElementById('kiroRegion')
+    const region = regionEl?.value || 'us-east-1'
+
+    testedRefreshToken = tokenResponse.refreshToken || ''
+    testedKiroCreds = {
+      accessToken: tokenResponse.accessToken || '',
+      refreshToken: tokenResponse.refreshToken || '',
+      expiresAt: tokenResponse.expiresAt || '',
+      profileArn: tokenResponse.profileArn || '',
+      region: region,
+      authMethod: 'social',
+      clientId: '',
+      clientSecret: '',
+    }
+
+    // 6. 尝试从 profileArn 提取 region 并更新
+    if (tokenResponse.profileArn) {
+      const regionFromArn = extractRegionFromProfileArn(tokenResponse.profileArn)
+      if (regionFromArn && trySelectKiroRegion(regionFromArn) && testedKiroCreds) {
+        testedKiroCreds.region = regionFromArn
+      }
+    }
+
+    // 7. 更新按钮状态
+    updateKiroConfigButtons()
+
+    // 8. 登录成功后恢复 kiro:// 默认 handler（避免长期抢占）
+    await restoreKiroProtocolHandlerIfNeeded()
+
+    // 8. 关闭 Modal 并显示成功
+    closeSocialLoginModal()
+    showSuccess(t('kiro.socialLoginSuccess'))
+
+    // 9. 清理状态
+    resetSocialLoginState()
+  } catch (error) {
+    console.error('Deeplink callback error:', error)
+    showError(t('kiro.socialLoginFailed') + ': ' + (error?.message || error))
+    closeSocialLoginModal()
+  }
+}
+
+/**
+ * 交换授权码获取 token
+ * @param {string} code - 授权码
+ * @returns {Promise<Object>} Token 响应对象
+ */
+async function exchangeCodeForToken(code) {
+  const response = await fetch('https://prod.us-east-1.auth.desktop.kiro.dev/oauth/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      code: code,
+      code_verifier: socialLoginState.verifier,
+      redirect_uri: 'kiro://kiro.kiroAgent/authenticate-success',
+    }),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Token exchange failed: ${response.status} - ${errorText}`)
+  }
+
+  const data = await response.json()
+
+  // 返回完整的 token 响应（支持 snake_case 和 camelCase）
+  return {
+    accessToken: data.access_token || data.accessToken || '',
+    refreshToken: data.refresh_token || data.refreshToken || '',
+    profileArn: data.profile_arn || data.profileArn || '',
+    expiresIn: data.expires_in || data.expiresIn || 0,
+    expiresAt: calculateExpiresAt(data.expires_in || data.expiresIn || 3600),
+    idToken: data.id_token || data.idToken || '',
+    tokenType: data.token_type || data.tokenType || '',
+    csrfToken: data.csrf_token || data.csrfToken || '',
+  }
+}
+
+/**
+ * 计算 token 过期时间
+ * @param {number} expiresIn - 过期秒数
+ * @returns {string} 格式化的过期时间
+ */
+function calculateExpiresAt(expiresIn) {
+  const now = new Date()
+  const expiresAt = new Date(now.getTime() + expiresIn * 1000)
+  return expiresAt
+    .toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+    .replace(/\//g, '-')
+}
+
+/**
+ * 显示 Social 登录 Modal
+ */
+function showSocialLoginModal() {
+  const modal = document.getElementById('socialLoginModal')
+  if (modal) {
+    const urlEl = document.getElementById('socialLoginUrl')
+    if (urlEl) {
+      urlEl.textContent = socialLoginState.loginUrl
+      urlEl.title = socialLoginState.loginUrl
+    }
+    modal.classList.add('active')
+  }
+}
+
+/**
+ * 关闭 Social 登录 Modal
+ */
+export function closeSocialLoginModal() {
+  const modal = document.getElementById('socialLoginModal')
+  if (modal) {
+    modal.classList.remove('active')
+  }
+  resetSocialLoginState()
+}
+
+/**
+ * 重置 Social 登录状态
+ */
+function resetSocialLoginState() {
+  socialLoginState.provider = ''
+  socialLoginState.verifier = ''
+  socialLoginState.state = ''
+  socialLoginState.loginUrl = ''
+  socialLoginState.isWaiting = false
+  socialLoginState.originalKiroHandlerBundleId = ''
+  socialLoginState.didOverrideKiroHandler = false
+
+  // 清除超时定时器
+  if (socialLoginState.timeoutTimer) {
+    clearTimeout(socialLoginState.timeoutTimer)
+    socialLoginState.timeoutTimer = null
+  }
+
+  // 移除事件监听
+  if (window.runtime?.EventsOff) {
+    window.runtime.EventsOff('deeplink-callback')
+  }
+}
+
+/**
+ * 复制登录 URL
+ */
+export function copySocialLoginUrl() {
+  navigator.clipboard
+    .writeText(socialLoginState.loginUrl)
+    .then(() => showSuccess(t('kiro.linkCopied')))
+    .catch((err) => showError(t('kiro.copyFailed') + ': ' + err))
+}
+
+/**
+ * 打开登录 URL
+ */
+export async function openSocialLoginUrl() {
+  if (window.go?.main?.App?.OpenURLInIncognito) {
+    await window.go.main.App.OpenURLInIncognito(socialLoginState.loginUrl)
+  } else {
+    window.open(socialLoginState.loginUrl, '_blank', 'noopener,noreferrer')
   }
 }

@@ -496,6 +496,17 @@ export function initUI() {
 		                        </select>
 		                        <small>${t('kiro.authMethodHelp')}</small>
 		                    </div>
+		                    <div class="form-group" id="kiroSocialLoginButtons" style="display:none;">
+		                        <div style="display: flex; gap: 10px; margin-bottom: 8px;">
+		                            <button type="button" class="btn btn-primary" onclick="startSocialLogin('Google')" style="flex: 1;">
+		                                🔐 ${t('kiro.loginWithGoogle')}
+		                            </button>
+		                            <button type="button" class="btn btn-primary" onclick="startSocialLogin('Github')" style="flex: 1;">
+		                                🔐 ${t('kiro.loginWithGithub')}
+		                            </button>
+		                        </div>
+		                        <small>${t('kiro.socialLoginHelp')}</small>
+		                    </div>
 		                    <div class="form-group">
 		                        <label>${t('kiro.refreshToken')}</label>
 		                        <div class="model-input-wrapper">
@@ -557,8 +568,16 @@ export function initUI() {
 	                        </div>
 	                        <select id="kiroRegion" style="display:none;">
 	                            <option value="us-east-1">us-east-1 (N. Virginia)</option>
+	                            <option value="us-east-2">us-east-2 (Ohio)</option>
+	                            <option value="us-west-1">us-west-1 (N. California)</option>
 	                            <option value="us-west-2">us-west-2 (Oregon)</option>
+	                            <option value="af-south-1">af-south-1 (Cape Town)</option>
 	                            <option value="eu-west-1">eu-west-1 (Ireland)</option>
+	                            <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+	                            <option value="ap-east-1">ap-east-1 (Hong Kong)</option>
+	                            <option value="ap-east-2">ap-east-2 (Taipei)</option>
+	                            <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+	                            <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
 	                        </select>
 	                    </div>
 	                    <div class="form-group">
@@ -635,6 +654,41 @@ export function initUI() {
 	                </div>
 	                <div class="modal-footer">
 	                    <button class="btn btn-secondary" onclick="closeIdcDeviceFlowDialog()">${t('kiro.idcDialogClose')}</button>
+	                </div>
+	            </div>
+	        </div>
+
+	        <!-- Social Login Modal -->
+	        <div id="socialLoginModal" class="modal">
+	            <div class="modal-content">
+	                <div class="modal-header">
+	                    <h2>${t('kiro.socialLoginTitle')}</h2>
+	                    <button class="modal-close" onclick="closeSocialLoginModal()">&times;</button>
+	                </div>
+	                <div class="modal-body">
+	                    <div class="form-group" style="text-align: center; padding: 20px 0;">
+	                        <div class="loading-spinner"></div>
+	                        <p style="margin-top: 15px;">${t('kiro.socialLoginWaiting')}</p>
+	                        <small class="muted">${t('kiro.socialLoginInstruction')}</small>
+	                    </div>
+
+	                    <div class="form-group">
+	                        <label>${t('kiro.loginUrlLabel')}</label>
+	                        <div class="link-panel">
+	                            <div class="link-text" id="socialLoginUrl" title="">—</div>
+	                            <div class="link-actions">
+	                                <button type="button" class="btn btn-sm btn-secondary" onclick="copySocialLoginUrl()">
+	                                    ${t('kiro.copyLink')}
+	                                </button>
+	                                <button type="button" class="btn btn-sm btn-secondary" onclick="openSocialLoginUrl()">
+	                                    ${t('kiro.openLink')}
+	                                </button>
+	                            </div>
+	                        </div>
+	                    </div>
+	                </div>
+	                <div class="modal-footer">
+	                    <button class="btn btn-secondary" onclick="closeSocialLoginModal()">${t('settings.cancel')}</button>
 	                </div>
 	            </div>
 	        </div>
