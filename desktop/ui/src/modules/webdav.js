@@ -146,7 +146,10 @@ export async function backupToWebDAV() {
 
     try {
         // Ensure backup directory exists
-        await ensureBackupDir(config);
+        const dirCreated = await ensureBackupDir(config);
+        if (!dirCreated) {
+            throw new Error('无法创建备份目录');
+        }
 
         // Get current configuration from backend
         let configData;
@@ -165,6 +168,28 @@ export async function backupToWebDAV() {
             throw new Error('无法获取当前配置');
         }
 
+        // 添加备份元信息
+        const backupData = {
+            ...configData,
+            schemaVersion: 2,
+            createdAt: new Date().toISOString()
+        };
+
+        // 尝试包含 kiro-auth-token.json
+        let kiroIncluded = false;
+        try {
+            if (window.go?.main?.App?.GetKiroAuthTokenJSON) {
+                const kiroAuthToken = await window.go.main.App.GetKiroAuthTokenJSON();
+                if (kiroAuthToken) {
+                    backupData.kiroAuthToken = kiroAuthToken;
+                    kiroIncluded = true;
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to include kiro-auth-token.json in backup:', e);
+            showError('警告：Kiro 配置未包含在备份中');
+        }
+
         // Generate backup filename with computer name and timestamp
         const computerName = await getComputerName();
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -1);
@@ -174,13 +199,16 @@ export async function backupToWebDAV() {
         const result = await window.go.main.App.WebDAVPut({
             config,
             path: `${BACKUP_DIR}/${filename}`,
-            body: JSON.stringify(configData, null, 2)
+            body: JSON.stringify(backupData, null, 2)
         });
 
         if (result.error) {
             throw new Error(result.error);
         } else if (result.statusCode >= 200 && result.statusCode < 300) {
-            showSuccess(`配置已备份: ${filename}`);
+            const successMsg = kiroIncluded
+                ? `配置已备份（含 Kiro 凭据）: ${filename}`
+                : `配置已备份: ${filename}`;
+            showSuccess(successMsg);
             // Save WebDAV settings to config.json after successful backup
             await saveWebDAVSettings(config.serverUrl, config.username, config.password);
             // Refresh backups list
@@ -268,6 +296,28 @@ export async function loadBackupsList() {
 }
 
 /**
+ * 标准化备份里的 kiroAuthToken 字段（支持对象或 JSON 字符串）
+ */
+function normalizeKiroAuthToken(kiroAuthToken) {
+    if (!kiroAuthToken) return null;
+
+    if (typeof kiroAuthToken === 'string') {
+        try {
+            return JSON.parse(kiroAuthToken);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // 只接受普通对象，排除数组和其他类型
+    if (typeof kiroAuthToken === 'object' && !Array.isArray(kiroAuthToken)) {
+        return kiroAuthToken;
+    }
+
+    return null;
+}
+
+/**
  * Load and restore configuration from WebDAV backup via Go backend proxy
  */
 export async function loadConfigFromWebDAV(filename) {
@@ -311,6 +361,7 @@ export async function loadConfigFromWebDAV(filename) {
         }
 
         const remoteConfig = JSON.parse(result.body);
+        const remoteKiroAuthToken = normalizeKiroAuthToken(remoteConfig?.kiroAuthToken);
 
         // 根据模式处理配置
         let finalConfig;
@@ -326,7 +377,20 @@ export async function loadConfigFromWebDAV(filename) {
         if (window.go?.main?.App?.SaveFullConfig) {
             // SaveFullConfig returns error (null on success)
             await window.go.main.App.SaveFullConfig(finalConfig);
-            showSuccess(mode === 'replace' ? '配置已替换，正在刷新...' : '配置已合并，正在刷新...');
+
+            // 恢复 kiro-auth-token.json
+            let kiroRestoreFailed = false;
+            if (remoteKiroAuthToken && window.go?.main?.App?.SaveKiroAuthTokenJSON) {
+                try {
+                    await window.go.main.App.SaveKiroAuthTokenJSON(remoteKiroAuthToken);
+                } catch (e) {
+                    kiroRestoreFailed = true;
+                    console.error('Failed to restore kiro-auth-token.json:', e);
+                }
+            }
+
+            const baseMsg = mode === 'replace' ? '配置已替换，正在刷新...' : '配置已合并，正在刷新...';
+            showSuccess(kiroRestoreFailed ? `${baseMsg}（Kiro 配置恢复失败，请手动重新登录）` : baseMsg);
             // Reload configuration
             setTimeout(async () => {
                 if (window.go?.main?.App?.ReloadConfig) {

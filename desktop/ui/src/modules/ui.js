@@ -19,9 +19,6 @@ export function initUI() {
                         <button class="header-btn" onclick="showKiroConfigModal()" title="${t(
                           'kiro.title',
                         )}">Kiro</button>
-                        <button class="header-btn" onclick="openCLIConfigEditor()" title="${t(
-                          'cliConfig.title',
-                        )}">📝</button>
                         <button class="header-btn" onclick="showWebDAVModal()" title="${t('webdav.title')}">☁️</button>
                         <button class="header-btn" onclick="showSettingsModal()" title="${t(
                           'settings.title',
@@ -44,6 +41,7 @@ export function initUI() {
                         <button class="tab-btn" data-type="codex" onclick="switchTab('codex')">Codex</button>
                         <button class="tab-btn" data-type="gemini" onclick="switchTab('gemini')">Gemini</button>
                         <button class="tab-btn" data-type="chat" onclick="switchTab('chat')">Chat</button>
+                        <button class="tab-btn tab-btn-right" onclick="openCLIConfigEditor()" title="${t('cliConfig.title')}">📝</button>
                     </div>
                     <div class="active-selector">
                         <label>${t('endpoints.activeEndpoint')}:</label>
@@ -507,6 +505,17 @@ export function initUI() {
 		                        </div>
 		                        <small>${t('kiro.socialLoginHelp')}</small>
 		                    </div>
+		                    <div class="form-group" id="kiroIdcLoginButton" style="display:none;">
+		                        <div style="display: flex; gap: 10px;">
+		                            <button type="button" class="btn btn-primary" onclick="startIdcDeviceFlowLogin()" style="flex: 1;">
+		                                ${t('kiro.idcLoginButton')}
+		                            </button>
+		                            <button type="button" class="btn btn-primary" onclick="startIdcOrgLogin()" style="flex: 1;">
+		                                ${t('kiro.idcOrgLoginButton')}
+		                            </button>
+		                        </div>
+		                        <small>${t('kiro.idcLoginButtonHelp')}</small>
+		                    </div>
 		                    <div class="form-group">
 		                        <label>${t('kiro.refreshToken')}</label>
 		                        <div class="model-input-wrapper">
@@ -528,12 +537,6 @@ export function initUI() {
 		                        <label>${t('kiro.clientSecret')}</label>
 		                        <input type="password" id="kiroClientSecret" placeholder="${t('kiro.clientSecretPlaceholder')}" oninput="onKiroIdcFieldsInput()">
 		                        <small>${t('kiro.clientSecretHelp')}</small>
-		                    </div>
-		                    <div class="form-group" id="kiroIdcLoginButton" style="display:none;">
-		                        <button type="button" class="btn btn-primary" onclick="startIdcDeviceFlowLogin()" style="width:100%;">
-		                            ${t('kiro.idcLoginButton')}
-		                        </button>
-		                        <small>${t('kiro.idcLoginButtonHelp')}</small>
 		                    </div>
 		                    <div class="form-group">
 		                        <label>${t('kiro.accessToken')}</label>
@@ -558,7 +561,7 @@ export function initUI() {
 		                    <div class="form-group">
 		                        <label>${t('kiro.region')}</label>
 		                        <div class="model-select-container kiro-region-select">
-		                            <input type="text" id="kiroRegionDisplay" readonly onclick="toggleKiroRegionDropdown()">
+		                            <input type="text" id="kiroRegion" placeholder="us-east-1" autocomplete="off" oninput="onKiroRegionInput()">
 		                            <button type="button" class="model-dropdown-toggle" onclick="toggleKiroRegionDropdown()">
 		                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
 		                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
@@ -566,19 +569,6 @@ export function initUI() {
 	                            </button>
 	                            <div class="model-dropdown" id="kiroRegionDropdown"></div>
 	                        </div>
-	                        <select id="kiroRegion" style="display:none;">
-	                            <option value="us-east-1">us-east-1 (N. Virginia)</option>
-	                            <option value="us-east-2">us-east-2 (Ohio)</option>
-	                            <option value="us-west-1">us-west-1 (N. California)</option>
-	                            <option value="us-west-2">us-west-2 (Oregon)</option>
-	                            <option value="af-south-1">af-south-1 (Cape Town)</option>
-	                            <option value="eu-west-1">eu-west-1 (Ireland)</option>
-	                            <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
-	                            <option value="ap-east-1">ap-east-1 (Hong Kong)</option>
-	                            <option value="ap-east-2">ap-east-2 (Taipei)</option>
-	                            <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
-	                            <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
-	                        </select>
 	                    </div>
 	                    <div class="form-group">
 	                        <label>${t('kiro.proxyUrl')}</label>
@@ -609,6 +599,74 @@ export function initUI() {
 	                    <button class="btn btn-primary" id="saveKiroConfigBtn" onclick="saveKiroConfig()">${t(
                         'settings.save',
                       )}</button>
+	                </div>
+	            </div>
+	        </div>
+
+	        <!-- IDC Organization Login Modal -->
+	        <div id="idcOrgLoginModal" class="modal">
+	            <div class="modal-content">
+	                <div class="modal-header">
+	                    <h2>${t('kiro.idcOrgDialogTitle')}</h2>
+	                    <button class="modal-close" onclick="closeIdcOrgLoginDialog()">&times;</button>
+	                </div>
+	                <div class="modal-body">
+	                    <!-- Step 1: Config -->
+	                    <div id="idcOrgConfigStep">
+	                        <div class="form-group">
+	                            <label>${t('kiro.idcOrgStartUrl')}</label>
+	                            <input type="text" id="idcOrgStartUrl" placeholder="${t('kiro.idcOrgStartUrlPlaceholder')}">
+	                            <small>${t('kiro.idcOrgStartUrlHelp')}</small>
+	                        </div>
+	                        <div class="form-group">
+	                            <label>${t('kiro.region')}</label>
+	                            <input type="text" id="idcOrgRegion" placeholder="us-east-1" value="us-east-1">
+	                            <small>${t('kiro.idcOrgRegionHelp')}</small>
+	                        </div>
+	                        <div class="form-group">
+	                            <button class="btn btn-primary" onclick="submitIdcOrgLogin()" style="width: 100%;">
+	                                ${t('kiro.idcOrgConnect')}
+	                            </button>
+	                        </div>
+	                    </div>
+
+	                    <!-- Step 2: Verification (Hidden initially) -->
+	                    <div id="idcOrgVerifyStep" style="display: none;">
+	                        <div class="form-group">
+	                            <label>${t('kiro.idcVerifyUrlLabel')}</label>
+	                            <div class="link-panel">
+	                                <div class="link-text" id="idcOrgVerifyUrl" title="">—</div>
+	                                <div class="link-actions">
+	                                    <button type="button" class="btn btn-sm btn-secondary" id="idcOrgCopyLinkBtn" onclick="copyIdcVerifyUrl()">
+	                                        ${t('kiro.idcCopyLink')}
+	                                    </button>
+	                                    <button type="button" class="btn btn-sm btn-secondary" id="idcOrgOpenLinkBtn" onclick="openIdcVerifyUrl()">
+	                                        ${t('kiro.idcOpenLink')}
+	                                    </button>
+	                                </div>
+	                            </div>
+	                            <small>${t('kiro.idcVerifyUrlHelp')}</small>
+	                        </div>
+	                        <div class="form-group">
+	                            <div class="status" id="idcOrgStatusBox">
+	                                <div>
+	                                    <div style="font-weight:700;font-size:13px">${t('kiro.idcStatusLabel')}</div>
+	                                    <div class="muted" id="idcOrgStatusText" style="margin-top:4px">${t('kiro.idcStatusIdle')}</div>
+	                                </div>
+	                                <div class="badge">
+	                                    <span class="dot" id="idcOrgStatusDot"></span>
+	                                    <span id="idcOrgStatusLabel">IDLE</span>
+	                                </div>
+	                            </div>
+	                        </div>
+	                        <div class="form-group">
+	                            <small class="muted">${t('kiro.idcDialogHelp')}</small>
+	                        </div>
+	                    </div>
+	                </div>
+	                <div class="modal-footer">
+	                    <button class="btn btn-secondary" id="idcOrgBackBtn" onclick="backToOrgLoginStep1()" style="display:none;">${t('kiro.idcOrgBack')}</button>
+	                    <button class="btn btn-secondary" onclick="closeIdcOrgLoginDialog()">${t('kiro.idcDialogClose')}</button>
 	                </div>
 	            </div>
 	        </div>

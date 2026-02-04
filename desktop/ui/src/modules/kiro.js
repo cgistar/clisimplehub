@@ -493,6 +493,9 @@ export async function saveKiroConfig() {
       })
     }
 
+    // 检查并创建 kiro 端点
+    await ensureKiroEndpoint()
+
     closeKiroConfigModal()
     showSuccess(t('kiro.saveSuccess'))
     clearTransformersCache()
@@ -503,46 +506,73 @@ export async function saveKiroConfig() {
 }
 
 // Sync region dropdown display
+// AWS regions list
+const AWS_REGIONS = [
+  { value: 'us-east-1', label: 'us-east-1 (N. Virginia)' },
+  { value: 'us-east-2', label: 'us-east-2 (Ohio)' },
+  { value: 'us-west-1', label: 'us-west-1 (N. California)' },
+  { value: 'us-west-2', label: 'us-west-2 (Oregon)' },
+  { value: 'af-south-1', label: 'af-south-1 (Cape Town)' },
+  { value: 'eu-west-1', label: 'eu-west-1 (Ireland)' },
+  { value: 'eu-central-1', label: 'eu-central-1 (Frankfurt)' },
+  { value: 'ap-east-1', label: 'ap-east-1 (Hong Kong)' },
+  { value: 'ap-east-2', label: 'ap-east-2 (Taipei)' },
+  { value: 'ap-northeast-1', label: 'ap-northeast-1 (Tokyo)' },
+  { value: 'ap-southeast-1', label: 'ap-southeast-1 (Singapore)' },
+]
+
 function syncKiroRegionDisplay() {
-  const select = document.getElementById('kiroRegion')
-  const display = document.getElementById('kiroRegionDisplay')
-  if (!select || !display) return
+  // No-op: kiroRegion is now a direct editable input
+}
 
-  const selectedOption = select.options[select.selectedIndex]
-  if (selectedOption) {
-    display.value = selectedOption.textContent.trim()
+// Handle region input changes (filter dropdown)
+export function onKiroRegionInput() {
+  const input = document.getElementById('kiroRegion')
+  const dropdown = document.getElementById('kiroRegionDropdown')
+  if (!input || !dropdown) return
+
+  const query = (input.value || '').toLowerCase().trim()
+
+  // Filter and render dropdown
+  const filtered = AWS_REGIONS.filter((r) =>
+    r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query)
+  )
+
+  renderKiroRegionDropdown(filtered)
+
+  // Auto-show dropdown when typing
+  if (query && filtered.length > 0) {
+    dropdown.classList.add('show')
   }
-
-  // Render dropdown options
-  renderKiroRegionDropdown()
 }
 
 // Render region dropdown options
-function renderKiroRegionDropdown() {
-  const select = document.getElementById('kiroRegion')
+function renderKiroRegionDropdown(regions = AWS_REGIONS) {
+  const input = document.getElementById('kiroRegion')
   const dropdown = document.getElementById('kiroRegionDropdown')
-  if (!select || !dropdown) return
+  if (!input || !dropdown) return
+
+  const currentValue = (input.value || '').trim()
 
   dropdown.innerHTML = ''
-  Array.from(select.options).forEach((option) => {
+  regions.forEach((region) => {
     const item = document.createElement('div')
     item.className = 'model-dropdown-item'
-    if (option.selected) {
+    if (region.value === currentValue) {
       item.classList.add('selected')
     }
-    item.textContent = option.textContent.trim()
-    item.onclick = () => selectKiroRegion(option.value)
+    item.textContent = region.label
+    item.onclick = () => selectKiroRegion(region.value)
     dropdown.appendChild(item)
   })
 }
 
 // Select region from dropdown
 function selectKiroRegion(value) {
-  const select = document.getElementById('kiroRegion')
-  if (!select) return
+  const input = document.getElementById('kiroRegion')
+  if (!input) return
 
-  select.value = value
-  syncKiroRegionDisplay()
+  input.value = value
 
   // Close dropdown
   const dropdown = document.getElementById('kiroRegionDropdown')
@@ -554,8 +584,8 @@ function selectKiroRegion(value) {
 // Toggle region dropdown
 export function toggleKiroRegionDropdown() {
   const dropdown = document.getElementById('kiroRegionDropdown')
-  const select = document.getElementById('kiroRegion')
-  if (!dropdown || !select) return
+  const input = document.getElementById('kiroRegion')
+  if (!dropdown || !input) return
 
   if (dropdown.classList.contains('show')) {
     dropdown.classList.remove('show')
@@ -645,6 +675,8 @@ const idcDeviceFlowState = {
   pollInFlight: false,
   pollingEnabled: false,
   lastPollResult: null,
+  activeFlow: 'standard', // 'standard' (Builder ID) | 'org' (Organization Identity)
+  region: 'us-east-1', // 当前使用的 region（用于轮询）
 }
 
 // 停止轮询
@@ -676,7 +708,8 @@ async function pollIdcTokenOnce() {
   idcDeviceFlowState.pollInFlight = true
 
   try {
-    const region = document.getElementById('kiroRegion')?.value || 'us-east-1'
+    // 使用保存的 region（而不是从 DOM 读取）
+    const region = idcDeviceFlowState.region || 'us-east-1'
 
     if (!window.go?.main?.App?.PollIdcToken) {
       throw new Error('PollIdcToken API not available')
@@ -693,14 +726,18 @@ async function pollIdcTokenOnce() {
     if (result?.accessToken) {
       idcDeviceFlowState.lastPollResult = result
       stopIdcPolling()
-      updateIdcDialogStatus('ok', t('kiro.idcStatusSuccess'), 'SUCCESS')
+      updateIdcDialogStatus('ok', t('kiro.idcStatusSuccess'), 'SUCCESS', idcDeviceFlowState.activeFlow)
 
       // 回填凭证到 Kiro Config Modal
       fillIdcCredentials(result)
 
       // 延迟关闭 dialog
       setTimeout(() => {
-        closeIdcDeviceFlowDialog()
+        if (idcDeviceFlowState.activeFlow === 'org') {
+          closeIdcOrgLoginDialog()
+        } else {
+          closeIdcDeviceFlowDialog()
+        }
         showSuccess(t('kiro.idcLoginSuccess'))
       }, 1000)
       return
@@ -708,7 +745,7 @@ async function pollIdcTokenOnce() {
 
     // PENDING 状态
     if (result?.error === 'authorization_pending') {
-      updateIdcDialogStatus('pending', t('kiro.idcStatusPending'), 'PENDING')
+      updateIdcDialogStatus('pending', t('kiro.idcStatusPending'), 'PENDING', idcDeviceFlowState.activeFlow)
       return
     }
 
@@ -719,6 +756,7 @@ async function pollIdcTokenOnce() {
         'pending',
         `${t('kiro.idcStatusSlowDown')} ${(idcDeviceFlowState.pollIntervalMs / 1000).toFixed(1)}s`,
         'PENDING',
+        idcDeviceFlowState.activeFlow,
       )
       return
     }
@@ -726,19 +764,34 @@ async function pollIdcTokenOnce() {
     // EXPIRED
     if (result?.error === 'expired_token') {
       stopIdcPolling()
-      updateIdcDialogStatus('error', t('kiro.idcStatusExpired'), 'EXPIRED')
+      updateIdcDialogStatus('error', t('kiro.idcStatusExpired'), 'EXPIRED', idcDeviceFlowState.activeFlow)
+      return
+    }
+
+    // ACCESS_DENIED（用户拒绝授权）
+    if (result?.error === 'access_denied') {
+      stopIdcPolling()
+      updateIdcDialogStatus('error', t('kiro.idcStatusAccessDenied'), 'ERROR', idcDeviceFlowState.activeFlow)
+      return
+    }
+
+    // 其他不可重试错误
+    const nonRetryableErrors = ['invalid_client', 'invalid_grant', 'unauthorized_client', 'unsupported_grant_type']
+    if (result?.error && nonRetryableErrors.includes(result.error)) {
+      stopIdcPolling()
+      updateIdcDialogStatus('error', `${t('kiro.idcStatusError')}: ${result.error}`, 'ERROR', idcDeviceFlowState.activeFlow)
       return
     }
 
     // 其他错误 - 不停止轮询，继续重试
     const errorMsg = result?.error || 'Unknown error'
     console.warn('IDC polling error (will retry):', errorMsg)
-    updateIdcDialogStatus('pending', `${t('kiro.idcStatusPending')} (${errorMsg})`, 'PENDING')
+    updateIdcDialogStatus('pending', `${t('kiro.idcStatusPending')} (${errorMsg})`, 'PENDING', idcDeviceFlowState.activeFlow)
   } catch (error) {
     // 网络错误或其他异常 - 不停止轮询，继续重试
     console.warn('IDC polling exception (will retry):', error)
     const errorMsg = error?.message || error || 'Network error'
-    updateIdcDialogStatus('pending', `${t('kiro.idcStatusPending')} (${errorMsg})`, 'PENDING')
+    updateIdcDialogStatus('pending', `${t('kiro.idcStatusPending')} (${errorMsg})`, 'PENDING', idcDeviceFlowState.activeFlow)
   } finally {
     idcDeviceFlowState.pollInFlight = false
   }
@@ -775,6 +828,7 @@ function fillIdcCredentials(result) {
 
 // 开始 IDC Device Flow 登录
 export async function startIdcDeviceFlowLogin() {
+  idcDeviceFlowState.activeFlow = 'standard'
   const region = document.getElementById('kiroRegion')?.value || 'us-east-1'
 
   // 重置状态
@@ -786,10 +840,14 @@ export async function startIdcDeviceFlowLogin() {
   idcDeviceFlowState.deviceCode = ''
   idcDeviceFlowState.lastPollResult = null
   idcDeviceFlowState.pollIntervalMs = 2000
+  idcDeviceFlowState.region = region // 保存 region 用于轮询
+
+  // 关闭其他 Modal（互斥）
+  closeIdcOrgLoginDialog()
 
   // 显示 dialog
   showIdcDeviceFlowDialog()
-  updateIdcDialogStatus('polling', t('kiro.idcStatusRegistering'), 'WORKING')
+  updateIdcDialogStatus('polling', t('kiro.idcStatusRegistering'), 'WORKING', 'standard')
 
   try {
     // Step 1: 注册 OIDC 客户端
@@ -801,7 +859,7 @@ export async function startIdcDeviceFlowLogin() {
     idcDeviceFlowState.clientId = registerResult.clientId
     idcDeviceFlowState.clientSecret = registerResult.clientSecret
 
-    updateIdcDialogStatus('polling', t('kiro.idcStatusGettingAuth'), 'WORKING')
+    updateIdcDialogStatus('polling', t('kiro.idcStatusGettingAuth'), 'WORKING', 'standard')
 
     // Step 2: 获取 Device Authorization
     if (!window.go?.main?.App?.StartDeviceAuthorization) {
@@ -820,8 +878,8 @@ export async function startIdcDeviceFlowLogin() {
     idcDeviceFlowState.pollIntervalMs = Math.max(2000, (deviceAuthResult.interval || 2) * 1000)
 
     // 更新 dialog 显示
-    updateIdcDialogContent()
-    updateIdcDialogStatus('pending', t('kiro.idcStatusPending'), 'PENDING')
+    updateIdcDialogContent('standard')
+    updateIdcDialogStatus('pending', t('kiro.idcStatusPending'), 'PENDING', 'standard')
 
     // Step 3: 开始轮询
     idcDeviceFlowState.pollingEnabled = true
@@ -830,7 +888,7 @@ export async function startIdcDeviceFlowLogin() {
     })
   } catch (error) {
     stopIdcPolling()
-    updateIdcDialogStatus('error', `${t('kiro.idcStatusError')}: ${error?.message || error}`, 'ERROR')
+    updateIdcDialogStatus('error', `${t('kiro.idcStatusError')}: ${error?.message || error}`, 'ERROR', 'standard')
   }
 }
 
@@ -851,11 +909,146 @@ export function closeIdcDeviceFlowDialog() {
   }
 }
 
+// 开始 IDC 组织身份登录
+export function startIdcOrgLogin() {
+  idcDeviceFlowState.activeFlow = 'org'
+  stopIdcPolling()
+
+  // 关闭其他 Modal（互斥）
+  closeIdcDeviceFlowDialog()
+
+  // 重置 UI
+  const region = document.getElementById('kiroRegion')?.value || 'us-east-1'
+  const orgRegionEl = document.getElementById('idcOrgRegion')
+  if (orgRegionEl) orgRegionEl.value = region
+
+  const startUrlEl = document.getElementById('idcOrgStartUrl')
+  if (startUrlEl) startUrlEl.value = ''
+
+  const configStep = document.getElementById('idcOrgConfigStep')
+  const verifyStep = document.getElementById('idcOrgVerifyStep')
+  const backBtn = document.getElementById('idcOrgBackBtn')
+  if (configStep) configStep.style.display = 'block'
+  if (verifyStep) verifyStep.style.display = 'none'
+  if (backBtn) backBtn.style.display = 'none'
+
+  const modal = document.getElementById('idcOrgLoginModal')
+  if (modal) modal.classList.add('active')
+}
+
+// 关闭 IDC 组织身份登录 Dialog
+export function closeIdcOrgLoginDialog() {
+  stopIdcPolling()
+  document.getElementById('idcOrgLoginModal').classList.remove('active')
+}
+
+// 提交 IDC 组织身份登录
+export async function submitIdcOrgLogin() {
+  const startUrl = document.getElementById('idcOrgStartUrl')?.value.trim()
+  const region = document.getElementById('idcOrgRegion')?.value
+
+  if (!startUrl) {
+    showError(t('kiro.idcOrgStartUrlRequired'))
+    return
+  }
+
+  // 防抖：禁用 Connect 按钮
+  const submitBtn = document.getElementById('idcOrgSubmitBtn')
+  if (submitBtn) {
+    if (submitBtn.disabled) return // 已经在处理中，直接返回
+    submitBtn.disabled = true
+  }
+
+  // 切换到 Step 2 UI (loading)
+  const configStep = document.getElementById('idcOrgConfigStep')
+  const verifyStep = document.getElementById('idcOrgVerifyStep')
+  const backBtn = document.getElementById('idcOrgBackBtn')
+  if (configStep) configStep.style.display = 'none'
+  if (verifyStep) verifyStep.style.display = 'block'
+  if (backBtn) backBtn.style.display = 'inline-block'
+  updateIdcDialogStatus('polling', t('kiro.idcStatusRegistering'), 'WORKING', 'org')
+
+  try {
+    // 重置状态
+    idcDeviceFlowState.clientId = ''
+    idcDeviceFlowState.clientSecret = ''
+    idcDeviceFlowState.verifyUrl = ''
+    idcDeviceFlowState.userCode = ''
+    idcDeviceFlowState.deviceCode = ''
+    idcDeviceFlowState.lastPollResult = null
+    idcDeviceFlowState.pollIntervalMs = 2000
+    idcDeviceFlowState.region = region // 保存 region 用于轮询
+
+    // Step 1: 注册 OIDC 客户端
+    if (!window.go?.main?.App?.RegisterIdcClient) {
+      throw new Error('RegisterIdcClient API not available')
+    }
+
+    const registerResult = await window.go.main.App.RegisterIdcClient({ region })
+    idcDeviceFlowState.clientId = registerResult.clientId
+    idcDeviceFlowState.clientSecret = registerResult.clientSecret
+
+    updateIdcDialogStatus('polling', t('kiro.idcStatusGettingAuth'), 'WORKING', 'org')
+
+    // Step 2: 获取 Device Authorization (传入自定义 Start URL)
+    if (!window.go?.main?.App?.StartDeviceAuthorization) {
+      throw new Error('StartDeviceAuthorization API not available')
+    }
+
+    const deviceAuthResult = await window.go.main.App.StartDeviceAuthorization({
+      clientId: idcDeviceFlowState.clientId,
+      clientSecret: idcDeviceFlowState.clientSecret,
+      region: region,
+      startUrl: startUrl,
+    })
+
+    idcDeviceFlowState.verifyUrl = deviceAuthResult.verificationUriComplete || deviceAuthResult.verificationUri || ''
+    idcDeviceFlowState.userCode = deviceAuthResult.userCode || ''
+    idcDeviceFlowState.deviceCode = deviceAuthResult.deviceCode || ''
+    idcDeviceFlowState.pollIntervalMs = Math.max(2000, (deviceAuthResult.interval || 2) * 1000)
+
+    // 更新 dialog 显示
+    updateIdcDialogContent('org')
+    updateIdcDialogStatus('pending', t('kiro.idcStatusPending'), 'PENDING', 'org')
+
+    // Step 3: 开始轮询
+    idcDeviceFlowState.pollingEnabled = true
+    pollIdcTokenOnce().finally(() => {
+      scheduleNextIdcPoll()
+    })
+  } catch (error) {
+    stopIdcPolling()
+    updateIdcDialogStatus('error', `${t('kiro.idcStatusError')}: ${error?.message || error}`, 'ERROR', 'org')
+
+    // 错误恢复：返回 Step 1 并重新启用按钮
+    const configStep = document.getElementById('idcOrgConfigStep')
+    const verifyStep = document.getElementById('idcOrgVerifyStep')
+    const submitBtn = document.getElementById('idcOrgSubmitBtn')
+    if (configStep) configStep.style.display = 'block'
+    if (verifyStep) verifyStep.style.display = 'none'
+    if (submitBtn) submitBtn.disabled = false
+  }
+}
+
+// 返回组织登录 Step 1（用于错误恢复）
+export function backToOrgLoginStep1() {
+  stopIdcPolling()
+  const configStep = document.getElementById('idcOrgConfigStep')
+  const verifyStep = document.getElementById('idcOrgVerifyStep')
+  const submitBtn = document.getElementById('idcOrgSubmitBtn')
+  const backBtn = document.getElementById('idcOrgBackBtn')
+  if (configStep) configStep.style.display = 'block'
+  if (verifyStep) verifyStep.style.display = 'none'
+  if (submitBtn) submitBtn.disabled = false
+  if (backBtn) backBtn.style.display = 'none'
+}
+
 // 更新 dialog 内容
-function updateIdcDialogContent() {
-  const verifyUrlEl = document.getElementById('idcVerifyUrl')
-  const copyLinkBtn = document.getElementById('idcCopyLinkBtn')
-  const openLinkBtn = document.getElementById('idcOpenLinkBtn')
+function updateIdcDialogContent(flow = 'standard') {
+  const isOrg = flow === 'org'
+  const verifyUrlEl = document.getElementById(isOrg ? 'idcOrgVerifyUrl' : 'idcVerifyUrl')
+  const copyLinkBtn = document.getElementById(isOrg ? 'idcOrgCopyLinkBtn' : 'idcCopyLinkBtn')
+  const openLinkBtn = document.getElementById(isOrg ? 'idcOrgOpenLinkBtn' : 'idcOpenLinkBtn')
 
   if (verifyUrlEl) {
     verifyUrlEl.textContent = idcDeviceFlowState.verifyUrl || '—'
@@ -866,11 +1059,12 @@ function updateIdcDialogContent() {
 }
 
 // 更新 dialog 状态
-function updateIdcDialogStatus(kind, text, label) {
-  const statusTextEl = document.getElementById('idcStatusText')
-  const statusLabelEl = document.getElementById('idcStatusLabel')
-  const statusBoxEl = document.getElementById('idcStatusBox')
-  const statusDotEl = document.getElementById('idcStatusDot')
+function updateIdcDialogStatus(kind, text, label, flow = 'standard') {
+  const isOrg = flow === 'org'
+  const statusTextEl = document.getElementById(isOrg ? 'idcOrgStatusText' : 'idcStatusText')
+  const statusLabelEl = document.getElementById(isOrg ? 'idcOrgStatusLabel' : 'idcStatusLabel')
+  const statusBoxEl = document.getElementById(isOrg ? 'idcOrgStatusBox' : 'idcStatusBox')
+  const statusDotEl = document.getElementById(isOrg ? 'idcOrgStatusDot' : 'idcStatusDot')
 
   if (statusTextEl) statusTextEl.textContent = text
   if (statusLabelEl) statusLabelEl.textContent = label
@@ -899,7 +1093,7 @@ export async function copyIdcVerifyUrl() {
   if (!idcDeviceFlowState.verifyUrl) return
   try {
     await navigator.clipboard.writeText(idcDeviceFlowState.verifyUrl)
-    updateIdcDialogStatus('pending', t('kiro.idcLinkCopied'), 'PENDING')
+    updateIdcDialogStatus('pending', t('kiro.idcLinkCopied'), 'PENDING', idcDeviceFlowState.activeFlow)
   } catch (error) {
     showError(t('kiro.idcCopyFailed') + (error?.message || error))
   }
@@ -913,17 +1107,17 @@ export async function openIdcVerifyUrl() {
     // 尝试使用后端方法以无痕模式打开
     if (window.go?.main?.App?.OpenURLInIncognito) {
       await window.go.main.App.OpenURLInIncognito(idcDeviceFlowState.verifyUrl)
-      updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING')
+      updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING', idcDeviceFlowState.activeFlow)
     } else {
       // 降级方案：使用普通方式打开
       window.open(idcDeviceFlowState.verifyUrl, '_blank', 'noopener,noreferrer')
-      updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING')
+      updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING', idcDeviceFlowState.activeFlow)
     }
   } catch (error) {
     console.warn('Failed to open in incognito mode, falling back to normal mode:', error)
     // 降级方案：使用普通方式打开
     window.open(idcDeviceFlowState.verifyUrl, '_blank', 'noopener,noreferrer')
-    updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING')
+    updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING', idcDeviceFlowState.activeFlow)
   }
 }
 
@@ -1246,5 +1440,56 @@ export async function openSocialLoginUrl() {
     await window.go.main.App.OpenURLInIncognito(socialLoginState.loginUrl)
   } else {
     window.open(socialLoginState.loginUrl, '_blank', 'noopener,noreferrer')
+  }
+}
+
+/**
+ * 确保存在 kiro 端点
+ * 参考后端 internal/proxy/kiro_handler.go:ensureKiroEndpoint 的实现
+ */
+async function ensureKiroEndpoint() {
+  try {
+    if (!window.go?.main?.App?.GetAllEndpoints || !window.go?.main?.App?.SaveEndpointData) {
+      console.warn('GetAllEndpoints or SaveEndpointData API not available')
+      return
+    }
+
+    // 获取所有端点
+    const allEndpoints = await window.go.main.App.GetAllEndpoints()
+
+    // 检查是否已存在 kiro/claude 端点
+    const hasKiroEndpoint = allEndpoints.some(
+      (ep) => ep.transformer === 'kiro/claude' && ep.interfaceType === 'claude'
+    )
+
+    if (hasKiroEndpoint) {
+      // 已存在，无需创建
+      return
+    }
+
+    // 不存在，创建新端点
+    const claudeEndpoints = allEndpoints.filter((ep) => ep.interfaceType === 'claude')
+    const isOnlyClaudeEndpoint = claudeEndpoints.length === 0
+
+    const newEndpoint = {
+      id: 0, // 新端点，ID 为 0
+      name: 'kiro',
+      apiUrl: 'https://q.us-east-1.amazonaws.com',
+      apiKey: '-',
+      active: isOnlyClaudeEndpoint, // 如果是唯一的 claude 端点，自动设为 active
+      enabled: true,
+      interfaceType: 'claude',
+      transformer: 'kiro/claude',
+      transformerSet: true,
+      priority: 8,
+      remark: 'Auto-created Kiro endpoint',
+    }
+
+    // 保存端点
+    await window.go.main.App.SaveEndpointData(newEndpoint)
+    console.log('Kiro endpoint created successfully')
+  } catch (error) {
+    // 记录错误但不影响主流程
+    console.error('Failed to ensure kiro endpoint:', error)
   }
 }

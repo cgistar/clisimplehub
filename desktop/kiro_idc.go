@@ -33,6 +33,7 @@ type IdcDeviceAuthRequest struct {
 	ClientId     string `json:"clientId"`
 	ClientSecret string `json:"clientSecret"`
 	Region       string `json:"region,omitempty"`
+	StartUrl     string `json:"startUrl,omitempty"`
 }
 
 // IdcDeviceAuthResponse represents the response from device authorization
@@ -158,7 +159,12 @@ func (a *App) StartDeviceAuthorization(req *IdcDeviceAuthRequest) (*IdcDeviceAut
 
 	oidcURL := getIdcOidcURL(region)
 	deviceAuthURL := fmt.Sprintf("%s/device_authorization", oidcURL)
-	startURL := "https://view.awsapps.com/start"
+
+	// 使用自定义 Start URL，为空则使用默认 Builder ID URL
+	startURL := strings.TrimSpace(req.StartUrl)
+	if startURL == "" {
+		startURL = "https://view.awsapps.com/start"
+	}
 
 	// 构建设备授权请求
 	payload := map[string]string{
@@ -275,9 +281,10 @@ func (a *App) PollIdcToken(req *IdcPollTokenRequest) (*IdcPollTokenResponse, err
 		return nil, fmt.Errorf("failed to parse token poll response: %w", err)
 	}
 
-	// 对于 400 错误，如果是 authorization_pending 或 slow_down，返回结果而不是错误
+	// 对于 400 错误，如果是可预期的业务错误（authorization_pending/slow_down/expired_token），返回结果而不是错误
+	// 这样前端可以根据 error 字段做相应处理
 	if resp.StatusCode == http.StatusBadRequest {
-		if result.Error == "authorization_pending" || result.Error == "slow_down" {
+		if result.Error == "authorization_pending" || result.Error == "slow_down" || result.Error == "expired_token" {
 			return &result, nil
 		}
 	}

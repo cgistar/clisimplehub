@@ -78,12 +78,17 @@ import {
     onKiroIdcFieldsInput,
     onKiroAuthMethodChange,
     fetchKiroUsage,
+    onKiroRegionInput,
     toggleKiroRegionDropdown,
     toggleKiroAuthMethodDropdown,
     startIdcDeviceFlowLogin,
     closeIdcDeviceFlowDialog,
     copyIdcVerifyUrl,
     openIdcVerifyUrl,
+    startIdcOrgLogin,
+    closeIdcOrgLoginDialog,
+    submitIdcOrgLogin,
+    backToOrgLoginStep1,
     startSocialLogin,
     closeSocialLoginModal,
     copySocialLoginUrl,
@@ -204,12 +209,17 @@ window.onKiroRefreshTokenInput = onKiroRefreshTokenInput;
 window.onKiroIdcFieldsInput = onKiroIdcFieldsInput;
 window.onKiroAuthMethodChange = onKiroAuthMethodChange;
 window.fetchKiroUsage = fetchKiroUsage;
+window.onKiroRegionInput = onKiroRegionInput;
 window.toggleKiroRegionDropdown = toggleKiroRegionDropdown;
 window.toggleKiroAuthMethodDropdown = toggleKiroAuthMethodDropdown;
 window.startIdcDeviceFlowLogin = startIdcDeviceFlowLogin;
 window.closeIdcDeviceFlowDialog = closeIdcDeviceFlowDialog;
 window.copyIdcVerifyUrl = copyIdcVerifyUrl;
 window.openIdcVerifyUrl = openIdcVerifyUrl;
+window.startIdcOrgLogin = startIdcOrgLogin;
+window.closeIdcOrgLoginDialog = closeIdcOrgLoginDialog;
+window.submitIdcOrgLogin = submitIdcOrgLogin;
+window.backToOrgLoginStep1 = backToOrgLoginStep1;
 window.startSocialLogin = startSocialLogin;
 window.closeSocialLoginModal = closeSocialLoginModal;
 window.copySocialLoginUrl = copySocialLoginUrl;

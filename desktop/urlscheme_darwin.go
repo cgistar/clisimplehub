@@ -3,11 +3,15 @@
 package main
 
 /*
-#cgo LDFLAGS: -framework CoreServices -framework CoreFoundation
+#cgo CFLAGS: -x objective-c
+#cgo LDFLAGS: -framework AppKit -framework Foundation -framework CoreServices -framework CoreFoundation
 
 #include <CoreServices/CoreServices.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <AppKit/AppKit.h>
+#include <Foundation/Foundation.h>
 #include <stdlib.h>
+#include <string.h>
 
 static char* cfstring_to_cstring(CFStringRef s) {
 	if (s == NULL) {
@@ -24,6 +28,46 @@ static char* cfstring_to_cstring(CFStringRef s) {
 	}
 	free(buffer);
 	return NULL;
+}
+
+static char* default_handler_bundle_id_for_url_scheme(const char* scheme) {
+	@autoreleasepool {
+		if (scheme == NULL) {
+			return NULL;
+		}
+
+		NSString *schemeStr = [NSString stringWithUTF8String:scheme];
+		if (schemeStr == nil) {
+			return NULL;
+		}
+
+		NSString *urlStr = [NSString stringWithFormat:@"%@://", schemeStr];
+		NSURL *url = [NSURL URLWithString:urlStr];
+		if (url == nil) {
+			return NULL;
+		}
+
+		NSURL *appURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:url];
+		if (appURL == nil) {
+			return NULL;
+		}
+
+		NSBundle *bundle = [NSBundle bundleWithURL:appURL];
+		if (bundle == nil) {
+			return NULL;
+		}
+
+		NSString *bundleID = [bundle bundleIdentifier];
+		if (bundleID == nil) {
+			return NULL;
+		}
+
+		const char *utf8 = [bundleID UTF8String];
+		if (utf8 == NULL) {
+			return NULL;
+		}
+		return strdup(utf8);
+	}
 }
 */
 import "C"
@@ -58,21 +102,9 @@ func getDefaultHandlerBundleIDForURLScheme(scheme string) (string, error) {
 	cscheme := C.CString(scheme)
 	defer C.free(unsafe.Pointer(cscheme))
 
-	cfScheme := C.CFStringCreateWithCString(C.kCFAllocatorDefault, cscheme, C.kCFStringEncodingUTF8)
-	if cfScheme == 0 {
-		return "", errors.New("failed to create CFString for scheme")
-	}
-	defer C.CFRelease(C.CFTypeRef(cfScheme))
-
-	handler := C.LSCopyDefaultHandlerForURLScheme(cfScheme)
-	if handler == 0 {
-		return "", nil
-	}
-	defer C.CFRelease(C.CFTypeRef(handler))
-
-	cstr := C.cfstring_to_cstring(handler)
+	cstr := C.default_handler_bundle_id_for_url_scheme(cscheme)
 	if cstr == nil {
-		return "", errors.New("failed to convert default handler bundle id to string")
+		return "", nil
 	}
 	defer C.free(unsafe.Pointer(cstr))
 

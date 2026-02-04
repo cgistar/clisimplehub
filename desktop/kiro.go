@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -40,6 +44,106 @@ func (a *App) getKiroAuthTokenPath() string {
 		}
 	}
 	return kiroShared.GetDefaultKiroCredentialsPath()
+}
+
+// GetKiroAuthTokenJSON 返回 kiro-auth-token.json 的原始 JSON 内容用于备份
+// 文件不存在时返回 (nil, nil)
+func (a *App) GetKiroAuthTokenJSON() (map[string]interface{}, error) {
+	credsPath := kiroShared.ExpandTilde(a.getKiroAuthTokenPath())
+	data, err := os.ReadFile(credsPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read kiro-auth-token.json: %w", err)
+	}
+
+	var token map[string]interface{}
+	if err := json.Unmarshal(data, &token); err != nil {
+		return nil, fmt.Errorf("parse kiro-auth-token.json: %w", err)
+	}
+	return token, nil
+}
+
+// SaveKiroAuthTokenJSON 从备份恢复 kiro-auth-token.json
+// 采用原子写入 + 0600 权限
+func (a *App) SaveKiroAuthTokenJSON(token map[string]interface{}) error {
+	if len(token) == 0 {
+		return nil
+	}
+
+	refreshToken, _ := token["refreshToken"].(string)
+	if strings.TrimSpace(refreshToken) == "" {
+		return fmt.Errorf("invalid kiro auth token: refreshToken is required")
+	}
+
+	credsPath := kiroShared.ExpandTilde(a.getKiroAuthTokenPath())
+	data, err := json.MarshalIndent(token, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal kiro auth token: %w", err)
+	}
+	if err := writeFileAtomic0600(credsPath, data); err != nil {
+		return fmt.Errorf("write kiro-auth-token.json: %w", err)
+	}
+	return nil
+}
+
+// writeFileAtomic0600 原子写入文件并设置 0600 权限
+func writeFileAtomic0600(path string, data []byte) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("empty path")
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	renamed := false
+	defer func() {
+		_ = tmp.Close()
+		if !renamed {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if runtime.GOOS != "windows" {
+		if err := tmp.Chmod(0600); err != nil {
+			return err
+		}
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	// Windows: 删除目标文件后再重命名
+	if runtime.GOOS == "windows" {
+		_ = os.Remove(path)
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	renamed = true
+
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetKiroConfig retrieves Kiro configuration
