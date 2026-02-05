@@ -823,11 +823,13 @@ function fillIdcCredentials(result) {
   const clientSecretEl = document.getElementById('kiroClientSecret')
   const refreshTokenEl = document.getElementById('kiroRefreshToken')
   const accessTokenEl = document.getElementById('kiroAccessToken')
+  const profileArnEl = document.getElementById('kiroProfileArn')
 
   if (clientIdEl) clientIdEl.value = idcDeviceFlowState.clientId
   if (clientSecretEl) clientSecretEl.value = idcDeviceFlowState.clientSecret
   if (refreshTokenEl && result.refreshToken) refreshTokenEl.value = result.refreshToken
   if (accessTokenEl && result.accessToken) accessTokenEl.value = result.accessToken
+  if (profileArnEl && result.profileArn) profileArnEl.value = result.profileArn
 
   // 更新 testedKiroCreds 以便保存
   testedRefreshToken = result.refreshToken || ''
@@ -837,6 +839,9 @@ function fillIdcCredentials(result) {
     expiresAt: result.expiresAt || '',
     profileArn: result.profileArn || '',
     region: document.getElementById('kiroRegion')?.value || 'us-east-1',
+    authMethod: 'idc',
+    clientId: idcDeviceFlowState.clientId,
+    clientSecret: idcDeviceFlowState.clientSecret,
   }
 
   // 更新按钮状态

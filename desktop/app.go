@@ -714,6 +714,7 @@ func (a *App) GetAllEndpoints() ([]*EndpointInfo, error) {
 			InterfaceType: ep.InterfaceType,
 			ProviderName:  ep.ProviderName,
 			Model:         ep.Model,
+			Transformer:   ep.Transformer,
 			Headers:       ep.Headers,
 			Remark:        ep.Remark,
 			Priority:      ep.Priority,
