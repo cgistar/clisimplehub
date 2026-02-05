@@ -81,6 +81,7 @@ import {
     onKiroRegionInput,
     toggleKiroRegionDropdown,
     toggleKiroAuthMethodDropdown,
+    toggleKiroClientSecretVisibility,
     startIdcDeviceFlowLogin,
     closeIdcDeviceFlowDialog,
     copyIdcVerifyUrl,
@@ -212,6 +213,7 @@ window.fetchKiroUsage = fetchKiroUsage;
 window.onKiroRegionInput = onKiroRegionInput;
 window.toggleKiroRegionDropdown = toggleKiroRegionDropdown;
 window.toggleKiroAuthMethodDropdown = toggleKiroAuthMethodDropdown;
+window.toggleKiroClientSecretVisibility = toggleKiroClientSecretVisibility;
 window.startIdcDeviceFlowLogin = startIdcDeviceFlowLogin;
 window.closeIdcDeviceFlowDialog = closeIdcDeviceFlowDialog;
 window.copyIdcVerifyUrl = copyIdcVerifyUrl;

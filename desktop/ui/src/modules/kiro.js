@@ -119,6 +119,8 @@ export async function showKiroConfigModal() {
       syncKiroAuthMethodDisplay()
       // Update IdC fields visibility
       updateIdcFieldsVisibility()
+      // Update Social login buttons visibility
+      updateSocialLoginButtonsVisibility()
 
       initialRefreshToken = (config.refreshToken || '').trim()
       testedRefreshToken = ''
@@ -655,6 +657,21 @@ export function toggleKiroAuthMethodDropdown() {
   } else {
     renderKiroAuthMethodDropdown()
     dropdown.classList.add('show')
+  }
+}
+
+// 切换 Client Secret 密码可见性
+export function toggleKiroClientSecretVisibility() {
+  const input = document.getElementById('kiroClientSecret')
+  const btn = document.getElementById('toggleKiroClientSecretVisibility')
+  if (!input || !btn) return
+
+  if (input.type === 'password') {
+    input.type = 'text'
+    btn.textContent = '🙈'
+  } else {
+    input.type = 'password'
+    btn.textContent = '👁️'
   }
 }
 

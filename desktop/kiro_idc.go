@@ -1,16 +1,10 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 
-	"clisimplehub/internal/executor"
+	kiroIdc "clisimplehub/internal/transformer/kiro/idc"
 )
 
 // =============================================================================
@@ -63,13 +57,15 @@ type IdcPollTokenResponse struct {
 	Error        string `json:"error,omitempty"`
 }
 
-// getIdcOidcURL returns the OIDC URL for the given region
-func getIdcOidcURL(region string) string {
-	region = strings.TrimSpace(region)
-	if region == "" {
-		region = "us-east-1"
+// getKiroProxyURL 从 storage 读取 Kiro 代理配置
+func (a *App) getKiroProxyURL() string {
+	if a.storage == nil {
+		return ""
 	}
-	return fmt.Sprintf("https://oidc.%s.amazonaws.com", region)
+	if proxy, err := a.storage.GetConfig("kiro.proxyUrl"); err == nil {
+		return strings.TrimSpace(proxy)
+	}
+	return ""
 }
 
 // RegisterIdcClient registers a new OIDC client for device flow authentication
@@ -78,66 +74,30 @@ func (a *App) RegisterIdcClient(req *IdcRegisterRequest) (*IdcRegisterResponse, 
 		req = &IdcRegisterRequest{}
 	}
 
+	// 从 storage 读取代理配置
+	proxyURL := a.getKiroProxyURL()
+
+	// 创建 IDC 客户端
 	region := strings.TrimSpace(req.Region)
 	if region == "" {
 		region = "us-east-1"
 	}
+	client := kiroIdc.NewClient(proxyURL, region)
 
-	oidcURL := getIdcOidcURL(region)
-	registerURL := fmt.Sprintf("%s/client/register", oidcURL)
-
-	// 构建注册请求
-	payload := map[string]any{
-		"clientName": "Amazon Q Developer for command line",
-		"clientType": "public",
-		"scopes": []string{
-			"codewhisperer:completions",
-			"codewhisperer:analysis",
-			"codewhisperer:conversations",
-		},
+	// 调用核心层的 RegisterClient 方法
+	coreReq := &kiroIdc.RegisterRequest{
+		Region: req.Region,
 	}
-
-	payloadBytes, err := json.Marshal(payload)
+	coreResp, err := client.RegisterClient(coreReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal register payload: %w", err)
+		return nil, err
 	}
 
-	// 创建 HTTP 请求
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", registerURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create register request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	// 发送请求
-	client := executor.NewHTTPClientForcedProxyURL("", 15*time.Second)
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to register OIDC client: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read register response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("register failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// 解析响应
-	var result IdcRegisterResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse register response: %w", err)
-	}
-
-	return &result, nil
+	// 转换响应类型
+	return &IdcRegisterResponse{
+		ClientId:     coreResp.ClientId,
+		ClientSecret: coreResp.ClientSecret,
+	}, nil
 }
 
 // StartDeviceAuthorization starts the device authorization flow
@@ -146,74 +106,37 @@ func (a *App) StartDeviceAuthorization(req *IdcDeviceAuthRequest) (*IdcDeviceAut
 		return nil, fmt.Errorf("nil request")
 	}
 
-	clientId := strings.TrimSpace(req.ClientId)
-	clientSecret := strings.TrimSpace(req.ClientSecret)
-	if clientId == "" || clientSecret == "" {
-		return nil, fmt.Errorf("clientId and clientSecret are required")
-	}
+	// 从 storage 读取代理配置
+	proxyURL := a.getKiroProxyURL()
 
+	// 创建 IDC 客户端
 	region := strings.TrimSpace(req.Region)
 	if region == "" {
 		region = "us-east-1"
 	}
+	client := kiroIdc.NewClient(proxyURL, region)
 
-	oidcURL := getIdcOidcURL(region)
-	deviceAuthURL := fmt.Sprintf("%s/device_authorization", oidcURL)
-
-	// 使用自定义 Start URL，为空则使用默认 Builder ID URL
-	startURL := strings.TrimSpace(req.StartUrl)
-	if startURL == "" {
-		startURL = "https://view.awsapps.com/start"
+	// 调用核心层的 StartDeviceAuthorization 方法
+	coreReq := &kiroIdc.DeviceAuthRequest{
+		ClientId:     req.ClientId,
+		ClientSecret: req.ClientSecret,
+		Region:       req.Region,
+		StartUrl:     req.StartUrl,
 	}
-
-	// 构建设备授权请求
-	payload := map[string]string{
-		"clientId":     clientId,
-		"clientSecret": clientSecret,
-		"startUrl":     startURL,
-	}
-
-	payloadBytes, err := json.Marshal(payload)
+	coreResp, err := client.StartDeviceAuthorization(coreReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal device auth payload: %w", err)
+		return nil, err
 	}
 
-	// 创建 HTTP 请求
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", deviceAuthURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create device auth request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	// 发送请求
-	client := executor.NewHTTPClientForcedProxyURL("", 15*time.Second)
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start device authorization: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read device auth response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("device authorization failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// 解析响应
-	var result IdcDeviceAuthResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse device auth response: %w", err)
-	}
-
-	return &result, nil
+	// 转换响应类型
+	return &IdcDeviceAuthResponse{
+		DeviceCode:              coreResp.DeviceCode,
+		UserCode:                coreResp.UserCode,
+		VerificationUri:         coreResp.VerificationUri,
+		VerificationUriComplete: coreResp.VerificationUriComplete,
+		ExpiresIn:               coreResp.ExpiresIn,
+		Interval:                coreResp.Interval,
+	}, nil
 }
 
 // PollIdcToken polls for the access token using device code
@@ -222,80 +145,34 @@ func (a *App) PollIdcToken(req *IdcPollTokenRequest) (*IdcPollTokenResponse, err
 		return nil, fmt.Errorf("nil request")
 	}
 
-	clientId := strings.TrimSpace(req.ClientId)
-	clientSecret := strings.TrimSpace(req.ClientSecret)
-	deviceCode := strings.TrimSpace(req.DeviceCode)
-	if clientId == "" || clientSecret == "" || deviceCode == "" {
-		return nil, fmt.Errorf("clientId, clientSecret and deviceCode are required")
-	}
+	// 从 storage 读取代理配置
+	proxyURL := a.getKiroProxyURL()
 
+	// 创建 IDC 客户端
 	region := strings.TrimSpace(req.Region)
 	if region == "" {
 		region = "us-east-1"
 	}
+	client := kiroIdc.NewClient(proxyURL, region)
 
-	oidcURL := getIdcOidcURL(region)
-	tokenURL := fmt.Sprintf("%s/token", oidcURL)
-
-	// 构建 token 请求
-	payload := map[string]string{
-		"clientId":     clientId,
-		"clientSecret": clientSecret,
-		"deviceCode":   deviceCode,
-		"grantType":    "urn:ietf:params:oauth:grant-type:device_code",
+	// 调用核心层的 PollToken 方法
+	coreReq := &kiroIdc.PollTokenRequest{
+		ClientId:     req.ClientId,
+		ClientSecret: req.ClientSecret,
+		DeviceCode:   req.DeviceCode,
+		Region:       req.Region,
 	}
-
-	payloadBytes, err := json.Marshal(payload)
+	coreResp, err := client.PollToken(coreReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal token poll payload: %w", err)
+		return nil, err
 	}
 
-	// 创建 HTTP 请求
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", tokenURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create token poll request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	// 发送请求
-	client := executor.NewHTTPClientForcedProxyURL("", 15*time.Second)
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to poll token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read token poll response: %w", err)
-	}
-
-	// 解析响应（即使是错误响应也要解析）
-	var result IdcPollTokenResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse token poll response: %w", err)
-	}
-
-	// 对于 400 错误，如果是可预期的业务错误（authorization_pending/slow_down/expired_token），返回结果而不是错误
-	// 这样前端可以根据 error 字段做相应处理
-	if resp.StatusCode == http.StatusBadRequest {
-		if result.Error == "authorization_pending" || result.Error == "slow_down" || result.Error == "expired_token" {
-			return &result, nil
-		}
-	}
-
-	// 对于其他错误状态码，返回错误
-	if resp.StatusCode != http.StatusOK {
-		if result.Error != "" {
-			return &result, fmt.Errorf("token poll failed: %s", result.Error)
-		}
-		return nil, fmt.Errorf("token poll failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return &result, nil
+	// 转换响应类型
+	return &IdcPollTokenResponse{
+		AccessToken:  coreResp.AccessToken,
+		RefreshToken: coreResp.RefreshToken,
+		ExpiresIn:    coreResp.ExpiresIn,
+		TokenType:    coreResp.TokenType,
+		Error:        coreResp.Error,
+	}, nil
 }

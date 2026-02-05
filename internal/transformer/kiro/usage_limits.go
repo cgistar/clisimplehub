@@ -21,18 +21,15 @@ type HTTPDoer interface {
 type UsageHTTPError struct {
 	StatusCode int
 	Body       string
-	Hint       string
 }
 
 func (e *UsageHTTPError) Error() string {
 	payload := struct {
 		StatusCode int    `json:"statusCode"`
 		Body       string `json:"body"`
-		Hint       string `json:"hint,omitempty"`
 	}{
 		StatusCode: e.StatusCode,
 		Body:       e.Body,
-		Hint:       strings.TrimSpace(e.Hint),
 	}
 
 	b, err := json.Marshal(payload)
@@ -40,24 +37,19 @@ func (e *UsageHTTPError) Error() string {
 		return "KIRO_USAGE_HTTP_ERROR: " + string(b)
 	}
 
-	msg := strings.TrimSpace(e.Hint)
-	if msg == "" {
-		msg = "usage request failed"
-	}
 	if e.StatusCode > 0 && strings.TrimSpace(e.Body) != "" {
-		return fmt.Sprintf("%s (HTTP %d): %s", msg, e.StatusCode, strings.TrimSpace(e.Body))
+		return fmt.Sprintf("usage request failed (HTTP %d): %s", e.StatusCode, strings.TrimSpace(e.Body))
 	}
 	if e.StatusCode > 0 {
-		return fmt.Sprintf("%s (HTTP %d)", msg, e.StatusCode)
+		return fmt.Sprintf("usage request failed (HTTP %d)", e.StatusCode)
 	}
-	return msg
+	return "usage request failed"
 }
 
-func newUsageHTTPError(statusCode int, body string, hint string) *UsageHTTPError {
+func newUsageHTTPError(statusCode int, body string) *UsageHTTPError {
 	return &UsageHTTPError{
 		StatusCode: statusCode,
 		Body:       strings.TrimSpace(strings.ToValidUTF8(body, "�")),
-		Hint:       strings.TrimSpace(hint),
 	}
 }
 
@@ -158,9 +150,9 @@ func FetchUsage(ctx context.Context, doer HTTPDoer, query UsageQuery) (*UsageRes
 		if status == http.StatusUnauthorized || status == http.StatusForbidden {
 			var httpErr *UsageHTTPError
 			if errors.As(err, &httpErr) {
-				return nil, newUsageHTTPError(httpErr.StatusCode, httpErr.Body, "accessToken expired or unauthorized; please click Test to refresh accessToken")
+				return nil, newUsageHTTPError(httpErr.StatusCode, httpErr.Body)
 			}
-			return nil, newUsageHTTPError(status, "", "accessToken expired or unauthorized; please click Test to refresh accessToken")
+			return nil, newUsageHTTPError(status, "")
 		}
 		return nil, err
 	}
@@ -246,7 +238,7 @@ func fetchUsageOnce(ctx context.Context, doer HTTPDoer, query UsageQuery, access
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return UsageLimitsResponse{}, resp.StatusCode, newUsageHTTPError(resp.StatusCode, string(body), "")
+		return UsageLimitsResponse{}, resp.StatusCode, newUsageHTTPError(resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)

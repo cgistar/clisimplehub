@@ -13,6 +13,7 @@ import (
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer/kiro"
 	kiroClaude "clisimplehub/internal/transformer/kiro/claude"
+	kiroClient "clisimplehub/internal/transformer/kiro/client"
 	kiroShared "clisimplehub/internal/transformer/kiro/shared"
 )
 
@@ -241,6 +242,9 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
+		// 使用统一的 HTTP 客户端工厂，支持代理配置
+		httpClient := kiroClient.NewHTTPClientWithProxy(strings.TrimSpace(req.ProxyURL), 10*time.Second)
+
 		usageQuery := kiro.UsageQuery{
 			AccessToken:   accessToken,
 			ProfileArn:    profileArn,
@@ -250,7 +254,7 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 			Version:       version,
 		}
 
-		if usageResult, err := kiro.FetchUsage(ctx, http.DefaultClient, usageQuery); err == nil && usageResult != nil {
+		if usageResult, err := kiro.FetchUsage(ctx, httpClient, usageQuery); err == nil && usageResult != nil {
 			usageInfo = &UsageInfo{
 				Used:  int(usageResult.CurrentUsage),
 				Limit: int(usageResult.UsageLimit),
@@ -475,6 +479,17 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// 从 storage 读取代理配置
+	proxyURL := ""
+	if store != nil {
+		if v, err := store.GetConfig("kiro.proxyUrl"); err == nil {
+			proxyURL = v
+		}
+	}
+
+	// 使用统一的 HTTP 客户端工厂，支持代理配置
+	httpClient := kiroClient.NewHTTPClientWithProxy(proxyURL, 10*time.Second)
+
 	usageQuery := kiro.UsageQuery{
 		AccessToken:   accessToken,
 		ProfileArn:    profileArn,
@@ -484,7 +499,7 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 		Version:       version,
 	}
 
-	usageResult, err := kiro.FetchUsage(ctx, http.DefaultClient, usageQuery)
+	usageResult, err := kiro.FetchUsage(ctx, httpClient, usageQuery)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error": fmt.Sprintf("Failed to fetch usage: %v", err),

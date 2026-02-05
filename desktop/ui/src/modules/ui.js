@@ -535,7 +535,10 @@ export function initUI() {
 		                    </div>
 		                    <div class="form-group" id="kiroIdcSecretField" style="display:none;">
 		                        <label>${t('kiro.clientSecret')}</label>
-		                        <input type="password" id="kiroClientSecret" placeholder="${t('kiro.clientSecretPlaceholder')}" oninput="onKiroIdcFieldsInput()">
+		                        <div class="input-with-icon">
+		                            <input type="password" id="kiroClientSecret" placeholder="${t('kiro.clientSecretPlaceholder')}" oninput="onKiroIdcFieldsInput()">
+		                            <button type="button" class="input-icon-btn" id="toggleKiroClientSecretVisibility" onclick="toggleKiroClientSecretVisibility()" title="${t('manage.toggleVisibility')}">👁️</button>
+		                        </div>
 		                        <small>${t('kiro.clientSecretHelp')}</small>
 		                    </div>
 		                    <div class="form-group">

@@ -2,14 +2,11 @@ package claude
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,9 +14,8 @@ import (
 	"time"
 
 	kiroapi "clisimplehub/internal/transformer/kiro"
+	kiroClient "clisimplehub/internal/transformer/kiro/client"
 	kiroShared "clisimplehub/internal/transformer/kiro/shared"
-
-	"golang.org/x/net/proxy"
 )
 
 const (
@@ -56,8 +52,8 @@ func NewKiroAuthManager(creds *kiroShared.KiroCredentials, credsPath string, pro
 		region = "us-east-1"
 	}
 
-	// Create HTTP client with optional proxy support
-	httpClient := buildProxyHTTPClient(proxyURL, 30*time.Second)
+	// Create HTTP client with optional proxy support using unified client factory
+	httpClient := kiroClient.NewHTTPClientWithProxy(proxyURL, 30*time.Second)
 
 	return &KiroAuthManager{
 		creds:         creds,
@@ -390,81 +386,4 @@ func (m *KiroAuthManager) handleRefreshResponse(resp *http.Response) error {
 // isRetryableStatus checks if an HTTP status code is retryable
 func isRetryableStatus(status int) bool {
 	return status == 429 || status == 500 || status == 502 || status == 503 || status == 504
-}
-
-// buildProxyHTTPClient creates an HTTP client with optional proxy support
-func buildProxyHTTPClient(proxyURL string, timeout time.Duration) *http.Client {
-	client := &http.Client{Timeout: timeout}
-
-	// Always set an explicit transport so we don't accidentally pick up proxy settings
-	// from environment variables; Kiro proxy must come from config.json `kiro.proxyUrl`.
-	proxyURL = strings.TrimSpace(proxyURL)
-	if proxyURL == "" {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.Proxy = nil
-		client.Transport = transport
-		return client
-	}
-
-	transport := buildKiroProxyTransport(proxyURL)
-	if transport == nil {
-		transport = http.DefaultTransport.(*http.Transport).Clone()
-		transport.Proxy = nil
-	}
-	client.Transport = transport
-	return client
-}
-
-// buildKiroProxyTransport creates an HTTP transport with proxy support
-// Supports socks5, http, and https proxy protocols
-func buildKiroProxyTransport(proxyURL string) *http.Transport {
-	if proxyURL == "" {
-		return nil
-	}
-
-	base := http.DefaultTransport.(*http.Transport).Clone()
-	base.Proxy = nil
-
-	parsedURL, err := url.Parse(proxyURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to parse kiro proxy URL: %v\n", err)
-		return nil
-	}
-
-	switch parsedURL.Scheme {
-	case "socks5":
-		return buildKiroSOCKS5Transport(base, parsedURL)
-	case "http", "https":
-		base.Proxy = http.ProxyURL(parsedURL)
-		return base
-	default:
-		fmt.Fprintf(os.Stderr, "Warning: unsupported kiro proxy scheme: %s\n", parsedURL.Scheme)
-		return nil
-	}
-}
-
-// buildKiroSOCKS5Transport creates a SOCKS5 proxy transport
-func buildKiroSOCKS5Transport(base *http.Transport, parsedURL *url.URL) *http.Transport {
-	if base == nil {
-		base = http.DefaultTransport.(*http.Transport).Clone()
-		base.Proxy = nil
-	}
-
-	var auth *proxy.Auth
-	if parsedURL.User != nil {
-		username := parsedURL.User.Username()
-		password, _ := parsedURL.User.Password()
-		auth = &proxy.Auth{User: username, Password: password}
-	}
-
-	dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, proxy.Direct)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to create kiro SOCKS5 dialer: %v\n", err)
-		return nil
-	}
-
-	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return dialer.Dial(network, addr)
-	}
-	return base
 }
