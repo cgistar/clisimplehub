@@ -1,8 +1,8 @@
 import { t } from '../../i18n/index.js'
 
 export function mainLayoutTemplate() {
-    return `
-        <div class="main-container">
+  return `
+        <div class="main-container" id="homeView">
             <div class="left-panel">
                 <div class="card">
                     <div class="card-header">
@@ -45,6 +45,46 @@ export function mainLayoutTemplate() {
                     </div>
                     <div class="logs-container" id="logsContainer">
                         <div class="empty-state">${t('logs.noLogs')}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-container kiro-accounts-view" id="kiroAccountsView" style="display: none;">
+            <div class="kiro-accounts-page">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>👥 ${t('kiro.accountsTitle')}</h2>
+                        <div class="card-header-actions">
+                            <div class="kiro-add-account-dropdown">
+                                <button class="btn btn-sm btn-primary" onclick="toggleKiroAddAccountDropdown()" title="${t('kiro.addAccount')}">
+                                    ➕ ${t('kiro.addAccount')} ▾
+                                </button>
+                                <div class="kiro-add-account-menu" id="kiroAddAccountMenu" style="display: none;">
+                                    <button class="dropdown-item" onclick="startAddAccountLogin('social', 'Google')">
+                                        <span class="dropdown-icon">🔑</span>
+                                        <span class="dropdown-text">Google</span>
+                                    </button>
+                                    <button class="dropdown-item" onclick="startAddAccountLogin('social', 'Github')">
+                                        <span class="dropdown-icon">🔑</span>
+                                        <span class="dropdown-text">GitHub</span>
+                                    </button>
+                                    <button class="dropdown-item" onclick="startAddAccountLogin('idc', 'builder')">
+                                        <span class="dropdown-icon">🏗️</span>
+                                        <span class="dropdown-text">AWS Builder ID</span>
+                                    </button>
+                                    <button class="dropdown-item" onclick="startAddAccountLogin('idc', 'org')">
+                                        <span class="dropdown-icon">🏢</span>
+                                        <span class="dropdown-text">AWS IdC (Org)</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kiro-accounts-page-body">
+                        <div class="kiro-accounts-grid" id="kiroAccountsGrid">
+                            <div class="loading">${t('common.loading')}</div>
+                        </div>
                     </div>
                 </div>
             </div>

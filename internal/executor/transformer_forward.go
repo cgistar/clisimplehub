@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"clisimplehub/internal/transformer"
 	kiroAuth "clisimplehub/internal/transformer/kiro"
 	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
+	kiroShared "clisimplehub/internal/transformer/kiro/shared"
 	"clisimplehub/internal/usage"
 )
 
@@ -278,6 +281,9 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 			debugLogger.SetSection("UpstreamResponseBody", truncateTextForLog(bytesToSafeText(body), 32*1024))
 			debugLogger.SetRawSection("UpstreamResponseRaw", body)
 		}
+
+		// 检查并更新账号状态
+		handleKiroErrorStatus(resp.StatusCode, body, tr)
 
 		result.Body = body
 		return result
@@ -1086,4 +1092,90 @@ func truncateTextForLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "\n...(truncated)\n"
+}
+
+// handleKiroErrorStatus 检查并更新 Kiro 账号状态（用于 HTTP 错误响应）
+// statusCode: HTTP 状态码
+// body: 响应体
+// tr: transformer 实例（用于获取配置路径和 refreshToken）
+func handleKiroErrorStatus(statusCode int, body []byte, tr transformer.Transformer) {
+	if tr == nil || len(body) == 0 {
+		return
+	}
+
+	bodyStr := string(body)
+	var targetStatus kiroShared.KiroAccountStatus
+	var errorType string
+
+	// 检查 402 + MONTHLY_REQUEST_COUNT（额度用尽）
+	if statusCode == 402 && kiroShared.IsMonthlyRequestCountError(bodyStr) {
+		targetStatus = kiroShared.KiroStatusExhausted
+		errorType = "MONTHLY_REQUEST_COUNT"
+	} else if statusCode == 403 && kiroShared.IsTemporarilySuspendedError(bodyStr) {
+		// 检查 403 + TEMPORARILY_SUSPENDED（账号被封禁）
+		targetStatus = kiroShared.KiroStatusBanned
+		errorType = "TEMPORARILY_SUSPENDED"
+	} else {
+		// 不是我们关心的错误类型
+		return
+	}
+
+	// credentials live next to config.json
+	// Prefer CONFIG_PATH, but fall back to the kiro transformer global config getter.
+	configPath := strings.TrimSpace(os.Getenv("CONFIG_PATH"))
+	if configPath == "" {
+		if v, err := kiro_claude.GetConfig("configPath"); err == nil {
+			configPath = strings.TrimSpace(v)
+		}
+	}
+	credsPath := ""
+	if configPath != "" {
+		credsPath = filepath.Join(filepath.Dir(kiroShared.ExpandTilde(configPath)), filepath.Base(kiroShared.GetDefaultKiroCredentialsPath()))
+	}
+	if credsPath == "" {
+		credsPath = kiroShared.GetDefaultKiroCredentialsPath()
+	}
+
+	// kiro.json 在同一目录
+	multiConfigPath := ""
+	if configPath != "" {
+		multiConfigPath = filepath.Join(filepath.Dir(kiroShared.ExpandTilde(configPath)), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
+	}
+	if multiConfigPath == "" {
+		multiConfigPath = kiroShared.GetDefaultKiroMultiConfigPath()
+	}
+
+	// Determine refreshToken for the account that should be marked (banned/exhausted).
+	// Primary source: kiro-auth-token.json; fallback: kiro.json activeRefreshToken (multi-account mode).
+	refreshToken := ""
+	creds, err := kiroShared.LoadKiroCredentials(credsPath)
+	if err == nil && creds != nil {
+		refreshToken = strings.TrimSpace(creds.RefreshToken)
+	} else {
+		// Do not early-return: multi-account setups may not have kiro-auth-token.json at all.
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to load credentials from %s: %v\n", credsPath, err)
+		}
+	}
+	if refreshToken == "" {
+		if multiConfig, err := kiroShared.LoadKiroMultiConfig(multiConfigPath); err == nil && multiConfig != nil {
+			refreshToken = strings.TrimSpace(multiConfig.ActiveRefreshToken)
+		}
+	}
+	if refreshToken == "" {
+		fmt.Fprintf(os.Stderr, "Warning: cannot determine refreshToken to update account status (creds=%s multi=%s)\n", credsPath, multiConfigPath)
+		return
+	}
+
+	// 更新账号状态
+	if err := kiroShared.UpdateAccountStatusByRefreshToken(
+		refreshToken,
+		targetStatus,
+		credsPath,
+		multiConfigPath,
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update account status to %s (%s): %v\n", targetStatus, errorType, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "Info: updated account status to %s due to %s error (path: %s)\n", targetStatus, errorType, credsPath)
+	}
 }

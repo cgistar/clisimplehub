@@ -6,7 +6,8 @@ export function headerTemplate() {
             <div class="header-content">
                 <div class="header-left">
                     <div class="header-tabs">
-                        <button class="header-tab active" data-tab="home">🏠 ${t('header.home')}</button>
+                        <button class="header-tab active" data-tab="home" onclick="switchMainTab('home')">🏠 ${t('header.home')}</button>
+                        <button class="header-tab" data-tab="kiro-accounts" onclick="switchMainTab('kiro-accounts')">👥 ${t('kiro.accountsTitle')}</button>
                     </div>
                 </div>
                 <div class="header-right">

@@ -21,6 +21,7 @@ const socialLoginState = {
   timeoutTimer: null, // 超时定时器
   originalKiroHandlerBundleId: '', // 登录开始前的 kiro:// 默认 handler（macOS）
   didOverrideKiroHandler: false, // 本次登录是否临时抢占了 handler
+  fromAccountManagement: false, // 是否从账号管理界面发起
 }
 
 async function isDarwinPlatform() {
@@ -443,6 +444,45 @@ export async function fetchKiroUsage() {
   }
 }
 
+// 为账号管理界面获取用量（用于激活账号）
+export async function fetchKiroUsageForAccount(account) {
+  if (!account) {
+    throw new Error('Account is required')
+  }
+
+  if (!account.accessToken) {
+    throw new Error(t('kiro.accessTokenRequiredForUsage'))
+  }
+
+  try {
+    if (!window.go?.main?.App?.GetKiroUsage) {
+      throw new Error('GetKiroUsage is not available')
+    }
+
+    const result = await window.go.main.App.GetKiroUsage({
+      accessToken: account.accessToken || '',
+      refreshToken: account.refreshToken || '',
+      profileArn: account.profileArn || '',
+      region: account.region || 'us-east-1',
+      proxyUrl: account.proxyUrl || '',
+      userAgent: account.userAgent || '',
+      version: account.version || '',
+    })
+
+    logKiroUsageDetails(result)
+    return result
+  } catch (error) {
+    console.error('GetKiroUsage error:', error)
+    const httpDetail = parseKiroUsageHttpError(error)
+    const detailMessage = httpDetail
+      ? formatKiroUsageHttpError(httpDetail)
+      : normalizeErrorMessage(error) || 'Unknown error'
+    const msg = t('kiro.usageFailedPrefix') + detailMessage
+    logError(`[KiroUsage] ${msg}`)
+    throw new Error(detailMessage)
+  }
+}
+
 export async function saveKiroConfig() {
   const refreshToken = document.getElementById('kiroRefreshToken').value.trim()
   const region = document.getElementById('kiroRegion').value
@@ -479,7 +519,8 @@ export async function saveKiroConfig() {
 
   try {
     if (window.go?.main?.App?.SaveKiroConfig) {
-      await window.go.main.App.SaveKiroConfig({
+      // 根据authMethod构建配置对象，只包含相应类型的字段
+      const config = {
         refreshToken: testedKiroCreds?.refreshToken || refreshToken,
         region: testedKiroCreds?.region || region,
         proxyUrl,
@@ -487,12 +528,26 @@ export async function saveKiroConfig() {
         version,
         bufferedStream,
         authMethod,
-        clientId,
-        clientSecret,
         accessToken: shouldPersistAuthState ? testedKiroCreds?.accessToken || '' : '',
         expiresAt: shouldPersistAuthState ? testedKiroCreds?.expiresAt || '' : '',
-        profileArn: shouldPersistAuthState ? testedKiroCreds?.profileArn || '' : '',
-      })
+      }
+
+      // 根据authMethod添加类型特定的字段
+      if (authMethod.toLowerCase() === 'idc') {
+        // IdC类型：包含clientId和clientSecret，不包含profileArn和provider
+        config.clientId = clientId
+        config.clientSecret = clientSecret
+        config.provider = ''
+        config.profileArn = ''
+      } else {
+        // Social类型：包含provider和profileArn，不包含clientId和clientSecret
+        config.provider = testedKiroCreds?.provider || ''
+        config.profileArn = shouldPersistAuthState ? testedKiroCreds?.profileArn || '' : ''
+        config.clientId = ''
+        config.clientSecret = ''
+      }
+
+      await window.go.main.App.SaveKiroConfig(config)
     }
 
     // 检查并创建 kiro 端点
@@ -1150,8 +1205,9 @@ export async function openIdcVerifyUrl() {
 /**
  * 开始 Social 登录流程
  * @param {string} provider - 'google' 或 'github'
+ * @param {boolean} fromAccountManagement - 是否从账号管理界面发起
  */
-export async function startSocialLogin(provider) {
+export async function startSocialLogin(provider, fromAccountManagement = false) {
   try {
     // 0. 清理旧的监听器（防止重复注册）
     resetSocialLoginState()
@@ -1205,6 +1261,7 @@ export async function startSocialLogin(provider) {
     socialLoginState.state = state
     socialLoginState.loginUrl = loginUrl
     socialLoginState.isWaiting = true
+    socialLoginState.fromAccountManagement = fromAccountManagement
 
     // 4. 显示等待 Modal
     showSocialLoginModal()
@@ -1304,6 +1361,7 @@ async function handleDeeplinkCallback(url) {
       profileArn: tokenResponse.profileArn || '',
       region: region,
       authMethod: 'social',
+      provider: socialLoginState.provider || '',
       clientId: '',
       clientSecret: '',
     }
@@ -1322,11 +1380,46 @@ async function handleDeeplinkCallback(url) {
     // 8. 登录成功后恢复 kiro:// 默认 handler（避免长期抢占）
     await restoreKiroProtocolHandlerIfNeeded()
 
-    // 8. 关闭 Modal 并显示成功
+    // 9. 如果是从账号管理界面发起，自动添加账号
+    if (socialLoginState.fromAccountManagement) {
+      try {
+        // 导入 addKiroAccount 函数
+        const { addKiroAccount } = await import('./kiroAccounts.js')
+
+        // 构建账号数据
+        const accountData = {
+          refreshToken: tokenResponse.refreshToken || '',
+          accessToken: tokenResponse.accessToken || '',
+          profileArn: tokenResponse.profileArn || '',
+          expiresAt: tokenResponse.expiresAt || '',
+          region: testedKiroCreds?.region || 'us-east-1',
+          authMethod: 'social',
+          provider: socialLoginState.provider,
+        }
+
+        // 添加账号
+        await addKiroAccount(accountData)
+
+        // 关闭 Modal
+        closeSocialLoginModal()
+
+        // 清理状态
+        resetSocialLoginState()
+        return
+      } catch (error) {
+        console.error('Failed to add account:', error)
+        showError(t('kiro.addAccountFailed') + ': ' + (error?.message || error))
+        closeSocialLoginModal()
+        resetSocialLoginState()
+        return
+      }
+    }
+
+    // 10. 关闭 Modal 并显示成功（非账号管理界面发起）
     closeSocialLoginModal()
     showSuccess(t('kiro.socialLoginSuccess'))
 
-    // 9. 清理状态
+    // 11. 清理状态
     resetSocialLoginState()
   } catch (error) {
     console.error('Deeplink callback error:', error)
@@ -1431,6 +1524,7 @@ function resetSocialLoginState() {
   socialLoginState.isWaiting = false
   socialLoginState.originalKiroHandlerBundleId = ''
   socialLoginState.didOverrideKiroHandler = false
+  socialLoginState.fromAccountManagement = false
 
   // 清除超时定时器
   if (socialLoginState.timeoutTimer) {

@@ -46,6 +46,12 @@ func getConfig(key string) (string, error) {
 	return globalConfigGetter(key)
 }
 
+// GetConfig exposes the global config getter for non-transformer packages.
+// It is intentionally a thin wrapper around the internal getConfig.
+func GetConfig(key string) (string, error) {
+	return getConfig(key)
+}
+
 // Transformer implements the transformer.Transformer interface for Kiro -> Claude conversion
 type Transformer struct {
 	authManager       *KiroAuthManager

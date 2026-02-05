@@ -11,6 +11,34 @@ import (
 	"time"
 )
 
+// KiroCredentials represents credentials loaded from kiro-auth-token.json.
+type KiroCredentials struct {
+	AccessToken  string            `json:"accessToken"`
+	RefreshToken string            `json:"refreshToken"`
+	ProfileArn   string            `json:"profileArn"`
+	ExpiresAt    time.Time         `json:"expiresAt"`
+	Region       string            `json:"region,omitempty"`
+	AuthMethod   string            `json:"authMethod,omitempty"`
+	Provider     string            `json:"provider,omitempty"`
+	ClientId     string            `json:"clientId,omitempty"`
+	ClientSecret string            `json:"clientSecret,omitempty"`
+	Status       KiroAccountStatus `json:"status,omitempty"`
+}
+
+// credentialsJSON is used for JSON unmarshaling with string expiresAt.
+type credentialsJSON struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ProfileArn   string `json:"profileArn"`
+	ExpiresAt    string `json:"expiresAt"`
+	Region       string `json:"region,omitempty"`
+	AuthMethod   string `json:"authMethod,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	ClientId     string `json:"clientId,omitempty"`
+	ClientSecret string `json:"clientSecret,omitempty"`
+	Status       string `json:"status,omitempty"`
+}
+
 // LoadKiroCredentials loads credentials from a JSON file
 func LoadKiroCredentials(path string) (*KiroCredentials, error) {
 	expandedPath := ExpandTilde(path)
@@ -48,6 +76,7 @@ func LoadKiroCredentials(path string) (*KiroCredentials, error) {
 		Provider:     raw.Provider,
 		ClientId:     raw.ClientId,
 		ClientSecret: raw.ClientSecret,
+		Status:       KiroAccountStatus(raw.Status),
 	}
 
 	// Parse expiresAt
@@ -112,9 +141,21 @@ func SaveKiroCredentials(path string, creds *KiroCredentials) error {
 	existingData["accessToken"] = creds.AccessToken
 	existingData["refreshToken"] = creds.RefreshToken
 	authMethod := strings.ToLower(strings.TrimSpace(creds.AuthMethod))
+
+	// Enforce field invariants by auth method to avoid persisting stale credentials.
+	// - Social: never store IdC clientId/clientSecret.
+	// - IdC (and builder-id): never store profileArn/provider (they are not used for these auth methods).
+	switch authMethod {
+	case "social":
+		delete(existingData, "clientId")
+		delete(existingData, "clientSecret")
+	case "idc", "builder-id":
+		delete(existingData, "profileArn")
+		delete(existingData, "provider")
+	}
+
 	if (authMethod == "idc" || authMethod == "builder-id") && strings.TrimSpace(creds.ProfileArn) == "" {
-		// IdC does not rely on profileArn; clear any stale values from previous auth methods.
-		existingData["profileArn"] = ""
+		// IdC does not rely on profileArn; keep it absent unless explicitly provided.
 	} else if creds.ProfileArn != "" {
 		existingData["profileArn"] = creds.ProfileArn
 	}
@@ -130,14 +171,17 @@ func SaveKiroCredentials(path string, creds *KiroCredentials) error {
 	if creds.AuthMethod != "" {
 		existingData["authMethod"] = creds.AuthMethod
 	}
-	if creds.Provider != "" {
+	if creds.Provider != "" && authMethod != "idc" && authMethod != "builder-id" {
 		existingData["provider"] = creds.Provider
 	}
-	if creds.ClientId != "" {
+	if creds.ClientId != "" && (authMethod == "idc" || authMethod == "builder-id") {
 		existingData["clientId"] = creds.ClientId
 	}
-	if creds.ClientSecret != "" {
+	if creds.ClientSecret != "" && (authMethod == "idc" || authMethod == "builder-id") {
 		existingData["clientSecret"] = creds.ClientSecret
+	}
+	if creds.Status != "" {
+		existingData["status"] = string(creds.Status)
 	}
 
 	// Ensure directory exists

@@ -95,6 +95,14 @@ import {
     copySocialLoginUrl,
     openSocialLoginUrl
 } from './modules/kiro.js';
+import {
+    showKiroAccountsModal,
+    closeKiroAccountsModal,
+    hideAddKiroAccountOptions,
+    toggleKiroAddAccountDropdown,
+    hideKiroAddAccountDropdown
+} from './modules/kiroAccounts.js';
+import { switchMainTab } from './modules/mainTabs.js';
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', async () => {
@@ -227,3 +235,9 @@ window.closeSocialLoginModal = closeSocialLoginModal;
 window.copySocialLoginUrl = copySocialLoginUrl;
 window.openSocialLoginUrl = openSocialLoginUrl;
 window.toggleDebugModeDropdown = toggleDebugModeDropdown;
+window.showKiroAccountsModal = showKiroAccountsModal;
+window.closeKiroAccountsModal = closeKiroAccountsModal;
+window.hideAddKiroAccountOptions = hideAddKiroAccountOptions;
+window.toggleKiroAddAccountDropdown = toggleKiroAddAccountDropdown;
+window.hideKiroAddAccountDropdown = hideKiroAddAccountDropdown;
+window.switchMainTab = switchMainTab;
