@@ -72,7 +72,6 @@ type KiroConfig struct {
 	ProxyURL       string `json:"proxyUrl,omitempty"`
 	UserAgent      string `json:"userAgent,omitempty"`
 	Version        string `json:"version,omitempty"`
-	MachineID      string `json:"machineId,omitempty"`
 	BufferedStream bool   `json:"bufferedStream,omitempty"`
 }
 
@@ -302,7 +301,6 @@ func IsValidEndpoint(endpoint *EndpointConfig) bool {
 	return len(ValidateEndpoint(endpoint)) == 0
 }
 
-
 // IsPortAvailable 检查端口是否可用
 func IsPortAvailable(port int) error {
 	if err := ValidatePort(port); err != nil {
@@ -334,3 +332,22 @@ func ValidateListenAddr(addr string) error {
 		return fmt.Errorf("invalid listen address '%s': only 127.0.0.1, 0.0.0.0, ::1, and :: are allowed", addr)
 	}
 }
+
+// BackupData 表示完整的备份数据
+type BackupData struct {
+	SchemaVersion   int                    `json:"schemaVersion"`
+	CreatedAt       string                 `json:"createdAt"`
+	AppConfig       map[string]interface{} `json:"appConfig"`
+	Vendors         []VendorConfig         `json:"vendors"`
+	Endpoints       []EndpointConfig       `json:"endpoints"`
+	KiroAuthToken   map[string]interface{} `json:"kiroAuthToken,omitempty"`
+	KiroMultiConfig interface{}            `json:"kiroMultiConfig,omitempty"`
+}
+
+// BackupMergeMode 表示备份恢复模式
+type BackupMergeMode string
+
+const (
+	BackupMergeModeReplace BackupMergeMode = "replace"
+	BackupMergeModeMerge   BackupMergeMode = "merge"
+)

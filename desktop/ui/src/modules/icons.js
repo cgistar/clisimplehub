@@ -33,7 +33,15 @@ const iconMap = {
     refreshCw: 'RefreshCw',
     save: 'Save',
     edit: 'Edit',
-    externalLink: 'ExternalLink'
+    externalLink: 'ExternalLink',
+    building: 'Building',
+    key: 'Key',
+    hammer: 'Hammer',
+    terminal: 'Terminal',
+    monitor: 'Monitor',
+    list: 'List',
+    zap: 'Zap',
+    clock: 'Clock'
 }
 
 /**

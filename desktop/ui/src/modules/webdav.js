@@ -151,61 +151,29 @@ export async function backupToWebDAV() {
             throw new Error('无法创建备份目录');
         }
 
-        // Get current configuration from backend
-        let configData;
-        if (window.go?.main?.App?.GetFullConfig) {
-            configData = await window.go.main.App.GetFullConfig();
-        } else {
-            // Fallback: try to get from localStorage
-            configData = {
-                settings: state.settings,
-                vendors: state.vendors,
-                endpoints: Object.values(state.endpoints).flat()
-            };
+        // Call backend to create backup data
+        const backupResponse = await window.go.main.App.CreateBackupData();
+        if (!backupResponse) {
+            throw new Error('无法创建备份数据');
         }
 
-        if (!configData) {
-            throw new Error('无法获取当前配置');
+        const { filename, data } = backupResponse;
+        if (!filename || !data) {
+            throw new Error('后端返回的备份数据格式无效');
         }
-
-        // 添加备份元信息
-        const backupData = {
-            ...configData,
-            schemaVersion: 2,
-            createdAt: new Date().toISOString()
-        };
-
-        // 尝试包含 kiro-auth-token.json
-        let kiroIncluded = false;
-        try {
-            if (window.go?.main?.App?.GetKiroAuthTokenJSON) {
-                const kiroAuthToken = await window.go.main.App.GetKiroAuthTokenJSON();
-                if (kiroAuthToken) {
-                    backupData.kiroAuthToken = kiroAuthToken;
-                    kiroIncluded = true;
-                }
-            }
-        } catch (e) {
-            console.warn('Failed to include kiro-auth-token.json in backup:', e);
-            showError('警告：Kiro 配置未包含在备份中');
-        }
-
-        // Generate backup filename with computer name and timestamp
-        const computerName = await getComputerName();
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -1);
-        const filename = `${computerName}-${timestamp}.json`;
 
         // Upload to WebDAV via Go backend proxy (save to /clisimplehub/)
         const result = await window.go.main.App.WebDAVPut({
             config,
             path: `${BACKUP_DIR}/${filename}`,
-            body: JSON.stringify(backupData, null, 2)
+            body: JSON.stringify(data, null, 2)
         });
 
         if (result.error) {
             throw new Error(result.error);
         } else if (result.statusCode >= 200 && result.statusCode < 300) {
-            const successMsg = kiroIncluded
+            const hasKiro = data.kiroAuthToken || data.kiroMultiConfig;
+            const successMsg = hasKiro
                 ? `配置已备份（含 Kiro 凭据）: ${filename}`
                 : `配置已备份: ${filename}`;
             showSuccess(successMsg);
@@ -296,28 +264,6 @@ export async function loadBackupsList() {
 }
 
 /**
- * 标准化备份里的 kiroAuthToken 字段（支持对象或 JSON 字符串）
- */
-function normalizeKiroAuthToken(kiroAuthToken) {
-    if (!kiroAuthToken) return null;
-
-    if (typeof kiroAuthToken === 'string') {
-        try {
-            return JSON.parse(kiroAuthToken);
-        } catch (e) {
-            return null;
-        }
-    }
-
-    // 只接受普通对象，排除数组和其他类型
-    if (typeof kiroAuthToken === 'object' && !Array.isArray(kiroAuthToken)) {
-        return kiroAuthToken;
-    }
-
-    return null;
-}
-
-/**
  * Load and restore configuration from WebDAV backup via Go backend proxy
  */
 export async function loadConfigFromWebDAV(filename) {
@@ -360,122 +306,25 @@ export async function loadConfigFromWebDAV(filename) {
             throw new Error(`下载失败: ${result.statusCode}`);
         }
 
-        const remoteConfig = JSON.parse(result.body);
-        const remoteKiroAuthToken = normalizeKiroAuthToken(remoteConfig?.kiroAuthToken);
+        const backupData = JSON.parse(result.body);
 
-        // 根据模式处理配置
-        let finalConfig;
-        if (mode === 'replace') {
-            // 清空并替换：直接使用远程配置，设置 replaceMode 标志
-            finalConfig = { ...remoteConfig, replaceMode: true };
-        } else {
-            // 合并模式：将远程配置合并到本地
-            finalConfig = await mergeConfigs(remoteConfig);
-        }
+        // Call backend to restore data
+        await window.go.main.App.RestoreBackupData(backupData, mode);
 
-        // Save to config.json via backend
-        if (window.go?.main?.App?.SaveFullConfig) {
-            // SaveFullConfig returns error (null on success)
-            await window.go.main.App.SaveFullConfig(finalConfig);
+        showSuccess(mode === 'replace' ? '配置已替换，正在刷新...' : '配置已合并，正在刷新...');
 
-            // 恢复 kiro-auth-token.json
-            let kiroRestoreFailed = false;
-            if (remoteKiroAuthToken && window.go?.main?.App?.SaveKiroAuthTokenJSON) {
-                try {
-                    await window.go.main.App.SaveKiroAuthTokenJSON(remoteKiroAuthToken);
-                } catch (e) {
-                    kiroRestoreFailed = true;
-                    console.error('Failed to restore kiro-auth-token.json:', e);
-                }
+        // Reload configuration
+        setTimeout(async () => {
+            if (window.go?.main?.App?.ReloadConfig) {
+                await window.go.main.App.ReloadConfig();
             }
-
-            const baseMsg = mode === 'replace' ? '配置已替换，正在刷新...' : '配置已合并，正在刷新...';
-            showSuccess(kiroRestoreFailed ? `${baseMsg}（Kiro 配置恢复失败，请手动重新登录）` : baseMsg);
-            // Reload configuration
-            setTimeout(async () => {
-                if (window.go?.main?.App?.ReloadConfig) {
-                    await window.go.main.App.ReloadConfig();
-                }
-                // Refresh UI
-                location.reload();
-            }, 1000);
-        } else {
-            // Fallback: save to localStorage and reload
-            if (finalConfig.settings) {
-                localStorage.setItem('settings', JSON.stringify(finalConfig.settings));
-            }
-            if (finalConfig.vendors) {
-                localStorage.setItem('vendors', JSON.stringify(finalConfig.vendors));
-            }
-            if (finalConfig.endpoints) {
-                localStorage.setItem('endpoints', JSON.stringify(finalConfig.endpoints));
-            }
-            showSuccess(mode === 'replace' ? '配置已替换，正在刷新...' : '配置已合并，正在刷新...');
-            setTimeout(() => location.reload(), 1000);
-        }
+            // Refresh UI
+            location.reload();
+        }, 1000);
     } catch (error) {
         console.error('Load config error:', error);
         showError('载入配置失败: ' + error.message);
     }
-}
-
-/**
- * 合并远程配置到本地配置
- * @param {Object} remoteConfig - 远程配置
- * @returns {Object} - 合并后的配置
- */
-async function mergeConfigs(remoteConfig) {
-    // 获取当前本地配置
-    let localConfig;
-    if (window.go?.main?.App?.GetFullConfig) {
-        localConfig = await window.go.main.App.GetFullConfig();
-    } else {
-        localConfig = {
-            settings: state.settings || {},
-            vendors: state.vendors || [],
-            endpoints: Object.values(state.endpoints || {}).flat()
-        };
-    }
-
-    // 合并 settings：远程覆盖本地（保留本地独有字段）
-    const mergedSettings = { ...localConfig.settings, ...remoteConfig.settings };
-
-    // 合并 vendors：按 name 去重，远程优先
-    const localVendors = localConfig.vendors || [];
-    const remoteVendors = remoteConfig.vendors || [];
-    const vendorMap = new Map();
-    localVendors.forEach(v => vendorMap.set(v.name, v));
-    remoteVendors.forEach(v => vendorMap.set(v.name, v)); // 远程覆盖同名
-    const mergedVendors = Array.from(vendorMap.values());
-
-    // 合并 endpoints：按 id 去重，远程优先
-    // endpoints 不关联 vendors，独立同步
-    // 必须有 id 字段，没有 id 的端点将被丢弃
-    const localEndpoints = localConfig.endpoints || [];
-    const remoteEndpoints = remoteConfig.endpoints || [];
-    const endpointMap = new Map();
-
-    // 本地端点：只保留有 id 的端点
-    localEndpoints.forEach(e => {
-        if (e.id) {
-            endpointMap.set(e.id, e);
-        }
-    });
-
-    // 远程端点：只保留有 id 的端点，远程覆盖本地
-    remoteEndpoints.forEach(e => {
-        if (e.id) {
-            endpointMap.set(e.id, e);
-        }
-    });
-
-    const mergedEndpoints = Array.from(endpointMap.values());
-
-    return {
-        settings: mergedSettings,
-        vendors: mergedVendors,
-        endpoints: mergedEndpoints
-    };
 }
 
 /**
@@ -539,22 +388,6 @@ async function saveWebDAVSettings(serverUrl, username, password) {
 }
 
 /**
- * Get computer name
- */
-async function getComputerName() {
-    try {
-        if (window.go?.main?.App?.GetComputerName) {
-            return await window.go.main.App.GetComputerName();
-        }
-    } catch (e) {
-        console.error('Failed to get computer name:', e);
-    }
-
-    // Fallback: use hostname or generic name
-    return 'Computer-' + Math.random().toString(36).slice(2, 8);
-}
-
-/**
  * Update test button state
  */
 function updateTestButtonState() {
@@ -578,6 +411,7 @@ function updateBackupButtonState() {
 
 /**
  * Render backups list in the modal
+ * 使用 DOM API 安全创建元素，防止 XSS 注入
  */
 function renderBackupsList() {
     const container = document.getElementById('webdavBackupsList');
@@ -588,22 +422,50 @@ function renderBackupsList() {
         return;
     }
 
-    container.innerHTML = webdavState.backups.map(backup => `
-        <div class="backup-item">
-            <div class="backup-info">
-                <div class="backup-name">${backup.name}</div>
-                <div class="backup-time">${formatBackupTime(backup.lastModified)}</div>
-            </div>
-            <div class="backup-actions">
-                <button class="btn btn-sm btn-primary" onclick="loadConfigFromWebDAV('${backup.filename}')" title="载入配置">
-                    📥 载入
-                </button>
-                <button class="btn btn-sm btn-danger" onclick="deleteBackupFromWebDAV('${backup.filename}')" title="删除备份">
-                    🗑️
-                </button>
-            </div>
-        </div>
-    `).join('');
+    // 清空容器
+    container.innerHTML = '';
+
+    // 使用 DOM API 安全创建元素
+    webdavState.backups.forEach(backup => {
+        const item = document.createElement('div');
+        item.className = 'backup-item';
+
+        const info = document.createElement('div');
+        info.className = 'backup-info';
+
+        const name = document.createElement('div');
+        name.className = 'backup-name';
+        name.textContent = backup.name; // 安全：textContent 自动转义
+
+        const time = document.createElement('div');
+        time.className = 'backup-time';
+        time.textContent = formatBackupTime(backup.lastModified);
+
+        info.appendChild(name);
+        info.appendChild(time);
+
+        const actions = document.createElement('div');
+        actions.className = 'backup-actions';
+
+        const loadBtn = document.createElement('button');
+        loadBtn.className = 'btn btn-sm btn-primary';
+        loadBtn.title = '载入配置';
+        loadBtn.textContent = '📥 载入';
+        loadBtn.addEventListener('click', () => loadConfigFromWebDAV(backup.filename)); // 安全：事件绑定
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-sm btn-danger';
+        deleteBtn.title = '删除备份';
+        deleteBtn.textContent = '🗑️';
+        deleteBtn.addEventListener('click', () => deleteBackupFromWebDAV(backup.filename));
+
+        actions.appendChild(loadBtn);
+        actions.appendChild(deleteBtn);
+
+        item.appendChild(info);
+        item.appendChild(actions);
+        container.appendChild(item);
+    });
 }
 
 /**

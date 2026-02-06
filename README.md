@@ -295,7 +295,7 @@ curl -X POST http://localhost:5600/kiro/config \
 | `proxyUrl` | string | ❌ | 代理地址 |
 | `bufferedStream` | boolean | ❌ | 是否启用缓冲流模式（默认：false） |
 
-**注意**：`version`、`userAgent`、`machineId` 等参数从 `config.json` 中读取，无需在请求中提供。
+**注意**：`version`、`userAgent` 等参数从 `config.json` 中读取，无需在请求中提供；`machineId` 会根据 `refreshToken` 计算并保存到 `kiro-auth-token.json`。
 
 **响应示例**：
 
@@ -314,7 +314,7 @@ curl -X POST http://localhost:5600/kiro/config \
 #### 工作原理
 
 1. **接收配置**：接口验证并获取新的 accessToken
-2. **保存到文件**：更新 `kiro-auth-token.json` 和 `config.json`（machineId、bufferedStream）
+2. **保存到文件**：更新 `kiro-auth-token.json`（凭证、machineId）和 `config.json`（bufferedStream 等非凭证配置）
 3. **自动热重载**：通知所有 Kiro Transformer 实例重新加载配置
 4. **立即生效**：下次 Kiro 请求自动使用新配置，无需重启服务器
 5. **智能更新**：

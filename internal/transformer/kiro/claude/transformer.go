@@ -327,9 +327,6 @@ func (t *Transformer) initialize() error {
 	if v, err := getConfig("kiro.version"); err == nil {
 		t.kiroVersion = strings.TrimSpace(v)
 	}
-	if v, err := getConfig("kiro.machineId"); err == nil {
-		t.machineID = strings.TrimSpace(v)
-	}
 
 	// credentials live next to config.json.
 	credsPath := ""
@@ -347,6 +344,9 @@ func (t *Transformer) initialize() error {
 		// The transformer can still work if credentials are provided via endpoint config
 		fmt.Fprintf(os.Stderr, "Warning: failed to load kiro credentials from %s: %v\n", credsPath, err)
 		return nil
+	}
+	if v := strings.TrimSpace(creds.MachineID); v != "" {
+		t.machineID = v
 	}
 	if t.machineID == "" {
 		t.machineID = kiroapi.ComputeMachineID(creds.RefreshToken)

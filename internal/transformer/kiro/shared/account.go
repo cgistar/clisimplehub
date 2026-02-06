@@ -40,8 +40,12 @@ type KiroAccount struct {
 	SubscriptionTitle  string            `json:"subscriptionTitle,omitempty"`
 	UsageLimit         float64           `json:"usageLimit,omitempty"`
 	CurrentUsage       float64           `json:"currentUsage,omitempty"`
-	Balance            float64           `json:"balance,omitempty"`
+	Balance            float64           `json:"balance"`
 	UsagePct           float64           `json:"usagePct,omitempty"`
+	Email              string            `json:"email,omitempty"`
+	UserID             string            `json:"userId,omitempty"`
+	DaysUntilReset     *int32            `json:"daysUntilReset,omitempty"`
+	NextDateReset      *float64          `json:"nextDateReset,omitempty"`
 	LastUsageCheck     time.Time         `json:"lastUsageCheck,omitempty"`
 	UsageBreakdownList []byte            `json:"usageBreakdownList,omitempty"`
 
@@ -70,6 +74,7 @@ func (a *KiroAccount) ToCredentials() *KiroCredentials {
 		ProfileArn:   a.ProfileArn,
 		ExpiresAt:    a.ExpiresAt,
 		Region:       a.Region,
+		MachineID:    a.MachineId,
 		AuthMethod:   a.AuthMethod,
 		Provider:     a.Provider,
 		ClientId:     a.ClientId,
@@ -87,6 +92,9 @@ func (a *KiroAccount) FromCredentials(creds *KiroCredentials) {
 	a.ProfileArn = creds.ProfileArn
 	a.ExpiresAt = creds.ExpiresAt
 	a.Region = creds.Region
+	if strings.TrimSpace(creds.MachineID) != "" {
+		a.MachineId = creds.MachineID
+	}
 	a.AuthMethod = creds.AuthMethod
 	a.Provider = creds.Provider
 	a.ClientId = creds.ClientId
@@ -167,26 +175,26 @@ func IsMonthlyRequestCountError(body string) bool {
 	if strings.Contains(body, "MONTHLY_REQUEST_COUNT") {
 		return true
 	}
-	
+
 	// 尝试解析 JSON
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(body), &data); err != nil {
 		// 不是有效 JSON，只能依赖字符串匹配
 		return false
 	}
-	
+
 	// 2. JSON reason 字段
 	if reason, ok := data["reason"].(string); ok && reason == "MONTHLY_REQUEST_COUNT" {
 		return true
 	}
-	
+
 	// 3. JSON 嵌套 error.reason 字段
 	if errorObj, ok := data["error"].(map[string]interface{}); ok {
 		if reason, ok := errorObj["reason"].(string); ok && reason == "MONTHLY_REQUEST_COUNT" {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -199,26 +207,26 @@ func IsTemporarilySuspendedError(body string) bool {
 	if strings.Contains(body, "TEMPORARILY_SUSPENDED") {
 		return true
 	}
-	
+
 	// 尝试解析 JSON
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(body), &data); err != nil {
 		// 不是有效 JSON，只能依赖字符串匹配
 		return false
 	}
-	
+
 	// 2. JSON reason 字段
 	if reason, ok := data["reason"].(string); ok && reason == "TEMPORARILY_SUSPENDED" {
 		return true
 	}
-	
+
 	// 3. JSON 嵌套 error.reason 字段（完整性考虑）
 	if errorObj, ok := data["error"].(map[string]interface{}); ok {
 		if reason, ok := errorObj["reason"].(string); ok && reason == "TEMPORARILY_SUSPENDED" {
 			return true
 		}
 	}
-	
+
 	return false
 }
 

@@ -136,7 +136,7 @@ func (m *KiroAuthManager) GetProfileArn() string {
 		return ""
 	}
 	authMethod := strings.ToLower(strings.TrimSpace(m.creds.AuthMethod))
-	if authMethod == "idc" || authMethod == "builder-id" {
+	if authMethod == "idc" {
 		return ""
 	}
 	return m.creds.ProfileArn
@@ -236,7 +236,7 @@ func (m *KiroAuthManager) refreshTokenLocked() error {
 	var refreshURL string
 	var err error
 
-	if authMethod == "idc" || authMethod == "builder-id" {
+	if authMethod == "idc" {
 		// IdC authentication
 		if m.creds.ClientId == "" || m.creds.ClientSecret == "" {
 			return errors.New("IdC auth method requires clientId and clientSecret")
@@ -278,7 +278,7 @@ func (m *KiroAuthManager) refreshTokenLocked() error {
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		if authMethod == "idc" || authMethod == "builder-id" {
+		if authMethod == "idc" {
 			region := m.creds.Region
 			if strings.TrimSpace(region) == "" {
 				region = "us-east-1"
@@ -336,6 +336,11 @@ func (m *KiroAuthManager) refreshTokenLocked() error {
 
 // handleRefreshResponse processes the refresh response
 func (m *KiroAuthManager) handleRefreshResponse(resp *http.Response) error {
+	prevRefreshToken := ""
+	if m != nil && m.creds != nil {
+		prevRefreshToken = strings.TrimSpace(m.creds.RefreshToken)
+	}
+
 	var data struct {
 		AccessToken  string `json:"accessToken"`
 		RefreshToken string `json:"refreshToken"`
@@ -372,15 +377,33 @@ func (m *KiroAuthManager) handleRefreshResponse(resp *http.Response) error {
 		m.creds.ExpiresAt = now.Add(time.Duration(expiresIn-60) * time.Second)
 	}
 
-	// Save to file
-	if m.credsPath != "" {
-		if err := kiroShared.SaveKiroCredentials(m.credsPath, m.creds); err != nil {
-			// Log but don't fail
-			fmt.Fprintf(os.Stderr, "Warning: failed to save kiro credentials: %v\n", err)
-		}
-	}
+	m.persistRefreshAuthFields(prevRefreshToken)
 
 	return nil
+}
+
+func (m *KiroAuthManager) persistRefreshAuthFields(prevRefreshToken string) {
+	if m == nil || m.creds == nil || strings.TrimSpace(m.credsPath) == "" {
+		return
+	}
+
+	// 刷新接口只返回 token 相关字段；这里仅持久化这些字段，避免意外改动其它配置字段。
+	authFields := &kiroShared.KiroCredentials{
+		AccessToken:  m.creds.AccessToken,
+		RefreshToken: m.creds.RefreshToken,
+		ProfileArn:   m.creds.ProfileArn,
+		ExpiresAt:    m.creds.ExpiresAt,
+	}
+	if strings.TrimSpace(authFields.RefreshToken) != "" {
+		authFields.MachineID = kiroapi.ComputeMachineID(authFields.RefreshToken)
+	}
+
+	if err := kiroShared.SaveKiroCredentials(m.credsPath, authFields); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save kiro credentials: %v\n", err)
+	}
+	if err := kiroShared.SyncKiroMultiConfigFromCredentials(m.credsPath, prevRefreshToken, authFields); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to sync kiro.json: %v\n", err)
+	}
 }
 
 // isRetryableStatus checks if an HTTP status code is retryable

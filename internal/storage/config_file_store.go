@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"clisimplehub/internal/config"
-	"strings"
 )
 
 type ConfigFileStore struct {
@@ -24,7 +24,6 @@ func kiroAllEmpty(cfg *config.KiroConfig) bool {
 	return strings.TrimSpace(cfg.ProxyURL) == "" &&
 		strings.TrimSpace(cfg.UserAgent) == "" &&
 		strings.TrimSpace(cfg.Version) == "" &&
-		strings.TrimSpace(cfg.MachineID) == "" &&
 		!cfg.BufferedStream
 }
 
@@ -322,10 +321,6 @@ func (s *ConfigFileStore) GetConfig(key string) (string, error) {
 		if cfg.Kiro != nil {
 			return cfg.Kiro.Version, nil
 		}
-	case "kiro.machineId":
-		if cfg.Kiro != nil {
-			return cfg.Kiro.MachineID, nil
-		}
 	case "kiro.bufferedStream":
 		if cfg.Kiro != nil {
 			if cfg.Kiro.BufferedStream {
@@ -406,15 +401,6 @@ func (s *ConfigFileStore) SetConfig(key, value string) error {
 			cfg.Kiro = &config.KiroConfig{}
 		}
 		cfg.Kiro.Version = strings.TrimSpace(value)
-		if kiroAllEmpty(cfg.Kiro) {
-			cfg.Kiro = nil
-		}
-		return s.saveLocked(cfg)
-	case "kiro.machineId":
-		if cfg.Kiro == nil {
-			cfg.Kiro = &config.KiroConfig{}
-		}
-		cfg.Kiro.MachineID = strings.TrimSpace(value)
 		if kiroAllEmpty(cfg.Kiro) {
 			cfg.Kiro = nil
 		}

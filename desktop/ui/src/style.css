@@ -2999,7 +2999,7 @@ input:disabled + .slider {
    ============================================================================= */
 .kiro-accounts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 320px);
+  grid-template-columns: repeat(auto-fill, 350px);
   gap: 20px;
   padding: 8px 0;
   max-height: 65vh;

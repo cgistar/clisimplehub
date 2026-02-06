@@ -86,7 +86,7 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 验证 IdC 认证方式的必填字段
-	if authMethod == "idc" || authMethod == "builder-id" {
+	if authMethod == "idc" {
 		if strings.TrimSpace(req.ClientId) == "" || strings.TrimSpace(req.ClientSecret) == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 				"error": "clientId and clientSecret are required for IdC authentication",
@@ -232,7 +232,7 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 
 	// IdC tokens do not require (and typically do not return) a CodeWhisperer profileArn.
 	// Keeping a stale profileArn (e.g. from a prior Social login) can cause confusing upstream auth errors.
-	if authMethod == "idc" || authMethod == "builder-id" {
+	if authMethod == "idc" {
 		profileArn = ""
 	}
 
@@ -268,6 +268,7 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: refreshToken,
 		ProfileArn:   profileArn,
 		Region:       region,
+		MachineID:    machineID,
 		AuthMethod:   authMethod,
 		ClientId:     req.ClientId,
 		ClientSecret: req.ClientSecret,
@@ -287,14 +288,13 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if err := kiroShared.SyncKiroMultiConfigFromCredentials(credsPath, oldRefreshToken, saveCreds); err != nil {
+		// 不影响主流程：单账号配置已保存成功
+		fmt.Fprintf(os.Stderr, "Warning: failed to sync kiro.json: %v\n", err)
+	}
 
-	// 更新 config.json 中的 machineId 和 bufferedStream
+	// 更新 config.json 中的 bufferedStream（非凭证配置）
 	if store != nil {
-		// 保存 machineId
-		if err := store.SetConfig("kiro.machineId", machineID); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save machine id: %v\n", err)
-		}
-
 		// 保存 bufferedStream
 		if req.BufferedStream {
 			if err := store.SetConfig("kiro.bufferedStream", "true"); err != nil {
@@ -450,10 +450,9 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 	profileArn := strings.TrimSpace(creds.ProfileArn)
 	refreshToken := strings.TrimSpace(creds.RefreshToken)
 
-	// 从 storage 读取 version, userAgent, machineId
+	// 从 storage 读取 version, userAgent
 	version := ""
 	userAgent := ""
-	machineID := ""
 	if store != nil {
 		if v, err := store.GetConfig("kiro.version"); err == nil {
 			version = strings.TrimSpace(v)
@@ -461,16 +460,13 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 		if ua, err := store.GetConfig("kiro.userAgent"); err == nil {
 			userAgent = strings.TrimSpace(ua)
 		}
-		if mid, err := store.GetConfig("kiro.machineId"); err == nil {
-			machineID = strings.TrimSpace(mid)
-		}
 	}
 
 	// 应用默认值
 	version = kiroShared.KiroVersionOrDefault(version)
 	userAgent = kiroShared.KiroUserAgentBaseOrDefault(userAgent)
 
-	// 如果 machineId 为空，从 refreshToken 计算
+	machineID := strings.TrimSpace(creds.MachineID)
 	if machineID == "" && refreshToken != "" {
 		machineID = kiro.ComputeMachineID(refreshToken)
 	}

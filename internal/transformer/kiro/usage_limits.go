@@ -82,8 +82,16 @@ func ComputeMachineID(refreshToken string) string {
 }
 
 type UsageLimitsResponse struct {
+	DaysUntilReset     *int32           `json:"daysUntilReset,omitempty"`
+	NextDateReset      *float64         `json:"nextDateReset,omitempty"`
+	UserInfo           *UserInfo        `json:"userInfo,omitempty"`
 	SubscriptionInfo   SubscriptionInfo `json:"subscriptionInfo"`
 	UsageBreakdownList []UsageBreakdown `json:"usageBreakdownList"`
+}
+
+type UserInfo struct {
+	Email  *string `json:"email,omitempty"`
+	UserID *string `json:"userId,omitempty"`
 }
 
 type SubscriptionInfo struct {
@@ -207,6 +215,7 @@ func fetchUsageOnce(ctx context.Context, doer HTTPDoer, query UsageQuery, access
 		return UsageLimitsResponse{}, 0, fmt.Errorf("failed to parse usage url: %w", err)
 	}
 	q := usageURL.Query()
+	q.Set("isEmailRequired", "true")
 	q.Set("origin", "AI_EDITOR")
 	q.Set("resourceType", "AGENTIC_REQUEST")
 	if v := strings.TrimSpace(query.ProfileArn); v != "" {

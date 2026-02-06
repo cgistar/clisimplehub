@@ -110,9 +110,10 @@ func MigrateFromSingleAccount(oldPath, newPath string, computeMachineId func(str
 	expandedOldPath := ExpandTilde(oldPath)
 	expandedNewPath := ExpandTilde(newPath)
 
-	// 检查新配置是否已存在且有账号
-	if newConfig, err := LoadKiroMultiConfig(expandedNewPath); err == nil && len(newConfig.Accounts) > 0 {
-		return false, nil // 已有多账号配置，无需迁移
+	// 检查新配置是否已存在（只要文件可读可解析，就视为已进入多账号模式）
+	// 注意：即使 accounts 为空，也不应从单账号配置自动迁移，否则会导致“删除最后一个账号后又被迁回”的问题。
+	if _, err := LoadKiroMultiConfig(expandedNewPath); err == nil {
+		return false, nil
 	}
 
 	// 检查旧配置是否存在
@@ -148,7 +149,9 @@ func MigrateFromSingleAccount(oldPath, newPath string, computeMachineId func(str
 	}
 
 	// 计算 machineId
-	if computeMachineId != nil {
+	if strings.TrimSpace(oldCreds.MachineID) != "" {
+		account.MachineId = strings.TrimSpace(oldCreds.MachineID)
+	} else if computeMachineId != nil {
 		account.MachineId = computeMachineId(oldCreds.RefreshToken)
 	}
 
@@ -190,7 +193,9 @@ func CreateAccountFromCredentials(creds *KiroCredentials, computeMachineId func(
 	}
 	if creds != nil {
 		account.FromCredentials(creds)
-		if computeMachineId != nil && creds.RefreshToken != "" {
+		if strings.TrimSpace(creds.MachineID) != "" {
+			account.MachineId = strings.TrimSpace(creds.MachineID)
+		} else if computeMachineId != nil && creds.RefreshToken != "" {
 			account.MachineId = computeMachineId(creds.RefreshToken)
 		}
 	}

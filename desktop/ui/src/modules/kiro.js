@@ -10,6 +10,7 @@ import { generateRandomString, generateCodeChallenge, generateUUID } from './uti
 let initialRefreshToken = ''
 let testedRefreshToken = ''
 let testedKiroCreds = null
+let loadedKiroProvider = ''
 
 // Social 登录状态
 const socialLoginState = {
@@ -113,6 +114,7 @@ export async function showKiroConfigModal() {
       document.getElementById('kiroAuthMethod').value = config.authMethod || 'social'
       document.getElementById('kiroClientId').value = config.clientId || ''
       document.getElementById('kiroClientSecret').value = config.clientSecret || ''
+      loadedKiroProvider = config.provider || ''
 
       // Sync region dropdown display
       syncKiroRegionDisplay()
@@ -534,10 +536,10 @@ export async function saveKiroConfig() {
 
       // 根据authMethod添加类型特定的字段
       if (authMethod.toLowerCase() === 'idc') {
-        // IdC类型：包含clientId和clientSecret，不包含profileArn和provider
+        // IdC类型：包含clientId和clientSecret，不包含profileArn
         config.clientId = clientId
         config.clientSecret = clientSecret
-        config.provider = ''
+        config.provider = testedKiroCreds?.provider || loadedKiroProvider || ''
         config.profileArn = ''
       } else {
         // Social类型：包含provider和profileArn，不包含clientId和clientSecret
@@ -751,6 +753,21 @@ const idcDeviceFlowState = {
   region: 'us-east-1', // 当前使用的 region（用于轮询）
 }
 
+function getIdcProviderForActiveFlow(flow) {
+  return flow === 'org' ? 'Enterprise' : 'BuilderId'
+}
+
+function getIdcAccountAddContext() {
+  const ctx = window.__kiroIdcAccountAddContext
+  if (!ctx || typeof ctx !== 'object') return null
+  if (!ctx.enabled) return null
+  return ctx
+}
+
+function clearIdcAccountAddContext() {
+  window.__kiroIdcAccountAddContext = null
+}
+
 // 停止轮询
 function stopIdcPolling() {
   idcDeviceFlowState.pollingEnabled = false
@@ -802,6 +819,9 @@ async function pollIdcTokenOnce() {
 
       // 回填凭证到 Kiro Config Modal
       fillIdcCredentials(result)
+
+      // 如果从账号管理界面发起，自动写入 kiro.json（多账号配置）
+      await tryAddIdcAccountFromAccountManagement(result)
 
       // 延迟关闭 dialog
       setTimeout(() => {
@@ -869,6 +889,38 @@ async function pollIdcTokenOnce() {
   }
 }
 
+async function tryAddIdcAccountFromAccountManagement(result) {
+  const ctx = getIdcAccountAddContext()
+  if (!ctx) return
+
+  // 防止重复触发（即使后续 add 失败，也由用户重新发起）
+  clearIdcAccountAddContext()
+
+  try {
+    const refreshToken = String(result?.refreshToken || '').trim()
+    if (!refreshToken) {
+      showError(t('kiro.addAccountFailed') + ': empty refreshToken')
+      return
+    }
+
+    const provider = String(ctx.provider || '').trim() || getIdcProviderForActiveFlow(idcDeviceFlowState.activeFlow)
+
+    const { addKiroAccount } = await import('./kiroAccounts.js')
+    await addKiroAccount({
+      refreshToken,
+      accessToken: result?.accessToken || '',
+      region: idcDeviceFlowState.region || 'us-east-1',
+      authMethod: 'idc',
+      provider,
+      clientId: idcDeviceFlowState.clientId,
+      clientSecret: idcDeviceFlowState.clientSecret,
+    })
+  } catch (error) {
+    console.error('Failed to add IdC account from account management:', error)
+    showError(t('kiro.addAccountFailed') + ': ' + (error?.message || error))
+  }
+}
+
 // 回填凭证
 function fillIdcCredentials(result) {
   if (!result) return
@@ -895,6 +947,7 @@ function fillIdcCredentials(result) {
     profileArn: result.profileArn || '',
     region: document.getElementById('kiroRegion')?.value || 'us-east-1',
     authMethod: 'idc',
+    provider: getIdcProviderForActiveFlow(idcDeviceFlowState.activeFlow),
     clientId: idcDeviceFlowState.clientId,
     clientSecret: idcDeviceFlowState.clientSecret,
   }
@@ -920,7 +973,7 @@ export async function startIdcDeviceFlowLogin() {
   idcDeviceFlowState.region = region // 保存 region 用于轮询
 
   // 关闭其他 Modal（互斥）
-  closeIdcOrgLoginDialog()
+  closeIdcOrgLoginDialog({ clearAddContext: false })
 
   // 显示 dialog
   showIdcDeviceFlowDialog()
@@ -978,8 +1031,10 @@ function showIdcDeviceFlowDialog() {
 }
 
 // 关闭 IDC Device Flow Dialog
-export function closeIdcDeviceFlowDialog() {
+export function closeIdcDeviceFlowDialog(options = {}) {
+  const clearAddContext = options.clearAddContext !== false
   stopIdcPolling()
+  if (clearAddContext) clearIdcAccountAddContext()
   const modal = document.getElementById('idcDeviceFlowModal')
   if (modal) {
     modal.classList.remove('active')
@@ -992,7 +1047,7 @@ export function startIdcOrgLogin() {
   stopIdcPolling()
 
   // 关闭其他 Modal（互斥）
-  closeIdcDeviceFlowDialog()
+  closeIdcDeviceFlowDialog({ clearAddContext: false })
 
   // 重置 UI
   const region = document.getElementById('kiroRegion')?.value || 'us-east-1'
@@ -1014,8 +1069,10 @@ export function startIdcOrgLogin() {
 }
 
 // 关闭 IDC 组织身份登录 Dialog
-export function closeIdcOrgLoginDialog() {
+export function closeIdcOrgLoginDialog(options = {}) {
+  const clearAddContext = options.clearAddContext !== false
   stopIdcPolling()
+  if (clearAddContext) clearIdcAccountAddContext()
   document.getElementById('idcOrgLoginModal').classList.remove('active')
 }
 

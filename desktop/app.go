@@ -24,6 +24,7 @@ import (
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
+	kiroShared "clisimplehub/internal/transformer/kiro/shared"
 
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -2477,73 +2478,104 @@ type FullConfig struct {
 	ReplaceMode bool                     `json:"replaceMode,omitempty"` // If true, clear existing config before saving
 }
 
-// GetFullConfig returns the complete configuration for backup
-func (a *App) GetFullConfig() (*FullConfig, error) {
-	if a.storage == nil {
-		return nil, fmt.Errorf("storage not initialized")
-	}
+// configBackup holds a snapshot of current configuration for rollback
+type configBackup struct {
+	settings  *Settings
+	vendors   []*storage.Vendor
+	endpoints []*storage.Endpoint
+}
 
-	// Get app settings
+// backupCurrentConfig creates a snapshot of current configuration
+func (a *App) backupCurrentConfig() (*configBackup, error) {
 	settings, err := a.GetSettings()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get settings: %w", err)
 	}
 
-	// Get vendors
-	vendors, err := a.GetVendors()
+	vendors, err := a.storage.GetVendors()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get vendors: %w", err)
 	}
 
-	// Get all endpoints
-	allEndpoints, err := a.storage.GetEndpoints()
+	endpoints, err := a.storage.GetEndpoints()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get endpoints: %w", err)
 	}
 
-	// Convert storage.Endpoint to config.EndpointConfig (for backup, exclude timestamps and stats)
-	endpoints := make([]*config.EndpointConfig, 0, len(allEndpoints))
-	for _, ep := range allEndpoints {
-		endpoints = append(endpoints, &config.EndpointConfig{
-			ID:            ep.ID,
-			Name:          ep.Name,
-			APIURL:        ep.APIURL,
-			APIKey:        ep.APIKey,
-			Active:        ep.Active,
-			Enabled:       ep.Enabled,
-			InterfaceType: ep.InterfaceType,
-			ProviderName:  ep.ProviderName,
-			Model:         ep.Model,
-			Transformer:   ep.Transformer,
-			Remark:        ep.Remark,
-			Priority:      ep.Priority,
-			ProxyURL:      ep.ProxyURL,
-			Models:        convertModelMappings(ep.Models),
-			Headers:       ep.Headers,
-		})
-	}
-
-	// Create appConfig map from settings
-	appConfig := map[string]interface{}{
-		"port":     settings.Port,
-		"apiKey":   settings.APIKey,
-		"fallback": settings.Fallback,
-	}
-
-	return &FullConfig{
-		AppConfig: appConfig,
-		Vendors:   vendors,
-		Endpoints: endpoints,
+	return &configBackup{
+		settings:  settings,
+		vendors:   vendors,
+		endpoints: endpoints,
 	}, nil
 }
 
+// restoreConfigBackup restores configuration from backup
+func (a *App) restoreConfigBackup(backup *configBackup) error {
+	if backup == nil {
+		return fmt.Errorf("backup is nil")
+	}
+
+	// Clear current data
+	currentEndpoints, err := a.storage.GetEndpoints()
+	if err != nil {
+		return fmt.Errorf("failed to get current endpoints: %w", err)
+	}
+	for _, ep := range currentEndpoints {
+		if err := a.storage.DeleteEndpoint(ep.ID); err != nil {
+			return fmt.Errorf("failed to delete endpoint: %w", err)
+		}
+	}
+
+	currentVendors, err := a.storage.GetVendors()
+	if err != nil {
+		return fmt.Errorf("failed to get current vendors: %w", err)
+	}
+	for _, v := range currentVendors {
+		if err := a.storage.DeleteVendor(v.ID); err != nil {
+			return fmt.Errorf("failed to delete vendor: %w", err)
+		}
+	}
+
+	// Restore settings
+	if err := a.SaveSettings(backup.settings); err != nil {
+		return fmt.Errorf("failed to restore settings: %w", err)
+	}
+
+	// Restore vendors
+	for _, v := range backup.vendors {
+		if err := a.storage.SaveVendor(v); err != nil {
+			return fmt.Errorf("failed to restore vendor: %w", err)
+		}
+	}
+
+	// Restore endpoints
+	for _, ep := range backup.endpoints {
+		if err := a.storage.SaveEndpoint(ep); err != nil {
+			return fmt.Errorf("failed to restore endpoint: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // SaveFullConfig saves the complete configuration from backup
+// P0 FIX: Added backup/restore mechanism to prevent data loss in ReplaceMode
 func (a *App) SaveFullConfig(config *FullConfig) error {
 	if a.storage == nil {
 		return fmt.Errorf("storage not initialized")
 	}
 	if config == nil {
 		return fmt.Errorf("config is nil")
+	}
+
+	// ReplaceMode: backup current config before clearing
+	var backup *configBackup
+	if config.ReplaceMode {
+		var err error
+		backup, err = a.backupCurrentConfig()
+		if err != nil {
+			return fmt.Errorf("failed to backup current config: %w", err)
+		}
 	}
 
 	// Save app settings
@@ -2578,10 +2610,18 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 		// Delete all endpoints first (they depend on vendors)
 		existingEndpoints, err := a.storage.GetEndpoints()
 		if err != nil {
+			// Restore backup on failure
+			if restoreErr := a.restoreConfigBackup(backup); restoreErr != nil {
+				return fmt.Errorf("failed to get endpoints and restore failed: %w, %v", err, restoreErr)
+			}
 			return fmt.Errorf("failed to get existing endpoints: %w", err)
 		}
 		for _, ep := range existingEndpoints {
 			if err := a.storage.DeleteEndpoint(ep.ID); err != nil {
+				// Restore backup on failure
+				if restoreErr := a.restoreConfigBackup(backup); restoreErr != nil {
+					return fmt.Errorf("failed to delete endpoint and restore failed: %w, %v", err, restoreErr)
+				}
 				return fmt.Errorf("failed to delete endpoint %s: %w", ep.Name, err)
 			}
 		}
@@ -2589,10 +2629,18 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 		// Delete all vendors
 		existingVendors, err := a.storage.GetVendors()
 		if err != nil {
+			// Restore backup on failure
+			if restoreErr := a.restoreConfigBackup(backup); restoreErr != nil {
+				return fmt.Errorf("failed to get vendors and restore failed: %w, %v", err, restoreErr)
+			}
 			return fmt.Errorf("failed to get existing vendors: %w", err)
 		}
 		for _, v := range existingVendors {
 			if err := a.storage.DeleteVendor(v.ID); err != nil {
+				// Restore backup on failure
+				if restoreErr := a.restoreConfigBackup(backup); restoreErr != nil {
+					return fmt.Errorf("failed to delete vendor and restore failed: %w, %v", err, restoreErr)
+				}
 				return fmt.Errorf("failed to delete vendor %s: %w", v.Name, err)
 			}
 		}
@@ -2732,6 +2780,393 @@ func (a *App) GetComputerName() (string, error) {
 		return "Unknown-Computer", nil
 	}
 	return hostname, nil
+}
+
+// =============================================================================
+// WebDAV Backup/Restore Methods
+// =============================================================================
+
+// BackupDataResponse 备份数据响应（包含文件名和数据）
+type BackupDataResponse struct {
+	Filename string              `json:"filename"`
+	Data     *config.BackupData  `json:"data"`
+}
+
+// CreateBackupData 创建完整的备份数据
+// 包含 config.json, kiro.json, kiro-auth-token.json 的所有内容
+func (a *App) CreateBackupData() (*BackupDataResponse, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+
+	// 1. 获取主配置 (settings, vendors, endpoints)
+	settings, err := a.GetSettings()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get settings: %w", err)
+	}
+
+	vendors, err := a.storage.GetVendors()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get vendors: %w", err)
+	}
+
+	endpoints, err := a.storage.GetEndpoints()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get endpoints: %w", err)
+	}
+
+	// 2. 组装 appConfig
+	appConfig := map[string]interface{}{
+		"port":     settings.Port,
+		"apiKey":   settings.APIKey,
+		"fallback": settings.Fallback,
+	}
+
+	// 3. 转换 vendors
+	vendorConfigs := make([]config.VendorConfig, len(vendors))
+	for i, v := range vendors {
+		vendorConfigs[i] = config.VendorConfig{
+			ID:      v.ID,
+			Name:    v.Name,
+			HomeURL: v.HomeURL,
+			APIURL:  v.APIURL,
+			Remark:  v.Remark,
+		}
+	}
+
+	// 4. 转换 endpoints
+	endpointConfigs := make([]config.EndpointConfig, len(endpoints))
+	for i, e := range endpoints {
+		models := make([]config.ModelMapping, len(e.Models))
+		for j, m := range e.Models {
+			models[j] = config.ModelMapping{
+				Name:  m.Name,
+				Alias: m.Alias,
+			}
+		}
+		endpointConfigs[i] = config.EndpointConfig{
+			ID:            e.ID,
+			Name:          e.Name,
+			APIURL:        e.APIURL,
+			APIKey:        e.APIKey,
+			Active:        e.Active,
+			Enabled:       e.Enabled,
+			InterfaceType: e.InterfaceType,
+			Transformer:   e.Transformer,
+			ProviderName:  e.ProviderName,
+			Model:         e.Model,
+			Remark:        e.Remark,
+			Priority:      e.Priority,
+			ProxyURL:      e.ProxyURL,
+			Models:        models,
+			Headers:       e.Headers,
+		}
+	}
+
+	// 5. 尝试获取 kiro-auth-token.json (向后兼容)
+	var kiroAuthToken map[string]interface{}
+	kiroAuthTokenPath := a.getKiroAuthTokenPath()
+	if data, err := a.readKiroAuthTokenFile(kiroAuthTokenPath); err == nil {
+		kiroAuthToken = data
+	}
+
+	// 6. 尝试获取 kiro.json (多账号配置)
+	var kiroMultiConfig interface{}
+	kiroMultiConfigPath := a.getKiroMultiConfigPath()
+	if dto, err := a.loadKiroMultiConfigDTO(kiroMultiConfigPath); err == nil {
+		kiroMultiConfig = dto
+	}
+
+	// 7. 组装备份数据
+	backupData := &config.BackupData{
+		SchemaVersion:   2,
+		CreatedAt:       time.Now().Format(time.RFC3339),
+		AppConfig:       appConfig,
+		Vendors:         vendorConfigs,
+		Endpoints:       endpointConfigs,
+		KiroAuthToken:   kiroAuthToken,
+		KiroMultiConfig: kiroMultiConfig,
+	}
+
+	// 8. 生成备份文件名
+	computerName, _ := a.GetComputerName()
+	timestamp := time.Now().Format("2006-01-02T15-04-05")
+	filename := fmt.Sprintf("%s-%s.json", computerName, timestamp)
+
+	return &BackupDataResponse{
+		Filename: filename,
+		Data:     backupData,
+	}, nil
+}
+
+// readKiroAuthTokenFile 读取 kiro-auth-token.json
+func (a *App) readKiroAuthTokenFile(path string) (map[string]interface{}, error) {
+	expanded := kiroShared.ExpandTilde(path)
+	data, err := os.ReadFile(expanded)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// loadKiroMultiConfigDTO 加载 kiro.json 并转换为 DTO
+func (a *App) loadKiroMultiConfigDTO(path string) (*KiroMultiConfigDTO, error) {
+	config, err := kiroShared.LoadKiroMultiConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil || len(config.Accounts) == 0 {
+		return nil, fmt.Errorf("no accounts")
+	}
+
+	accounts := make([]KiroAccountDTO, 0, len(config.Accounts))
+	for i := range config.Accounts {
+		isActive := config.Accounts[i].RefreshToken == config.ActiveRefreshToken
+		accounts = append(accounts, accountToDTO(&config.Accounts[i], isActive))
+	}
+
+	return &KiroMultiConfigDTO{
+		ActiveRefreshToken: config.ActiveRefreshToken,
+		Accounts:           accounts,
+	}, nil
+}
+
+// RestoreBackupData 从备份数据恢复配置
+// mode: "replace" 或 "merge"
+func (a *App) RestoreBackupData(backupData *config.BackupData, mode string) error {
+	if a.storage == nil {
+		return fmt.Errorf("storage not initialized")
+	}
+
+	if backupData == nil {
+		return fmt.Errorf("backup data is nil")
+	}
+
+	// 验证备份数据
+	if err := a.validateBackupData(backupData); err != nil {
+		return fmt.Errorf("invalid backup data: %w", err)
+	}
+
+	// 确定恢复模式
+	replaceMode := strings.ToLower(strings.TrimSpace(mode)) == "replace"
+
+	// 根据模式处理主配置
+	var finalConfig *FullConfig
+	if replaceMode {
+		// 替换模式：直接使用远程配置
+		finalConfig = a.convertBackupToFullConfig(backupData, true)
+	} else {
+		// 合并模式：合并本地和远程配置
+		mergedConfig, err := a.mergeBackupWithLocal(backupData)
+		if err != nil {
+			return fmt.Errorf("failed to merge configs: %w", err)
+		}
+		finalConfig = mergedConfig
+	}
+
+	// 保存主配置
+	if err := a.SaveFullConfig(finalConfig); err != nil {
+		return fmt.Errorf("failed to save main config: %w", err)
+	}
+
+	// 恢复 kiro-auth-token.json (向后兼容)
+	if backupData.KiroAuthToken != nil && len(backupData.KiroAuthToken) > 0 {
+		if err := a.saveKiroAuthTokenInternal(backupData.KiroAuthToken); err != nil {
+			fmt.Printf("warning: failed to restore kiro-auth-token.json: %v\n", err)
+		}
+	}
+
+	// 恢复 kiro.json (多账号配置)
+	if backupData.KiroMultiConfig != nil {
+		if err := a.saveKiroMultiConfigInternal(backupData.KiroMultiConfig, replaceMode); err != nil {
+			fmt.Printf("warning: failed to restore kiro.json: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+// validateBackupData 验证备份数据的完整性
+func (a *App) validateBackupData(data *config.BackupData) error {
+	if data == nil {
+		return fmt.Errorf("backup data is nil")
+	}
+	if data.SchemaVersion < 1 {
+		return fmt.Errorf("invalid schema version: %d", data.SchemaVersion)
+	}
+	if data.AppConfig == nil {
+		return fmt.Errorf("appConfig is missing")
+	}
+	return nil
+}
+
+// convertBackupToFullConfig 将 BackupData 转换为 FullConfig
+func (a *App) convertBackupToFullConfig(backup *config.BackupData, replaceMode bool) *FullConfig {
+	vendors := make([]*VendorInfo, len(backup.Vendors))
+	for i, v := range backup.Vendors {
+		vendors[i] = &VendorInfo{
+			ID:      v.ID,
+			Name:    v.Name,
+			HomeURL: v.HomeURL,
+			APIURL:  v.APIURL,
+			Remark:  v.Remark,
+		}
+	}
+
+	endpoints := make([]*config.EndpointConfig, len(backup.Endpoints))
+	for i := range backup.Endpoints {
+		endpoints[i] = &backup.Endpoints[i]
+	}
+
+	return &FullConfig{
+		AppConfig:   backup.AppConfig,
+		Vendors:     vendors,
+		Endpoints:   endpoints,
+		ReplaceMode: replaceMode,
+	}
+}
+
+// mergeBackupWithLocal 合并远程备份和本地配置
+func (a *App) mergeBackupWithLocal(backupData *config.BackupData) (*FullConfig, error) {
+	// 1. 获取本地配置
+	localSettings, err := a.GetSettings()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get local settings: %w", err)
+	}
+
+	localVendors, err := a.storage.GetVendors()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get local vendors: %w", err)
+	}
+
+	localEndpoints, err := a.storage.GetEndpoints()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get local endpoints: %w", err)
+	}
+
+	// 2. 合并 settings (远程覆盖本地)
+	mergedAppConfig := map[string]interface{}{
+		"port":     localSettings.Port,
+		"apiKey":   localSettings.APIKey,
+		"fallback": localSettings.Fallback,
+	}
+	for k, v := range backupData.AppConfig {
+		mergedAppConfig[k] = v
+	}
+
+	// 3. 合并 vendors (按 name 去重，远程优先)
+	vendorMap := make(map[string]*VendorInfo)
+	for _, v := range localVendors {
+		vendorMap[v.Name] = &VendorInfo{
+			ID:      v.ID,
+			Name:    v.Name,
+			HomeURL: v.HomeURL,
+			APIURL:  v.APIURL,
+			Remark:  v.Remark,
+		}
+	}
+	for _, v := range backupData.Vendors {
+		vendorMap[v.Name] = &VendorInfo{
+			ID:      v.ID,
+			Name:    v.Name,
+			HomeURL: v.HomeURL,
+			APIURL:  v.APIURL,
+			Remark:  v.Remark,
+		}
+	}
+	mergedVendors := make([]*VendorInfo, 0, len(vendorMap))
+	for _, v := range vendorMap {
+		mergedVendors = append(mergedVendors, v)
+	}
+
+	// 4. 合并 endpoints (按 id 去重，远程优先)
+	endpointMap := make(map[int64]*config.EndpointConfig)
+	for _, e := range localEndpoints {
+		if e.ID != 0 {
+			endpointMap[e.ID] = &config.EndpointConfig{
+				ID:            e.ID,
+				Name:          e.Name,
+				APIURL:        e.APIURL,
+				APIKey:        e.APIKey,
+				Active:        e.Active,
+				Enabled:       e.Enabled,
+				InterfaceType: e.InterfaceType,
+				ProviderName:  e.ProviderName,
+				Model:         e.Model,
+				Transformer:   e.Transformer,
+				Remark:        e.Remark,
+				Priority:      e.Priority,
+				ProxyURL:      e.ProxyURL,
+				Models:        convertModelMappings(e.Models),
+				Headers:       e.Headers,
+			}
+		}
+	}
+	for i := range backupData.Endpoints {
+		if backupData.Endpoints[i].ID != 0 {
+			endpointMap[backupData.Endpoints[i].ID] = &backupData.Endpoints[i]
+		}
+	}
+	mergedEndpoints := make([]*config.EndpointConfig, 0, len(endpointMap))
+	for _, e := range endpointMap {
+		mergedEndpoints = append(mergedEndpoints, e)
+	}
+
+	return &FullConfig{
+		AppConfig:   mergedAppConfig,
+		Vendors:     mergedVendors,
+		Endpoints:   mergedEndpoints,
+		ReplaceMode: false,
+	}, nil
+}
+
+// saveKiroAuthTokenInternal 保存 kiro-auth-token.json
+func (a *App) saveKiroAuthTokenInternal(data map[string]interface{}) error {
+	path := a.getKiroAuthTokenPath()
+	expanded := kiroShared.ExpandTilde(path)
+
+	// 验证 refreshToken
+	refreshToken, ok := data["refreshToken"].(string)
+	if !ok || strings.TrimSpace(refreshToken) == "" {
+		return fmt.Errorf("refreshToken is required")
+	}
+
+	// 序列化
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	// 原子写入
+	dir := filepath.Dir(expanded)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+
+	return writeFileAtomic0600(expanded, jsonData)
+}
+
+// saveKiroMultiConfigInternal 保存 kiro.json
+func (a *App) saveKiroMultiConfigInternal(data interface{}, replaceMode bool) error {
+	// 转换为 KiroMultiConfigDTO
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	var dto KiroMultiConfigDTO
+	if err := json.Unmarshal(jsonData, &dto); err != nil {
+		return err
+	}
+
+	dto.ReplaceMode = replaceMode
+
+	// 复用现有的保存逻辑
+	return a.SaveKiroMultiConfigFromBackup(&dto)
 }
 
 // =============================================================================
