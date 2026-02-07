@@ -55,13 +55,20 @@ func (c *ExecutionContext) DetectInterfaceType(path string) string {
 	return c.provider.DetectInterfaceType(path)
 }
 
-// ResolveEndpoint 根据路径解析端点
-func (c *ExecutionContext) ResolveEndpoint(path string) (*EndpointConfig, string) {
+// ResolveEndpoint 根据路径和模型名解析端点
+// model 非空时优先通过 Routes 匹配，无匹配则 fallback 到 GetActiveEndpoint
+func (c *ExecutionContext) ResolveEndpoint(path string, model string) (*EndpointConfig, string) {
 	if c.provider == nil {
 		return nil, ""
 	}
 	interfaceType := c.provider.DetectInterfaceType(path)
-	endpoint := c.provider.GetActiveEndpoint(interfaceType)
+	var endpoint *EndpointConfig
+	if model != "" {
+		endpoint = c.provider.GetEndpointByModel(interfaceType, model)
+	}
+	if endpoint == nil {
+		endpoint = c.provider.GetActiveEndpoint(interfaceType)
+	}
 	return endpoint, interfaceType
 }
 
@@ -71,13 +78,9 @@ func (c *ExecutionContext) GetExecutor(interfaceType string) Executor {
 }
 
 // Execute 执行单次请求
-// 流程：检测接口类型 → 选择执行器 → 查找端点 → 执行转发
+// 流程：解析端点（模型路由 + active fallback）→ 选择执行器 → 执行转发
 func (c *ExecutionContext) Execute(ctx context.Context, req *ForwardRequest, w http.ResponseWriter) (*ForwardResult, *EndpointConfig, string) {
-	// 1. 检测接口类型
-	interfaceType := c.DetectInterfaceType(req.Path)
-
-	// 2. 查找端点
-	endpoint := c.provider.GetActiveEndpoint(interfaceType)
+	endpoint, interfaceType := c.ResolveEndpoint(req.Path, req.RequestModel)
 	if endpoint == nil {
 		return &ForwardResult{
 			Error:      &StatusError{Code: http.StatusServiceUnavailable, Message: "No enabled endpoints available"},
@@ -85,9 +88,8 @@ func (c *ExecutionContext) Execute(ctx context.Context, req *ForwardRequest, w h
 		}, nil, interfaceType
 	}
 
-	// 3. 选择执行器并执行
 	var result *ForwardResult
-	if endpoint != nil && strings.TrimSpace(endpoint.Transformer) != "" {
+	if strings.TrimSpace(endpoint.Transformer) != "" {
 		result = c.executeWithTransformer(ctx, interfaceType, endpoint, req, w)
 	} else {
 		exec := c.GetExecutor(interfaceType)

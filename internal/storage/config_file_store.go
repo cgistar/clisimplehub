@@ -643,6 +643,7 @@ func flattenEndpoints(cfg *config.AppConfig) []*Endpoint {
 			Remark:        ep.Remark,
 			Priority:      ep.Priority,
 			ProxyURL:      ep.ProxyURL,
+			Routes:        ep.Routes,
 			Models:        models,
 			Headers:       ep.Headers,
 		})
@@ -674,6 +675,7 @@ func addEndpointToConfig(cfg *config.AppConfig, endpoint *Endpoint) error {
 		Remark:        endpoint.Remark,
 		Priority:      endpoint.Priority,
 		ProxyURL:      endpoint.ProxyURL,
+		Routes:        endpoint.Routes,
 		Models:        models,
 		Headers:       endpoint.Headers,
 		ProviderName:  endpoint.ProviderName,
@@ -710,6 +712,7 @@ func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error)
 		cfg.Endpoints[i].Remark = endpoint.Remark
 		cfg.Endpoints[i].Priority = endpoint.Priority
 		cfg.Endpoints[i].ProxyURL = endpoint.ProxyURL
+		cfg.Endpoints[i].Routes = endpoint.Routes
 		cfg.Endpoints[i].Models = models
 		cfg.Endpoints[i].Headers = endpoint.Headers
 		cfg.Endpoints[i].ProviderName = endpoint.ProviderName

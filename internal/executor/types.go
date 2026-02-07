@@ -10,12 +10,13 @@ import (
 
 // ForwardRequest 表示转发请求的输入
 type ForwardRequest struct {
-	Method      string
-	Path        string
-	RawQuery    string
-	Headers     http.Header
-	Body        []byte
-	IsStreaming bool
+	Method       string
+	Path         string
+	RawQuery     string
+	Headers      http.Header
+	Body         []byte
+	IsStreaming  bool
+	RequestModel string
 }
 
 // ForwardResult 表示转发请求的结果

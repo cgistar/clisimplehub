@@ -222,7 +222,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	exec := p.ensureExecutor()
 	forwardReq := executor.ForwardRequestFromHTTP(r, bodyBytes, isStreaming)
-	endpoint, resolvedType := exec.ctx.ResolveEndpoint(forwardReq.Path)
+	endpoint, resolvedType := exec.ctx.ResolveEndpoint(forwardReq.Path, forwardReq.RequestModel)
 	if resolvedType != "" {
 		interfaceType = InterfaceType(resolvedType)
 	}

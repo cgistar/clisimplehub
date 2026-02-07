@@ -55,6 +55,7 @@ type EndpointInfo struct {
 	Transformer   string                 `json:"transformer,omitempty"`
 	ProxyURL      string                 `json:"proxyUrl,omitempty"`
 	Models        []storage.ModelMapping `json:"models,omitempty"`
+	Routes        []string               `json:"routes,omitempty"`
 	Headers       map[string]string      `json:"headers,omitempty"`
 	Remark        string                 `json:"remark,omitempty"`
 	Priority      int                    `json:"priority"`
@@ -758,6 +759,7 @@ func (a *App) GetEndpointByID(endpointID int64) (*EndpointInfo, error) {
 		Transformer:   ep.Transformer,
 		ProxyURL:      ep.ProxyURL,
 		Models:        ep.Models,
+		Routes:        ep.Routes,
 		Headers:       ep.Headers,
 		Remark:        ep.Remark,
 		Priority:      ep.Priority,
@@ -1128,6 +1130,8 @@ type EndpointInput struct {
 	ProxyURL       string                 `json:"proxyUrl,omitempty"`
 	Models         []storage.ModelMapping `json:"models,omitempty"`
 	ModelsSet      bool                   `json:"modelsSet,omitempty"`
+	Routes         []string               `json:"routes,omitempty"`
+	RoutesSet      bool                   `json:"routesSet,omitempty"`
 	Remark         string                 `json:"remark,omitempty"`
 	Priority       int                    `json:"priority"`
 }
@@ -1164,6 +1168,7 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		Transformer:   endpoint.Transformer,
 		ProxyURL:      endpoint.ProxyURL,
 		Models:        endpoint.Models,
+		Routes:        endpoint.Routes,
 		Remark:        endpoint.Remark,
 		Priority:      priority,
 	}
@@ -1187,6 +1192,9 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		if !endpoint.ModelsSet && ep.Models == nil {
 			ep.Models = existing.Models
 		}
+		if !endpoint.RoutesSet && ep.Routes == nil {
+			ep.Routes = existing.Routes
+		}
 	}
 	if err := a.storage.SaveEndpoint(ep); err != nil {
 		return nil, err
@@ -1209,6 +1217,7 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		InterfaceType: ep.InterfaceType,
 		ProviderName:  ep.ProviderName,
 		Model:         ep.Model,
+		Routes:        ep.Routes,
 		Headers:       ep.Headers,
 		Remark:        ep.Remark,
 		Priority:      ep.Priority,
@@ -3533,6 +3542,7 @@ func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 			Remark:        e.Remark,
 			Priority:      e.Priority,
 			ProxyURL:      e.ProxyURL,
+			Routes:        e.Routes,
 			Models:        models,
 			Headers:       e.Headers,
 		}

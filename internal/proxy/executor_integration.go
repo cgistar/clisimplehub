@@ -153,6 +153,14 @@ func (p *routerEndpointProvider) SetActiveEndpoint(interfaceType string, endpoin
 	return p.router.SetActiveEndpoint(InterfaceType(normalizeInterfaceType(interfaceType)), proxyEndpointFromConfig(endpoint))
 }
 
+func (p *routerEndpointProvider) GetEndpointByModel(interfaceType string, model string) *executor.EndpointConfig {
+	if p.router == nil || model == "" {
+		return nil
+	}
+	ep := p.router.GetEndpointByModel(InterfaceType(normalizeInterfaceType(interfaceType)), model)
+	return toExecutorEndpointConfig(ep)
+}
+
 func normalizeInterfaceType(interfaceType string) string {
 	return strings.ToLower(strings.TrimSpace(interfaceType))
 }
@@ -178,6 +186,7 @@ func toExecutorEndpointConfig(ep *Endpoint) *executor.EndpointConfig {
 		ProviderName:  ep.ProviderName,
 		Model:         ep.Model,
 		ProxyURL:      ep.ProxyURL,
+		Routes:        cloneStringSlice(ep.Routes),
 		Models:        toExecutorModelMappings(ep.Models),
 		Headers:       cloneStringMap(ep.Headers),
 	}
@@ -202,6 +211,15 @@ func cloneStringMap(src map[string]string) map[string]string {
 	for k, v := range src {
 		dst[k] = v
 	}
+	return dst
+}
+
+func cloneStringSlice(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]string, len(src))
+	copy(dst, src)
 	return dst
 }
 

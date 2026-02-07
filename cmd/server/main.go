@@ -382,6 +382,7 @@ func convertEndpoints(endpoints []*storage.Endpoint) []*proxy.Endpoint {
 			Remark:        e.Remark,
 			Priority:      e.Priority,
 			ProxyURL:      e.ProxyURL,
+			Routes:        e.Routes,
 			Models:        models,
 			Headers:       e.Headers,
 		}

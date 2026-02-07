@@ -2,7 +2,9 @@
 package executor
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // EndpointAdapter 端点适配器接口
@@ -44,13 +46,22 @@ func EndpointFromAdapter(ep EndpointAdapter) *EndpointConfig {
 // ForwardRequestFromHTTP 从 HTTP 请求创建转发请求
 func ForwardRequestFromHTTP(r *http.Request, body []byte, isStreaming bool) *ForwardRequest {
 	return &ForwardRequest{
-		Method:      r.Method,
-		Path:        r.URL.Path,
-		RawQuery:    r.URL.RawQuery,
-		Headers:     r.Header.Clone(),
-		Body:        body,
-		IsStreaming: isStreaming,
+		Method:       r.Method,
+		Path:         r.URL.Path,
+		RawQuery:     r.URL.RawQuery,
+		Headers:      r.Header.Clone(),
+		Body:         body,
+		IsStreaming:  isStreaming,
+		RequestModel: extractModelFromRequestBody(body),
 	}
+}
+
+func extractModelFromRequestBody(body []byte) string {
+	var req struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &req)
+	return strings.TrimSpace(req.Model)
 }
 
 // SelectExecutor 根据接口类型选择合适的执行器

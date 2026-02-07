@@ -59,6 +59,9 @@ export async function showEndpointForm(endpoint = null) {
     // 初始化 models 映射
     renderModelMappings(endpoint?.models || []);
 
+    // 初始化 routes
+    renderRoutes(endpoint?.routes || []);
+
     const deleteBtn = document.getElementById('deleteEndpointBtn');
     const parsedEndpointId = parseInt(endpoint?.id, 10);
     const canDelete = Number.isFinite(parsedEndpointId) && parsedEndpointId > 0;
@@ -813,6 +816,9 @@ export async function saveEndpoint() {
     // 收集 models 映射
     const models = collectModelMappings();
 
+    // 收集 routes
+    const routes = collectRoutes();
+
     const endpoint = {
         id: endpointId,
         name: document.getElementById('endpointName').value.trim(),
@@ -826,6 +832,8 @@ export async function saveEndpoint() {
         providerName: document.getElementById('endpointVendor').value.trim(),
         models: models.length > 0 ? models : null,
         modelsSet: true,
+        routes: routes.length > 0 ? routes : null,
+        routesSet: true,
         remark: document.getElementById('endpointRemark').value.trim(),
         priority: parseInt(document.getElementById('endpointPriority').value) || 5,
         enabled: document.getElementById('endpointEnabled').checked,
@@ -1065,6 +1073,70 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// =============================================================================
+// Routes 相关函数
+// =============================================================================
+
+export function renderRoutes(routes) {
+    const container = document.getElementById('routesList');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    if (!routes || routes.length === 0) {
+        return;
+    }
+
+    routes.forEach((route, index) => {
+        const row = createRouteRow(route || '', index);
+        container.appendChild(row);
+    });
+}
+
+function createRouteRow(value, index) {
+    const row = document.createElement('div');
+    row.className = 'model-mapping-row';
+    row.dataset.index = index;
+    row.innerHTML = `
+        <input type="text" class="route-value" value="${escapeHtml(value)}" placeholder="${t('manage.routePlaceholder')}" style="flex:1;">
+        <button type="button" class="btn btn-sm btn-icon btn-danger" onclick="removeRoute(this)" title="${t('manage.delete')}">×</button>
+    `;
+    return row;
+}
+
+export function addRoute() {
+    const container = document.getElementById('routesList');
+    if (!container) return;
+
+    const index = container.children.length;
+    const row = createRouteRow('', index);
+    container.appendChild(row);
+}
+
+export function removeRoute(btn) {
+    const row = btn.closest('.model-mapping-row');
+    if (row) {
+        row.remove();
+    }
+}
+
+function collectRoutes() {
+    const container = document.getElementById('routesList');
+    if (!container) return [];
+
+    const rows = container.querySelectorAll('.model-mapping-row');
+    const routes = [];
+
+    rows.forEach(row => {
+        const value = row.querySelector('.route-value')?.value?.trim() || '';
+        if (value) {
+            routes.push(value);
+        }
+    });
+
+    return routes;
 }
 
 // =============================================================================

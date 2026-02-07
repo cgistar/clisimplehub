@@ -27,6 +27,10 @@ type Router interface {
 	// GetEndpointsByType returns all endpoints for the given interface type
 	GetEndpointsByType(interfaceType InterfaceType) []*Endpoint
 
+	// GetEndpointByModel returns the best endpoint whose Routes contains the given model.
+	// Returns nil if no match found.
+	GetEndpointByModel(interfaceType InterfaceType, model string) *Endpoint
+
 	// DisableEndpoint temporarily disables an endpoint in memory (does not persist).
 	// Returns the until timestamp of this temporary disable (zero if no-op).
 	DisableEndpoint(interfaceType InterfaceType, endpoint *Endpoint) time.Time
@@ -513,6 +517,60 @@ func (r *DefaultRouter) GetEnabledEndpointsByType(interfaceType InterfaceType) [
 		}
 	}
 	return result
+}
+
+// GetEndpointByModel returns the best enabled endpoint whose Routes contains the given model (case-insensitive).
+// When multiple endpoints match, Active:true is preferred, then lower Priority wins.
+// Returns nil if no match found.
+func (r *DefaultRouter) GetEndpointByModel(interfaceType InterfaceType, model string) *Endpoint {
+	if model == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.restoreExpiredLocked(interfaceType)
+
+	eps := r.endpoints[interfaceType]
+	if len(eps) == 0 {
+		return nil
+	}
+
+	var candidates []*Endpoint
+	for _, ep := range eps {
+		if ep == nil || !ep.Enabled || len(ep.Routes) == 0 {
+			continue
+		}
+		for _, route := range ep.Routes {
+			if strings.EqualFold(strings.TrimSpace(route), model) {
+				candidates = append(candidates, ep)
+				break
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+
+	// Sort: Active first, then lower Priority, then Name as tiebreaker
+	activeEp := r.active[interfaceType]
+	sort.SliceStable(candidates, func(i, j int) bool {
+		iActive := activeEp != nil && candidates[i].ID == activeEp.ID && candidates[i].ID != 0
+		jActive := activeEp != nil && candidates[j].ID == activeEp.ID && candidates[j].ID != 0
+		if iActive != jActive {
+			return iActive
+		}
+		if candidates[i].Priority != candidates[j].Priority {
+			return candidates[i].Priority < candidates[j].Priority
+		}
+		return candidates[i].Name < candidates[j].Name
+	})
+
+	return candidates[0]
 }
 
 // IsRetryablePath checks if the given path should have retry and failover enabled.

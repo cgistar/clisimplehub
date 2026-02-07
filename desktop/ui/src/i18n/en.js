@@ -365,6 +365,10 @@ export default {
     addModelMapping: 'Add Mapping',
     quickMapping: 'Quick Mapping',
     quickMappingTitle: 'Quick fill Claude model mappings',
+    routes: 'Model Routes',
+    routesHelp: 'Match client model names to route requests to this endpoint',
+    addRoute: 'Add Route',
+    routePlaceholder: 'Model name',
   },
   console: {
     title: 'Console Logs',

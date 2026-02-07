@@ -93,6 +93,17 @@ export function endpointFormModalTemplate() {
                         <small>${t('manage.transformerHelp')}</small>
                     </div>
                     <div class="form-group">
+                        <label>${t('manage.routes')}</label>
+                        <small>${t('manage.routesHelp')}</small>
+                        <div class="model-mappings-container" id="routesContainer">
+                            <div class="model-mapping-header">
+                                <input type="text" placeholder="${t('manage.routePlaceholder')}" disabled class="mapping-header-label" style="flex:1;">
+                                <button type="button" class="btn btn-sm btn-primary" onclick="addRoute()">+</button>
+                            </div>
+                            <div id="routesList"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
                         <label>${t('manage.modelMappings')}</label>
                         <small>${t('manage.modelMappingsHelp')}</small>
                         <div class="model-mappings-container" id="modelMappingsContainer">

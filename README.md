@@ -4,6 +4,7 @@ CLI API服务简易切换器
 ## 功能特性
 
 - **多端点轮换**：自动故障转移，一个失败自动切换下一个
+- **模型路由**：根据请求中的模型名自动路由到指定端点，无需手动切换
 - **多种cli支持**：支持 Claude、OpenAI、Gemini CLI请求中转
 - **实时统计**：按渠道进行请求数、错误数、Token 用量监控
 - **跨平台**：Windows、macOS、Linux
@@ -69,6 +70,67 @@ CLI API服务简易切换器
 模型替换仍通过 `endpoints.model` / `endpoints.models` 生效（转换器不做模型名硬编码）。
 
 <img src="docs/images/转换器.png" alt="转换器" width="400">
+
+### 3.2 模型路由（Routes）
+
+当同一接口类型（如 claude）配置了多个端点时，默认所有请求都发往「活动端点」。**模型路由** 可以根据客户端请求中携带的模型名，自动将请求分发到不同端点，无需手动切换。
+
+#### Routes 与 Model / Models 的区别
+
+端点有三个模型相关字段，职责不同：
+
+| 字段 | 作用 | 阶段 |
+|------|------|------|
+| `routes` | **路由选择** — 决定请求发到哪个端点 | 选择端点时 |
+| `models` | **名称映射** — 将客户端模型名转换为上游模型名 | 转发请求前 |
+| `model` | **模型覆盖** — 强制所有请求使用指定模型 | 转发请求前 |
+
+完整流程：
+```
+客户端请求 (model: "claude-sonnet-4-5-20250929")
+  → routes 匹配 → 选中端点 A
+  → models 映射 → "claude-sonnet-4-5-20250929" → "claude-4.5-sonnet"
+  → 转发到上游 API
+```
+
+#### 配置示例
+
+在端点配置中添加 `routes` 字段：
+
+```json
+{
+  "endpoints": [
+    {
+      "name": "Sonnet 专用",
+      "apiUrl": "https://api.provider-a.com",
+      "interfaceType": "claude",
+      "enabled": true,
+      "routes": ["claude-sonnet-4-5-20250929"]
+    },
+    {
+      "name": "Opus 专用",
+      "apiUrl": "https://api.provider-b.com",
+      "interfaceType": "claude",
+      "enabled": true,
+      "active": true,
+      "routes": ["claude-opus-4-5-20251101"]
+    }
+  ]
+}
+```
+
+#### 路由规则
+
+- 请求携带 `model: "claude-sonnet-4-5-20250929"` → 匹配到 **Sonnet 专用**（routes 包含该模型）
+- 请求携带 `model: "claude-opus-4-5-20251101"` → 匹配到 **Opus 专用**
+- 请求携带 `model: "claude-haiku-4-5-20251001"` → 无匹配，回退到**活动端点**（Opus 专用）
+- 请求未携带 model → 回退到**活动端点**
+
+多个端点匹配同一模型时，按 **活动端点优先 → 优先级数值小优先** 排序。
+
+#### GUI 配置
+
+在端点编辑表单中，「模型路由」区域可以添加/删除路由条目，每条填写一个模型名。
 
 ### 4. cli 配置编辑器
 - 本软件支持一键将 cli 配置 改为当前软件的访问地址

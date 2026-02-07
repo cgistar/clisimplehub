@@ -360,6 +360,10 @@ export default {
     addModelMapping: '添加映射',
     quickMapping: '快捷映射',
     quickMappingTitle: '快速填充Claude模型映射',
+    routes: '模型路由',
+    routesHelp: '匹配客户端请求的模型名，优先路由到此端点',
+    addRoute: '添加路由',
+    routePlaceholder: '模型名',
   },
   console: {
     title: '控制台日志',

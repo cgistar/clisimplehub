@@ -43,6 +43,8 @@ import {
     toggleVendorDropdown,
     addModelMapping,
     removeModelMapping,
+    addRoute,
+    removeRoute,
     applyQuickModelMappings
 } from './modules/endpoint-form.js';
 import {
@@ -197,6 +199,8 @@ window.toggleModelDropdown = toggleModelDropdown;
 window.toggleTransformerDropdown = toggleTransformerDropdown;
 window.addModelMapping = addModelMapping;
 window.removeModelMapping = removeModelMapping;
+window.addRoute = addRoute;
+window.removeRoute = removeRoute;
 window.applyQuickModelMappings = applyQuickModelMappings;
 window.openCLIConfigEditor = openCLIConfigEditor;
 window.closeCLIConfigEditor = closeCLIConfigEditor;

@@ -57,6 +57,7 @@ type EndpointConfig struct {
 	Remark        string            `json:"remark,omitempty"`
 	Priority      int               `json:"priority,omitempty"`
 	ProxyURL      string            `json:"proxyUrl,omitempty"`
+	Routes        []string          `json:"routes,omitempty"`
 	Models        []ModelMapping    `json:"models,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
 }

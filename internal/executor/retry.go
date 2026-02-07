@@ -53,11 +53,8 @@ type ExecuteResult struct {
 // 3. 选择执行器执行
 // 4. 失败时重试或切换端点
 func (r *RetryExecutor) Execute(ctx context.Context, req *ForwardRequest, w http.ResponseWriter, enableRetry bool) *ExecuteResult {
-	// 1. 检测接口类型
-	interfaceType := r.execCtx.DetectInterfaceType(req.Path)
-
-	// 2. 查找初始端点
-	endpoint := r.execCtx.GetProvider().GetActiveEndpoint(interfaceType)
+	// 1. 查找初始端点（模型路由 + active fallback）
+	endpoint, interfaceType := r.execCtx.ResolveEndpoint(req.Path, req.RequestModel)
 	if endpoint == nil {
 		return &ExecuteResult{
 			Result: &ForwardResult{

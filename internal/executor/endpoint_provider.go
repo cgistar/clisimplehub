@@ -30,6 +30,9 @@ type EndpointProvider interface {
 
 	// SetActiveEndpoint 设置活动端点
 	SetActiveEndpoint(interfaceType string, endpoint *EndpointConfig) error
+
+	// GetEndpointByModel 根据模型名查找配置了对应路由的端点
+	GetEndpointByModel(interfaceType string, model string) *EndpointConfig
 }
 
 // EndpointKey 生成端点的唯一标识
