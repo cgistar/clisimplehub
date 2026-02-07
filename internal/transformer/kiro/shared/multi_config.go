@@ -34,6 +34,11 @@ func LoadKiroMultiConfig(path string) (*KiroMultiConfig, error) {
 		normalizeAccountTimes(&config.Accounts[i])
 	}
 
+	// 首次加载时自动填充默认 ModelMapping（仅内存，不写盘避免竞争）
+	if len(config.ModelMapping) == 0 {
+		config.ModelMapping = DefaultKiroModelMapping()
+	}
+
 	return &config, nil
 }
 

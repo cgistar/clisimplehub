@@ -2867,6 +2867,7 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 			Remark:        e.Remark,
 			Priority:      e.Priority,
 			ProxyURL:      e.ProxyURL,
+			Routes:        e.Routes,
 			Models:        models,
 			Headers:       e.Headers,
 		}
@@ -2940,6 +2941,11 @@ func (a *App) loadKiroMultiConfigDTO(path string) (*KiroMultiConfigDTO, error) {
 
 	return &KiroMultiConfigDTO{
 		ActiveRefreshToken: config.ActiveRefreshToken,
+		ProxyURL:           config.ProxyURL,
+		UserAgent:          config.UserAgent,
+		Version:            config.Version,
+		BufferedStream:     config.BufferedStream,
+		ModelMapping:       config.ModelMapping,
 		Accounts:           accounts,
 	}, nil
 }

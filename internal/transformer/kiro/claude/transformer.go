@@ -76,6 +76,14 @@ func NewTransformer() *Transformer {
 	return t
 }
 
+// ensureInitialized triggers lazy init and returns any init error.
+func (t *Transformer) ensureInitialized() error {
+	t.initOnce.Do(func() {
+		t.initErr = t.initialize()
+	})
+	return t.initErr
+}
+
 // TargetInterfaceType returns the target interface type
 func (t *Transformer) TargetInterfaceType() string {
 	return "kiro"
@@ -96,12 +104,8 @@ func (t *Transformer) OutputContentType(isStreaming bool) string {
 
 // TransformRequest transforms a Claude API request to Kiro API format
 func (t *Transformer) TransformRequest(modelName string, rawJSON []byte, stream bool) ([]byte, error) {
-	// Lazy initialization
-	t.initOnce.Do(func() {
-		t.initErr = t.initialize()
-	})
-	if t.initErr != nil {
-		return nil, fmt.Errorf("kiro transformer initialization failed: %w", t.initErr)
+	if err := t.ensureInitialized(); err != nil {
+		return nil, fmt.Errorf("kiro transformer initialization failed: %w", err)
 	}
 
 	// Parse Claude request
@@ -112,8 +116,11 @@ func (t *Transformer) TransformRequest(modelName string, rawJSON []byte, stream 
 
 	// Get profile ARN from auth manager
 	profileArn := ""
-	if t.authManager != nil {
-		profileArn = t.authManager.GetProfileArn()
+	t.mu.RLock()
+	am := t.authManager
+	t.mu.RUnlock()
+	if am != nil {
+		profileArn = am.GetProfileArn()
 	}
 
 	// Convert to Kiro request
@@ -149,10 +156,7 @@ func newStreamState(modelName string, originalRequestRawJSON []byte) *StreamStat
 	}
 
 	// 读取缓冲流式模式配置
-	bufferedStreamingEnabled := false
-	if bs, err := getConfig("kiro.bufferedStream"); err == nil && bs == "true" {
-		bufferedStreamingEnabled = true
-	}
+	bufferedStreamingEnabled := GetCachedBufferedStream()
 
 	return &StreamState{
 		MessageID:                 "msg_kiro_" + shared.RandomSuffix(),
@@ -320,21 +324,27 @@ func (t *Transformer) TransformResponseNonStream(
 
 // initialize loads credentials and creates the auth manager
 func (t *Transformer) initialize() error {
-	// Capture Kiro client header configuration (best-effort; defaults applied at call sites).
-	if ua, err := getConfig("kiro.userAgent"); err == nil {
-		t.kiroUserAgentBase = strings.TrimSpace(ua)
-	}
-	if v, err := getConfig("kiro.version"); err == nil {
-		t.kiroVersion = strings.TrimSpace(v)
-	}
-
 	// credentials live next to config.json.
 	credsPath := ""
+	kiroJsonPath := ""
 	if configPath, err := getConfig("configPath"); err == nil && configPath != "" {
-		credsPath = filepath.Join(filepath.Dir(kiroShared.ExpandTilde(configPath)), filepath.Base(kiroShared.GetDefaultKiroCredentialsPath()))
+		dir := filepath.Dir(kiroShared.ExpandTilde(configPath))
+		credsPath = filepath.Join(dir, filepath.Base(kiroShared.GetDefaultKiroCredentialsPath()))
+		kiroJsonPath = filepath.Join(dir, filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 	}
 	if credsPath == "" {
 		credsPath = kiroShared.GetDefaultKiroCredentialsPath()
+	}
+
+	// Read global config (userAgent, version, proxyUrl, bufferedStream, modelMapping) from kiro.json
+	if kiroJsonPath != "" {
+		if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
+			t.kiroUserAgentBase = strings.TrimSpace(mc.UserAgent)
+			t.kiroVersion = strings.TrimSpace(mc.Version)
+			t.kiroProxyURL = strings.TrimSpace(mc.ProxyURL)
+			SetCachedBufferedStream(mc.BufferedStream)
+			SetCachedModelMapping(mc.ModelMapping)
+		}
 	}
 
 	// Load credentials
@@ -352,12 +362,7 @@ func (t *Transformer) initialize() error {
 		t.machineID = kiroapi.ComputeMachineID(creds.RefreshToken)
 	}
 
-	// Get proxy configuration
-	proxyURL := ""
-	if proxy, err := getConfig("kiro.proxyUrl"); err == nil {
-		proxyURL = proxy
-	}
-	t.kiroProxyURL = strings.TrimSpace(proxyURL)
+	proxyURL := strings.TrimSpace(t.kiroProxyURL)
 
 	// Create auth manager with proxy support
 	t.authManager = NewKiroAuthManager(creds, credsPath, proxyURL, t.kiroVersion)
@@ -365,75 +370,75 @@ func (t *Transformer) initialize() error {
 	return nil
 }
 
-// KiroProxyURL returns the configured global Kiro proxy URL (from config.json `kiro.proxyUrl`).
+// KiroProxyURL returns the configured global Kiro proxy URL (from kiro.json).
 func (t *Transformer) KiroProxyURL() string {
-	t.initOnce.Do(func() {
-		t.initErr = t.initialize()
-	})
-	return strings.TrimSpace(t.kiroProxyURL)
+	_ = t.ensureInitialized()
+	t.mu.RLock()
+	v := t.kiroProxyURL
+	t.mu.RUnlock()
+	return strings.TrimSpace(v)
 }
 
 // KiroUserAgentBase returns the configured Kiro User-Agent base prefix.
-// If config.json doesn't specify one, it returns the built-in default.
 func (t *Transformer) KiroUserAgentBase() string {
-	t.initOnce.Do(func() {
-		t.initErr = t.initialize()
-	})
-	return kiroShared.KiroUserAgentBaseOrDefault(t.kiroUserAgentBase)
+	_ = t.ensureInitialized()
+	t.mu.RLock()
+	v := t.kiroUserAgentBase
+	t.mu.RUnlock()
+	return kiroShared.KiroUserAgentBaseOrDefault(v)
 }
 
 // KiroVersion returns the configured Kiro client version token.
-// If config.json doesn't specify one, it returns the built-in default.
 func (t *Transformer) KiroVersion() string {
-	t.initOnce.Do(func() {
-		t.initErr = t.initialize()
-	})
-	return kiroShared.KiroVersionOrDefault(t.kiroVersion)
+	_ = t.ensureInitialized()
+	t.mu.RLock()
+	v := t.kiroVersion
+	t.mu.RUnlock()
+	return kiroShared.KiroVersionOrDefault(v)
 }
 
 func (t *Transformer) MachineID() string {
-	t.initOnce.Do(func() {
-		t.initErr = t.initialize()
-	})
-	return strings.TrimSpace(t.machineID)
+	_ = t.ensureInitialized()
+	t.mu.RLock()
+	v := t.machineID
+	t.mu.RUnlock()
+	return strings.TrimSpace(v)
 }
 
 // GetAuthManager returns the auth manager (for use by proxy server)
 func (t *Transformer) GetAuthManager() *KiroAuthManager {
-	// Ensure initialization
-	t.initOnce.Do(func() {
-		t.initErr = t.initialize()
-	})
-	return t.authManager
+	_ = t.ensureInitialized()
+	t.mu.RLock()
+	am := t.authManager
+	t.mu.RUnlock()
+	return am
 }
 
 // GetAccessToken returns a valid access token (convenience method)
 func (t *Transformer) GetAccessToken() (string, error) {
-	// Ensure initialization
-	t.initOnce.Do(func() {
-		t.initErr = t.initialize()
-	})
-	if t.initErr != nil {
-		return "", fmt.Errorf("kiro transformer initialization failed: %w", t.initErr)
+	if err := t.ensureInitialized(); err != nil {
+		return "", fmt.Errorf("kiro transformer initialization failed: %w", err)
 	}
 
-	if t.authManager == nil {
+	t.mu.RLock()
+	am := t.authManager
+	t.mu.RUnlock()
+	if am == nil {
 		return "", fmt.Errorf("auth manager not initialized")
 	}
-	return t.authManager.GetAccessToken()
+	return am.GetAccessToken()
 }
 
 // GetRegion returns the configured region
 func (t *Transformer) GetRegion() string {
-	// Ensure initialization
-	t.initOnce.Do(func() {
-		t.initErr = t.initialize()
-	})
-
-	if t.authManager == nil {
+	_ = t.ensureInitialized()
+	t.mu.RLock()
+	am := t.authManager
+	t.mu.RUnlock()
+	if am == nil {
 		return "us-east-1"
 	}
-	return t.authManager.GetRegion()
+	return am.GetRegion()
 }
 
 // GetAPIURL returns the Kiro API URL for the configured region
@@ -493,7 +498,7 @@ func flushBufferedStream(s *StreamState) []string {
 }
 
 // Reload 重新加载 Kiro 配置
-// 此方法会重置初始化状态，下次调用时会重新读取 kiro-auth-token.json
+// 此方法会重置初始化状态，下次调用时会重新读取 kiro-auth-token.json 和 kiro.json
 func (t *Transformer) Reload() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -506,6 +511,16 @@ func (t *Transformer) Reload() error {
 	t.kiroVersion = ""
 	t.kiroProxyURL = ""
 	t.machineID = ""
+
+	// Eagerly reload kiro.json cached values so they take effect before the next request triggers initOnce.
+	if configPath, err := getConfig("configPath"); err == nil && configPath != "" {
+		dir := filepath.Dir(kiroShared.ExpandTilde(configPath))
+		kiroJsonPath := filepath.Join(dir, filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
+		if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
+			SetCachedBufferedStream(mc.BufferedStream)
+			SetCachedModelMapping(mc.ModelMapping)
+		}
+	}
 
 	return nil
 }

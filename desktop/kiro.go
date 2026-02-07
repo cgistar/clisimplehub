@@ -136,17 +136,13 @@ func (a *App) GetKiroConfig() (*KiroConfig, error) {
 			config.AuthMethod = "social"
 		}
 	}
-	if proxy, err := a.storage.GetConfig("kiro.proxyUrl"); err == nil {
-		config.ProxyURL = proxy
-	}
-	if ua, err := a.storage.GetConfig("kiro.userAgent"); err == nil {
-		config.UserAgent = ua
-	}
-	if v, err := a.storage.GetConfig("kiro.version"); err == nil {
-		config.Version = v
-	}
-	if bs, err := a.storage.GetConfig("kiro.bufferedStream"); err == nil {
-		config.BufferedStream = bs == "true"
+
+	// Read global settings from kiro.json
+	if mc, err := a.loadOrCreateMultiConfig(); err == nil && mc != nil {
+		config.ProxyURL = mc.ProxyURL
+		config.UserAgent = mc.UserAgent
+		config.Version = mc.Version
+		config.BufferedStream = mc.BufferedStream
 	}
 
 	return config, nil
@@ -252,19 +248,87 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 		fmt.Printf("warning: failed to sync to kiro.json: %v\n", err)
 	}
 
-	if err := a.storage.SetConfig("kiro.proxyUrl", config.ProxyURL); err != nil {
-		return fmt.Errorf("failed to save proxy URL: %w", err)
+	// Save global settings to kiro.json
+	multiConfig, err := a.loadOrCreateMultiConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load kiro multi config: %w", err)
 	}
-	if err := a.storage.SetConfig("kiro.userAgent", config.UserAgent); err != nil {
-		return fmt.Errorf("failed to save user agent: %w", err)
-	}
-	if err := a.storage.SetConfig("kiro.version", config.Version); err != nil {
-		return fmt.Errorf("failed to save version: %w", err)
-	}
-	if err := a.storage.SetConfig("kiro.bufferedStream", fmt.Sprintf("%v", config.BufferedStream)); err != nil {
-		return fmt.Errorf("failed to save buffered stream: %w", err)
+	multiConfig.ProxyURL = config.ProxyURL
+	multiConfig.UserAgent = config.UserAgent
+	multiConfig.Version = config.Version
+	multiConfig.BufferedStream = config.BufferedStream
+	multiPath := a.getKiroMultiConfigPath()
+	if err := kiroShared.SaveKiroMultiConfig(multiPath, multiConfig); err != nil {
+		return fmt.Errorf("failed to save kiro global config: %w", err)
 	}
 
+	return nil
+}
+
+// KiroGlobalConfigDTO represents Kiro global settings + model mapping for frontend
+type KiroGlobalConfigDTO struct {
+	ProxyURL       string            `json:"proxyUrl"`
+	UserAgent      string            `json:"userAgent"`
+	Version        string            `json:"version"`
+	BufferedStream bool              `json:"bufferedStream"`
+	ModelMapping   map[string]string `json:"modelMapping"`
+}
+
+// GetKiroGlobalConfig returns the Kiro global configuration and model mapping from kiro.json
+func (a *App) GetKiroGlobalConfig() (*KiroGlobalConfigDTO, error) {
+	mc, err := a.loadOrCreateMultiConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kiro config: %w", err)
+	}
+	mapping := mc.ModelMapping
+	if len(mapping) == 0 {
+		mapping = kiroShared.DefaultKiroModelMapping()
+	}
+	clone := make(map[string]string, len(mapping))
+	for k, v := range mapping {
+		clone[k] = v
+	}
+	return &KiroGlobalConfigDTO{
+		ProxyURL:       mc.ProxyURL,
+		UserAgent:      mc.UserAgent,
+		Version:        mc.Version,
+		BufferedStream: mc.BufferedStream,
+		ModelMapping:   clone,
+	}, nil
+}
+
+// SaveKiroGlobalConfig saves Kiro global settings + model mapping to kiro.json and reloads transformers
+func (a *App) SaveKiroGlobalConfig(dto *KiroGlobalConfigDTO) error {
+	if dto == nil {
+		return fmt.Errorf("nil config")
+	}
+	mc, err := a.loadOrCreateMultiConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load kiro config: %w", err)
+	}
+	mc.ProxyURL = strings.TrimSpace(dto.ProxyURL)
+	mc.UserAgent = strings.TrimSpace(dto.UserAgent)
+	mc.Version = strings.TrimSpace(dto.Version)
+	mc.BufferedStream = dto.BufferedStream
+	if dto.ModelMapping != nil {
+		sanitized := make(map[string]string, len(dto.ModelMapping))
+		for k, v := range dto.ModelMapping {
+			alias := strings.TrimSpace(k)
+			name := strings.TrimSpace(v)
+			if alias != "" && name != "" {
+				sanitized[alias] = name
+			}
+		}
+		mc.ModelMapping = sanitized
+	}
+
+	multiPath := a.getKiroMultiConfigPath()
+	if err := kiroShared.SaveKiroMultiConfig(multiPath, mc); err != nil {
+		return fmt.Errorf("failed to save kiro config: %w", err)
+	}
+	if err := kiroClaude.ReloadAllTransformers(); err != nil {
+		return fmt.Errorf("saved kiro config but failed to reload transformers: %w", err)
+	}
 	return nil
 }
 
@@ -551,9 +615,14 @@ type KiroAccountsResponse struct {
 
 // KiroMultiConfigDTO 多账号配置传输对象（用于 WebDAV 备份/恢复）
 type KiroMultiConfigDTO struct {
-	ActiveRefreshToken string           `json:"activeRefreshToken"`
-	Accounts           []KiroAccountDTO `json:"accounts"`
-	ReplaceMode        bool             `json:"replaceMode,omitempty"` // 替换模式：清空现有账号
+	ActiveRefreshToken string            `json:"activeRefreshToken"`
+	ProxyURL           string            `json:"proxyUrl,omitempty"`
+	UserAgent          string            `json:"userAgent,omitempty"`
+	Version            string            `json:"version,omitempty"`
+	BufferedStream     bool              `json:"bufferedStream,omitempty"`
+	ModelMapping       map[string]string `json:"modelMapping,omitempty"`
+	Accounts           []KiroAccountDTO  `json:"accounts"`
+	ReplaceMode        bool              `json:"replaceMode,omitempty"` // 替换模式：清空现有账号
 }
 
 func accountToDTO(account *kiroShared.KiroAccount, isActive bool) KiroAccountDTO {
@@ -666,9 +735,10 @@ func (a *App) loadOrCreateMultiConfig() (*kiroShared.KiroMultiConfig, error) {
 	config, err := kiroShared.LoadKiroMultiConfig(multiPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// 文件不存在，返回空配置
+			// 文件不存在，返回空配置（含默认 ModelMapping）
 			return &kiroShared.KiroMultiConfig{
-				Accounts: []kiroShared.KiroAccount{},
+				ModelMapping: kiroShared.DefaultKiroModelMapping(),
+				Accounts:     []kiroShared.KiroAccount{},
 			}, nil
 		}
 		return nil, err
@@ -1112,6 +1182,11 @@ func (a *App) replaceKiroMultiConfig(multiPath string, dto *KiroMultiConfigDTO) 
 
 	newConfig := &kiroShared.KiroMultiConfig{
 		ActiveRefreshToken: activeRefreshToken,
+		ProxyURL:           dto.ProxyURL,
+		UserAgent:          dto.UserAgent,
+		Version:            dto.Version,
+		BufferedStream:     dto.BufferedStream,
+		ModelMapping:       dto.ModelMapping,
 		Accounts:           accounts,
 	}
 
@@ -1223,8 +1298,32 @@ func (a *App) mergeKiroMultiConfig(multiPath string, dto *KiroMultiConfigDTO) er
 		activeRefreshToken = mergedAccounts[0].RefreshToken
 	}
 
+	// 合并全局配置（远程优先，本地兜底）
+	proxyURL := dto.ProxyURL
+	if proxyURL == "" {
+		proxyURL = localConfig.ProxyURL
+	}
+	userAgent := dto.UserAgent
+	if userAgent == "" {
+		userAgent = localConfig.UserAgent
+	}
+	version := dto.Version
+	if version == "" {
+		version = localConfig.Version
+	}
+	bufferedStream := dto.BufferedStream || localConfig.BufferedStream
+	modelMapping := dto.ModelMapping
+	if len(modelMapping) == 0 {
+		modelMapping = localConfig.ModelMapping
+	}
+
 	mergedConfig := &kiroShared.KiroMultiConfig{
 		ActiveRefreshToken: activeRefreshToken,
+		ProxyURL:           proxyURL,
+		UserAgent:          userAgent,
+		Version:            version,
+		BufferedStream:     bufferedStream,
+		ModelMapping:       modelMapping,
 		Accounts:           mergedAccounts,
 	}
 

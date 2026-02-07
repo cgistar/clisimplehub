@@ -57,6 +57,9 @@ export function mainLayoutTemplate() {
                     <div class="card-header">
                         <h2>${createIcon('users', { size: 16 })} ${t('kiro.accountsTitle')}</h2>
                         <div class="card-header-actions">
+                            <button class="btn btn-sm btn-secondary" style="margin-right: 8px;" onclick="showKiroGlobalConfigModal()" title="${t('kiro.globalConfig')}">
+                                ${createIcon('settings', { size: 14 })} ${t('kiro.globalConfig')}
+                            </button>
                             <button class="btn btn-sm btn-danger" style="margin-right: 8px;" onclick="showBulkDeleteDialog()" title="${t('kiro.bulkDelete')}">
                                 ${createIcon('trash', { size: 14 })} ${t('common.delete')}
                             </button>

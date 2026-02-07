@@ -68,14 +68,6 @@ type ModelMapping struct {
 	Alias string `json:"alias"` // API 使用的别名（客户端传入的 model）
 }
 
-// KiroConfig represents top-level Kiro settings in config.json.
-type KiroConfig struct {
-	ProxyURL       string `json:"proxyUrl,omitempty"`
-	UserAgent      string `json:"userAgent,omitempty"`
-	Version        string `json:"version,omitempty"`
-	BufferedStream bool   `json:"bufferedStream,omitempty"`
-}
-
 // WebDAVConfig represents WebDAV sync settings in config.json.
 type WebDAVConfig struct {
 	ServerURL string `json:"serverUrl,omitempty"`
@@ -86,7 +78,6 @@ type WebDAVConfig struct {
 // AppConfig represents the complete application configuration
 type AppConfig struct {
 	AppConfigKV map[string]interface{} `json:"appConfig,omitempty"`
-	Kiro        *KiroConfig            `json:"kiro,omitempty"`
 	WebDAV      *WebDAVConfig          `json:"webdav,omitempty"`
 	Vendors     []VendorConfig         `json:"vendors"`
 	Endpoints   []EndpointConfig       `json:"endpoints,omitempty"`

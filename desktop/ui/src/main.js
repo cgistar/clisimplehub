@@ -95,7 +95,12 @@ import {
     startSocialLogin,
     closeSocialLoginModal,
     copySocialLoginUrl,
-    openSocialLoginUrl
+    openSocialLoginUrl,
+    showKiroGlobalConfigModal,
+    closeKiroGlobalConfigModal,
+    addKiroModelMappingRow,
+    resetKiroModelMappingDefaults,
+    saveKiroGlobalConfig
 } from './modules/kiro.js';
 import {
     showKiroAccountsModal,
@@ -238,6 +243,11 @@ window.startSocialLogin = startSocialLogin;
 window.closeSocialLoginModal = closeSocialLoginModal;
 window.copySocialLoginUrl = copySocialLoginUrl;
 window.openSocialLoginUrl = openSocialLoginUrl;
+window.showKiroGlobalConfigModal = showKiroGlobalConfigModal;
+window.closeKiroGlobalConfigModal = closeKiroGlobalConfigModal;
+window.addKiroModelMappingRow = addKiroModelMappingRow;
+window.resetKiroModelMappingDefaults = resetKiroModelMappingDefaults;
+window.saveKiroGlobalConfig = saveKiroGlobalConfig;
 window.toggleDebugModeDropdown = toggleDebugModeDropdown;
 window.showKiroAccountsModal = showKiroAccountsModal;
 window.closeKiroAccountsModal = closeKiroAccountsModal;

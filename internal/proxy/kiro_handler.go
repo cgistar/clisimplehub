@@ -108,25 +108,16 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	credsPath := filepath.Join(filepath.Dir(configPath), "kiro-auth-token.json")
+	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 
-	// 从 storage 读取 version, userAgent, machineId
-	p.mu.RLock()
-	store := p.store
-	p.mu.RUnlock()
-
+	// 从 kiro.json 读取 version, userAgent, bufferedStream
 	version := ""
 	userAgent := ""
 	oldBufferedStream := false
-	if store != nil {
-		if v, err := store.GetConfig("kiro.version"); err == nil {
-			version = strings.TrimSpace(v)
-		}
-		if ua, err := store.GetConfig("kiro.userAgent"); err == nil {
-			userAgent = strings.TrimSpace(ua)
-		}
-		if bs, err := store.GetConfig("kiro.bufferedStream"); err == nil {
-			oldBufferedStream = (bs == "true")
-		}
+	if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
+		version = strings.TrimSpace(mc.Version)
+		userAgent = strings.TrimSpace(mc.UserAgent)
+		oldBufferedStream = mc.BufferedStream
 	}
 
 	// 应用默认值
@@ -169,13 +160,10 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// 如果只是 bufferedStream 变化，更新配置但不刷新 token
-		if store != nil {
-			if req.BufferedStream {
-				_ = store.SetConfig("kiro.bufferedStream", "true")
-			} else {
-				_ = store.SetConfig("kiro.bufferedStream", "false")
-			}
+		// 如果只是 bufferedStream 变化，更新 kiro.json
+		if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
+			mc.BufferedStream = req.BufferedStream
+			_ = kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc)
 		}
 
 		// 返回现有凭证信息
@@ -293,17 +281,11 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync kiro.json: %v\n", err)
 	}
 
-	// 更新 config.json 中的 bufferedStream（非凭证配置）
-	if store != nil {
-		// 保存 bufferedStream
-		if req.BufferedStream {
-			if err := store.SetConfig("kiro.bufferedStream", "true"); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to save bufferedStream: %v\n", err)
-			}
-		} else {
-			if err := store.SetConfig("kiro.bufferedStream", "false"); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to save bufferedStream: %v\n", err)
-			}
+	// 更新 kiro.json 中的 bufferedStream
+	if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
+		mc.BufferedStream = req.BufferedStream
+		if err := kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save bufferedStream to kiro.json: %v\n", err)
 		}
 	}
 
@@ -412,7 +394,6 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 	// 获取配置路径
 	p.mu.RLock()
 	configPath := p.configPath
-	store := p.store
 	p.mu.RUnlock()
 
 	if configPath == "" {
@@ -450,16 +431,15 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 	profileArn := strings.TrimSpace(creds.ProfileArn)
 	refreshToken := strings.TrimSpace(creds.RefreshToken)
 
-	// 从 storage 读取 version, userAgent
+	// 从 kiro.json 读取 version, userAgent, proxyUrl
+	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 	version := ""
 	userAgent := ""
-	if store != nil {
-		if v, err := store.GetConfig("kiro.version"); err == nil {
-			version = strings.TrimSpace(v)
-		}
-		if ua, err := store.GetConfig("kiro.userAgent"); err == nil {
-			userAgent = strings.TrimSpace(ua)
-		}
+	proxyURL := ""
+	if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
+		version = strings.TrimSpace(mc.Version)
+		userAgent = strings.TrimSpace(mc.UserAgent)
+		proxyURL = strings.TrimSpace(mc.ProxyURL)
 	}
 
 	// 应用默认值
@@ -474,14 +454,6 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 	// 获取使用量信息
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	// 从 storage 读取代理配置
-	proxyURL := ""
-	if store != nil {
-		if v, err := store.GetConfig("kiro.proxyUrl"); err == nil {
-			proxyURL = v
-		}
-	}
 
 	// 使用统一的 HTTP 客户端工厂，支持代理配置
 	httpClient := kiroClient.NewHTTPClientWithProxy(proxyURL, 10*time.Second)

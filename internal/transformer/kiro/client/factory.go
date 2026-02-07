@@ -41,7 +41,7 @@ func (f *Factory) NewHTTPClient(timeout time.Duration) *http.Client {
 	}
 
 	// 始终设置显式的 transport，避免意外使用环境变量代理
-	// Kiro 代理必须来自 config.json 的 kiro.proxyUrl
+	// Kiro 代理必须来自显式配置（kiro.json），不隐式使用环境变量代理
 	if proxyURL == "" {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.Proxy = nil

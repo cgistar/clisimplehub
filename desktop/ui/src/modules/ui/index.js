@@ -12,7 +12,8 @@ import {
     kiroConfigModalTemplate,
     idcOrgLoginModalTemplate,
     idcDeviceFlowModalTemplate,
-    socialLoginModalTemplate
+    socialLoginModalTemplate,
+    kiroGlobalConfigModalTemplate
 } from './kiroModals.js'
 import { cliConfigModalTemplate, errorToastTemplate } from './miscComponents.js'
 
@@ -32,6 +33,7 @@ export function initUI() {
         kiroConfigModalTemplate(),
         idcOrgLoginModalTemplate(),
         idcDeviceFlowModalTemplate(),
-        socialLoginModalTemplate()
+        socialLoginModalTemplate(),
+        kiroGlobalConfigModalTemplate()
     ].join('')
 }

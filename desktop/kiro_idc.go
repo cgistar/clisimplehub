@@ -57,13 +57,10 @@ type IdcPollTokenResponse struct {
 	Error        string `json:"error,omitempty"`
 }
 
-// getKiroProxyURL 从 storage 读取 Kiro 代理配置
+// getKiroProxyURL 从 kiro.json 读取 Kiro 代理配置
 func (a *App) getKiroProxyURL() string {
-	if a.storage == nil {
-		return ""
-	}
-	if proxy, err := a.storage.GetConfig("kiro.proxyUrl"); err == nil {
-		return strings.TrimSpace(proxy)
+	if mc, err := a.loadOrCreateMultiConfig(); err == nil && mc != nil {
+		return strings.TrimSpace(mc.ProxyURL)
 	}
 	return ""
 }

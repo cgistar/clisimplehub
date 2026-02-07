@@ -61,9 +61,32 @@ type KiroAccount struct {
 
 // KiroMultiConfig 多账号配置文件结构
 type KiroMultiConfig struct {
-	// 当前激活账号的 refreshToken
-	ActiveRefreshToken string        `json:"activeRefreshToken"`
-	Accounts           []KiroAccount `json:"accounts"`
+	ActiveRefreshToken string            `json:"activeRefreshToken"`
+	ProxyURL           string            `json:"proxyUrl,omitempty"`
+	UserAgent          string            `json:"userAgent,omitempty"`
+	Version            string            `json:"version,omitempty"`
+	BufferedStream     bool              `json:"bufferedStream,omitempty"`
+	ModelMapping       map[string]string `json:"modelMapping,omitempty"`
+	Accounts           []KiroAccount     `json:"accounts"`
+}
+
+// DefaultKiroModelMapping returns the default Claude model → Kiro model ID mapping.
+func DefaultKiroModelMapping() map[string]string {
+	return map[string]string{
+		"claude-opus-4-6":            "claude-opus-4.6",
+		"claude-opus-4-5":            "claude-opus-4.5",
+		"claude-opus-4-5-20251101":   "claude-opus-4.5",
+		"claude-opus-4-5-20250514":   "claude-opus-4.5",
+		"claude-haiku-4.5":           "claude-haiku-4.5",
+		"claude-haiku-4-5":           "claude-haiku-4.5",
+		"claude-haiku-4-5-20251001":  "claude-haiku-4.5",
+		"claude-sonnet-4-5":          "claude-sonnet-4.5",
+		"claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
+		"claude-sonnet-4-5-20250514": "claude-sonnet-4.5",
+		"claude-sonnet-4":            "claude-sonnet-4",
+		"claude-sonnet-4-20250514":   "claude-sonnet-4",
+		"auto":                       "claude-sonnet-4.5",
+	}
 }
 
 // ToCredentials 将 KiroAccount 转换为 KiroCredentials

@@ -179,6 +179,16 @@ export default {
     openLink: 'Open in Browser',
     linkCopied: 'Link copied',
     copyFailed: 'Copy failed',
+    // Global Config
+    globalConfig: 'Config',
+    globalConfigSaved: 'Global config saved',
+    globalConfigSaveFailed: 'Save failed: ',
+    modelMapping: 'Model Mapping',
+    modelMappingHelp: 'Claude model name → Kiro model ID mapping',
+    addMapping: 'Add Mapping',
+    resetDefaults: 'Reset Defaults',
+    mappingAlias: 'Client Model Name',
+    mappingName: 'Kiro Model ID',
   },
   endpoints: {
     title: 'Endpoints',

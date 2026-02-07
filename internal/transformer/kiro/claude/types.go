@@ -2,6 +2,8 @@ package claude
 
 import (
 	kiroresponse "clisimplehub/internal/transformer/kiro/response"
+	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	"sync"
 )
 
 // KiroRequest represents the request payload for Kiro API
@@ -166,34 +168,53 @@ func (s *StreamState) TokenUsage() (inputTokens int, outputTokens int) {
 	return s.InputTokens, s.OutputTokens
 }
 
-// KiroModelMapping maps Claude model names to Kiro model IDs
-var KiroModelMapping = map[string]string{
-	// MODEL_MAPPING.
-	"claude-opus-4-6":          "claude-opus-4.6",
-	"claude-opus-4-5":          "claude-opus-4.5",
-	"claude-opus-4-5-20251101": "claude-opus-4.5",
-	"claude-opus-4-5-20250514":   "claude-opus-4.5",
+var (
+	cachedModelMapping map[string]string
+	cachedModelMu      sync.RWMutex
 
-	"claude-haiku-4.5":          "claude-haiku-4.5",
-	"claude-haiku-4-5":          "claude-haiku-4.5",
-	"claude-haiku-4-5-20251001": "claude-haiku-4.5",
+	cachedBufferedStream bool
+	cachedBufferedMu     sync.RWMutex
+)
 
-	"claude-sonnet-4-5":          "claude-sonnet-4.5",
-	"claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
-	"claude-sonnet-4-5-20250514": "claude-sonnet-4.5",
+// SetCachedModelMapping updates the cached model mapping (called during transformer init/reload).
+func SetCachedModelMapping(m map[string]string) {
+	cachedModelMu.Lock()
+	defer cachedModelMu.Unlock()
+	if len(m) == 0 {
+		cachedModelMapping = nil
+		return
+	}
+	clone := make(map[string]string, len(m))
+	for k, v := range m {
+		clone[k] = v
+	}
+	cachedModelMapping = clone
+}
 
-	"claude-sonnet-4":          "claude-sonnet-4",
-	"claude-sonnet-4-20250514": "claude-sonnet-4",
+// SetCachedBufferedStream updates the cached buffered-stream flag (called during transformer init/reload).
+func SetCachedBufferedStream(v bool) {
+	cachedBufferedMu.Lock()
+	defer cachedBufferedMu.Unlock()
+	cachedBufferedStream = v
+}
 
-	// Convenience aliases
-	"auto": "claude-sonnet-4.5",
+// GetCachedBufferedStream returns the cached buffered-stream flag.
+func GetCachedBufferedStream() bool {
+	cachedBufferedMu.RLock()
+	defer cachedBufferedMu.RUnlock()
+	return cachedBufferedStream
 }
 
 // GetKiroModelID returns the Kiro model ID for a given Claude model name
 func GetKiroModelID(claudeModel string) string {
-	if kiroModel, ok := KiroModelMapping[claudeModel]; ok {
+	cachedModelMu.RLock()
+	mapping := cachedModelMapping
+	cachedModelMu.RUnlock()
+	if mapping == nil {
+		mapping = kiroShared.DefaultKiroModelMapping()
+	}
+	if kiroModel, ok := mapping[claudeModel]; ok {
 		return kiroModel
 	}
-	// Default to the input model name if no mapping found
 	return "claude-sonnet-4.5"
 }

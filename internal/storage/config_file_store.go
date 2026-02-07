@@ -17,16 +17,6 @@ type ConfigFileStore struct {
 	mu     sync.Mutex
 }
 
-func kiroAllEmpty(cfg *config.KiroConfig) bool {
-	if cfg == nil {
-		return true
-	}
-	return strings.TrimSpace(cfg.ProxyURL) == "" &&
-		strings.TrimSpace(cfg.UserAgent) == "" &&
-		strings.TrimSpace(cfg.Version) == "" &&
-		!cfg.BufferedStream
-}
-
 func webdavAllEmpty(cfg *config.WebDAVConfig) bool {
 	if cfg == nil {
 		return true
@@ -309,25 +299,6 @@ func (s *ConfigFileStore) GetConfig(key string) (string, error) {
 	}
 
 	switch key {
-	case "kiro.proxyUrl":
-		if cfg.Kiro != nil {
-			return cfg.Kiro.ProxyURL, nil
-		}
-	case "kiro.userAgent":
-		if cfg.Kiro != nil {
-			return cfg.Kiro.UserAgent, nil
-		}
-	case "kiro.version":
-		if cfg.Kiro != nil {
-			return cfg.Kiro.Version, nil
-		}
-	case "kiro.bufferedStream":
-		if cfg.Kiro != nil {
-			if cfg.Kiro.BufferedStream {
-				return "true", nil
-			}
-			return "false", nil
-		}
 	case "webdav.serverUrl":
 		if cfg.WebDAV != nil {
 			return cfg.WebDAV.ServerURL, nil
@@ -378,42 +349,6 @@ func (s *ConfigFileStore) SetConfig(key, value string) error {
 	}
 
 	switch key {
-	case "kiro.proxyUrl":
-		if cfg.Kiro == nil {
-			cfg.Kiro = &config.KiroConfig{}
-		}
-		cfg.Kiro.ProxyURL = strings.TrimSpace(value)
-		if kiroAllEmpty(cfg.Kiro) {
-			cfg.Kiro = nil
-		}
-		return s.saveLocked(cfg)
-	case "kiro.userAgent":
-		if cfg.Kiro == nil {
-			cfg.Kiro = &config.KiroConfig{}
-		}
-		cfg.Kiro.UserAgent = strings.TrimSpace(value)
-		if kiroAllEmpty(cfg.Kiro) {
-			cfg.Kiro = nil
-		}
-		return s.saveLocked(cfg)
-	case "kiro.version":
-		if cfg.Kiro == nil {
-			cfg.Kiro = &config.KiroConfig{}
-		}
-		cfg.Kiro.Version = strings.TrimSpace(value)
-		if kiroAllEmpty(cfg.Kiro) {
-			cfg.Kiro = nil
-		}
-		return s.saveLocked(cfg)
-	case "kiro.bufferedStream":
-		if cfg.Kiro == nil {
-			cfg.Kiro = &config.KiroConfig{}
-		}
-		cfg.Kiro.BufferedStream = value == "true"
-		if kiroAllEmpty(cfg.Kiro) {
-			cfg.Kiro = nil
-		}
-		return s.saveLocked(cfg)
 	case "webdav.serverUrl":
 		if cfg.WebDAV == nil {
 			cfg.WebDAV = &config.WebDAVConfig{}
@@ -519,10 +454,6 @@ func (s *ConfigFileStore) loadAndNormalizeLocked() (*config.AppConfig, error) {
 	}
 
 	changed := ensureIDs(cfg)
-	if cfg.Kiro != nil && kiroAllEmpty(cfg.Kiro) {
-		cfg.Kiro = nil
-		changed = true
-	}
 	if changed {
 		_ = s.saveLocked(cfg)
 	}

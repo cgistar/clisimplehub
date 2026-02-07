@@ -176,6 +176,16 @@ export default {
     openLink: '在浏览器中打开',
     linkCopied: '链接已复制',
     copyFailed: '复制失败',
+    // Global Config
+    globalConfig: '配置',
+    globalConfigSaved: '全局配置已保存',
+    globalConfigSaveFailed: '保存失败：',
+    modelMapping: '模型映射',
+    modelMappingHelp: 'Claude 模型名 → Kiro 模型 ID 的映射关系',
+    addMapping: '添加映射',
+    resetDefaults: '恢复默认',
+    mappingAlias: '客户端模型名',
+    mappingName: 'Kiro 模型 ID',
   },
   endpoints: {
     title: '端点',

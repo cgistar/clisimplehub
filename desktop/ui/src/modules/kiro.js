@@ -1666,3 +1666,127 @@ async function ensureKiroEndpoint() {
     console.error('Failed to ensure kiro endpoint:', error)
   }
 }
+
+// =============================================================================
+// Kiro Global Config Modal (model mapping + global settings)
+// =============================================================================
+
+let kiroGlobalConfigDefaults = null
+
+function renderKiroModelMappingList(mapping) {
+  const container = document.getElementById('kiroModelMappingList')
+  if (!container) return
+  container.replaceChildren()
+  if (!mapping || typeof mapping !== 'object') return
+
+  Object.entries(mapping).forEach(([alias, name]) => {
+    container.appendChild(createModelMappingRow(alias, name))
+  })
+}
+
+function createModelMappingRow(alias, name) {
+  const row = document.createElement('div')
+  row.className = 'model-mapping-row'
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:4px;'
+
+  const aliasInput = document.createElement('input')
+  aliasInput.type = 'text'
+  aliasInput.className = 'kiro-mm-alias'
+  aliasInput.placeholder = t('kiro.mappingAlias')
+  aliasInput.value = String(alias || '')
+  aliasInput.style.cssText = 'flex:1;font-size:12px;'
+
+  const arrow = document.createElement('span')
+  arrow.style.cssText = 'color:var(--text-secondary);font-size:12px;'
+  arrow.textContent = '\u2192'
+
+  const nameInput = document.createElement('input')
+  nameInput.type = 'text'
+  nameInput.className = 'kiro-mm-name'
+  nameInput.placeholder = t('kiro.mappingName')
+  nameInput.value = String(name || '')
+  nameInput.style.cssText = 'flex:1;font-size:12px;'
+
+  const removeBtn = document.createElement('button')
+  removeBtn.type = 'button'
+  removeBtn.className = 'btn btn-sm btn-danger'
+  removeBtn.style.cssText = 'padding:2px 6px;font-size:11px;'
+  removeBtn.textContent = '\u00d7'
+  removeBtn.addEventListener('click', () => row.remove())
+
+  row.appendChild(aliasInput)
+  row.appendChild(arrow)
+  row.appendChild(nameInput)
+  row.appendChild(removeBtn)
+  return row
+}
+
+function collectModelMapping() {
+  const container = document.getElementById('kiroModelMappingList')
+  if (!container) return {}
+  const rows = container.querySelectorAll('.model-mapping-row')
+  const mapping = {}
+  rows.forEach(row => {
+    const alias = (row.querySelector('.kiro-mm-alias')?.value || '').trim()
+    const name = (row.querySelector('.kiro-mm-name')?.value || '').trim()
+    if (alias && name) {
+      mapping[alias] = name
+    }
+  })
+  return mapping
+}
+
+export async function showKiroGlobalConfigModal() {
+  try {
+    if (!window.go?.main?.App?.GetKiroGlobalConfig) return
+    const cfg = await window.go.main.App.GetKiroGlobalConfig()
+    kiroGlobalConfigDefaults = cfg?.modelMapping || {}
+
+    document.getElementById('kiroGlobalProxyUrl').value = cfg?.proxyUrl || ''
+    document.getElementById('kiroGlobalUserAgent').value = cfg?.userAgent || ''
+    document.getElementById('kiroGlobalVersion').value = cfg?.version || ''
+    document.getElementById('kiroGlobalBufferedStream').checked = cfg?.bufferedStream || false
+    renderKiroModelMappingList(cfg?.modelMapping || {})
+  } catch (error) {
+    console.error('Failed to load Kiro global config:', error)
+    showError(t('kiro.globalConfigSaveFailed') + (error?.message || error))
+    return
+  }
+  document.getElementById('kiroGlobalConfigModal').classList.add('active')
+}
+
+export function closeKiroGlobalConfigModal() {
+  document.getElementById('kiroGlobalConfigModal').classList.remove('active')
+}
+
+export function addKiroModelMappingRow() {
+  const container = document.getElementById('kiroModelMappingList')
+  if (!container) return
+  const row = createModelMappingRow('', '')
+  container.appendChild(row)
+  row.querySelector('.kiro-mm-alias')?.focus()
+}
+
+export function resetKiroModelMappingDefaults() {
+  renderKiroModelMappingList(kiroGlobalConfigDefaults)
+}
+
+export async function saveKiroGlobalConfig() {
+  try {
+    if (!window.go?.main?.App?.SaveKiroGlobalConfig) return
+
+    const dto = {
+      proxyUrl: (document.getElementById('kiroGlobalProxyUrl')?.value || '').trim(),
+      userAgent: (document.getElementById('kiroGlobalUserAgent')?.value || '').trim(),
+      version: (document.getElementById('kiroGlobalVersion')?.value || '').trim(),
+      bufferedStream: document.getElementById('kiroGlobalBufferedStream')?.checked || false,
+      modelMapping: collectModelMapping(),
+    }
+    await window.go.main.App.SaveKiroGlobalConfig(dto)
+    closeKiroGlobalConfigModal()
+    showSuccess(t('kiro.globalConfigSaved'))
+  } catch (error) {
+    console.error('SaveKiroGlobalConfig error:', error)
+    showError(t('kiro.globalConfigSaveFailed') + (error?.message || error))
+  }
+}

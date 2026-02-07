@@ -284,3 +284,55 @@ export function socialLoginModalTemplate() {
             </div>
         </div>`
 }
+
+export function kiroGlobalConfigModalTemplate() {
+    return `
+        <div id="kiroGlobalConfigModal" class="modal">
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header">
+                    <h2>${t('kiro.globalConfig')}</h2>
+                    <button class="modal-close" onclick="closeKiroGlobalConfigModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>${t('kiro.proxyUrl')}</label>
+                        <input type="text" id="kiroGlobalProxyUrl" placeholder="${t('kiro.proxyUrlPlaceholder')}">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('kiro.userAgent')}</label>
+                        <input type="text" id="kiroGlobalUserAgent" placeholder="${t('kiro.userAgentPlaceholder')}">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('kiro.version')}</label>
+                        <input type="text" id="kiroGlobalVersion" placeholder="${t('kiro.versionPlaceholder')}">
+                    </div>
+                    <div class="form-group switch-form-group">
+                        <label class="switch-label-inline">${t('kiro.bufferedStream')}</label>
+                        <label class="switch">
+                            <input type="checkbox" id="kiroGlobalBufferedStream">
+                            <span class="slider"></span>
+                        </label>
+                        <small>${t('kiro.bufferedStreamHelp')}</small>
+                    </div>
+                    <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);">
+                    <div class="form-group">
+                        <label>${t('kiro.modelMapping')}</label>
+                        <small style="display:block;margin-bottom:8px;">${t('kiro.modelMappingHelp')}</small>
+                        <div id="kiroModelMappingList"></div>
+                        <div style="margin-top: 8px; display: flex; gap: 8px;">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="addKiroModelMappingRow()">
+                                ${t('kiro.addMapping')}
+                            </button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="resetKiroModelMappingDefaults()">
+                                ${t('kiro.resetDefaults')}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeKiroGlobalConfigModal()">${t('settings.cancel')}</button>
+                    <button class="btn btn-primary" onclick="saveKiroGlobalConfig()">${t('settings.save')}</button>
+                </div>
+            </div>
+        </div>`
+}
