@@ -5,6 +5,7 @@
 import { state } from './state.js';
 import { t } from '../i18n/index.js';
 import { getRealTimeManager } from './realtime.js';
+import { createIcon } from './icons.js';
 
 // Real-time requests state
 let realtimeRequests = new Map();
@@ -118,8 +119,8 @@ function updateRecentLog(request) {
         state.recentLogs[existingIndex] = log;
     } else {
         state.recentLogs.unshift(log);
-        if (state.recentLogs.length > 5) {
-            state.recentLogs = state.recentLogs.slice(0, 5);
+        if (state.recentLogs.length > 10) {
+            state.recentLogs = state.recentLogs.slice(0, 10);
         }
     }
     
@@ -232,7 +233,7 @@ export function renderLogs(logs) {
     if (!container) return;
     
     if (countEl) {
-        countEl.textContent = `${logs.length} / 5`;
+        countEl.textContent = `${logs.length} / 10`;
     }
     
     if (!logs || logs.length === 0) {
@@ -388,13 +389,25 @@ function renderLogDetailModal(log) {
                 </div>
                 ${log.requestStream ? `
                 <div class="log-detail-section collapsible">
-                    <h3 onclick="this.parentElement.classList.toggle('expanded')">${t('logs.requestStream')} <span class="collapse-icon">▶</span></h3>
-                    <pre class="log-stream-content">${escapeHtml(log.requestStream)}</pre>
+                    <h3 onclick="this.parentElement.classList.toggle('expanded')">
+                        ${t('logs.requestStream')}
+                        <span class="collapse-icon">▶</span>
+                        <button class="stream-copy-btn" onclick="event.stopPropagation(); copyStreamContent('request', this)" title="${t('logs.copyToClipboard')}">
+                            ${createIcon('copy', { size: 14 })}
+                        </button>
+                    </h3>
+                    <pre class="log-stream-content" data-stream-type="request">${escapeHtml(log.requestStream)}</pre>
                 </div>` : ''}
                 ${log.responseStream ? `
                 <div class="log-detail-section collapsible">
-                    <h3 onclick="this.parentElement.classList.toggle('expanded')">${t('logs.responseStream')} <span class="collapse-icon">▶</span></h3>
-                    <pre class="log-stream-content">${escapeHtml(log.responseStream)}</pre>
+                    <h3 onclick="this.parentElement.classList.toggle('expanded')">
+                        ${t('logs.responseStream')}
+                        <span class="collapse-icon">▶</span>
+                        <button class="stream-copy-btn" onclick="event.stopPropagation(); copyStreamContent('response', this)" title="${t('logs.copyToClipboard')}">
+                            ${createIcon('copy', { size: 14 })}
+                        </button>
+                    </h3>
+                    <pre class="log-stream-content" data-stream-type="response">${escapeHtml(log.responseStream)}</pre>
                 </div>` : ''}
                 ${log.requestHeaders && Object.keys(log.requestHeaders).length > 0 ? `
                 <div class="log-detail-section">
@@ -639,7 +652,47 @@ function stopRealtimeDurationRefresh() {
     realtimeDurationInterval = null;
 }
 
+/**
+ * Copy stream content to clipboard
+ */
+async function copyStreamContent(streamType, buttonElement) {
+    try {
+        // Find the modal and get the content
+        const modal = document.getElementById('logDetailModal');
+        if (!modal) return;
+
+        const streamContent = modal.querySelector(`pre[data-stream-type="${streamType}"]`);
+        if (!streamContent) return;
+
+        const textContent = streamContent.textContent;
+
+        // Copy to clipboard
+        await navigator.clipboard.writeText(textContent);
+
+        // Visual feedback - change icon temporarily
+        const originalHTML = buttonElement.innerHTML;
+        buttonElement.innerHTML = createIcon('check', { size: 14 });
+        buttonElement.classList.add('copied');
+
+        // Reset after 2 seconds
+        setTimeout(() => {
+            buttonElement.innerHTML = originalHTML;
+            buttonElement.classList.remove('copied');
+        }, 2000);
+
+    } catch (error) {
+        console.error('Failed to copy to clipboard:', error);
+        // Fallback: show error feedback
+        const originalHTML = buttonElement.innerHTML;
+        buttonElement.innerHTML = createIcon('alert', { size: 14 });
+        setTimeout(() => {
+            buttonElement.innerHTML = originalHTML;
+        }, 2000);
+    }
+}
+
 // Export for global access
 window.showLogDetail = showLogDetail;
 window.closeLogDetailModal = closeLogDetailModal;
 window.toggleRealtimeConnection = toggleRealtimeConnection;
+window.copyStreamContent = copyStreamContent;

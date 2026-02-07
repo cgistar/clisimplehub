@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -413,6 +414,112 @@ func (s *ConfigFileStore) SetConfigBool(key string, value bool) error {
 	}
 	cfg.AppConfigKV[key] = value
 	return s.saveLocked(cfg)
+}
+
+func cloneServerConfigs(in []config.ServerConfig) []config.ServerConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]config.ServerConfig, len(in))
+	copy(out, in)
+	return out
+}
+
+func normalizeServersInput(servers []config.ServerConfig) ([]config.ServerConfig, error) {
+	if len(servers) == 0 {
+		return nil, nil
+	}
+	if len(servers) > 50 {
+		return nil, fmt.Errorf("too many servers: %d (max 50)", len(servers))
+	}
+
+	out := make([]config.ServerConfig, 0, len(servers))
+	for i, s := range servers {
+		s.Name = strings.TrimSpace(s.Name)
+		s.URL = strings.TrimSpace(s.URL)
+		s.APIKey = strings.TrimSpace(s.APIKey)
+
+		if s.URL == "" {
+			return nil, fmt.Errorf("servers[%d].url is required", i)
+		}
+		u, err := url.Parse(s.URL)
+		if err != nil {
+			return nil, fmt.Errorf("servers[%d].url invalid: %w", i, err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return nil, fmt.Errorf("servers[%d].url must start with http:// or https://", i)
+		}
+		if u.Host == "" {
+			return nil, fmt.Errorf("servers[%d].url must include host", i)
+		}
+
+		u.RawQuery = ""
+		u.Fragment = ""
+		u.Path = strings.TrimRight(u.Path, "/")
+		s.URL = u.String()
+
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func (s *ConfigFileStore) GetServers() ([]config.ServerConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg, err := s.loadAndNormalizeLocked()
+	if err != nil {
+		return nil, err
+	}
+	if len(cfg.Servers) == 0 {
+		return []config.ServerConfig{}, nil
+	}
+	return cloneServerConfigs(cfg.Servers), nil
+}
+
+func (s *ConfigFileStore) SaveServers(servers []config.ServerConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg, err := s.loadAndNormalizeLocked()
+	if err != nil {
+		return err
+	}
+
+	normalized, err := normalizeServersInput(servers)
+	if err != nil {
+		return err
+	}
+
+	if len(normalized) == 0 {
+		cfg.Servers = nil
+	} else {
+		cfg.Servers = normalized
+	}
+	return s.saveLocked(cfg)
+}
+
+// ReplaceFullConfig replaces the entire config while preserving local-only fields.
+func (s *ConfigFileStore) ReplaceFullConfig(newCfg *config.AppConfig) error {
+	if newCfg == nil {
+		return errors.New("new config is nil")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	oldCfg, err := s.loadAndNormalizeLocked()
+	if err != nil {
+		return err
+	}
+
+	cfgCopy := *newCfg
+	cfgCopy.Servers = cloneServerConfigs(oldCfg.Servers)
+	cfgCopy.AppConfigKV = oldCfg.AppConfigKV
+	cfgCopy.WebDAV = oldCfg.WebDAV
+
+	ensureIDs(&cfgCopy)
+	return s.saveLocked(&cfgCopy)
 }
 
 func (s *ConfigFileStore) ensureFileExists() error {

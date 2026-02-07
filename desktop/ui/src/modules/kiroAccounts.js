@@ -11,6 +11,19 @@ import { confirm as confirmDialog } from './confirm.js'
 let kiroAccounts = []
 let activeRefreshToken = null
 
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => {
+    switch (ch) {
+      case '&': return '&amp;'
+      case '<': return '&lt;'
+      case '>': return '&gt;'
+      case '"': return '&quot;'
+      case "'": return '&#39;'
+      default: return ch
+    }
+  })
+}
+
 // 获取状态
 export function getKiroAccounts() {
   return kiroAccounts
@@ -322,6 +335,7 @@ function renderAccountCard(account) {
   const powerIcon = createIcon('power', { size: 14 })
   const copyIcon = createIcon('copy', { size: 14 })
   const eyeIcon = createIcon('eye', { size: 14 })
+  const editIcon = createIcon('edit', { size: 14 })
   const trashIcon = createIcon('trash', { size: 14 })
   const refreshIcon = createIcon('refreshCw', { size: 14 })
   const batteryIcon = createIcon('battery', { size: 14 })
@@ -338,12 +352,12 @@ function renderAccountCard(account) {
   return `
         <div class="kiro-account-card ${isActive ? 'active' : ''} ${account.status === 'banned' ? 'banned' : ''}" data-refresh-token="${encodedToken}">
             <div class="kiro-card-header" style="align-items: center;">
-                <span class="kiro-account-email" style="flex: 1; min-width: 0; font-weight: 600; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 10px;" title="${account.email || ''}">${account.email || ''}</span>
+                <span class="kiro-account-email" style="flex: 1; min-width: 0; font-weight: 600; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 10px;" title="${escapeHTML(account.email || '')}">${escapeHTML(account.email || '')}</span>
                 <span class="kiro-status-badge ${statusBadgeClass}" style="margin-left: auto; flex-shrink: 0;">${statusText}</span>
             </div>
             <div class="kiro-header-tags" style="display: flex; align-items: center;">
-                ${account.subscriptionTitle ? `<span class="kiro-tag kiro-tag-plan">${account.subscriptionTitle}</span>` : ''}
-                <span class="kiro-tag kiro-tag-auth">${authLabel}</span>
+                ${account.subscriptionTitle ? `<span class="kiro-tag kiro-tag-plan">${escapeHTML(account.subscriptionTitle)}</span>` : ''}
+                <span class="kiro-tag kiro-tag-auth">${escapeHTML(authLabel)}</span>
                 ${isActive ? `<span class="kiro-badge-active" style="margin-left: auto;">${t('kiro.currentActive')}</span>` : ''}
             </div>
             <div class="kiro-card-body">
@@ -367,6 +381,7 @@ function renderAccountCard(account) {
                     <button class="kiro-icon-btn" onclick="testKiroAccountFromCard('${encodedToken}')" title="${t('kiro.test')}">${refreshIcon}</button>
                     <button class="kiro-icon-btn" onclick="fetchKiroAccountUsageFromCard('${encodedToken}')" title="${t('kiro.usage')}">${batteryIcon}</button>
                     <button class="kiro-icon-btn" onclick="copyKiroAccountFromCard('${encodedToken}')" title="${t('kiro.copy')}">${copyIcon}</button>
+                    <button class="kiro-icon-btn" onclick="editKiroAccountFromCard('${encodedToken}')" title="${t('kiro.edit')}">${editIcon}</button>
                     <button class="kiro-icon-btn" onclick="viewKiroAccountFromCard('${encodedToken}')" title="${t('kiro.view')}">${eyeIcon}</button>
                     <button class="kiro-icon-btn kiro-icon-btn-danger" onclick="deleteKiroAccountFromCard('${encodedToken}')" title="${t('kiro.deleteAccount')}">${trashIcon}</button>
                 </div>
@@ -666,12 +681,109 @@ window.viewKiroAccountFromCard = function (encodedToken) {
   document.body.appendChild(modal)
 }
 
+// 编辑账号 — 记录当前编辑的账号对象
+let editingRefreshToken = ''
+let editingAccount = null
+
+window.editKiroAccountFromCard = function (encodedToken) {
+  const refreshToken = decodeRefreshToken(encodedToken)
+  const account = kiroAccounts.find((acc) => acc.refreshToken === refreshToken)
+  if (!account) {
+    showError(t('kiro.accountNotFound'))
+    return
+  }
+
+  editingRefreshToken = refreshToken
+  editingAccount = account // 保存完整的账号对象
+
+  // 填充字段
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || '' }
+  set('editKiroRefreshToken', account.refreshToken)
+  set('editKiroRegion', account.region || 'us-east-1')
+  set('editKiroAuthMethod', account.authMethod || 'social')
+  set('editKiroProvider', account.provider || '')
+  set('editKiroProfileArn', account.profileArn)
+  set('editKiroClientId', account.clientId)
+  set('editKiroClientSecret', account.clientSecret)
+  set('editKiroProxyUrl', account.proxyUrl)
+  set('editKiroUserAgent', account.userAgent)
+  set('editKiroVersion', account.version)
+  set('editKiroWeight', account.weight > 0 ? String(account.weight) : '')
+  set('editKiroMachineId', account.machineId)
+
+  // 同步自定义下拉组件显示
+  if (window.syncEditKiroAuthMethodDisplay) {
+    window.syncEditKiroAuthMethodDisplay()
+  }
+
+  // 切换 social/idc 区域可见性
+  syncEditAuthMethodFields()
+
+  const modal = document.getElementById('kiroAccountEditModal')
+  if (modal) modal.classList.add('active')
+}
+
+function syncEditAuthMethodFields() {
+  const method = (document.getElementById('editKiroAuthMethod')?.value || 'social').toLowerCase()
+  const isSocial = method !== 'idc'
+  const show = (id, visible) => { const el = document.getElementById(id); if (el) el.style.display = visible ? '' : 'none' }
+  show('editKiroProfileArnGroup', isSocial)
+  show('editKiroClientIdGroup', !isSocial)
+  show('editKiroClientSecretGroup', !isSocial)
+}
+
+window.onEditKiroAuthMethodChange = syncEditAuthMethodFields
+
+window.toggleEditKiroClientSecretVisibility = function () {
+  const input = document.getElementById('editKiroClientSecret')
+  if (!input) return
+  input.type = input.type === 'password' ? 'text' : 'password'
+}
+
+window.closeKiroAccountEditModal = function () {
+  const modal = document.getElementById('kiroAccountEditModal')
+  if (modal) modal.classList.remove('active')
+  editingRefreshToken = ''
+  editingAccount = null
+}
+
+window.saveKiroAccountEdit = async function () {
+  if (!editingRefreshToken || !editingAccount) return
+
+  const val = (id) => (document.getElementById(id)?.value || '').trim()
+
+  // 基于原始账号对象创建 DTO，只更新表单中的字段
+  const dto = {
+    ...editingAccount, // 保留所有原始字段
+    // 更新表单中编辑的字段
+    refreshToken: editingRefreshToken,
+    region: val('editKiroRegion') || 'us-east-1',
+    authMethod: val('editKiroAuthMethod') || 'social',
+    provider: val('editKiroProvider'),
+    profileArn: val('editKiroProfileArn'),
+    clientId: val('editKiroClientId'),
+    clientSecret: val('editKiroClientSecret'),
+    proxyUrl: val('editKiroProxyUrl'),
+    userAgent: val('editKiroUserAgent'),
+    version: val('editKiroVersion'),
+    weight: parseInt(val('editKiroWeight'), 10) || 0,
+  }
+
+  try {
+    await updateKiroAccount(dto)
+    closeKiroAccountEditModal()
+  } catch (error) {
+    console.error('Failed to save account edit:', error)
+    showError(t('kiro.updateAccountFailed') + (error?.message || error))
+  }
+}
+
 // 渲染详情字段
 function renderDetailField(label, value) {
   return `
         <div class="kiro-detail-field">
-            <div class="kiro-detail-label">${label}</div>
-            <div class="kiro-detail-value">${value}</div>
+            <div class="kiro-detail-label">${escapeHTML(label)}</div>
+            <div class="kiro-detail-value">${escapeHTML(value)}</div>
         </div>
     `
 }

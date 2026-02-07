@@ -54,10 +54,14 @@ func GetConfig(key string) (string, error) {
 
 // Transformer implements the transformer.Transformer interface for Kiro -> Claude conversion
 type Transformer struct {
-	authManager       *KiroAuthManager
+	authManagers      map[string]*KiroAuthManager // refreshToken -> manager cache
+	currentAccount    *kiroShared.KiroAccount     // currently bound account
+	authManager       *KiroAuthManager            // current active auth manager
 	kiroUserAgentBase string
 	kiroVersion       string
 	kiroProxyURL      string
+	kiroRegion        string // top-level region from kiro.json
+	kiroJsonPath      string
 	machineID         string
 	initOnce          sync.Once
 	initErr           error
@@ -324,59 +328,132 @@ func (t *Transformer) TransformResponseNonStream(
 
 // initialize loads credentials and creates the auth manager
 func (t *Transformer) initialize() error {
-	// credentials live next to config.json.
-	credsPath := ""
+	t.authManagers = make(map[string]*KiroAuthManager)
+
 	kiroJsonPath := ""
 	if configPath, err := getConfig("configPath"); err == nil && configPath != "" {
 		dir := filepath.Dir(kiroShared.ExpandTilde(configPath))
-		credsPath = filepath.Join(dir, filepath.Base(kiroShared.GetDefaultKiroCredentialsPath()))
 		kiroJsonPath = filepath.Join(dir, filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 	}
-	if credsPath == "" {
-		credsPath = kiroShared.GetDefaultKiroCredentialsPath()
-	}
+	t.kiroJsonPath = kiroJsonPath
 
-	// Read global config (userAgent, version, proxyUrl, bufferedStream, modelMapping) from kiro.json
+	// Read global config from kiro.json
 	if kiroJsonPath != "" {
 		if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
 			t.kiroUserAgentBase = strings.TrimSpace(mc.UserAgent)
 			t.kiroVersion = strings.TrimSpace(mc.Version)
 			t.kiroProxyURL = strings.TrimSpace(mc.ProxyURL)
+			t.kiroRegion = strings.TrimSpace(mc.Region)
 			SetCachedBufferedStream(mc.BufferedStream)
 			SetCachedModelMapping(mc.ModelMapping)
 		}
 	}
 
-	// Load credentials
-	creds, err := kiroShared.LoadKiroCredentials(credsPath)
-	if err != nil {
-		// Don't fail initialization, just log warning
-		// The transformer can still work if credentials are provided via endpoint config
-		fmt.Fprintf(os.Stderr, "Warning: failed to load kiro credentials from %s: %v\n", credsPath, err)
+	// Select account via pool (if initialized) or fallback to active account in kiro.json
+	var account *kiroShared.KiroAccount
+	pool := kiroapi.GetPool()
+	if pool != nil {
+		account = pool.Select()
+	}
+	if account == nil && kiroJsonPath != "" {
+		if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
+			account = mc.GetActiveAccount()
+		}
+	}
+	if account == nil {
+		fmt.Fprintf(os.Stderr, "Warning: no kiro account available\n")
 		return nil
 	}
-	if v := strings.TrimSpace(creds.MachineID); v != "" {
-		t.machineID = v
-	}
-	if t.machineID == "" {
-		t.machineID = kiroapi.ComputeMachineID(creds.RefreshToken)
-	}
 
-	proxyURL := strings.TrimSpace(t.kiroProxyURL)
-
-	// Create auth manager with proxy support
-	t.authManager = NewKiroAuthManager(creds, credsPath, proxyURL, t.kiroVersion)
-
+	t.currentAccount = account
+	t.bindAccountLocked(account)
 	return nil
 }
 
-// KiroProxyURL returns the configured global Kiro proxy URL (from kiro.json).
+// bindAccountLocked creates/reuses a KiroAuthManager for the given account and binds it.
+// Caller must hold t.mu.
+func (t *Transformer) bindAccountLocked(account *kiroShared.KiroAccount) {
+	if account == nil {
+		return
+	}
+	if t.authManagers == nil {
+		t.authManagers = make(map[string]*KiroAuthManager)
+	}
+	t.currentAccount = account
+	creds := account.ToCredentials()
+	mid := strings.TrimSpace(creds.MachineID)
+	if mid == "" {
+		mid = kiroapi.ComputeMachineID(creds.RefreshToken)
+	}
+	t.machineID = mid
+
+	proxyURL := t.resolveProxyURL(account)
+
+	// Reuse existing auth manager if available
+	if am, ok := t.authManagers[account.RefreshToken]; ok {
+		t.authManager = am
+		return
+	}
+
+	am := NewKiroAuthManager(creds, t.kiroJsonPath, proxyURL, t.kiroVersion)
+	t.authManagers[account.RefreshToken] = am
+	t.authManager = am
+}
+
+// resolveProxyURL returns per-account proxyUrl if set, else global proxyUrl.
+func (t *Transformer) resolveProxyURL(account *kiroShared.KiroAccount) string {
+	if account != nil && strings.TrimSpace(account.ProxyUrl) != "" {
+		return strings.TrimSpace(account.ProxyUrl)
+	}
+	return strings.TrimSpace(t.kiroProxyURL)
+}
+
+// RebindAccount selects the next account from the pool and binds it.
+// Returns false if no different account is available.
+func (t *Transformer) RebindAccount() bool {
+	pool := kiroapi.GetPool()
+	if pool == nil {
+		return false
+	}
+	account := pool.Select()
+	if account == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.currentAccount != nil && account.RefreshToken == t.currentAccount.RefreshToken {
+		return false
+	}
+	t.bindAccountLocked(account)
+	return true
+}
+
+// CurrentAccountRefreshToken returns the refresh token of the currently bound account.
+func (t *Transformer) CurrentAccountRefreshToken() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.currentAccount == nil {
+		return ""
+	}
+	return t.currentAccount.RefreshToken
+}
+
+// KiroProxyURL returns the effective Kiro proxy URL for the currently bound account.
+// Priority: per-account proxyUrl -> kiro.json top-level proxyUrl.
 func (t *Transformer) KiroProxyURL() string {
 	_ = t.ensureInitialized()
 	t.mu.RLock()
-	v := t.kiroProxyURL
+	account := t.currentAccount
+	globalProxyURL := t.kiroProxyURL
 	t.mu.RUnlock()
-	return strings.TrimSpace(v)
+
+	// Priority: per-account proxyUrl -> kiro.json top-level proxyUrl.
+	if account != nil {
+		if v := strings.TrimSpace(account.ProxyUrl); v != "" {
+			return v
+		}
+	}
+	return strings.TrimSpace(globalProxyURL)
 }
 
 // KiroUserAgentBase returns the configured Kiro User-Agent base prefix.
@@ -429,21 +506,25 @@ func (t *Transformer) GetAccessToken() (string, error) {
 	return am.GetAccessToken()
 }
 
-// GetRegion returns the configured region
+// GetRegion returns the top-level kiro.json region (per-account region is not used).
 func (t *Transformer) GetRegion() string {
 	_ = t.ensureInitialized()
 	t.mu.RLock()
-	am := t.authManager
+	r := t.kiroRegion
 	t.mu.RUnlock()
-	if am == nil {
-		return "us-east-1"
+	if v := strings.TrimSpace(r); v != "" {
+		return v
 	}
-	return am.GetRegion()
+	return "us-east-1"
 }
 
-// GetAPIURL returns the Kiro API URL for the configured region
+// GetAPIURL returns the Kiro API URL using the top-level kiro.json region only.
 func (t *Transformer) GetAPIURL() string {
-	return kiroapi.KiroGenerateURL(t.GetRegion())
+	_ = t.ensureInitialized()
+	t.mu.RLock()
+	r := t.kiroRegion
+	t.mu.RUnlock()
+	return kiroapi.KiroGenerateURL(r) // KiroGenerateURL handles empty → "us-east-1"
 }
 
 // ForceRefreshKiroToken forces a refresh of the access token (best-effort).
@@ -497,22 +578,29 @@ func flushBufferedStream(s *StreamState) []string {
 	return result
 }
 
-// Reload 重新加载 Kiro 配置
-// 此方法会重置初始化状态，下次调用时会重新读取 kiro-auth-token.json 和 kiro.json
+// Reload resets initialization state and reloads kiro.json cached values.
 func (t *Transformer) Reload() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// 重置 sync.Once，允许重新初始化
 	t.initOnce = sync.Once{}
 	t.initErr = nil
 	t.authManager = nil
+	t.authManagers = nil
+	t.currentAccount = nil
 	t.kiroUserAgentBase = ""
 	t.kiroVersion = ""
 	t.kiroProxyURL = ""
+	t.kiroRegion = ""
+	t.kiroJsonPath = ""
 	t.machineID = ""
 
-	// Eagerly reload kiro.json cached values so they take effect before the next request triggers initOnce.
+	// Reload pool if available
+	if pool := kiroapi.GetPool(); pool != nil {
+		pool.Reload()
+	}
+
+	// Eagerly reload kiro.json cached values
 	if configPath, err := getConfig("configPath"); err == nil && configPath != "" {
 		dir := filepath.Dir(kiroShared.ExpandTilde(configPath))
 		kiroJsonPath := filepath.Join(dir, filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
@@ -525,8 +613,7 @@ func (t *Transformer) Reload() error {
 	return nil
 }
 
-// ReloadAllTransformers 重新加载所有已注册的 Kiro Transformer
-// 此函数应在 kiro-auth-token.json 更新后调用
+// ReloadAllTransformers reloads all registered Kiro transformers.
 func ReloadAllTransformers() error {
 	transformerRegistryMu.RLock()
 	defer transformerRegistryMu.RUnlock()

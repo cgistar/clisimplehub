@@ -75,10 +75,18 @@ type WebDAVConfig struct {
 	Password  string `json:"password,omitempty"`
 }
 
+// ServerConfig represents a remote headless server for config sync.
+type ServerConfig struct {
+	Name   string `json:"name,omitempty"`
+	URL    string `json:"url"`
+	APIKey string `json:"apiKey,omitempty"`
+}
+
 // AppConfig represents the complete application configuration
 type AppConfig struct {
 	AppConfigKV map[string]interface{} `json:"appConfig,omitempty"`
 	WebDAV      *WebDAVConfig          `json:"webdav,omitempty"`
+	Servers     []ServerConfig         `json:"servers,omitempty"`
 	Vendors     []VendorConfig         `json:"vendors"`
 	Endpoints   []EndpointConfig       `json:"endpoints,omitempty"`
 }

@@ -9,7 +9,7 @@ const (
 	// DefaultKiroUserAgentBase is the default AWS SDK style User-Agent prefix used by Kiro clients.
 	DefaultKiroUserAgentBase = "aws-sdk-js/1.0.27 ua/2.1 os/darwin#24.6.0 lang/js md/nodejs#22.21.1 api/codewhispererstreaming#1.0.27 m/E"
 	// DefaultKiroVersion is the default Kiro client version token appended to user agent headers.
-	DefaultKiroVersion = "KiroIDE-0.8.0"
+	DefaultKiroVersion = "KiroIDE-0.9.2"
 )
 
 func KiroUserAgentBaseOrDefault(userAgentBase string) string {
@@ -33,7 +33,7 @@ func KiroXAmzUserAgentBase(userAgentBase string) string {
 func KiroVersionOrDefault(version string) string {
 	if v := strings.TrimSpace(version); v != "" {
 		// Normalize to the value shape Kiro clients use in headers: `KiroIDE-<version>`.
-		// This keeps config.json simple (users can set `0.8.0`) while staying compatible
+		// This keeps config.json simple (users can set `0.9.2`) while staying compatible
 		// with callers that already pass the full `KiroIDE-...` token.
 		if !strings.HasPrefix(v, "KiroIDE-") {
 			return "KiroIDE-" + v

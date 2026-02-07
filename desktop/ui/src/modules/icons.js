@@ -41,7 +41,8 @@ const iconMap = {
     monitor: 'Monitor',
     list: 'List',
     zap: 'Zap',
-    clock: 'Clock'
+    clock: 'Clock',
+    server: 'Server'
 }
 
 /**

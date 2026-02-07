@@ -7,6 +7,7 @@
 import { state } from './state.js';
 import { showError, showSuccess } from './utils.js';
 import { confirm, confirmWithOptions } from './confirm.js';
+import { loadServers } from './serverSync.js';
 
 // WebDAV configuration state
 export const webdavState = {
@@ -61,6 +62,9 @@ export async function showWebDAVModal() {
 
     // Load backups list
     await loadBackupsList();
+
+    // Load server sync accounts
+    await loadServers();
 
     // Show modal
     document.getElementById('webdavModal').classList.add('active');

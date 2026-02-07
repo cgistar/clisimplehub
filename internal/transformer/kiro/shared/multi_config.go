@@ -38,6 +38,12 @@ func LoadKiroMultiConfig(path string) (*KiroMultiConfig, error) {
 	if len(config.ModelMapping) == 0 {
 		config.ModelMapping = DefaultKiroModelMapping()
 	}
+	if strings.TrimSpace(config.UserAgent) == "" {
+		config.UserAgent = DefaultKiroUserAgentBase
+	}
+	if strings.TrimSpace(config.Version) == "" {
+		config.Version = DefaultKiroVersion
+	}
 
 	return &config, nil
 }
@@ -106,78 +112,6 @@ func SaveKiroMultiConfig(path string, config *KiroMultiConfig) error {
 	return nil
 }
 
-// MigrateFromSingleAccount 从单账号配置迁移到多账号配置
-// oldPath: kiro-auth-token.json 路径
-// newPath: kiro.json 路径
-// computeMachineId: 计算 machineId 的函数
-// 返回: 是否执行了迁移
-func MigrateFromSingleAccount(oldPath, newPath string, computeMachineId func(string) string) (bool, error) {
-	expandedOldPath := ExpandTilde(oldPath)
-	expandedNewPath := ExpandTilde(newPath)
-
-	// 检查新配置是否已存在（只要文件可读可解析，就视为已进入多账号模式）
-	// 注意：即使 accounts 为空，也不应从单账号配置自动迁移，否则会导致“删除最后一个账号后又被迁回”的问题。
-	if _, err := LoadKiroMultiConfig(expandedNewPath); err == nil {
-		return false, nil
-	}
-
-	// 检查旧配置是否存在
-	oldCreds, err := LoadKiroCredentials(expandedOldPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil // 旧配置不存在，无需迁移
-		}
-		return false, err
-	}
-
-	// 旧配置存在但没有 refreshToken，无需迁移
-	if strings.TrimSpace(oldCreds.RefreshToken) == "" {
-		return false, nil
-	}
-
-	// 创建新的多账号配置
-	now := time.Now()
-
-	account := KiroAccount{
-		RefreshToken: oldCreds.RefreshToken,
-		AccessToken:  oldCreds.AccessToken,
-		ProfileArn:   oldCreds.ProfileArn,
-		ExpiresAt:    oldCreds.ExpiresAt,
-		Region:       oldCreds.Region,
-		AuthMethod:   oldCreds.AuthMethod,
-		Provider:     oldCreds.Provider,
-		ClientId:     oldCreds.ClientId,
-		ClientSecret: oldCreds.ClientSecret,
-		Status:       KiroStatusUnknown,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
-	// 计算 machineId
-	if strings.TrimSpace(oldCreds.MachineID) != "" {
-		account.MachineId = strings.TrimSpace(oldCreds.MachineID)
-	} else if computeMachineId != nil {
-		account.MachineId = computeMachineId(oldCreds.RefreshToken)
-	}
-
-	// 设置默认 region
-	if account.Region == "" {
-		account.Region = "us-east-1"
-	}
-
-	newConfig := &KiroMultiConfig{
-		ActiveRefreshToken: oldCreds.RefreshToken,
-		Accounts:           []KiroAccount{account},
-	}
-
-	// 保存新配置
-	if err := SaveKiroMultiConfig(expandedNewPath, newConfig); err != nil {
-		return false, err
-	}
-
-	return true, nil
-}
-
 // normalizeAccountTimes 规范化账号中的时间字段
 func normalizeAccountTimes(account *KiroAccount) {
 	if account.CreatedAt.IsZero() {
@@ -188,24 +122,3 @@ func normalizeAccountTimes(account *KiroAccount) {
 	}
 }
 
-// CreateAccountFromCredentials 从凭证创建新账号
-func CreateAccountFromCredentials(creds *KiroCredentials, computeMachineId func(string) string) *KiroAccount {
-	now := time.Now()
-	account := &KiroAccount{
-		Status:    KiroStatusUnknown,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if creds != nil {
-		account.FromCredentials(creds)
-		if strings.TrimSpace(creds.MachineID) != "" {
-			account.MachineId = strings.TrimSpace(creds.MachineID)
-		} else if computeMachineId != nil && creds.RefreshToken != "" {
-			account.MachineId = computeMachineId(creds.RefreshToken)
-		}
-	}
-	if account.Region == "" {
-		account.Region = "us-east-1"
-	}
-	return account
-}

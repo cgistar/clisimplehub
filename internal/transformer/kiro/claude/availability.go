@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,34 +14,33 @@ import (
 // This is intentionally a local-only check (no token refresh / network calls), so callers
 // can use it to decide whether to surface Kiro transformer options in UIs.
 func HasValidLocalAccessToken() bool {
-	credsPath := ""
-
+	kiroJsonPath := ""
 	if configPath, err := getConfig("configPath"); err == nil && strings.TrimSpace(configPath) != "" {
-		credsPath = filepath.Join(filepath.Dir(kiroShared.ExpandTilde(configPath)), filepath.Base(kiroShared.GetDefaultKiroCredentialsPath()))
+		kiroJsonPath = filepath.Join(filepath.Dir(kiroShared.ExpandTilde(configPath)), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 	}
-	if strings.TrimSpace(credsPath) == "" {
-		credsPath = kiroShared.GetDefaultKiroCredentialsPath()
-	}
-
-	expanded := kiroShared.ExpandTilde(credsPath)
-	if _, err := os.Stat(expanded); err != nil {
+	if strings.TrimSpace(kiroJsonPath) == "" {
 		return false
 	}
 
-	creds, err := kiroShared.LoadKiroCredentials(expanded)
-	if err != nil || creds == nil {
+	mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath)
+	if err != nil || mc == nil {
 		return false
 	}
 
-	if strings.TrimSpace(creds.RefreshToken) == "" {
+	account := mc.GetActiveAccount()
+	if account == nil {
 		return false
 	}
 
-	if strings.TrimSpace(creds.AccessToken) == "" {
+	if strings.TrimSpace(account.RefreshToken) == "" {
 		return false
 	}
 
-	if !creds.ExpiresAt.IsZero() && time.Now().After(creds.ExpiresAt) {
+	if strings.TrimSpace(account.AccessToken) == "" {
+		return false
+	}
+
+	if !account.ExpiresAt.IsZero() && time.Now().After(account.ExpiresAt) {
 		return false
 	}
 

@@ -1,7 +1,8 @@
 import { t } from '../../i18n/index.js'
+import { createIcon } from '../icons.js'
 
 export function headerTemplate() {
-    return `
+  return `
         <div class="header">
             <div class="header-content">
                 <div class="header-left">
@@ -12,9 +13,10 @@ export function headerTemplate() {
                 </div>
                 <div class="header-right">
                     <div class="header-btn-group">
-                        <button class="header-btn" onclick="showKiroConfigModal()" title="${t('kiro.title')}">Kiro</button>
+                        <button class="header-btn" style="display:none;" onclick="showKiroConfigModal()" title="${t('kiro.title')}">Kiro</button>
                         <button class="header-btn" onclick="showWebDAVModal()" title="${t('webdav.title')}">☁️</button>
                         <button class="header-btn" onclick="showSettingsModal()" title="${t('settings.title')}">⚙️</button>
+                        <button class="header-btn" id="consoleToggleBtn" onclick="toggleBottomConsole()" title="${t('console.title')}">${createIcon('terminal', { size: 14 })}</button>
                     </div>
                 </div>
             </div>

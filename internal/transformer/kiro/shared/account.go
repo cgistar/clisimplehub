@@ -18,6 +18,13 @@ const (
 	KiroStatusUnknown   KiroAccountStatus = "unknown"
 )
 
+// Rotation mode constants
+const (
+	RotationFixed       = "fixed"
+	RotationFailover    = "failover"
+	RotationLoadBalance = "loadbalance"
+)
+
 // KiroAccount 多账号管理中的单个账号
 // refreshToken 作为主键
 type KiroAccount struct {
@@ -53,6 +60,7 @@ type KiroAccount struct {
 	ProxyUrl  string `json:"proxyUrl,omitempty"`
 	UserAgent string `json:"userAgent,omitempty"`
 	Version   string `json:"version,omitempty"`
+	Weight    int    `json:"weight,omitempty"` // WRR 权重，默认 1
 
 	// 元数据
 	CreatedAt time.Time `json:"createdAt,omitempty"`
@@ -62,6 +70,8 @@ type KiroAccount struct {
 // KiroMultiConfig 多账号配置文件结构
 type KiroMultiConfig struct {
 	ActiveRefreshToken string            `json:"activeRefreshToken"`
+	RotationMode       string            `json:"rotationMode,omitempty"` // "fixed"(默认), "failover", "loadbalance"
+	Region             string            `json:"region,omitempty"`       // 全局默认 region，per-account 可覆盖
 	ProxyURL           string            `json:"proxyUrl,omitempty"`
 	UserAgent          string            `json:"userAgent,omitempty"`
 	Version            string            `json:"version,omitempty"`
@@ -103,25 +113,6 @@ func (a *KiroAccount) ToCredentials() *KiroCredentials {
 		ClientId:     a.ClientId,
 		ClientSecret: a.ClientSecret,
 	}
-}
-
-// FromCredentials 从 KiroCredentials 更新 KiroAccount 的认证字段
-func (a *KiroAccount) FromCredentials(creds *KiroCredentials) {
-	if creds == nil {
-		return
-	}
-	a.AccessToken = creds.AccessToken
-	a.RefreshToken = creds.RefreshToken
-	a.ProfileArn = creds.ProfileArn
-	a.ExpiresAt = creds.ExpiresAt
-	a.Region = creds.Region
-	if strings.TrimSpace(creds.MachineID) != "" {
-		a.MachineId = creds.MachineID
-	}
-	a.AuthMethod = creds.AuthMethod
-	a.Provider = creds.Provider
-	a.ClientId = creds.ClientId
-	a.ClientSecret = creds.ClientSecret
 }
 
 // GetActiveAccount 获取当前激活的账号
@@ -254,32 +245,21 @@ func IsTemporarilySuspendedError(body string) bool {
 }
 
 // UpdateAccountStatusByRefreshToken 更新指定 refreshToken 的账号状态
-// 同时更新 kiro-auth-token.json 和 kiro.json 中匹配的账号
-func UpdateAccountStatusByRefreshToken(refreshToken string, status KiroAccountStatus, credsPath, multiConfigPath string) error {
+// 同时更新 kiro.json 中匹配的账号
+func UpdateAccountStatusByRefreshToken(refreshToken string, status KiroAccountStatus, multiConfigPath string) error {
 	if refreshToken == "" {
 		return fmt.Errorf("refreshToken is required")
 	}
 
-	// 1. 更新 kiro-auth-token.json
-	creds, err := LoadKiroCredentials(credsPath)
-	if err == nil && creds != nil && creds.RefreshToken == refreshToken {
-		creds.Status = status
-		if err := SaveKiroCredentials(credsPath, creds); err != nil {
-			return fmt.Errorf("failed to update kiro-auth-token.json: %w", err)
-		}
-	}
-
-	// 2. 更新 kiro.json
+	// 更新 kiro.json
 	multiConfig, err := LoadKiroMultiConfig(multiConfigPath)
 	if err != nil {
-		// 文件不存在或无法加载，不算错误
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to load kiro.json: %w", err)
 	}
 
-	// 查找并更新所有匹配的账号
 	updated := false
 	for i := range multiConfig.Accounts {
 		if multiConfig.Accounts[i].RefreshToken == refreshToken {
@@ -296,4 +276,48 @@ func UpdateAccountStatusByRefreshToken(refreshToken string, status KiroAccountSt
 	}
 
 	return nil
+}
+
+// GetAvailableAccounts 返回状态不是 banned/exhausted 的可用账号
+func (c *KiroMultiConfig) GetAvailableAccounts() []*KiroAccount {
+	if c == nil {
+		return nil
+	}
+	var result []*KiroAccount
+	for i := range c.Accounts {
+		s := c.Accounts[i].Status
+		if s != KiroStatusBanned && s != KiroStatusExhausted {
+			result = append(result, &c.Accounts[i])
+		}
+	}
+	return result
+}
+
+// GetRegion 返回全局 region，空值默认 "us-east-1"
+func (c *KiroMultiConfig) GetRegion() string {
+	if c == nil || strings.TrimSpace(c.Region) == "" {
+		return "us-east-1"
+	}
+	return strings.TrimSpace(c.Region)
+}
+
+// GetRotationMode 返回 rotationMode，空值默认 "fixed"
+func (c *KiroMultiConfig) GetRotationMode() string {
+	if c == nil || c.RotationMode == "" {
+		return RotationFixed
+	}
+	switch c.RotationMode {
+	case RotationFixed, RotationFailover, RotationLoadBalance:
+		return c.RotationMode
+	default:
+		return RotationFixed
+	}
+}
+
+// EffectiveWeight 返回 Weight，<=0 时返回 1
+func (a *KiroAccount) EffectiveWeight() int {
+	if a == nil || a.Weight <= 0 {
+		return 1
+	}
+	return a.Weight
 }

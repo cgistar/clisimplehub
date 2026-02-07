@@ -39,9 +39,6 @@ export function mainLayoutTemplate() {
                             <button class="btn btn-sm btn-secondary" onclick="showStatsModal()" title="${t('stats.title')}">
                                 ${createIcon('chart', { size: 14 })} ${t('stats.title')}
                             </button>
-                            <button class="toggle-btn" id="consoleToggleBtn" onclick="toggleBottomConsole()" title="${t('console.title')}">
-                                ${createIcon('terminal', { size: 14 })}
-                            </button>
                         </div>
                     </div>
                     <div class="logs-container" id="logsContainer">

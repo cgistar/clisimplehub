@@ -62,22 +62,14 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	fp := ""
-	if k != nil && k.source != nil {
-		fp = k.source.MachineID()
-	}
+	fp := k.source.MachineID()
 	if fp == "" {
-		// Keep a stable fallback value; Kiro clients typically use a stable 64-hex machine id.
 		fp = "33e6db50359eab22e8c82e76d7f9e2f76e16daca79c68c1b1addcb011efe87b5"
 	}
 	fp = kiroShared.TruncateFingerprint(fp, 64)
 
-	userAgentBase := kiroShared.DefaultKiroUserAgentBase
-	kiroVersion := kiroShared.DefaultKiroVersion
-	if k != nil && k.source != nil {
-		userAgentBase = k.source.KiroUserAgentBase()
-		kiroVersion = k.source.KiroVersion()
-	}
+	userAgentBase := k.source.KiroUserAgentBase()
+	kiroVersion := k.source.KiroVersion()
 
 	userAgent := strings.TrimSpace(userAgentBase) + " " + strings.TrimSpace(kiroVersion) + "-" + fp
 	req.Header.Set("User-Agent", userAgent)

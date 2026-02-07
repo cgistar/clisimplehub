@@ -1,7 +1,7 @@
 import { t } from '../../i18n/index.js'
 
 export function kiroConfigModalTemplate() {
-    return `
+  return `
         <div id="kiroConfigModal" class="modal">
             <div class="modal-content">
                 <div class="modal-header">
@@ -21,8 +21,8 @@ export function kiroConfigModalTemplate() {
                             <div class="model-dropdown" id="kiroAuthMethodDropdown"></div>
                         </div>
                         <select id="kiroAuthMethod" style="display:none;" onchange="onKiroAuthMethodChange()">
-                            <option value="social">Social (默认)</option>
-                            <option value="idc">IdC (企业)</option>
+                            <option value="social">Social</option>
+                            <option value="idc">Idc</option>
                         </select>
                         <small>${t('kiro.authMethodHelp')}</small>
                     </div>
@@ -132,7 +132,7 @@ export function kiroConfigModalTemplate() {
 }
 
 export function idcOrgLoginModalTemplate() {
-    return `
+  return `
         <div id="idcOrgLoginModal" class="modal">
             <div class="modal-content">
                 <div class="modal-header">
@@ -202,7 +202,7 @@ export function idcOrgLoginModalTemplate() {
 }
 
 export function idcDeviceFlowModalTemplate() {
-    return `
+  return `
         <div id="idcDeviceFlowModal" class="modal">
             <div class="modal-content">
                 <div class="modal-header">
@@ -249,7 +249,7 @@ export function idcDeviceFlowModalTemplate() {
 }
 
 export function socialLoginModalTemplate() {
-    return `
+  return `
         <div id="socialLoginModal" class="modal">
             <div class="modal-content">
                 <div class="modal-header">
@@ -286,7 +286,7 @@ export function socialLoginModalTemplate() {
 }
 
 export function kiroGlobalConfigModalTemplate() {
-    return `
+  return `
         <div id="kiroGlobalConfigModal" class="modal">
             <div class="modal-content" style="max-width: 600px;">
                 <div class="modal-header">
@@ -294,6 +294,18 @@ export function kiroGlobalConfigModalTemplate() {
                     <button class="modal-close" onclick="closeKiroGlobalConfigModal()">&times;</button>
                 </div>
                 <div class="modal-body">
+                    <div class="form-group">
+                        <label>${t('kiro.region')}</label>
+                        <div class="model-select-container kiro-global-region-select">
+                            <input type="text" id="kiroGlobalRegion" placeholder="us-east-1" autocomplete="off" oninput="onKiroGlobalRegionInput()">
+                            <button type="button" class="model-dropdown-toggle" onclick="toggleKiroGlobalRegionDropdown()">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                            </button>
+                            <div class="model-dropdown" id="kiroGlobalRegionDropdown"></div>
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label>${t('kiro.proxyUrl')}</label>
                         <input type="text" id="kiroGlobalProxyUrl" placeholder="${t('kiro.proxyUrlPlaceholder')}">
@@ -314,6 +326,24 @@ export function kiroGlobalConfigModalTemplate() {
                         </label>
                         <small>${t('kiro.bufferedStreamHelp')}</small>
                     </div>
+                    <div class="form-group">
+                        <label>${t('kiro.rotationMode')}</label>
+                        <div class="model-select-container kiro-rotation-mode-select">
+                            <input type="text" id="kiroRotationModeDisplay" readonly onclick="toggleKiroRotationModeDropdown()">
+                            <button type="button" class="model-dropdown-toggle" onclick="toggleKiroRotationModeDropdown()">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                            </button>
+                            <div class="model-dropdown" id="kiroRotationModeDropdown"></div>
+                        </div>
+                        <select id="kiroRotationMode" style="display:none;" onchange="onKiroRotationModeChange()">
+                            <option value="fixed">${t('kiro.rotationFixed')}</option>
+                            <option value="failover">${t('kiro.rotationFailover')}</option>
+                            <option value="loadbalance">${t('kiro.rotationLoadBalance')}</option>
+                        </select>
+                        <small>${t('kiro.rotationModeHelp')}</small>
+                    </div>
                     <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);">
                     <div class="form-group">
                         <label>${t('kiro.modelMapping')}</label>
@@ -332,6 +362,101 @@ export function kiroGlobalConfigModalTemplate() {
                 <div class="modal-footer">
                     <button class="btn btn-secondary" onclick="closeKiroGlobalConfigModal()">${t('settings.cancel')}</button>
                     <button class="btn btn-primary" onclick="saveKiroGlobalConfig()">${t('settings.save')}</button>
+                </div>
+            </div>
+        </div>`
+}
+
+export function kiroAccountEditModalTemplate() {
+  return `
+        <div id="kiroAccountEditModal" class="modal">
+            <div class="modal-content" style="max-width: 560px;">
+                <div class="modal-header">
+                    <h2>${t('kiro.editAccountTitle')}</h2>
+                    <button class="modal-close" onclick="closeKiroAccountEditModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>${t('kiro.refreshToken')}</label>
+                        <input type="text" id="editKiroRefreshToken" readonly style="opacity:.7;">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('kiro.region')}</label>
+                        <div class="model-select-container edit-kiro-region-select">
+                            <input type="text" id="editKiroRegion" placeholder="us-east-1" autocomplete="off" oninput="onEditKiroRegionInput()">
+                            <button type="button" class="model-dropdown-toggle" onclick="toggleEditKiroRegionDropdown()">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                            </button>
+                            <div class="model-dropdown" id="editKiroRegionDropdown"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>${t('kiro.authMethod')}</label>
+                        <div class="model-select-container edit-kiro-auth-method-select">
+                            <input type="text" id="editKiroAuthMethodDisplay" readonly onclick="toggleEditKiroAuthMethodDropdown()">
+                            <button type="button" class="model-dropdown-toggle" onclick="toggleEditKiroAuthMethodDropdown()">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                    <path d="M2 4L6 8L10 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                            </button>
+                            <div class="model-dropdown" id="editKiroAuthMethodDropdown"></div>
+                        </div>
+                        <select id="editKiroAuthMethod" style="display:none;" onchange="onEditKiroAuthMethodChange()">
+                            <option value="social">Social</option>
+                            <option value="idc">Idc</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>${t('kiro.provider')}</label>
+                        <input type="text" id="editKiroProvider" placeholder="${t('kiro.providerPlaceholder') || 'Google, Github, BuilderId, Enterprise'}">
+                        <small>${t('kiro.providerHelp') || 'Provider name (e.g., Google, Github, BuilderId, Enterprise)'}</small>
+                    </div>
+                    <div class="form-group" id="editKiroProfileArnGroup">
+                        <label>${t('kiro.profileArn')}</label>
+                        <input type="text" id="editKiroProfileArn" placeholder="${t('kiro.profileArnPlaceholder')}">
+                    </div>
+                    <div class="form-group" id="editKiroClientIdGroup" style="display:none;">
+                        <label>${t('kiro.clientId')}</label>
+                        <input type="text" id="editKiroClientId" placeholder="${t('kiro.clientIdPlaceholder')}">
+                    </div>
+                    <div class="form-group" id="editKiroClientSecretGroup" style="display:none;">
+                        <label>${t('kiro.clientSecret')}</label>
+                        <div class="input-with-icon">
+                            <input type="password" id="editKiroClientSecret" placeholder="${t('kiro.clientSecretPlaceholder')}">
+                            <button type="button" class="input-icon-btn" onclick="toggleEditKiroClientSecretVisibility()" title="${t('manage.toggleVisibility')}">&#128065;&#65039;</button>
+                        </div>
+                    </div>
+                    <hr style="margin: 12px 0; border: none; border-top: 1px solid var(--border);">
+                    <small style="display:block;margin-bottom:8px;color:var(--text-secondary);">${t('kiro.perAccountConfig')}</small>
+                    <div class="form-group">
+                        <label>${t('kiro.proxyUrl')}</label>
+                        <input type="text" id="editKiroProxyUrl" placeholder="${t('kiro.proxyUrlPlaceholder')}">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('kiro.userAgent')}</label>
+                        <input type="text" id="editKiroUserAgent" placeholder="${t('kiro.userAgentPlaceholder')}">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('kiro.version')}</label>
+                        <input type="text" id="editKiroVersion" placeholder="${t('kiro.versionPlaceholder')}">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('kiro.weight')}</label>
+                        <input type="number" id="editKiroWeight" min="1" placeholder="1">
+                        <small>${t('kiro.weightHelp')}</small>
+                    </div>
+                    <hr style="margin: 12px 0; border: none; border-top: 1px solid var(--border);">
+                    <small style="display:block;margin-bottom:8px;color:var(--text-secondary);">${t('kiro.readonlyInfo')}</small>
+                    <div class="form-group">
+                        <label>MachineId</label>
+                        <input type="text" id="editKiroMachineId" readonly style="opacity:.7;">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeKiroAccountEditModal()">${t('settings.cancel')}</button>
+                    <button class="btn btn-primary" onclick="saveKiroAccountEdit()">${t('settings.save')}</button>
                 </div>
             </div>
         </div>`

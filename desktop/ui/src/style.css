@@ -614,6 +614,10 @@ input:disabled + .slider {
   padding: 10px;
 }
 
+.log-item:last-child {
+  margin-bottom: 10px;
+}
+
 .log-item {
   background: var(--bg-secondary);
   border-radius: var(--radius-md);
@@ -1557,13 +1561,16 @@ input:disabled + .slider {
 .log-detail-section.collapsible h3 {
   cursor: pointer;
   user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
 }
 .log-detail-section.collapsible h3:hover {
   color: var(--primary);
 }
 .log-detail-section.collapsible .collapse-icon {
   font-size: 10px;
-  margin-left: 6px;
   transition: transform 0.2s;
 }
 .log-detail-section.collapsible.expanded .collapse-icon {
@@ -1573,6 +1580,37 @@ input:disabled + .slider {
   display: none;
 }
 .log-detail-section.collapsible.expanded pre {
+  display: block;
+}
+
+/* Stream copy button */
+.stream-copy-btn {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  color: var(--text-secondary);
+}
+
+.stream-copy-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.stream-copy-btn.copied {
+  background: rgba(76, 175, 80, 0.1);
+  border-color: var(--success-color);
+  color: var(--success-color);
+}
+
+.stream-copy-btn svg {
   display: block;
 }
 
@@ -2021,6 +2059,9 @@ input:disabled + .slider {
 
 .model-select-container.kiro-region-select input,
 .model-select-container.kiro-auth-method-select input,
+.model-select-container.kiro-rotation-mode-select input,
+.model-select-container.edit-kiro-region-select input,
+.model-select-container.edit-kiro-auth-method-select input,
 .model-select-container.interface-type-select input {
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
@@ -2452,6 +2493,16 @@ input:disabled + .slider {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.card-header-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-header-actions .btn svg {
+  vertical-align: middle;
 }
 
 /* =============================================================================

@@ -39,15 +39,6 @@ type KiroConfig struct {
 	ExpiresAt      string `json:"expiresAt,omitempty"`
 }
 
-func (a *App) getKiroAuthTokenPath() string {
-	if a != nil && a.configLoader != nil {
-		if p := strings.TrimSpace(a.configLoader.GetPath()); p != "" {
-			return filepath.Join(filepath.Dir(p), filepath.Base(kiroShared.GetDefaultKiroCredentialsPath()))
-		}
-	}
-	return kiroShared.GetDefaultKiroCredentialsPath()
-}
-
 // writeFileAtomic0600 原子写入文件并设置 0600 权限
 func writeFileAtomic0600(path string, data []byte) error {
 	path = strings.TrimSpace(path)
@@ -106,7 +97,7 @@ func writeFileAtomic0600(path string, data []byte) error {
 	return nil
 }
 
-// GetKiroConfig retrieves Kiro configuration
+// GetKiroConfig retrieves Kiro configuration from kiro.json active account
 func (a *App) GetKiroConfig() (*KiroConfig, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("storage not initialized")
@@ -117,38 +108,38 @@ func (a *App) GetKiroConfig() (*KiroConfig, error) {
 		AuthMethod: "social",
 	}
 
-	credsPath := a.getKiroAuthTokenPath()
-	if creds, err := kiroShared.LoadKiroCredentials(credsPath); err == nil && creds != nil {
-		config.RefreshToken = creds.RefreshToken
-		config.ProfileArn = creds.ProfileArn
-		config.AccessToken = creds.AccessToken
-		config.AuthMethod = creds.AuthMethod
-		config.Provider = creds.Provider
-		config.ClientId = creds.ClientId
-		config.ClientSecret = creds.ClientSecret
-		if !creds.ExpiresAt.IsZero() {
-			config.ExpiresAt = creds.ExpiresAt.Format(time.RFC3339Nano)
-		}
-		if strings.TrimSpace(creds.Region) != "" {
-			config.Region = creds.Region
-		}
-		if strings.TrimSpace(config.AuthMethod) == "" {
-			config.AuthMethod = "social"
-		}
-	}
-
-	// Read global settings from kiro.json
-	if mc, err := a.loadOrCreateMultiConfig(); err == nil && mc != nil {
+	// Read from kiro.json active account
+	mc, err := a.loadOrCreateMultiConfig()
+	if err == nil && mc != nil {
 		config.ProxyURL = mc.ProxyURL
 		config.UserAgent = mc.UserAgent
 		config.Version = mc.Version
 		config.BufferedStream = mc.BufferedStream
+
+		if account := mc.GetActiveAccount(); account != nil {
+			config.RefreshToken = account.RefreshToken
+			config.ProfileArn = account.ProfileArn
+			config.AccessToken = account.AccessToken
+			config.AuthMethod = account.AuthMethod
+			config.Provider = account.Provider
+			config.ClientId = account.ClientId
+			config.ClientSecret = account.ClientSecret
+			if !account.ExpiresAt.IsZero() {
+				config.ExpiresAt = account.ExpiresAt.Format(time.RFC3339Nano)
+			}
+			if strings.TrimSpace(account.Region) != "" {
+				config.Region = account.Region
+			}
+			if strings.TrimSpace(config.AuthMethod) == "" {
+				config.AuthMethod = "social"
+			}
+		}
 	}
 
 	return config, nil
 }
 
-// SaveKiroConfig saves Kiro configuration
+// SaveKiroConfig saves Kiro configuration to kiro.json
 func (a *App) SaveKiroConfig(config *KiroConfig) error {
 	if a.storage == nil {
 		return fmt.Errorf("storage not initialized")
@@ -166,111 +157,134 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 		}
 	}
 
-	// Persist to credentials file next to config.json (single source of truth for Kiro auth).
-	credsPath := a.getKiroAuthTokenPath()
-	var creds *kiroShared.KiroCredentials
-	if existing, err := kiroShared.LoadKiroCredentials(credsPath); err == nil {
-		creds = existing
-	} else {
-		creds = &kiroShared.KiroCredentials{}
-	}
-
-	oldRefreshToken := strings.TrimSpace(creds.RefreshToken)
-	oldProfileArn := strings.TrimSpace(creds.ProfileArn)
-
-	newRefreshToken := strings.TrimSpace(config.RefreshToken)
-	newProfileArn := strings.TrimSpace(config.ProfileArn)
-	newRegion := strings.TrimSpace(config.Region)
-
-	refreshTokenChanged := oldRefreshToken != "" && newRefreshToken != "" && oldRefreshToken != newRefreshToken
-
-	machineID := kiroCore.ComputeMachineID(newRefreshToken)
-
-	creds.RefreshToken = newRefreshToken
-	creds.Region = newRegion
-	if creds.Region == "" {
-		creds.Region = "us-east-1"
-	}
-	creds.MachineID = machineID
-	creds.AuthMethod = config.AuthMethod
-	creds.Provider = config.Provider
-	creds.ClientId = config.ClientId
-	creds.ClientSecret = config.ClientSecret
-
-	accessToken := strings.TrimSpace(config.AccessToken)
-	expiresAtStr := strings.TrimSpace(config.ExpiresAt)
-	if accessToken != "" || expiresAtStr != "" {
-		if accessToken == "" {
-			return fmt.Errorf("accessToken is required when expiresAt is provided")
-		}
-		if expiresAtStr == "" {
-			return fmt.Errorf("expiresAt is required when accessToken is provided")
-		}
-		expiresAt, err := time.Parse(time.RFC3339Nano, expiresAtStr)
-		if err != nil {
-			expiresAt, err = time.Parse(time.RFC3339, expiresAtStr)
-		}
-		if err != nil {
-			return fmt.Errorf("invalid expiresAt: %w", err)
-		}
-		creds.AccessToken = accessToken
-		creds.ExpiresAt = expiresAt
-	}
-
-	// If the refresh token was changed by config update, require fresh auth state from UI test.
-	if refreshTokenChanged {
-		if strings.TrimSpace(config.AccessToken) == "" {
-			return fmt.Errorf("accessToken is required when refreshToken changes; please test first")
-		}
-		if strings.TrimSpace(config.ExpiresAt) == "" {
-			return fmt.Errorf("expiresAt is required when refreshToken changes; please test first")
-		}
-		creds.ProfileArn = strings.TrimSpace(config.ProfileArn)
-	} else {
-		// Keep/overwrite profileArn only if explicitly provided.
-		if newProfileArn != "" && newProfileArn != oldProfileArn {
-			creds.ProfileArn = newProfileArn
-		}
-	}
-
-	// IdC tokens do not require (and typically do not return) a CodeWhisperer profileArn.
-	// Keeping a stale profileArn (e.g. from a prior Social login) can cause confusing upstream auth errors.
-	if authMethod == "idc" {
-		creds.ProfileArn = ""
-	}
-	if err := kiroShared.SaveKiroCredentials(credsPath, creds); err != nil {
-		return fmt.Errorf("failed to save kiro credentials: %w", err)
-	}
-
-	// 同步更新 kiro.json 多账号配置
-	if err := a.syncToMultiAccountConfig(creds, config); err != nil {
-		// 不阻止保存流程，只记录警告
-		fmt.Printf("warning: failed to sync to kiro.json: %v\n", err)
-	}
-
-	// Save global settings to kiro.json
 	multiConfig, err := a.loadOrCreateMultiConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load kiro multi config: %w", err)
 	}
+
+	newRefreshToken := strings.TrimSpace(config.RefreshToken)
+	newRegion := strings.TrimSpace(config.Region)
+	if newRegion == "" {
+		newRegion = "us-east-1"
+	}
+	machineID := kiroCore.ComputeMachineID(newRefreshToken)
+
+	// Find or create account in kiro.json
+	account := multiConfig.FindAccountByRefreshToken(newRefreshToken)
+	if account == nil {
+		// Check if there's an existing active account whose refreshToken is being replaced
+		activeAccount := multiConfig.GetActiveAccount()
+		if activeAccount != nil {
+			oldRefreshToken := strings.TrimSpace(activeAccount.RefreshToken)
+			refreshTokenChanged := oldRefreshToken != "" && oldRefreshToken != newRefreshToken
+			if refreshTokenChanged {
+				if strings.TrimSpace(config.AccessToken) == "" {
+					return fmt.Errorf("accessToken is required when refreshToken changes; please test first")
+				}
+				if strings.TrimSpace(config.ExpiresAt) == "" {
+					return fmt.Errorf("expiresAt is required when refreshToken changes; please test first")
+				}
+				// Update existing active account with new refreshToken
+				account = activeAccount
+			}
+		}
+	}
+
+	if account != nil {
+		// Update existing account
+		account.RefreshToken = newRefreshToken
+		account.Region = newRegion
+		account.MachineId = machineID
+		account.AuthMethod = config.AuthMethod
+		account.Provider = config.Provider
+		account.ClientId = config.ClientId
+		account.ClientSecret = config.ClientSecret
+
+		accessToken := strings.TrimSpace(config.AccessToken)
+		expiresAtStr := strings.TrimSpace(config.ExpiresAt)
+		if accessToken != "" && expiresAtStr != "" {
+			expiresAt, err := time.Parse(time.RFC3339Nano, expiresAtStr)
+			if err != nil {
+				expiresAt, err = time.Parse(time.RFC3339, expiresAtStr)
+			}
+			if err != nil {
+				return fmt.Errorf("invalid expiresAt: %w", err)
+			}
+			account.AccessToken = accessToken
+			account.ExpiresAt = expiresAt
+		}
+
+		if strings.TrimSpace(config.ProfileArn) != "" {
+			account.ProfileArn = config.ProfileArn
+		}
+		if authMethod == "idc" {
+			account.ProfileArn = ""
+		}
+
+		account.Status = kiroShared.KiroStatusValid
+		account.UpdatedAt = time.Now()
+		multiConfig.UpdateAccount(account)
+	} else {
+		// New account
+		now := time.Now()
+		newAccount := &kiroShared.KiroAccount{
+			RefreshToken: newRefreshToken,
+			Region:       newRegion,
+			MachineId:    machineID,
+			AuthMethod:   config.AuthMethod,
+			Provider:     config.Provider,
+			ClientId:     config.ClientId,
+			ClientSecret: config.ClientSecret,
+			Status:       kiroShared.KiroStatusValid,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+
+		accessToken := strings.TrimSpace(config.AccessToken)
+		expiresAtStr := strings.TrimSpace(config.ExpiresAt)
+		if accessToken != "" && expiresAtStr != "" {
+			expiresAt, err := time.Parse(time.RFC3339Nano, expiresAtStr)
+			if err != nil {
+				expiresAt, err = time.Parse(time.RFC3339, expiresAtStr)
+			}
+			if err != nil {
+				return fmt.Errorf("invalid expiresAt: %w", err)
+			}
+			newAccount.AccessToken = accessToken
+			newAccount.ExpiresAt = expiresAt
+		}
+
+		if strings.TrimSpace(config.ProfileArn) != "" {
+			newAccount.ProfileArn = config.ProfileArn
+		}
+		if authMethod == "idc" {
+			newAccount.ProfileArn = ""
+		}
+
+		multiConfig.Accounts = append(multiConfig.Accounts, *newAccount)
+	}
+
+	// Set as active account
+	multiConfig.ActiveRefreshToken = newRefreshToken
+
+	// Save global settings
 	multiConfig.ProxyURL = config.ProxyURL
 	multiConfig.UserAgent = config.UserAgent
 	multiConfig.Version = config.Version
 	multiConfig.BufferedStream = config.BufferedStream
-	multiPath := a.getKiroMultiConfigPath()
-	if err := kiroShared.SaveKiroMultiConfig(multiPath, multiConfig); err != nil {
-		return fmt.Errorf("failed to save kiro global config: %w", err)
-	}
 
-	return nil
+	multiPath := a.getKiroMultiConfigPath()
+	return kiroShared.SaveKiroMultiConfig(multiPath, multiConfig)
 }
 
 // KiroGlobalConfigDTO represents Kiro global settings + model mapping for frontend
 type KiroGlobalConfigDTO struct {
+	Region         string            `json:"region"`
 	ProxyURL       string            `json:"proxyUrl"`
 	UserAgent      string            `json:"userAgent"`
 	Version        string            `json:"version"`
 	BufferedStream bool              `json:"bufferedStream"`
+	RotationMode   string            `json:"rotationMode"`
 	ModelMapping   map[string]string `json:"modelMapping"`
 }
 
@@ -289,10 +303,12 @@ func (a *App) GetKiroGlobalConfig() (*KiroGlobalConfigDTO, error) {
 		clone[k] = v
 	}
 	return &KiroGlobalConfigDTO{
+		Region:         mc.GetRegion(),
 		ProxyURL:       mc.ProxyURL,
 		UserAgent:      mc.UserAgent,
 		Version:        mc.Version,
 		BufferedStream: mc.BufferedStream,
+		RotationMode:   mc.GetRotationMode(),
 		ModelMapping:   clone,
 	}, nil
 }
@@ -306,10 +322,12 @@ func (a *App) SaveKiroGlobalConfig(dto *KiroGlobalConfigDTO) error {
 	if err != nil {
 		return fmt.Errorf("failed to load kiro config: %w", err)
 	}
+	mc.Region = strings.TrimSpace(dto.Region)
 	mc.ProxyURL = strings.TrimSpace(dto.ProxyURL)
 	mc.UserAgent = strings.TrimSpace(dto.UserAgent)
 	mc.Version = strings.TrimSpace(dto.Version)
 	mc.BufferedStream = dto.BufferedStream
+	mc.RotationMode = strings.TrimSpace(dto.RotationMode)
 	if dto.ModelMapping != nil {
 		sanitized := make(map[string]string, len(dto.ModelMapping))
 		for k, v := range dto.ModelMapping {
@@ -332,100 +350,6 @@ func (a *App) SaveKiroGlobalConfig(dto *KiroGlobalConfigDTO) error {
 	return nil
 }
 
-// syncToMultiAccountConfig 同步更新 kiro.json 多账号配置
-// 如果存在相同 refreshToken 的账号则更新，否则添加
-func (a *App) syncToMultiAccountConfig(creds *kiroShared.KiroCredentials, config *KiroConfig) error {
-	if creds == nil || config == nil {
-		return nil
-	}
-
-	refreshToken := strings.TrimSpace(creds.RefreshToken)
-	if refreshToken == "" {
-		return nil
-	}
-
-	authMethod := strings.ToLower(strings.TrimSpace(creds.AuthMethod))
-	profileArn := creds.ProfileArn
-	provider := creds.Provider
-	clientId := creds.ClientId
-	clientSecret := creds.ClientSecret
-	switch authMethod {
-	case "social":
-		clientId = ""
-		clientSecret = ""
-	case "idc":
-		profileArn = ""
-	}
-
-	// 加载或创建多账号配置
-	multiConfig, err := a.loadOrCreateMultiConfig()
-	if err != nil {
-		return fmt.Errorf("load multi config: %w", err)
-	}
-
-	// 查找是否存在相同 refreshToken 的账号
-	existingAccount := multiConfig.FindAccountByRefreshToken(refreshToken)
-
-	if existingAccount != nil {
-		// 更新现有账号
-		existingAccount.AccessToken = creds.AccessToken
-		existingAccount.ProfileArn = profileArn
-		existingAccount.ExpiresAt = creds.ExpiresAt
-		existingAccount.Region = creds.Region
-		existingAccount.AuthMethod = creds.AuthMethod
-		existingAccount.Provider = provider
-		existingAccount.ClientId = clientId
-		existingAccount.ClientSecret = clientSecret
-		existingAccount.ProxyUrl = config.ProxyURL
-		existingAccount.UserAgent = config.UserAgent
-		existingAccount.Version = config.Version
-		existingAccount.Status = kiroShared.KiroStatusValid
-		existingAccount.UpdatedAt = time.Now()
-
-		if !multiConfig.UpdateAccount(existingAccount) {
-			return fmt.Errorf("failed to update account in config")
-		}
-	} else {
-		// 添加新账号
-		now := time.Now()
-		newAccount := &kiroShared.KiroAccount{
-			RefreshToken: refreshToken,
-			AccessToken:  creds.AccessToken,
-			ProfileArn:   profileArn,
-			ExpiresAt:    creds.ExpiresAt,
-			Region:       creds.Region,
-			AuthMethod:   creds.AuthMethod,
-			Provider:     provider,
-			ClientId:     clientId,
-			ClientSecret: clientSecret,
-			MachineId:    kiroCore.ComputeMachineID(refreshToken),
-			ProxyUrl:     config.ProxyURL,
-			UserAgent:    config.UserAgent,
-			Version:      config.Version,
-			Status:       kiroShared.KiroStatusValid,
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		}
-
-		if newAccount.Region == "" {
-			newAccount.Region = "us-east-1"
-		}
-
-		multiConfig.Accounts = append(multiConfig.Accounts, *newAccount)
-	}
-
-	// 将当前保存的账号设为激活账号
-	multiConfig.ActiveRefreshToken = refreshToken
-
-	// 保存多账号配置
-	multiPath := a.getKiroMultiConfigPath()
-	if err := kiroShared.SaveKiroMultiConfig(multiPath, multiConfig); err != nil {
-		return fmt.Errorf("save multi config: %w", err)
-	}
-
-	return nil
-}
-
 type KiroTestResult struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken,omitempty"`
@@ -437,6 +361,7 @@ type KiroTestResult struct {
 type KiroUsageInput struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken,omitempty"`
+	MachineID    string `json:"machineId,omitempty"`
 	ProfileArn   string `json:"profileArn,omitempty"`
 	Region       string `json:"region,omitempty"`
 	ProxyURL     string `json:"proxyUrl,omitempty"`
@@ -517,16 +442,19 @@ func (a *App) GetKiroUsage(input *KiroUsageInput) (*KiroUsageResult, error) {
 	}
 
 	machineID := ""
-	if v := strings.TrimSpace(input.RefreshToken); v != "" {
+	if v := strings.TrimSpace(input.MachineID); v != "" {
+		machineID = v
+	} else if v := strings.TrimSpace(input.RefreshToken); v != "" {
 		machineID = kiroCore.ComputeMachineID(v)
-	} else if a != nil {
-		if creds, err := kiroShared.LoadKiroCredentials(a.getKiroAuthTokenPath()); err == nil && creds != nil {
-			machineID = strings.TrimSpace(creds.MachineID)
-			if machineID == "" && strings.TrimSpace(creds.RefreshToken) != "" {
-				machineID = kiroCore.ComputeMachineID(creds.RefreshToken)
-			}
-		}
 	}
+	machineID = strings.TrimSpace(machineID)
+	if machineID == "" {
+		return nil, fmt.Errorf("machineId is required (or provide refreshToken to compute it)")
+	}
+	if strings.ContainsAny(machineID, "\r\n") {
+		return nil, fmt.Errorf("invalid machineId")
+	}
+
 
 	baseCtx := a.ctx
 	if baseCtx == nil {
@@ -588,6 +516,7 @@ type KiroAccountDTO struct {
 	ClientSecret       string          `json:"clientSecret,omitempty"`
 	MachineId          string          `json:"machineId,omitempty"`
 	Status             string          `json:"status"`
+	Weight             int             `json:"weight,omitempty"`
 	SubscriptionTitle  string          `json:"subscriptionTitle,omitempty"`
 	UsageLimit         float64         `json:"usageLimit,omitempty"`
 	CurrentUsage       float64         `json:"currentUsage,omitempty"`
@@ -616,10 +545,12 @@ type KiroAccountsResponse struct {
 // KiroMultiConfigDTO 多账号配置传输对象（用于 WebDAV 备份/恢复）
 type KiroMultiConfigDTO struct {
 	ActiveRefreshToken string            `json:"activeRefreshToken"`
+	Region             string            `json:"region,omitempty"`
 	ProxyURL           string            `json:"proxyUrl,omitempty"`
 	UserAgent          string            `json:"userAgent,omitempty"`
 	Version            string            `json:"version,omitempty"`
 	BufferedStream     bool              `json:"bufferedStream,omitempty"`
+	RotationMode       string            `json:"rotationMode,omitempty"`
 	ModelMapping       map[string]string `json:"modelMapping,omitempty"`
 	Accounts           []KiroAccountDTO  `json:"accounts"`
 	ReplaceMode        bool              `json:"replaceMode,omitempty"` // 替换模式：清空现有账号
@@ -637,6 +568,7 @@ func accountToDTO(account *kiroShared.KiroAccount, isActive bool) KiroAccountDTO
 		ClientSecret:       account.ClientSecret,
 		MachineId:          account.MachineId,
 		Status:             string(account.Status),
+		Weight:             account.Weight,
 		SubscriptionTitle:  account.SubscriptionTitle,
 		UsageLimit:         account.UsageLimit,
 		CurrentUsage:       account.CurrentUsage,
@@ -679,6 +611,7 @@ func dtoToAccount(dto *KiroAccountDTO) *kiroShared.KiroAccount {
 		ClientSecret:       dto.ClientSecret,
 		MachineId:          dto.MachineId,
 		Status:             kiroShared.KiroAccountStatus(dto.Status),
+		Weight:             dto.Weight,
 		SubscriptionTitle:  dto.SubscriptionTitle,
 		UsageLimit:         dto.UsageLimit,
 		CurrentUsage:       dto.CurrentUsage,
@@ -716,20 +649,9 @@ func dtoToAccount(dto *KiroAccountDTO) *kiroShared.KiroAccount {
 	return account
 }
 
-// loadOrCreateMultiConfig 加载或创建多账号配置，自动执行迁移
+// loadOrCreateMultiConfig 加载或创建多账号配置
 func (a *App) loadOrCreateMultiConfig() (*kiroShared.KiroMultiConfig, error) {
 	multiPath := a.getKiroMultiConfigPath()
-	oldPath := a.getKiroAuthTokenPath()
-
-	// 尝试从单账号迁移
-	migrated, err := kiroShared.MigrateFromSingleAccount(oldPath, multiPath, kiroCore.ComputeMachineID)
-	if err != nil {
-		// 迁移失败不阻止继续，只记录日志
-		fmt.Printf("kiro migration warning: %v\n", err)
-	}
-	if migrated {
-		fmt.Println("kiro: migrated from single account to multi-account config")
-	}
 
 	// 加载多账号配置
 	config, err := kiroShared.LoadKiroMultiConfig(multiPath)
@@ -738,6 +660,8 @@ func (a *App) loadOrCreateMultiConfig() (*kiroShared.KiroMultiConfig, error) {
 			// 文件不存在，返回空配置（含默认 ModelMapping）
 			return &kiroShared.KiroMultiConfig{
 				ModelMapping: kiroShared.DefaultKiroModelMapping(),
+				UserAgent: kiroShared.DefaultKiroUserAgentBase,
+				Version:   kiroShared.DefaultKiroVersion,
 				Accounts:     []kiroShared.KiroAccount{},
 			}, nil
 		}
@@ -798,15 +722,6 @@ func (a *App) SetActiveKiroAccount(refreshToken string) error {
 	}
 
 	config.ActiveRefreshToken = refreshToken
-
-	// 同步到旧的单账号配置文件（兼容性）
-	if account := config.GetActiveAccount(); account != nil {
-		oldPath := a.getKiroAuthTokenPath()
-		creds := account.ToCredentials()
-		if err := kiroShared.SaveKiroCredentials(oldPath, creds); err != nil {
-			fmt.Printf("warning: failed to sync to legacy config: %v\n", err)
-		}
-	}
 
 	multiPath := a.getKiroMultiConfigPath()
 	return kiroShared.SaveKiroMultiConfig(multiPath, config)
@@ -897,15 +812,6 @@ func (a *App) UpdateKiroAccount(dto *KiroAccountDTO) error {
 		return fmt.Errorf("failed to update account")
 	}
 
-	// 如果更新的是激活账号，同步到旧配置
-	if dto.RefreshToken == config.ActiveRefreshToken {
-		oldPath := a.getKiroAuthTokenPath()
-		creds := account.ToCredentials()
-		if err := kiroShared.SaveKiroCredentials(oldPath, creds); err != nil {
-			fmt.Printf("warning: failed to sync to legacy config: %v\n", err)
-		}
-	}
-
 	multiPath := a.getKiroMultiConfigPath()
 	return kiroShared.SaveKiroMultiConfig(multiPath, config)
 }
@@ -923,22 +829,6 @@ func (a *App) DeleteKiroAccount(refreshToken string) error {
 
 	if !config.DeleteAccount(refreshToken) {
 		return fmt.Errorf("account not found")
-	}
-
-	oldPath := a.getKiroAuthTokenPath()
-
-	// 如果删除后还有账号，同步新的激活账号到旧配置
-	if account := config.GetActiveAccount(); account != nil {
-		creds := account.ToCredentials()
-		if err := kiroShared.SaveKiroCredentials(oldPath, creds); err != nil {
-			fmt.Printf("warning: failed to sync to legacy config: %v\n", err)
-		}
-	} else {
-		// 删除后无账号：清理旧的单账号配置，避免下次加载时被迁移逻辑重新写回 kiro.json
-		expanded := kiroShared.ExpandTilde(oldPath)
-		if removeErr := os.Remove(expanded); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			return fmt.Errorf("failed to remove legacy kiro credentials: %w", removeErr)
-		}
 	}
 
 	multiPath := a.getKiroMultiConfigPath()
@@ -1032,14 +922,28 @@ func (a *App) GetKiroAccountUsage(refreshToken string) (*KiroUsageResult, error)
 	}
 
 	// 使用现有的用量查询逻辑
+	effectiveProxyURL := strings.TrimSpace(account.ProxyUrl)
+	if effectiveProxyURL == "" {
+		effectiveProxyURL = strings.TrimSpace(config.ProxyURL)
+	}
+	effectiveUserAgent := strings.TrimSpace(account.UserAgent)
+	if effectiveUserAgent == "" {
+		effectiveUserAgent = strings.TrimSpace(config.UserAgent)
+	}
+	effectiveVersion := strings.TrimSpace(account.Version)
+	if effectiveVersion == "" {
+		effectiveVersion = strings.TrimSpace(config.Version)
+	}
+
 	input := &KiroUsageInput{
 		AccessToken:  account.AccessToken,
 		RefreshToken: account.RefreshToken,
+		MachineID:    account.MachineId,
 		ProfileArn:   account.ProfileArn,
 		Region:       account.Region,
-		ProxyURL:     account.ProxyUrl,
-		UserAgent:    account.UserAgent,
-		Version:      account.Version,
+		ProxyURL:     effectiveProxyURL,
+		UserAgent:    effectiveUserAgent,
+		Version:      effectiveVersion,
 	}
 
 	result, err := a.GetKiroUsage(input)
@@ -1182,25 +1086,18 @@ func (a *App) replaceKiroMultiConfig(multiPath string, dto *KiroMultiConfigDTO) 
 
 	newConfig := &kiroShared.KiroMultiConfig{
 		ActiveRefreshToken: activeRefreshToken,
+		Region:             dto.Region,
 		ProxyURL:           dto.ProxyURL,
 		UserAgent:          dto.UserAgent,
 		Version:            dto.Version,
 		BufferedStream:     dto.BufferedStream,
+		RotationMode:       dto.RotationMode,
 		ModelMapping:       dto.ModelMapping,
 		Accounts:           accounts,
 	}
 
 	if err := kiroShared.SaveKiroMultiConfig(multiPath, newConfig); err != nil {
 		return fmt.Errorf("failed to save kiro multi config: %w", err)
-	}
-
-	// 同步激活账号到单账号配置（向后兼容）
-	if activeAccount := newConfig.GetActiveAccount(); activeAccount != nil {
-		oldPath := a.getKiroAuthTokenPath()
-		creds := activeAccount.ToCredentials()
-		if err := kiroShared.SaveKiroCredentials(oldPath, creds); err != nil {
-			fmt.Printf("warning: failed to sync to legacy config: %v\n", err)
-		}
 	}
 
 	return nil
@@ -1299,6 +1196,10 @@ func (a *App) mergeKiroMultiConfig(multiPath string, dto *KiroMultiConfigDTO) er
 	}
 
 	// 合并全局配置（远程优先，本地兜底）
+	region := dto.Region
+	if region == "" {
+		region = localConfig.Region
+	}
 	proxyURL := dto.ProxyURL
 	if proxyURL == "" {
 		proxyURL = localConfig.ProxyURL
@@ -1312,6 +1213,10 @@ func (a *App) mergeKiroMultiConfig(multiPath string, dto *KiroMultiConfigDTO) er
 		version = localConfig.Version
 	}
 	bufferedStream := dto.BufferedStream || localConfig.BufferedStream
+	rotationMode := dto.RotationMode
+	if rotationMode == "" {
+		rotationMode = localConfig.RotationMode
+	}
 	modelMapping := dto.ModelMapping
 	if len(modelMapping) == 0 {
 		modelMapping = localConfig.ModelMapping
@@ -1319,25 +1224,18 @@ func (a *App) mergeKiroMultiConfig(multiPath string, dto *KiroMultiConfigDTO) er
 
 	mergedConfig := &kiroShared.KiroMultiConfig{
 		ActiveRefreshToken: activeRefreshToken,
+		Region:             region,
 		ProxyURL:           proxyURL,
 		UserAgent:          userAgent,
 		Version:            version,
 		BufferedStream:     bufferedStream,
+		RotationMode:       rotationMode,
 		ModelMapping:       modelMapping,
 		Accounts:           mergedAccounts,
 	}
 
 	if err := kiroShared.SaveKiroMultiConfig(multiPath, mergedConfig); err != nil {
 		return fmt.Errorf("failed to save merged config: %w", err)
-	}
-
-	// 同步激活账号到单账号配置（向后兼容）
-	if activeAccount := mergedConfig.GetActiveAccount(); activeAccount != nil {
-		oldPath := a.getKiroAuthTokenPath()
-		creds := activeAccount.ToCredentials()
-		if err := kiroShared.SaveKiroCredentials(oldPath, creds); err != nil {
-			fmt.Printf("warning: failed to sync to legacy config: %v\n", err)
-		}
 	}
 
 	return nil

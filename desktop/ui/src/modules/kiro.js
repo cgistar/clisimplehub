@@ -593,8 +593,8 @@ export function onKiroRegionInput() {
   const query = (input.value || '').toLowerCase().trim()
 
   // Filter and render dropdown
-  const filtered = AWS_REGIONS.filter((r) =>
-    r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query)
+  const filtered = AWS_REGIONS.filter(
+    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query),
   )
 
   renderKiroRegionDropdown(filtered)
@@ -713,6 +713,301 @@ export function toggleKiroAuthMethodDropdown() {
     dropdown.classList.remove('show')
   } else {
     renderKiroAuthMethodDropdown()
+    dropdown.classList.add('show')
+  }
+}
+
+// Sync rotation mode dropdown display
+function syncKiroRotationModeDisplay() {
+  const select = document.getElementById('kiroRotationMode')
+  const display = document.getElementById('kiroRotationModeDisplay')
+  if (!select || !display) return
+
+  const selectedOption = select.options[select.selectedIndex]
+  if (selectedOption) {
+    display.value = selectedOption.textContent.trim()
+  }
+
+  renderKiroRotationModeDropdown()
+}
+
+// Render rotation mode dropdown options
+function renderKiroRotationModeDropdown() {
+  const select = document.getElementById('kiroRotationMode')
+  const dropdown = document.getElementById('kiroRotationModeDropdown')
+  if (!select || !dropdown) return
+
+  dropdown.innerHTML = ''
+  Array.from(select.options).forEach((option) => {
+    const item = document.createElement('div')
+    item.className = 'model-dropdown-item'
+    if (option.selected) {
+      item.classList.add('selected')
+    }
+    item.textContent = option.textContent.trim()
+    item.onclick = () => selectKiroRotationMode(option.value)
+    dropdown.appendChild(item)
+  })
+}
+
+// Select rotation mode from dropdown
+function selectKiroRotationMode(value) {
+  const select = document.getElementById('kiroRotationMode')
+  if (!select) return
+
+  select.value = value
+  syncKiroRotationModeDisplay()
+  onKiroRotationModeChange()
+
+  // Close dropdown
+  const dropdown = document.getElementById('kiroRotationModeDropdown')
+  if (dropdown) {
+    dropdown.classList.remove('show')
+  }
+}
+
+// Toggle rotation mode dropdown
+export function toggleKiroRotationModeDropdown() {
+  const dropdown = document.getElementById('kiroRotationModeDropdown')
+  const select = document.getElementById('kiroRotationMode')
+  if (!dropdown || !select) return
+
+  if (dropdown.classList.contains('show')) {
+    dropdown.classList.remove('show')
+  } else {
+    renderKiroRotationModeDropdown()
+    dropdown.classList.add('show')
+  }
+}
+
+// Handle rotation mode change
+export function onKiroRotationModeChange() {
+  // Placeholder for future logic if needed
+}
+
+// Register global functions for HTML onclick handlers
+window.toggleKiroAuthMethodDropdown = toggleKiroAuthMethodDropdown
+window.toggleKiroRotationModeDropdown = toggleKiroRotationModeDropdown
+window.onKiroRotationModeChange = onKiroRotationModeChange
+window.onKiroGlobalRegionInput = onKiroGlobalRegionInput
+window.toggleKiroGlobalRegionDropdown = toggleKiroGlobalRegionDropdown
+window.onEditKiroRegionInput = onEditKiroRegionInput
+window.toggleEditKiroRegionDropdown = toggleEditKiroRegionDropdown
+window.toggleEditKiroAuthMethodDropdown = toggleEditKiroAuthMethodDropdown
+window.syncEditKiroAuthMethodDisplay = syncEditKiroAuthMethodDisplay
+
+// =============================================================================
+// Kiro Global Config Modal - Region Dropdown
+// =============================================================================
+
+// Handle global region input changes (filter dropdown)
+export function onKiroGlobalRegionInput() {
+  const input = document.getElementById('kiroGlobalRegion')
+  const dropdown = document.getElementById('kiroGlobalRegionDropdown')
+  if (!input || !dropdown) return
+
+  const query = (input.value || '').toLowerCase().trim()
+
+  const filtered = AWS_REGIONS.filter(
+    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query),
+  )
+
+  renderKiroGlobalRegionDropdown(filtered)
+
+  if (query && filtered.length > 0) {
+    dropdown.classList.add('show')
+  }
+}
+
+// Render global region dropdown options
+function renderKiroGlobalRegionDropdown(regions = AWS_REGIONS) {
+  const input = document.getElementById('kiroGlobalRegion')
+  const dropdown = document.getElementById('kiroGlobalRegionDropdown')
+  if (!input || !dropdown) return
+
+  const currentValue = (input.value || '').trim()
+
+  dropdown.innerHTML = ''
+  regions.forEach((region) => {
+    const item = document.createElement('div')
+    item.className = 'model-dropdown-item'
+    if (region.value === currentValue) {
+      item.classList.add('selected')
+    }
+    item.textContent = region.label
+    item.onclick = () => selectKiroGlobalRegion(region.value)
+    dropdown.appendChild(item)
+  })
+}
+
+// Select global region from dropdown
+function selectKiroGlobalRegion(value) {
+  const input = document.getElementById('kiroGlobalRegion')
+  if (!input) return
+
+  input.value = value
+
+  const dropdown = document.getElementById('kiroGlobalRegionDropdown')
+  if (dropdown) {
+    dropdown.classList.remove('show')
+  }
+}
+
+// Toggle global region dropdown
+export function toggleKiroGlobalRegionDropdown() {
+  const dropdown = document.getElementById('kiroGlobalRegionDropdown')
+  const input = document.getElementById('kiroGlobalRegion')
+  if (!dropdown || !input) return
+
+  if (dropdown.classList.contains('show')) {
+    dropdown.classList.remove('show')
+  } else {
+    renderKiroGlobalRegionDropdown()
+    dropdown.classList.add('show')
+  }
+}
+
+// =============================================================================
+// Edit Kiro Account Modal - Region Dropdown
+// =============================================================================
+
+// Handle edit region input changes (filter dropdown)
+export function onEditKiroRegionInput() {
+  const input = document.getElementById('editKiroRegion')
+  const dropdown = document.getElementById('editKiroRegionDropdown')
+  if (!input || !dropdown) return
+
+  const query = (input.value || '').toLowerCase().trim()
+
+  // Filter and render dropdown
+  const filtered = AWS_REGIONS.filter(
+    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query),
+  )
+
+  renderEditKiroRegionDropdown(filtered)
+
+  // Auto-show dropdown when typing
+  if (query && filtered.length > 0) {
+    dropdown.classList.add('show')
+  }
+}
+
+// Render edit region dropdown options
+function renderEditKiroRegionDropdown(regions = AWS_REGIONS) {
+  const input = document.getElementById('editKiroRegion')
+  const dropdown = document.getElementById('editKiroRegionDropdown')
+  if (!input || !dropdown) return
+
+  const currentValue = (input.value || '').trim()
+
+  dropdown.innerHTML = ''
+  regions.forEach((region) => {
+    const item = document.createElement('div')
+    item.className = 'model-dropdown-item'
+    if (region.value === currentValue) {
+      item.classList.add('selected')
+    }
+    item.textContent = region.label
+    item.onclick = () => selectEditKiroRegion(region.value)
+    dropdown.appendChild(item)
+  })
+}
+
+// Select edit region from dropdown
+function selectEditKiroRegion(value) {
+  const input = document.getElementById('editKiroRegion')
+  if (!input) return
+
+  input.value = value
+
+  // Close dropdown
+  const dropdown = document.getElementById('editKiroRegionDropdown')
+  if (dropdown) {
+    dropdown.classList.remove('show')
+  }
+}
+
+// Toggle edit region dropdown
+export function toggleEditKiroRegionDropdown() {
+  const dropdown = document.getElementById('editKiroRegionDropdown')
+  const input = document.getElementById('editKiroRegion')
+  if (!dropdown || !input) return
+
+  if (dropdown.classList.contains('show')) {
+    dropdown.classList.remove('show')
+  } else {
+    renderEditKiroRegionDropdown()
+    dropdown.classList.add('show')
+  }
+}
+
+// =============================================================================
+// Edit Kiro Account Modal - Auth Method Dropdown
+// =============================================================================
+
+// Sync edit auth method dropdown display
+function syncEditKiroAuthMethodDisplay() {
+  const select = document.getElementById('editKiroAuthMethod')
+  const display = document.getElementById('editKiroAuthMethodDisplay')
+  if (!select || !display) return
+
+  const selectedOption = select.options[select.selectedIndex]
+  if (selectedOption) {
+    display.value = selectedOption.textContent.trim()
+  }
+
+  renderEditKiroAuthMethodDropdown()
+}
+
+// Render edit auth method dropdown options
+function renderEditKiroAuthMethodDropdown() {
+  const select = document.getElementById('editKiroAuthMethod')
+  const dropdown = document.getElementById('editKiroAuthMethodDropdown')
+  if (!select || !dropdown) return
+
+  dropdown.innerHTML = ''
+  Array.from(select.options).forEach((option) => {
+    const item = document.createElement('div')
+    item.className = 'model-dropdown-item'
+    if (option.selected) {
+      item.classList.add('selected')
+    }
+    item.textContent = option.textContent.trim()
+    item.onclick = () => selectEditKiroAuthMethod(option.value)
+    dropdown.appendChild(item)
+  })
+}
+
+// Select edit auth method from dropdown
+function selectEditKiroAuthMethod(value) {
+  const select = document.getElementById('editKiroAuthMethod')
+  if (!select) return
+
+  select.value = value
+  syncEditKiroAuthMethodDisplay()
+
+  // Trigger the original change handler
+  if (window.onEditKiroAuthMethodChange) {
+    window.onEditKiroAuthMethodChange()
+  }
+
+  // Close dropdown
+  const dropdown = document.getElementById('editKiroAuthMethodDropdown')
+  if (dropdown) {
+    dropdown.classList.remove('show')
+  }
+}
+
+// Toggle edit auth method dropdown
+export function toggleEditKiroAuthMethodDropdown() {
+  const dropdown = document.getElementById('editKiroAuthMethodDropdown')
+  const select = document.getElementById('editKiroAuthMethod')
+  if (!dropdown || !select) return
+
+  if (dropdown.classList.contains('show')) {
+    dropdown.classList.remove('show')
+  } else {
+    renderEditKiroAuthMethodDropdown()
     dropdown.classList.add('show')
   }
 }
@@ -871,19 +1166,34 @@ async function pollIdcTokenOnce() {
     const nonRetryableErrors = ['invalid_client', 'invalid_grant', 'unauthorized_client', 'unsupported_grant_type']
     if (result?.error && nonRetryableErrors.includes(result.error)) {
       stopIdcPolling()
-      updateIdcDialogStatus('error', `${t('kiro.idcStatusError')}: ${result.error}`, 'ERROR', idcDeviceFlowState.activeFlow)
+      updateIdcDialogStatus(
+        'error',
+        `${t('kiro.idcStatusError')}: ${result.error}`,
+        'ERROR',
+        idcDeviceFlowState.activeFlow,
+      )
       return
     }
 
     // 其他错误 - 不停止轮询，继续重试
     const errorMsg = result?.error || 'Unknown error'
     console.warn('IDC polling error (will retry):', errorMsg)
-    updateIdcDialogStatus('pending', `${t('kiro.idcStatusPending')} (${errorMsg})`, 'PENDING', idcDeviceFlowState.activeFlow)
+    updateIdcDialogStatus(
+      'pending',
+      `${t('kiro.idcStatusPending')} (${errorMsg})`,
+      'PENDING',
+      idcDeviceFlowState.activeFlow,
+    )
   } catch (error) {
     // 网络错误或其他异常 - 不停止轮询，继续重试
     console.warn('IDC polling exception (will retry):', error)
     const errorMsg = error?.message || error || 'Network error'
-    updateIdcDialogStatus('pending', `${t('kiro.idcStatusPending')} (${errorMsg})`, 'PENDING', idcDeviceFlowState.activeFlow)
+    updateIdcDialogStatus(
+      'pending',
+      `${t('kiro.idcStatusPending')} (${errorMsg})`,
+      'PENDING',
+      idcDeviceFlowState.activeFlow,
+    )
   } finally {
     idcDeviceFlowState.pollInFlight = false
   }
@@ -1631,9 +1941,7 @@ async function ensureKiroEndpoint() {
     const allEndpoints = await window.go.main.App.GetAllEndpoints()
 
     // 检查是否已存在 kiro/claude 端点
-    const hasKiroEndpoint = allEndpoints.some(
-      (ep) => ep.transformer === 'kiro/claude' && ep.interfaceType === 'claude'
-    )
+    const hasKiroEndpoint = allEndpoints.some((ep) => ep.transformer === 'kiro/claude' && ep.interfaceType === 'claude')
 
     if (hasKiroEndpoint) {
       // 已存在，无需创建
@@ -1726,7 +2034,7 @@ function collectModelMapping() {
   if (!container) return {}
   const rows = container.querySelectorAll('.model-mapping-row')
   const mapping = {}
-  rows.forEach(row => {
+  rows.forEach((row) => {
     const alias = (row.querySelector('.kiro-mm-alias')?.value || '').trim()
     const name = (row.querySelector('.kiro-mm-name')?.value || '').trim()
     if (alias && name) {
@@ -1746,6 +2054,12 @@ export async function showKiroGlobalConfigModal() {
     document.getElementById('kiroGlobalUserAgent').value = cfg?.userAgent || ''
     document.getElementById('kiroGlobalVersion').value = cfg?.version || ''
     document.getElementById('kiroGlobalBufferedStream').checked = cfg?.bufferedStream || false
+    document.getElementById('kiroRotationMode').value = cfg?.rotationMode || 'fixed'
+    document.getElementById('kiroGlobalRegion').value = cfg?.region || 'us-east-1'
+
+    // Sync rotation mode dropdown display
+    syncKiroRotationModeDisplay()
+
     renderKiroModelMappingList(cfg?.modelMapping || {})
   } catch (error) {
     console.error('Failed to load Kiro global config:', error)
@@ -1776,10 +2090,12 @@ export async function saveKiroGlobalConfig() {
     if (!window.go?.main?.App?.SaveKiroGlobalConfig) return
 
     const dto = {
+      region: (document.getElementById('kiroGlobalRegion')?.value || 'us-east-1').trim(),
       proxyUrl: (document.getElementById('kiroGlobalProxyUrl')?.value || '').trim(),
       userAgent: (document.getElementById('kiroGlobalUserAgent')?.value || '').trim(),
       version: (document.getElementById('kiroGlobalVersion')?.value || '').trim(),
       bufferedStream: document.getElementById('kiroGlobalBufferedStream')?.checked || false,
+      rotationMode: (document.getElementById('kiroRotationMode')?.value || 'fixed').trim(),
       modelMapping: collectModelMapping(),
     }
     await window.go.main.App.SaveKiroGlobalConfig(dto)

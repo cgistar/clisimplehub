@@ -827,8 +827,8 @@ func (a *App) GetRecentLogs() ([]*RequestLogInfo, error) {
 		return []*RequestLogInfo{}, nil
 	}
 
-	// Get recent logs (max 5 as per Requirements 7.4)
-	logs := stats.GetRecentLogs(5)
+	// Get recent logs (max 10)
+	logs := stats.GetRecentLogs(10)
 
 	result := make([]*RequestLogInfo, 0, len(logs))
 	for _, log := range logs {
@@ -879,7 +879,7 @@ func (a *App) GetLogDetail(logID string) (*RequestLogDetailInfo, error) {
 	}
 
 	// Get recent logs and find the one with matching ID
-	logs := stats.GetRecentLogs(5)
+	logs := stats.GetRecentLogs(10)
 	for _, log := range logs {
 		if log.ID == logID {
 			return &RequestLogDetailInfo{
@@ -2802,7 +2802,7 @@ type BackupDataResponse struct {
 }
 
 // CreateBackupData 创建完整的备份数据
-// 包含 config.json, kiro.json, kiro-auth-token.json 的所有内容
+// 包含 config.json, kiro.json 的所有内容
 func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("storage not initialized")
@@ -2873,28 +2873,20 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 		}
 	}
 
-	// 5. 尝试获取 kiro-auth-token.json (向后兼容)
-	var kiroAuthToken map[string]interface{}
-	kiroAuthTokenPath := a.getKiroAuthTokenPath()
-	if data, err := a.readKiroAuthTokenFile(kiroAuthTokenPath); err == nil {
-		kiroAuthToken = data
-	}
-
-	// 6. 尝试获取 kiro.json (多账号配置)
+	// 5. 尝试获取 kiro.json (多账号配置)
 	var kiroMultiConfig interface{}
 	kiroMultiConfigPath := a.getKiroMultiConfigPath()
 	if dto, err := a.loadKiroMultiConfigDTO(kiroMultiConfigPath); err == nil {
 		kiroMultiConfig = dto
 	}
 
-	// 7. 组装备份数据
+	// 6. 组装备份数据
 	backupData := &config.BackupData{
 		SchemaVersion:   2,
 		CreatedAt:       time.Now().Format(time.RFC3339),
 		AppConfig:       appConfig,
 		Vendors:         vendorConfigs,
 		Endpoints:       endpointConfigs,
-		KiroAuthToken:   kiroAuthToken,
 		KiroMultiConfig: kiroMultiConfig,
 	}
 
@@ -2907,20 +2899,6 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 		Filename: filename,
 		Data:     backupData,
 	}, nil
-}
-
-// readKiroAuthTokenFile 读取 kiro-auth-token.json
-func (a *App) readKiroAuthTokenFile(path string) (map[string]interface{}, error) {
-	expanded := kiroShared.ExpandTilde(path)
-	data, err := os.ReadFile(expanded)
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 // loadKiroMultiConfigDTO 加载 kiro.json 并转换为 DTO
@@ -2941,10 +2919,12 @@ func (a *App) loadKiroMultiConfigDTO(path string) (*KiroMultiConfigDTO, error) {
 
 	return &KiroMultiConfigDTO{
 		ActiveRefreshToken: config.ActiveRefreshToken,
+		Region:             config.Region,
 		ProxyURL:           config.ProxyURL,
 		UserAgent:          config.UserAgent,
 		Version:            config.Version,
 		BufferedStream:     config.BufferedStream,
+		RotationMode:       config.RotationMode,
 		ModelMapping:       config.ModelMapping,
 		Accounts:           accounts,
 	}, nil
@@ -2986,13 +2966,6 @@ func (a *App) RestoreBackupData(backupData *config.BackupData, mode string) erro
 	// 保存主配置
 	if err := a.SaveFullConfig(finalConfig); err != nil {
 		return fmt.Errorf("failed to save main config: %w", err)
-	}
-
-	// 恢复 kiro-auth-token.json (向后兼容)
-	if backupData.KiroAuthToken != nil && len(backupData.KiroAuthToken) > 0 {
-		if err := a.saveKiroAuthTokenInternal(backupData.KiroAuthToken); err != nil {
-			fmt.Printf("warning: failed to restore kiro-auth-token.json: %v\n", err)
-		}
 	}
 
 	// 恢复 kiro.json (多账号配置)
@@ -3137,32 +3110,6 @@ func (a *App) mergeBackupWithLocal(backupData *config.BackupData) (*FullConfig, 
 		Endpoints:   mergedEndpoints,
 		ReplaceMode: false,
 	}, nil
-}
-
-// saveKiroAuthTokenInternal 保存 kiro-auth-token.json
-func (a *App) saveKiroAuthTokenInternal(data map[string]interface{}) error {
-	path := a.getKiroAuthTokenPath()
-	expanded := kiroShared.ExpandTilde(path)
-
-	// 验证 refreshToken
-	refreshToken, ok := data["refreshToken"].(string)
-	if !ok || strings.TrimSpace(refreshToken) == "" {
-		return fmt.Errorf("refreshToken is required")
-	}
-
-	// 序列化
-	jsonData, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// 原子写入
-	dir := filepath.Dir(expanded)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-
-	return writeFileAtomic0600(expanded, jsonData)
 }
 
 // saveKiroMultiConfigInternal 保存 kiro.json
@@ -3603,5 +3550,157 @@ func (a *App) SaveWebDAVConfig(config *WebDAVConfigInfo) error {
 		return fmt.Errorf("failed to save password: %w", err)
 	}
 
+	return nil
+}
+
+// =============================================================================
+// Server Sync Methods
+// =============================================================================
+
+func normalizeRemoteServerBaseURL(raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("server URL is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid server URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("server URL must start with http:// or https://")
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("server URL must include host")
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = strings.TrimRight(u.Path, "/")
+	return u, nil
+}
+
+// GetServers returns the list of remote servers from config.
+func (a *App) GetServers() ([]config.ServerConfig, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+
+	fileStore, ok := a.storage.(*storage.ConfigFileStore)
+	if !ok {
+		return nil, fmt.Errorf("storage type does not support servers")
+	}
+	return fileStore.GetServers()
+}
+
+// SaveServers saves the list of remote servers to config.
+func (a *App) SaveServers(servers []config.ServerConfig) error {
+	if a.storage == nil {
+		return fmt.Errorf("storage not initialized")
+	}
+
+	fileStore, ok := a.storage.(*storage.ConfigFileStore)
+	if !ok {
+		return fmt.Errorf("storage type does not support servers")
+	}
+	return fileStore.SaveServers(servers)
+}
+
+// TestServerConnection tests connectivity to a remote server by hitting its /health endpoint.
+func (a *App) TestServerConnection(serverURL, apiKey string) error {
+	base, err := normalizeRemoteServerBaseURL(serverURL)
+	if err != nil {
+		return err
+	}
+
+	healthURL := *base
+	healthURL.Path += "/health"
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, healthURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server responded with status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// SyncConfigToServer syncs the current config to a remote headless server.
+func (a *App) SyncConfigToServer(index int) error {
+	if a.storage == nil {
+		return fmt.Errorf("storage not initialized")
+	}
+
+	fileStore, ok := a.storage.(*storage.ConfigFileStore)
+	if !ok {
+		return fmt.Errorf("storage type does not support servers")
+	}
+
+	servers, err := fileStore.GetServers()
+	if err != nil {
+		return fmt.Errorf("failed to get servers: %w", err)
+	}
+	if index < 0 || index >= len(servers) {
+		return fmt.Errorf("invalid server index: %d", index)
+	}
+
+	server := servers[index]
+	base, err := normalizeRemoteServerBaseURL(server.URL)
+	if err != nil {
+		return err
+	}
+	syncURL := *base
+	syncURL.Path += "/sync/config"
+
+	// Load full config
+	if a.configLoader == nil {
+		return fmt.Errorf("config loader not initialized")
+	}
+	cfg, err := a.configLoader.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Only sync vendors + endpoints; avoid leaking local app settings and credentials.
+	payload := &config.AppConfig{
+		Vendors:   cfg.Vendors,
+		Endpoints: cfg.Endpoints,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to serialize config: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest(http.MethodPost, syncURL.String(), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if server.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+server.APIKey)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("sync request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
+		return fmt.Errorf("sync failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
 	return nil
 }

@@ -95,7 +95,7 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 获取 kiro-auth-token.json 路径
+	// 获取 kiro.json 路径
 	p.mu.RLock()
 	configPath := p.configPath
 	p.mu.RUnlock()
@@ -107,7 +107,6 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	credsPath := filepath.Join(filepath.Dir(configPath), "kiro-auth-token.json")
 	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 
 	// 从 kiro.json 读取 version, userAgent, bufferedStream
@@ -124,18 +123,22 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	version = kiroShared.KiroVersionOrDefault(version)
 	userAgent = kiroShared.KiroUserAgentBaseOrDefault(userAgent)
 
-	// 加载现有凭证
-	var existingCreds *kiroShared.KiroCredentials
-	if creds, err := kiroShared.LoadKiroCredentials(credsPath); err == nil {
-		existingCreds = creds
+	// 加载现有凭证 from kiro.json active account
+	var existingRefreshToken string
+	var existingAccessToken string
+	var existingExpiresAt time.Time
+	var existingProfileArn string
+	if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
+		if active := mc.GetActiveAccount(); active != nil {
+			existingRefreshToken = strings.TrimSpace(active.RefreshToken)
+			existingAccessToken = strings.TrimSpace(active.AccessToken)
+			existingExpiresAt = active.ExpiresAt
+			existingProfileArn = strings.TrimSpace(active.ProfileArn)
+		}
 	}
 
 	// 检查 refreshToken 是否变化
-	oldRefreshToken := ""
-	if existingCreds != nil {
-		oldRefreshToken = strings.TrimSpace(existingCreds.RefreshToken)
-	}
-	refreshTokenChanged := oldRefreshToken != "" && refreshToken != "" && oldRefreshToken != refreshToken
+	refreshTokenChanged := existingRefreshToken != "" && refreshToken != "" && existingRefreshToken != refreshToken
 
 	// 计算新的 machineId
 	machineID := kiro.ComputeMachineID(refreshToken)
@@ -144,17 +147,14 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	bufferedStreamChanged := req.BufferedStream != oldBufferedStream
 
 	// 如果 refreshToken 未变化且存在有效凭证，检查是否只需要更新 bufferedStream
-	if !refreshTokenChanged && existingCreds != nil && existingCreds.AccessToken != "" {
+	if !refreshTokenChanged && existingAccessToken != "" {
 		if !bufferedStreamChanged {
-			// 配置未变化，直接返回现有信息
 			response := KiroConfigResponse{
-				AccessToken: existingCreds.AccessToken,
-				ExpiresAt:   "",
-				ProfileArn:  existingCreds.ProfileArn,
-				Usage:       nil,
+				AccessToken: existingAccessToken,
+				ProfileArn:  existingProfileArn,
 			}
-			if !existingCreds.ExpiresAt.IsZero() {
-				response.ExpiresAt = existingCreds.ExpiresAt.Format(time.RFC3339Nano)
+			if !existingExpiresAt.IsZero() {
+				response.ExpiresAt = existingExpiresAt.Format(time.RFC3339Nano)
 			}
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -166,15 +166,12 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 			_ = kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc)
 		}
 
-		// 返回现有凭证信息
 		response := KiroConfigResponse{
-			AccessToken: existingCreds.AccessToken,
-			ExpiresAt:   "",
-			ProfileArn:  existingCreds.ProfileArn,
-			Usage:       nil,
+			AccessToken: existingAccessToken,
+			ProfileArn:  existingProfileArn,
 		}
-		if !existingCreds.ExpiresAt.IsZero() {
-			response.ExpiresAt = existingCreds.ExpiresAt.Format(time.RFC3339Nano)
+		if !existingExpiresAt.IsZero() {
+			response.ExpiresAt = existingExpiresAt.Format(time.RFC3339Nano)
 		}
 		writeJSON(w, http.StatusOK, response)
 		return
@@ -269,15 +266,8 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		saveCreds.ExpiresAt = creds.ExpiresAt
 	}
 
-	// 保存凭证到文件
-	if err := kiroShared.SaveKiroCredentials(credsPath, saveCreds); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
-			"error": fmt.Sprintf("Failed to save credentials: %v", err),
-		})
-		return
-	}
-	if err := kiroShared.SyncKiroMultiConfigFromCredentials(credsPath, oldRefreshToken, saveCreds); err != nil {
-		// 不影响主流程：单账号配置已保存成功
+	// Sync credentials to kiro.json (single source of truth)
+	if err := kiroShared.SyncTokenToKiroJson(kiroJsonPath, existingRefreshToken, saveCreds); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync kiro.json: %v\n", err)
 	}
 
@@ -403,18 +393,25 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 加载凭证文件
-	credsPath := filepath.Join(filepath.Dir(configPath), "kiro-auth-token.json")
-	creds, err := kiroShared.LoadKiroCredentials(credsPath)
+	// 加载凭证 from kiro.json active account
+	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
+	mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
-			"error": fmt.Sprintf("Failed to load credentials: %v", err),
+			"error": fmt.Sprintf("Failed to load kiro config: %v", err),
+		})
+		return
+	}
+	activeAccount := mc.GetActiveAccount()
+	if activeAccount == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "No active Kiro account, please configure Kiro first",
 		})
 		return
 	}
 
 	// 检查 accessToken 是否存在
-	accessToken := strings.TrimSpace(creds.AccessToken)
+	accessToken := strings.TrimSpace(activeAccount.AccessToken)
 	if accessToken == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error": "No access token available, please configure Kiro first",
@@ -423,30 +420,20 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 	}
 
 	// 获取配置信息
-	region := strings.TrimSpace(creds.Region)
+	region := strings.TrimSpace(activeAccount.Region)
 	if region == "" {
 		region = "us-east-1"
 	}
 
-	profileArn := strings.TrimSpace(creds.ProfileArn)
-	refreshToken := strings.TrimSpace(creds.RefreshToken)
+	profileArn := strings.TrimSpace(activeAccount.ProfileArn)
+	refreshToken := strings.TrimSpace(activeAccount.RefreshToken)
 
 	// 从 kiro.json 读取 version, userAgent, proxyUrl
-	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
-	version := ""
-	userAgent := ""
-	proxyURL := ""
-	if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
-		version = strings.TrimSpace(mc.Version)
-		userAgent = strings.TrimSpace(mc.UserAgent)
-		proxyURL = strings.TrimSpace(mc.ProxyURL)
-	}
+	version := kiroShared.KiroVersionOrDefault(strings.TrimSpace(mc.Version))
+	userAgent := kiroShared.KiroUserAgentBaseOrDefault(strings.TrimSpace(mc.UserAgent))
+	proxyURL := strings.TrimSpace(mc.ProxyURL)
 
-	// 应用默认值
-	version = kiroShared.KiroVersionOrDefault(version)
-	userAgent = kiroShared.KiroUserAgentBaseOrDefault(userAgent)
-
-	machineID := strings.TrimSpace(creds.MachineID)
+	machineID := strings.TrimSpace(activeAccount.MachineId)
 	if machineID == "" && refreshToken != "" {
 		machineID = kiro.ComputeMachineID(refreshToken)
 	}

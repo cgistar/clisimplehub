@@ -383,11 +383,10 @@ func (m *KiroAuthManager) handleRefreshResponse(resp *http.Response) error {
 }
 
 func (m *KiroAuthManager) persistRefreshAuthFields(prevRefreshToken string) {
-	if m == nil || m.creds == nil || strings.TrimSpace(m.credsPath) == "" {
+	if m == nil || m.creds == nil {
 		return
 	}
 
-	// 刷新接口只返回 token 相关字段；这里仅持久化这些字段，避免意外改动其它配置字段。
 	authFields := &kiroShared.KiroCredentials{
 		AccessToken:  m.creds.AccessToken,
 		RefreshToken: m.creds.RefreshToken,
@@ -398,11 +397,22 @@ func (m *KiroAuthManager) persistRefreshAuthFields(prevRefreshToken string) {
 		authFields.MachineID = kiroapi.ComputeMachineID(authFields.RefreshToken)
 	}
 
-	if err := kiroShared.SaveKiroCredentials(m.credsPath, authFields); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save kiro credentials: %v\n", err)
+	// Persist to kiro.json
+	kiroJsonPath := strings.TrimSpace(m.credsPath)
+	if kiroJsonPath == "" {
+		return
 	}
-	if err := kiroShared.SyncKiroMultiConfigFromCredentials(m.credsPath, prevRefreshToken, authFields); err != nil {
+	if err := kiroShared.SyncTokenToKiroJson(kiroJsonPath, prevRefreshToken, authFields); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync kiro.json: %v\n", err)
+		return
+	}
+
+	// If refreshToken rotated, reload the global pool so MarkFailed/Select can match the new key.
+	if strings.TrimSpace(prevRefreshToken) != "" &&
+		strings.TrimSpace(prevRefreshToken) != strings.TrimSpace(authFields.RefreshToken) {
+		if pool := kiroapi.GetPool(); pool != nil {
+			pool.Reload()
+		}
 	}
 }
 

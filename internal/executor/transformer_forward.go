@@ -22,6 +22,41 @@ import (
 	"clisimplehub/internal/usage"
 )
 
+// kiroAttemptKey is the context key for tracking kiro failover attempts.
+type kiroAttemptKey struct{}
+
+func kiroFailoverAttempt(ctx context.Context) int {
+	if v, ok := ctx.Value(kiroAttemptKey{}).(int); ok {
+		return v
+	}
+	return 0
+}
+
+// tryKiroFailoverRetry attempts to rebind to a different kiro account and retry.
+// The caller must have already called handleKiroErrorStatus (or pool.MarkFailed) to persist the failure.
+// Returns non-nil if failover was executed; nil if no failover is possible.
+func (c *ExecutionContext) tryKiroFailoverRetry(ctx context.Context, tr transformer.Transformer, retryFn func(context.Context) *ForwardResult) *ForwardResult {
+	pool := kiroAuth.GetPool()
+	if pool == nil || pool.Mode() == kiroShared.RotationFixed {
+		return nil
+	}
+	kt, ok := tr.(*kiro_claude.Transformer)
+	if !ok {
+		return nil
+	}
+	if !kt.RebindAccount() {
+		return nil
+	}
+	attempt := kiroFailoverAttempt(ctx)
+	maxAttempts := pool.TotalCount()
+	if attempt >= maxAttempts {
+		return nil
+	}
+	nextCtx := context.WithValue(ctx, kiroAttemptKey{}, attempt+1)
+	fmt.Fprintf(os.Stderr, "Info: kiro failover attempt %d/%d, switching account\n", attempt+1, maxAttempts)
+	return retryFn(nextCtx)
+}
+
 func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest, w http.ResponseWriter) *ForwardResult {
 	result := &ForwardResult{}
 	debugLogger := DebugLoggerFromContext(ctx)
@@ -52,7 +87,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 
 	targetInterface := strings.ToLower(strings.TrimSpace(tr.TargetInterfaceType()))
 	if targetInterface == "kiro" && strings.EqualFold(strings.TrimSpace(interfaceType), "claude") {
-		if out := c.tryHandleKiroWebSearchShortCircuit(ctx, w, endpoint, req, tr, requestModel, upstreamModel, originalBody); out != nil {
+		if out := c.tryHandleKiroWebSearchShortCircuit(ctx, w, interfaceType, endpoint, req, tr, requestModel, upstreamModel, originalBody); out != nil {
 			return out
 		}
 	}
@@ -205,12 +240,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	}
 	// when backend returns 401/403, force-refresh token and retry once.
 	if targetInterface == "kiro" && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
-		var authErrBody []byte
-		if debugLogger != nil {
-			authErrBody, _ = io.ReadAll(io.LimitReader(resp.Body, 4096))
-		} else {
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		}
+		authErrBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 		if debugLogger != nil {
 			debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(resp.Status, resp.Header))
@@ -219,6 +249,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 				debugLogger.SetRawSection("UpstreamResponseRaw", authErrBody)
 			}
 		}
+		refreshOK := false
 		if refresher, ok := tr.(interface{ ForceRefreshKiroToken() error }); ok && refresher != nil {
 			refreshErr := refresher.ForceRefreshKiroToken()
 			if debugLogger != nil {
@@ -229,6 +260,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 				}
 			}
 			if refreshErr == nil {
+				refreshOK = true
 				time.Sleep(50 * time.Millisecond) // small jitter to avoid immediate retry collisions
 				if retryReq, err := buildProxyReq(); err == nil {
 					resp, err = client.Do(retryReq)
@@ -241,6 +273,20 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 					}
 				}
 			}
+		}
+		// Token refresh failed — try account failover before giving up
+		if !refreshOK {
+			handleKiroErrorStatus(resp.StatusCode, authErrBody, tr)
+			if out := c.tryKiroFailoverRetry(ctx, tr, func(nextCtx context.Context) *ForwardResult {
+				return c.executeWithTransformer(nextCtx, interfaceType, endpoint, req, w)
+			}); out != nil {
+				return out
+			}
+			// No failover possible; return error with the captured body
+			result.StatusCode = resp.StatusCode
+			result.Headers = resp.Header.Clone()
+			result.Body = authErrBody
+			return result
 		}
 	}
 	defer resp.Body.Close()
@@ -282,8 +328,15 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 			debugLogger.SetRawSection("UpstreamResponseRaw", body)
 		}
 
-		// 检查并更新账号状态
-		handleKiroErrorStatus(resp.StatusCode, body, tr)
+		// Check and update account status; attempt failover if applicable
+		_, canFailover := handleKiroErrorStatus(resp.StatusCode, body, tr)
+		if canFailover {
+			if out := c.tryKiroFailoverRetry(ctx, tr, func(nextCtx context.Context) *ForwardResult {
+				return c.executeWithTransformer(nextCtx, interfaceType, endpoint, req, w)
+			}); out != nil {
+				return out
+			}
+		}
 
 		result.Body = body
 		return result
@@ -324,6 +377,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
 	ctx context.Context,
 	w http.ResponseWriter,
+	interfaceType string,
 	endpoint *EndpointConfig,
 	req *ForwardRequest,
 	tr transformer.Transformer,
@@ -425,18 +479,31 @@ func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
 		return c.writeKiroWebSearchResponse(ctx, w, req, result, model, query, toolUseID, nil, inputTokens, 0)
 	}
 
-	// handle 401/403: best-effort refresh and retry once (same as /generateAssistantResponse)
+	// handle 401/403: best-effort refresh and retry once; failover if refresh fails
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
+		refreshOK := false
 		if refresher, ok := tr.(interface{ ForceRefreshKiroToken() error }); ok && refresher != nil {
-			if refreshErr := refresher.ForceRefreshKiroToken(); refreshErr == nil {
+			if refresher.ForceRefreshKiroToken() == nil {
+				refreshOK = true
 				time.Sleep(50 * time.Millisecond)
-				if retryReq, err := buildMcpReq(); err == nil {
+				retryReq, buildErr := buildMcpReq()
+				if buildErr == nil {
 					proxyReq = retryReq
 					resp, err = client.Do(retryReq)
 				}
 			}
+		}
+		if !refreshOK {
+			// Token refresh failed — try account failover (re-runs executeWithTransformer → re-enters web search)
+			handleKiroErrorStatus(resp.StatusCode, nil, tr)
+			if out := c.tryKiroFailoverRetry(ctx, tr, func(nextCtx context.Context) *ForwardResult {
+				return c.executeWithTransformer(nextCtx, interfaceType, endpoint, req, w)
+			}); out != nil {
+				return out
+			}
+			return c.writeKiroWebSearchResponse(ctx, w, req, result, model, query, toolUseID, nil, inputTokens, 0)
 		}
 		if err != nil {
 			if debugLogger != nil {
@@ -462,6 +529,18 @@ func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
 	if debugLogger != nil && len(body) > 0 {
 		debugLogger.SetSection("UpstreamResponseBody", truncateTextForLog(bytesToSafeText(body), 32*1024))
 		debugLogger.SetRawSection("UpstreamResponseRaw", body)
+	}
+
+	// Failover for 402/403 errors (e.g., exhausted/banned discovered after refresh+retry)
+	if resp.StatusCode == 402 || resp.StatusCode == 403 {
+		_, canFailover := handleKiroErrorStatus(resp.StatusCode, body, tr)
+		if canFailover {
+			if out := c.tryKiroFailoverRetry(ctx, tr, func(nextCtx context.Context) *ForwardResult {
+				return c.executeWithTransformer(nextCtx, interfaceType, endpoint, req, w)
+			}); out != nil {
+				return out
+			}
+		}
 	}
 
 	var results *kiro_claude.WebSearchResults
@@ -1094,49 +1173,78 @@ func truncateTextForLog(s string, maxLen int) string {
 	return s[:maxLen] + "\n...(truncated)\n"
 }
 
-// handleKiroErrorStatus 检查并更新 Kiro 账号状态（用于 HTTP 错误响应）
-// statusCode: HTTP 状态码
-// body: 响应体
-// tr: transformer 实例（用于获取配置路径和 refreshToken）
-func handleKiroErrorStatus(statusCode int, body []byte, tr transformer.Transformer) {
-	if tr == nil || len(body) == 0 {
-		return
+// handleKiroErrorStatus checks and updates Kiro account status on HTTP errors.
+// Returns the detected status and whether failover should be attempted.
+func handleKiroErrorStatus(statusCode int, body []byte, tr transformer.Transformer) (kiroShared.KiroAccountStatus, bool) {
+	if tr == nil {
+		return "", false
 	}
 
 	bodyStr := string(body)
 	var targetStatus kiroShared.KiroAccountStatus
 	var errorType string
 
-	// 检查 402 + MONTHLY_REQUEST_COUNT（额度用尽）
 	if statusCode == 402 && kiroShared.IsMonthlyRequestCountError(bodyStr) {
 		targetStatus = kiroShared.KiroStatusExhausted
 		errorType = "MONTHLY_REQUEST_COUNT"
 	} else if statusCode == 403 && kiroShared.IsTemporarilySuspendedError(bodyStr) {
-		// 检查 403 + TEMPORARILY_SUSPENDED（账号被封禁）
 		targetStatus = kiroShared.KiroStatusBanned
 		errorType = "TEMPORARILY_SUSPENDED"
+	} else if statusCode == 401 {
+		targetStatus = kiroShared.KiroStatusUnknown
+		errorType = "AUTH_FAILURE"
 	} else {
-		// 不是我们关心的错误类型
-		return
+		return "", false
 	}
 
-	// credentials live next to config.json
-	// Prefer CONFIG_PATH, but fall back to the kiro transformer global config getter.
+	// Determine refreshToken from the transformer's currently bound account
+	refreshToken := ""
+	if kt, ok := tr.(*kiro_claude.Transformer); ok {
+		refreshToken = kt.CurrentAccountRefreshToken()
+	}
+
+	// Fallback: determine from kiro.json active account
+	if refreshToken == "" {
+		configPath := strings.TrimSpace(os.Getenv("CONFIG_PATH"))
+		if configPath == "" {
+			if v, err := kiro_claude.GetConfig("configPath"); err == nil {
+				configPath = strings.TrimSpace(v)
+			}
+		}
+		multiConfigPath := ""
+		if configPath != "" {
+			multiConfigPath = filepath.Join(filepath.Dir(kiroShared.ExpandTilde(configPath)), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
+		}
+		if multiConfigPath == "" {
+			multiConfigPath = kiroShared.GetDefaultKiroMultiConfigPath()
+		}
+		if multiConfig, err := kiroShared.LoadKiroMultiConfig(multiConfigPath); err == nil && multiConfig != nil {
+			refreshToken = strings.TrimSpace(multiConfig.ActiveRefreshToken)
+		}
+	}
+
+	if refreshToken == "" {
+		fmt.Fprintf(os.Stderr, "Warning: cannot determine refreshToken to update account status\n")
+		return targetStatus, true
+	}
+
+	// Update via pool if available
+	pool := kiroAuth.GetPool()
+	if pool != nil {
+		if err := pool.MarkFailed(refreshToken, targetStatus); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to persist kiro account status: %v\n", err)
+		}
+		fmt.Fprintf(os.Stderr, "Info: pool marked account %s as %s due to %s\n", refreshToken[:min(8, len(refreshToken))], targetStatus, errorType)
+		return targetStatus, true
+	}
+
+	// Fallback: direct update to kiro.json
 	configPath := strings.TrimSpace(os.Getenv("CONFIG_PATH"))
 	if configPath == "" {
 		if v, err := kiro_claude.GetConfig("configPath"); err == nil {
 			configPath = strings.TrimSpace(v)
 		}
 	}
-	credsPath := ""
-	if configPath != "" {
-		credsPath = filepath.Join(filepath.Dir(kiroShared.ExpandTilde(configPath)), filepath.Base(kiroShared.GetDefaultKiroCredentialsPath()))
-	}
-	if credsPath == "" {
-		credsPath = kiroShared.GetDefaultKiroCredentialsPath()
-	}
-
-	// kiro.json 在同一目录
 	multiConfigPath := ""
 	if configPath != "" {
 		multiConfigPath = filepath.Join(filepath.Dir(kiroShared.ExpandTilde(configPath)), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
@@ -1145,37 +1253,10 @@ func handleKiroErrorStatus(statusCode int, body []byte, tr transformer.Transform
 		multiConfigPath = kiroShared.GetDefaultKiroMultiConfigPath()
 	}
 
-	// Determine refreshToken for the account that should be marked (banned/exhausted).
-	// Primary source: kiro-auth-token.json; fallback: kiro.json activeRefreshToken (multi-account mode).
-	refreshToken := ""
-	creds, err := kiroShared.LoadKiroCredentials(credsPath)
-	if err == nil && creds != nil {
-		refreshToken = strings.TrimSpace(creds.RefreshToken)
-	} else {
-		// Do not early-return: multi-account setups may not have kiro-auth-token.json at all.
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to load credentials from %s: %v\n", credsPath, err)
-		}
-	}
-	if refreshToken == "" {
-		if multiConfig, err := kiroShared.LoadKiroMultiConfig(multiConfigPath); err == nil && multiConfig != nil {
-			refreshToken = strings.TrimSpace(multiConfig.ActiveRefreshToken)
-		}
-	}
-	if refreshToken == "" {
-		fmt.Fprintf(os.Stderr, "Warning: cannot determine refreshToken to update account status (creds=%s multi=%s)\n", credsPath, multiConfigPath)
-		return
-	}
-
-	// 更新账号状态
-	if err := kiroShared.UpdateAccountStatusByRefreshToken(
-		refreshToken,
-		targetStatus,
-		credsPath,
-		multiConfigPath,
-	); err != nil {
+	if err := kiroShared.UpdateAccountStatusByRefreshToken(refreshToken, targetStatus, multiConfigPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update account status to %s (%s): %v\n", targetStatus, errorType, err)
 	} else {
-		fmt.Fprintf(os.Stderr, "Info: updated account status to %s due to %s error (path: %s)\n", targetStatus, errorType, credsPath)
+		fmt.Fprintf(os.Stderr, "Info: updated account status to %s due to %s error\n", targetStatus, errorType)
 	}
+	return targetStatus, true
 }

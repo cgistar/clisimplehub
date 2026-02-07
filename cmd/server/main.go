@@ -17,6 +17,7 @@ import (
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
+	kiro "clisimplehub/internal/transformer/kiro"
 	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
 )
 
@@ -146,6 +147,12 @@ func main() {
 		}
 		return store.GetConfig(key)
 	})
+
+	// Initialize kiro account pool
+	kiroJsonPath := filepath.Join(filepath.Dir(configPath), "kiro.json")
+	if err := kiro.InitPool(kiroJsonPath); err != nil {
+		log.Printf("Warning: failed to initialize kiro account pool: %v", err)
+	}
 
 	// Load API Key from environment variable (highest priority) or config.json
 	apiKey := strings.TrimSpace(os.Getenv(config.EnvAPIKey))

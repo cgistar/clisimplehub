@@ -8,7 +8,7 @@ import (
 )
 
 // MaxRecentLogs is the maximum number of recent logs to keep
-const MaxRecentLogs = 5
+const MaxRecentLogs = 10
 
 // StatsManager manages request logs and token statistics (in-memory only)
 type StatsManager struct {

@@ -1,4 +1,5 @@
 import { t } from '../../i18n/index.js'
+import { serverSyncSectionHTML } from '../serverSync.js'
 
 export function webdavModalTemplate() {
     return `
@@ -9,6 +10,9 @@ export function webdavModalTemplate() {
                     <button class="modal-close" onclick="closeWebDAVModal()">×</button>
                 </div>
                 <div class="modal-body">
+                    <!-- Server Sync -->
+                    ${serverSyncSectionHTML()}
+
                     <!-- WebDAV Server Configuration -->
                     <div class="card-section">
                         <h3>WebDAV 服务器配置</h3>

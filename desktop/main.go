@@ -13,6 +13,7 @@ import (
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
+	kiro "clisimplehub/internal/transformer/kiro"
 	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
 
 	"github.com/wailsapp/wails/v2"
@@ -152,6 +153,13 @@ func main() {
 		}
 		return store.GetConfig(key)
 	})
+
+	// Initialize kiro account pool
+	kiroJsonPath := filepath.Join(filepath.Dir(configPath), "kiro.json")
+	if err := kiro.InitPool(kiroJsonPath); err != nil {
+		log.Printf("Warning: failed to initialize kiro account pool: %v", err)
+	}
+
 	if key, err := store.GetConfig(ConfigKeyAPIKey); err == nil {
 		if key = strings.TrimSpace(key); key != "" {
 			proxyServer.SetAuthKey(key)

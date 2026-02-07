@@ -72,6 +72,15 @@ import {
     deleteBackupFromWebDAV
 } from './modules/webdav.js';
 import {
+    addServerAccount,
+    editServerAccount,
+    cancelServerForm,
+    saveServerAccount,
+    deleteServerAccount,
+    testServerAccount,
+    syncConfigToServer
+} from './modules/serverSync.js';
+import {
     showKiroConfigModal,
     closeKiroConfigModal,
     saveKiroConfig,
@@ -219,6 +228,13 @@ window.backupToWebDAV = backupToWebDAV;
 window.loadBackupsList = loadBackupsList;
 window.loadConfigFromWebDAV = loadConfigFromWebDAV;
 window.deleteBackupFromWebDAV = deleteBackupFromWebDAV;
+window.addServerAccount = addServerAccount;
+window.editServerAccount = editServerAccount;
+window.cancelServerForm = cancelServerForm;
+window.saveServerAccount = saveServerAccount;
+window.deleteServerAccount = deleteServerAccount;
+window.testServerAccount = testServerAccount;
+window.syncConfigToServer = syncConfigToServer;
 window.showKiroConfigModal = showKiroConfigModal;
 window.closeKiroConfigModal = closeKiroConfigModal;
 window.saveKiroConfig = saveKiroConfig;

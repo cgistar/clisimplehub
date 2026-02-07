@@ -2,22 +2,13 @@ package shared
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
 
-// SyncKiroMultiConfigFromCredentials best-effort syncs auth fields into kiro.json (multi-account config)
-// when both files live in the same directory.
-//
-// Behavior:
-//   - If kiro.json does not exist, it returns nil (no-op).
-//   - It updates the account that matches refreshToken (preferring previousRefreshToken when provided),
-//     and preserves other per-account fields (proxy, usage, etc).
-//   - It does not create new accounts.
-func SyncKiroMultiConfigFromCredentials(credsPath string, previousRefreshToken string, creds *KiroCredentials) error {
-	expandedCredsPath := ExpandTilde(credsPath)
-	if strings.TrimSpace(expandedCredsPath) == "" || creds == nil {
+// SyncTokenToKiroJson syncs auth fields from credentials into kiro.json at the given path.
+func SyncTokenToKiroJson(kiroJsonPath string, previousRefreshToken string, creds *KiroCredentials) error {
+	if strings.TrimSpace(kiroJsonPath) == "" || creds == nil {
 		return nil
 	}
 
@@ -26,15 +17,14 @@ func SyncKiroMultiConfigFromCredentials(credsPath string, previousRefreshToken s
 		return nil
 	}
 
-	multiPath := filepath.Join(filepath.Dir(expandedCredsPath), filepath.Base(GetDefaultKiroMultiConfigPath()))
-	if _, err := os.Stat(multiPath); err != nil {
+	if _, err := os.Stat(kiroJsonPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
 
-	multiConfig, err := LoadKiroMultiConfig(multiPath)
+	multiConfig, err := LoadKiroMultiConfig(kiroJsonPath)
 	if err != nil || multiConfig == nil {
 		return err
 	}
@@ -105,5 +95,5 @@ func SyncKiroMultiConfigFromCredentials(credsPath string, previousRefreshToken s
 		multiConfig.ActiveRefreshToken = nextRefreshToken
 	}
 
-	return SaveKiroMultiConfig(multiPath, multiConfig)
+	return SaveKiroMultiConfig(kiroJsonPath, multiConfig)
 }

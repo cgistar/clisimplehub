@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"clisimplehub/internal/config"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
 )
@@ -109,6 +111,7 @@ func (p *ProxyServer) Start() error {
 	mux.HandleFunc("/kiro/getUsage", p.requireAuth(p.handleKiroGetUsage))
 	mux.HandleFunc("/reload", p.requireAuth(p.handleReload))
 	mux.HandleFunc("/endpoint", p.requireAuth(p.handleEndpoint))
+	mux.HandleFunc("/sync/config", p.requireAuthStrict(p.handleSyncConfig))
 
 	if p.wsHub != nil {
 		mux.HandleFunc("/ws", p.wsHub.HandleWebSocket)
@@ -224,6 +227,20 @@ func (p *ProxyServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// requireAuthStrict requires an API key to be configured and matching.
+// Use for endpoints that mutate local state (e.g. /sync/config).
+func (p *ProxyServer) requireAuthStrict(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimSpace(p.getAuthKey()) == "" {
+			writeJSON(w, http.StatusForbidden, map[string]interface{}{
+				"error": "API authentication must be enabled for this endpoint (apiKey not configured)",
+			})
+			return
+		}
+		p.requireAuth(next)(w, r)
+	}
+}
+
 // SetFallbackEnabled sets whether fallback is enabled
 func (p *ProxyServer) SetFallbackEnabled(enabled bool) {
 	p.mu.Lock()
@@ -271,13 +288,13 @@ func (p *ProxyServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 // handleStats handles statistics requests
 func (p *ProxyServer) handleStats(w http.ResponseWriter, r *http.Request) {
 	stats := map[string]interface{}{
-		"recent_logs": p.stats.GetRecentLogs(5),
+		"recent_logs": p.stats.GetRecentLogs(10),
 		"token_stats": p.stats.GetTokenStats(),
 	}
 	writeJSON(w, http.StatusOK, stats)
 }
 
-// SetConfigPath sets the config path for kiro-auth-token.json location
+// SetConfigPath sets the config path for locating kiro.json
 func (p *ProxyServer) SetConfigPath(path string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -544,4 +561,90 @@ func (p *ProxyServer) handleEndpoint(w http.ResponseWriter, r *http.Request) {
 	if reloadFunc != nil {
 		reloadFunc()
 	}
+}
+
+// handleSyncConfig receives a full config JSON and replaces the local config.
+func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
+			"error": "method not allowed",
+		})
+		return
+	}
+
+	if p.store == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "storage not initialized",
+		})
+		return
+	}
+
+	const maxSyncConfigBytes = 10 << 20 // 10 MiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxSyncConfigBytes)
+
+	var incoming config.AppConfig
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&incoming); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "invalid request body: " + err.Error(),
+		})
+		return
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "invalid request body: multiple JSON values",
+		})
+		return
+	}
+
+	// Validate endpoints
+	var validationErrs []string
+	for i := range incoming.Endpoints {
+		if errs := config.ValidateEndpoint(&incoming.Endpoints[i]); len(errs) > 0 {
+			for _, e := range errs {
+				validationErrs = append(validationErrs, fmt.Sprintf("endpoints[%d]: %s", i, e.Error()))
+				if len(validationErrs) >= 20 {
+					break
+				}
+			}
+		}
+		if len(validationErrs) >= 20 {
+			break
+		}
+	}
+	if len(validationErrs) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "config validation failed",
+			"details": validationErrs,
+		})
+		return
+	}
+
+	fileStore, ok := p.store.(*storage.ConfigFileStore)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "storage type does not support full config replace",
+		})
+		return
+	}
+
+	if err := fileStore.ReplaceFullConfig(&incoming); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "failed to replace config: " + err.Error(),
+		})
+		return
+	}
+
+	// Trigger hot reload
+	p.mu.RLock()
+	reloadFunc := p.reloadFunc
+	p.mu.RUnlock()
+
+	if reloadFunc != nil {
+		reloadFunc()
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "config synced and reloaded successfully",
+	})
 }

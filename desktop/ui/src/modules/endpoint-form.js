@@ -337,7 +337,7 @@ function appendEndpointTestToMainLogs(context, result, durationMs) {
         responseStream: toSingleLine(responseText, 5000)
     };
 
-    state.recentLogs = [log, ...(state.recentLogs || [])].slice(0, 5);
+    state.recentLogs = [log, ...(state.recentLogs || [])].slice(0, 10);
     renderLogs(state.recentLogs);
 }
 
