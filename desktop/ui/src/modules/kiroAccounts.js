@@ -334,7 +334,6 @@ function renderAccountCard(account) {
   // 创建图标
   const powerIcon = createIcon('power', { size: 14 })
   const copyIcon = createIcon('copy', { size: 14 })
-  const eyeIcon = createIcon('eye', { size: 14 })
   const editIcon = createIcon('edit', { size: 14 })
   const trashIcon = createIcon('trash', { size: 14 })
   const refreshIcon = createIcon('refreshCw', { size: 14 })
@@ -382,7 +381,6 @@ function renderAccountCard(account) {
                     <button class="kiro-icon-btn" onclick="fetchKiroAccountUsageFromCard('${encodedToken}')" title="${t('kiro.usage')}">${batteryIcon}</button>
                     <button class="kiro-icon-btn" onclick="copyKiroAccountFromCard('${encodedToken}')" title="${t('kiro.copy')}">${copyIcon}</button>
                     <button class="kiro-icon-btn" onclick="editKiroAccountFromCard('${encodedToken}')" title="${t('kiro.edit')}">${editIcon}</button>
-                    <button class="kiro-icon-btn" onclick="viewKiroAccountFromCard('${encodedToken}')" title="${t('kiro.view')}">${eyeIcon}</button>
                     <button class="kiro-icon-btn kiro-icon-btn-danger" onclick="deleteKiroAccountFromCard('${encodedToken}')" title="${t('kiro.deleteAccount')}">${trashIcon}</button>
                 </div>
             </div>
@@ -637,50 +635,6 @@ window.copyKiroAccountFromCard = async function (encodedToken) {
   }
 }
 
-// 查看账号详细信息
-window.viewKiroAccountFromCard = function (encodedToken) {
-  const refreshToken = decodeRefreshToken(encodedToken)
-  const account = kiroAccounts.find((acc) => acc.refreshToken === refreshToken)
-  if (!account) {
-    showError(t('kiro.accountNotFound'))
-    return
-  }
-
-  // 创建详情弹窗
-  const modal = document.createElement('div')
-  modal.className = 'modal active'
-  modal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>${t('kiro.accountDetails')}</h2>
-                <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="kiro-detail-grid">
-                    ${renderDetailField(t('kiro.authMethod'), account.authMethod || '-')}
-                    ${account.provider ? renderDetailField(t('kiro.provider'), account.provider) : ''}
-                    ${renderDetailField(t('kiro.refreshToken'), truncateRefreshToken(account.refreshToken))}
-                    ${account.accessToken ? renderDetailField(t('kiro.accessToken'), truncateToken(account.accessToken)) : ''}
-                    ${account.expiresAt ? renderDetailField(t('kiro.expiresAt'), formatDate(account.expiresAt)) : ''}
-                    ${account.region ? renderDetailField(t('kiro.region'), account.region) : ''}
-                    ${account.profileArn ? renderDetailField(t('kiro.profileArn'), account.profileArn) : ''}
-                    ${account.clientId ? renderDetailField(t('kiro.clientId'), account.clientId) : ''}
-                    ${account.clientSecret ? renderDetailField(t('kiro.clientSecret'), '••••••••') : ''}
-                    ${account.subscriptionTitle ? renderDetailField(t('kiro.subscription'), account.subscriptionTitle) : ''}
-                    ${renderDetailField(t('kiro.status'), getStatusText(account.status))}
-                    ${renderDetailField(t('kiro.usage'), `${formatUsageNumber(account.currentUsage || 0)} / ${formatUsageNumber(account.usageLimit || 0)} (${(account.usagePct || 0).toFixed(1)}%)`)}
-                    ${account.createdAt ? renderDetailField(t('kiro.createdAt'), formatDate(account.createdAt)) : ''}
-                    ${account.updatedAt ? renderDetailField(t('kiro.updatedAt'), formatDate(account.updatedAt)) : ''}
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">${t('common.close')}</button>
-            </div>
-        </div>
-    `
-  document.body.appendChild(modal)
-}
-
 // 编辑账号 — 记录当前编辑的账号对象
 let editingRefreshToken = ''
 let editingAccount = null
@@ -777,22 +731,6 @@ window.saveKiroAccountEdit = async function () {
     console.error('Failed to save account edit:', error)
     showError(t('kiro.updateAccountFailed') + (error?.message || error))
   }
-}
-
-// 渲染详情字段
-function renderDetailField(label, value) {
-  return `
-        <div class="kiro-detail-field">
-            <div class="kiro-detail-label">${escapeHTML(label)}</div>
-            <div class="kiro-detail-value">${escapeHTML(value)}</div>
-        </div>
-    `
-}
-
-// 截断 token 用于显示
-function truncateToken(token) {
-  if (!token || token.length <= 32) return token || ''
-  return token.substring(0, 16) + '...' + token.substring(token.length - 16)
 }
 
 window.showAddKiroAccountOptions = showAddKiroAccountOptions
