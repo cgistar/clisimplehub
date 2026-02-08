@@ -252,6 +252,13 @@ export default {
     ping: 'Ping',
     pingAll: 'Ping All',
     pingFailed: 'Failed',
+    applyToConfig: 'Apply to CLI config',
+    applyUrlTitle: 'Apply Endpoint URL',
+    applyUrlConfirm: 'Apply this endpoint URL to {name} config?\n\nThis will update the base URL in the CLI configuration file to:\n{url}',
+    applyUrlSuccess: '{name} config updated to: {url}',
+    applyUrlFailed: 'Failed to apply URL to config',
+    notFound: 'Endpoint not found',
+    unsupportedType: 'Only Claude and Codex endpoints support this feature',
   },
   logs: {
     title: 'Request Logs',

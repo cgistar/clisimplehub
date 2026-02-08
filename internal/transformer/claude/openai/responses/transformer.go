@@ -14,7 +14,7 @@ type Transformer struct{}
 
 func (Transformer) TargetInterfaceType() string { return "codex" }
 
-func (Transformer) TargetPath(_ bool, _ string) string { return "/v1/responses" }
+func (Transformer) TargetPath(_ bool, _ string) string { return "/responses" }
 
 func (Transformer) OutputContentType(isStreaming bool) string {
 	if isStreaming {

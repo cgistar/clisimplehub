@@ -540,6 +540,7 @@ func (a *App) GetEndpointsByType(interfaceType string) ([]*EndpointInfo, error) 
 			ID:            ep.ID,
 			Name:          ep.Name,
 			APIURL:        ep.APIURL,
+			APIKey:        ep.APIKey,
 			Active:        activeEndpointID != 0 && ep.ID == activeEndpointID,
 			Enabled:       enabled,
 			InterfaceType: ep.InterfaceType,
@@ -1545,7 +1546,7 @@ func (a *App) doTestEndpoint(apiURL, apiKey, interfaceType, model, reasoning str
 			"stream": true,
 		})
 	case "codex":
-		apiPath = "/v1/responses"
+		apiPath = "/responses"
 		if model == "" {
 			model = "codex-mini-latest"
 		}
@@ -2147,107 +2148,10 @@ func (a *App) SaveCodexConfig(configToml, authJson string) error {
 	return nil
 }
 
-// ProcessClaudeConfig processes Claude config with proxy settings
-func (a *App) ProcessClaudeConfig(content string) (string, error) {
-	settings, err := a.GetSettings()
-	if err != nil {
-		return "", err
-	}
-
-	// Parse JSON
-	var config map[string]interface{}
-	if err := json.Unmarshal([]byte(content), &config); err != nil {
-		return "", fmt.Errorf("invalid JSON: %w", err)
-	}
-
-	// Ensure env section exists
-	env, ok := config["env"].(map[string]interface{})
-	if !ok {
-		env = make(map[string]interface{})
-		config["env"] = env
-	}
-
-	// Set proxy URL and API key
-	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", settings.Port)
-	env["ANTHROPIC_BASE_URL"] = proxyURL
-
-	apiKey := settings.APIKey
-	if apiKey == "" {
-		apiKey = "-"
-	}
-	env["ANTHROPIC_AUTH_TOKEN"] = apiKey
-	env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-
-	// Marshal back to JSON with indentation
-	result, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return "", err
-	}
-
-	return string(result), nil
-}
-
 // ProcessCodexConfigResult represents the result of processing Codex config
 type ProcessCodexConfigResult struct {
 	ConfigToml string `json:"configToml"`
 	AuthJson   string `json:"authJson"`
-}
-
-// ProcessCodexConfig processes Codex config with proxy settings
-func (a *App) ProcessCodexConfig(configToml, authJson string) (*ProcessCodexConfigResult, error) {
-	settings, err := a.GetSettings()
-	if err != nil {
-		return nil, err
-	}
-
-	proxyURL := fmt.Sprintf("http://127.0.0.1:%d/v1", settings.Port)
-	apiKey := settings.APIKey
-	if apiKey == "" {
-		apiKey = "-"
-	}
-
-	// Process config.toml - replace base_url
-	// Simple string replacement for TOML
-	lines := strings.Split(configToml, "\n")
-	var newLines []string
-	inLocalProvider := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Track if we're in [model_providers.local] section
-		if strings.HasPrefix(trimmed, "[model_providers.local]") {
-			inLocalProvider = true
-		} else if strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "[model_providers.local]") {
-			inLocalProvider = false
-		}
-
-		// Replace base_url in local provider section
-		if inLocalProvider && strings.HasPrefix(trimmed, "base_url") {
-			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", proxyURL))
-		} else {
-			newLines = append(newLines, line)
-		}
-	}
-	newConfigToml := strings.Join(newLines, "\n")
-
-	// Process auth.json
-	var auth map[string]interface{}
-	if err := json.Unmarshal([]byte(authJson), &auth); err != nil {
-		// If invalid, create new
-		auth = make(map[string]interface{})
-	}
-	auth["OPENAI_API_KEY"] = apiKey
-
-	newAuthJson, err := json.MarshalIndent(auth, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-
-	return &ProcessCodexConfigResult{
-		ConfigToml: newConfigToml,
-		AuthJson:   string(newAuthJson),
-	}, nil
 }
 
 // ProcessClaudeConfigWithIP processes Claude config with proxy settings using specified IP
@@ -2279,7 +2183,6 @@ func (a *App) ProcessClaudeConfigWithIP(content string, ip string) (string, erro
 		apiKey = "-"
 	}
 	env["ANTHROPIC_AUTH_TOKEN"] = apiKey
-	env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
 
 	// Marshal back to JSON with indentation
 	result, err := json.MarshalIndent(config, "", "  ")
@@ -2416,6 +2319,7 @@ func (a *App) getDefaultClaudeSettings() string {
 		"env": map[string]string{
 			"ANTHROPIC_AUTH_TOKEN":                     apiKey,
 			"ANTHROPIC_BASE_URL":                       proxyURL,
+			"CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 		},
 		"permissions": map[string]interface{}{

@@ -143,8 +143,8 @@ func (r *DefaultRouter) DetectInterfaceType(path string) InterfaceType {
 		return InterfaceTypeChat
 	}
 
-	// OpenAI Responses 路径：/v1/responses 或以 /responses 结尾的都走 codex
-	if strings.HasPrefix(lowerPath, "/v1/responses") || strings.HasSuffix(lowerPath, "/responses") {
+	// OpenAI Responses 路径：以 /responses 结尾的都走 codex
+	if strings.HasSuffix(lowerPath, "/responses") {
 		return InterfaceTypeCodex
 	}
 
@@ -581,8 +581,8 @@ func IsRetryablePath(path string) bool {
 	if strings.HasPrefix(lowerPath, "/v1/messages") {
 		return true
 	}
-	// Codex: /v1/responses or paths ending with /responses
-	if strings.HasPrefix(lowerPath, "/v1/responses") || strings.HasSuffix(lowerPath, "/responses") {
+	// Codex: paths ending with /responses
+	if strings.HasSuffix(lowerPath, "/responses") {
 		return true
 	}
 	return false
@@ -598,8 +598,8 @@ func ShouldRecordUsageStats(interfaceType InterfaceType, path string) bool {
 		if strings.HasPrefix(lowerPath, "/v1/messages") {
 			return true
 		}
-		// Codex: /v1/responses or paths ending with /responses
-		if strings.HasPrefix(lowerPath, "/v1/responses") || strings.HasSuffix(lowerPath, "/responses") {
+		// Codex: paths ending with /responses
+		if strings.HasSuffix(lowerPath, "/responses") {
 			return true
 		}
 		return false

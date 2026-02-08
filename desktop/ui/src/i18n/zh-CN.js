@@ -248,6 +248,13 @@ export default {
     ping: '测速',
     pingAll: '全部测速',
     pingFailed: '失败',
+    applyToConfig: '应用到 CLI 配置',
+    applyUrlTitle: '应用端点 URL',
+    applyUrlConfirm: '是否将此端点 URL 应用到 {name} 配置？\n\n这将更新 CLI 配置文件中的 base URL 为：\n{url}',
+    applyUrlSuccess: '{name} 配置已更新为：{url}',
+    applyUrlFailed: '应用 URL 到配置失败',
+    notFound: '端点未找到',
+    unsupportedType: '仅 Claude 和 Codex 端点支持此功能',
   },
   logs: {
     title: '请求日志',
