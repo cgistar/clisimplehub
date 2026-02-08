@@ -16,6 +16,12 @@ import {
     kiroGlobalConfigModalTemplate,
     kiroAccountEditModalTemplate
 } from './kiroModals.js'
+import {
+    grokAccountEditModalTemplate,
+    grokAccountAddModalTemplate,
+    grokGlobalConfigModalTemplate,
+    grokBulkImportModalTemplate
+} from './grokModals.js'
 import { cliConfigModalTemplate, errorToastTemplate } from './miscComponents.js'
 
 export function initUI() {
@@ -36,6 +42,10 @@ export function initUI() {
         idcDeviceFlowModalTemplate(),
         socialLoginModalTemplate(),
         kiroGlobalConfigModalTemplate(),
-        kiroAccountEditModalTemplate()
+        kiroAccountEditModalTemplate(),
+        grokAccountEditModalTemplate(),
+        grokAccountAddModalTemplate(),
+        grokGlobalConfigModalTemplate(),
+        grokBulkImportModalTemplate()
     ].join('')
 }

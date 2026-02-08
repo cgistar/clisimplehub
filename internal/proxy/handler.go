@@ -132,12 +132,23 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	requestID := uuid.New().String()
 
-	reqHeaders := sanitizeHeadersForLog(r.Header)
-	interfaceType := p.router.DetectInterfaceType(r.URL.Path)
-	isAnthropic := isAnthropicClaudeCompatiblePath(r.URL.Path)
+	// Kiro virtual route: /kiro/... → strip prefix, use Kiro transformer directly
+	var isKiroRoute bool
+	effectivePath := r.URL.Path
+	if lp := strings.ToLower(r.URL.Path); strings.HasPrefix(lp, "/kiro/") || lp == "/kiro" {
+		isKiroRoute = true
+		effectivePath = r.URL.Path[len("/kiro"):]
+		if effectivePath == "" {
+			effectivePath = "/"
+		}
+	}
 
-	isRetryable := IsRetryablePath(r.URL.Path)
-	shouldRecordStats := ShouldRecordUsageStats(interfaceType, r.URL.Path)
+	reqHeaders := sanitizeHeadersForLog(r.Header)
+	interfaceType := p.router.DetectInterfaceType(effectivePath)
+	isAnthropic := isAnthropicClaudeCompatiblePath(effectivePath)
+
+	isRetryable := IsRetryablePath(effectivePath)
+	shouldRecordStats := ShouldRecordUsageStats(interfaceType, effectivePath)
 	fallbackEnabled := p.IsFallbackEnabled()
 
 	if required := p.getAuthKey(); required != "" && !isAuthorized(r, required) {
@@ -154,7 +165,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Anthropic compatibility endpoints (Claude Code relies on these).
-	if strings.EqualFold(strings.TrimSpace(r.URL.Path), "/v1/models") && strings.EqualFold(r.Method, http.MethodGet) {
+	if strings.EqualFold(strings.TrimSpace(effectivePath), "/v1/models") && strings.EqualFold(r.Method, http.MethodGet) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"object": "list",
@@ -202,7 +213,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.Body.Close()
 
-	if strings.EqualFold(strings.TrimSpace(r.URL.Path), "/v1/messages/count_tokens") && strings.EqualFold(r.Method, http.MethodPost) {
+	if strings.EqualFold(strings.TrimSpace(effectivePath), "/v1/messages/count_tokens") && strings.EqualFold(r.Method, http.MethodPost) {
 		if !json.Valid(bodyBytes) {
 			writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON")
 			return
@@ -222,7 +233,24 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	exec := p.ensureExecutor()
 	forwardReq := executor.ForwardRequestFromHTTP(r, bodyBytes, isStreaming)
-	endpoint, resolvedType := exec.ctx.ResolveEndpoint(forwardReq.Path, forwardReq.RequestModel)
+	if isKiroRoute {
+		forwardReq.Path = effectivePath
+	}
+
+	var endpoint *executor.EndpointConfig
+	var resolvedType string
+
+	if isKiroRoute {
+		endpoint = &executor.EndpointConfig{
+			Name:          "Kiro (virtual)",
+			InterfaceType: "claude",
+			Transformer:   "kiro/claude",
+			Enabled:       true,
+		}
+		resolvedType = "claude"
+	} else {
+		endpoint, resolvedType = exec.ctx.ResolveEndpoint(forwardReq.Path, forwardReq.RequestModel)
+	}
 	if resolvedType != "" {
 		interfaceType = InterfaceType(resolvedType)
 	}
@@ -304,7 +332,18 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if debugLogger != nil {
 		execCtx = executor.WithDebugLogger(execCtx, debugLogger)
 	}
-	execResult := exec.retry.Execute(execCtx, forwardReq, w, enableRetry)
+	var execResult *executor.ExecuteResult
+	if isKiroRoute {
+		result := exec.ctx.ExecuteWithEndpoint(execCtx, endpoint, forwardReq, w)
+		execResult = &executor.ExecuteResult{
+			Result:        result,
+			Endpoint:      endpoint,
+			InterfaceType: "claude",
+			Attempts:      1,
+		}
+	} else {
+		execResult = exec.retry.Execute(execCtx, forwardReq, w, enableRetry)
+	}
 	result := execResult.Result
 
 	if result != nil {

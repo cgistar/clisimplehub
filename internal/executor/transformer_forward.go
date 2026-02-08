@@ -59,7 +59,6 @@ func (c *ExecutionContext) tryKiroFailoverRetry(ctx context.Context, tr transfor
 
 func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest, w http.ResponseWriter) *ForwardResult {
 	result := &ForwardResult{}
-	debugLogger := DebugLoggerFromContext(ctx)
 
 	if endpoint == nil || req == nil {
 		result.StatusCode = http.StatusBadRequest
@@ -80,6 +79,13 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		result.Error = fmt.Errorf("nil transformer: interfaceType=%s transformer=%q", interfaceType, endpoint.Transformer)
 		return result
 	}
+
+	return c.executeWithResolvedTransformer(ctx, interfaceType, endpoint, req, w, tr)
+}
+
+func (c *ExecutionContext) executeWithResolvedTransformer(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest, w http.ResponseWriter, tr transformer.Transformer) *ForwardResult {
+	result := &ForwardResult{}
+	debugLogger := DebugLoggerFromContext(ctx)
 
 	originalBody := req.Body
 	requestModel := extractModelFromBody(originalBody)
@@ -129,8 +135,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		}
 	}
 	rawQuery := req.RawQuery
-	// Kiro endpoints don't accept arbitrary client query parameters (e.g. Anthropic-style `?beta=true`).
-	// The reference implementation always calls the Kiro API without query parameters.
+	// Kiro endpoints don't accept arbitrary client query parameters.
 	if targetInterface == "kiro" {
 		rawQuery = ""
 	}
@@ -174,7 +179,8 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		}
 
 		// Apply authentication - special handling for kiro transformer
-		if targetInterface == "kiro" {
+		switch targetInterface {
+		case "kiro":
 			// Do NOT forward headers to the AWS Kiro/CodeWhisperer API.
 			// Some upstream paths are sensitive to unrelated client/vendor/custom headers and can return 403.
 			src, ok := tr.(kiroAuth.KiroAuthSource)
@@ -185,7 +191,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 			if err := authApplier.Apply(proxyReq); err != nil {
 				return nil, fmt.Errorf("kiro auth failed: %w", err)
 			}
-		} else {
+		default:
 			copyRequestHeaders(proxyReq, req.Headers)
 			ApplyAuthForInterfaceType(proxyReq, endpoint.APIKey, tr.TargetInterfaceType(), req.IsStreaming)
 			ApplyEndpointHeaders(proxyReq, endpoint)
@@ -278,7 +284,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		if !refreshOK {
 			handleKiroErrorStatus(resp.StatusCode, authErrBody, tr)
 			if out := c.tryKiroFailoverRetry(ctx, tr, func(nextCtx context.Context) *ForwardResult {
-				return c.executeWithTransformer(nextCtx, interfaceType, endpoint, req, w)
+				return c.executeWithResolvedTransformer(nextCtx, interfaceType, endpoint, req, w, tr)
 			}); out != nil {
 				return out
 			}
@@ -332,7 +338,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		_, canFailover := handleKiroErrorStatus(resp.StatusCode, body, tr)
 		if canFailover {
 			if out := c.tryKiroFailoverRetry(ctx, tr, func(nextCtx context.Context) *ForwardResult {
-				return c.executeWithTransformer(nextCtx, interfaceType, endpoint, req, w)
+				return c.executeWithResolvedTransformer(nextCtx, interfaceType, endpoint, req, w, tr)
 			}); out != nil {
 				return out
 			}
@@ -499,7 +505,7 @@ func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
 			// Token refresh failed — try account failover (re-runs executeWithTransformer → re-enters web search)
 			handleKiroErrorStatus(resp.StatusCode, nil, tr)
 			if out := c.tryKiroFailoverRetry(ctx, tr, func(nextCtx context.Context) *ForwardResult {
-				return c.executeWithTransformer(nextCtx, interfaceType, endpoint, req, w)
+				return c.executeWithResolvedTransformer(nextCtx, interfaceType, endpoint, req, w, tr)
 			}); out != nil {
 				return out
 			}
@@ -536,7 +542,7 @@ func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
 		_, canFailover := handleKiroErrorStatus(resp.StatusCode, body, tr)
 		if canFailover {
 			if out := c.tryKiroFailoverRetry(ctx, tr, func(nextCtx context.Context) *ForwardResult {
-				return c.executeWithTransformer(nextCtx, interfaceType, endpoint, req, w)
+				return c.executeWithResolvedTransformer(nextCtx, interfaceType, endpoint, req, w, tr)
 			}); out != nil {
 				return out
 			}

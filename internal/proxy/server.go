@@ -107,6 +107,7 @@ func (p *ProxyServer) Start() error {
 	mux.HandleFunc("/health", p.handleHealth)
 	mux.HandleFunc("/stats", p.handleStats)
 	mux.HandleFunc("/transformers", p.handleTransformers)
+	mux.HandleFunc("/grok/", p.handleGrokProxy)
 	mux.HandleFunc("/kiro/config", p.requireAuth(p.handleKiroConfig))
 	mux.HandleFunc("/kiro/getUsage", p.requireAuth(p.handleKiroGetUsage))
 	mux.HandleFunc("/reload", p.requireAuth(p.handleReload))

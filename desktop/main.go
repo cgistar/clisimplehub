@@ -15,6 +15,7 @@ import (
 	"clisimplehub/internal/storage"
 	kiro "clisimplehub/internal/transformer/kiro"
 	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
+	grok "clisimplehub/internal/transformer/grok"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -158,6 +159,12 @@ func main() {
 	kiroJsonPath := filepath.Join(filepath.Dir(configPath), "kiro.json")
 	if err := kiro.InitPool(kiroJsonPath); err != nil {
 		log.Printf("Warning: failed to initialize kiro account pool: %v", err)
+	}
+
+	// Initialize grok account pool
+	grokJsonPath := filepath.Join(filepath.Dir(configPath), "grok.json")
+	if err := grok.InitPool(grokJsonPath); err != nil {
+		log.Printf("Warning: failed to initialize grok account pool: %v", err)
 	}
 
 	if key, err := store.GetConfig(ConfigKeyAPIKey); err == nil {

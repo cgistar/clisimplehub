@@ -92,10 +92,11 @@ func List(fromInterfaceType string) ([]string, error) {
 			"openai/chat-completions",
 		}, nil
 	case "chat":
+		out := []string{}
 		if kiro_claude.HasValidLocalAccessToken() {
-			return []string{"kiro/chat"}, nil
+			out = append(out, "kiro/chat")
 		}
-		return []string{}, nil
+		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported transformer source interfaceType=%q", fromInterfaceType)
 	}
@@ -106,7 +107,6 @@ func ListAll() map[string][]string {
 	out := map[string][]string{
 		"claude": {"openai/chat-completions", "openai/responses", "gemini"},
 		"codex":  {"openai/chat-completions"},
-		"chat":   {},
 	}
 	if kiro_claude.HasValidLocalAccessToken() {
 		out["claude"] = append([]string{"kiro/claude"}, out["claude"]...)

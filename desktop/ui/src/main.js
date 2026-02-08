@@ -118,6 +118,13 @@ import {
     toggleKiroAddAccountDropdown,
     hideKiroAddAccountDropdown
 } from './modules/kiroAccounts.js';
+import {
+    loadGrokAccounts,
+    renderGrokAccountCards,
+    showAddGrokAccountDialog,
+    showGrokGlobalConfigModal,
+    showGrokBulkImportDialog
+} from './modules/grokAccounts.js';
 import { switchMainTab } from './modules/mainTabs.js';
 
 // Initialize the application
@@ -271,4 +278,7 @@ window.closeKiroAccountsModal = closeKiroAccountsModal;
 window.hideAddKiroAccountOptions = hideAddKiroAccountOptions;
 window.toggleKiroAddAccountDropdown = toggleKiroAddAccountDropdown;
 window.hideKiroAddAccountDropdown = hideKiroAddAccountDropdown;
+window.showAddGrokAccountDialog = showAddGrokAccountDialog;
+window.showGrokGlobalConfigModal = showGrokGlobalConfigModal;
+window.showGrokBulkImportDialog = showGrokBulkImportDialog;
 window.switchMainTab = switchMainTab;

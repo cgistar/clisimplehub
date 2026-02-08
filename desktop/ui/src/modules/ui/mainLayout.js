@@ -96,5 +96,40 @@ export function mainLayoutTemplate() {
                     </div>
                 </div>
             </div>
+        </div>
+
+        <div class="main-container kiro-accounts-view" id="grokAccountsView" style="display: none;">
+            <div class="kiro-accounts-page">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>${createIcon('users', { size: 16 })} ${t('grok.accountsTitle')}</h2>
+                        <div class="card-header-actions">
+                            <button class="btn btn-sm btn-secondary" style="margin-right: 8px;" onclick="showGrokGlobalConfigModal()" title="${t('grok.globalConfig')}">
+                                ${createIcon('settings', { size: 14 })} ${t('grok.globalConfig')}
+                            </button>
+                            <div class="kiro-add-account-dropdown">
+                                <button class="btn btn-sm btn-primary" onclick="toggleGrokAddAccountDropdown(event)" title="${t('grok.addAccount')}">
+                                    ${createIcon('plus', { size: 14 })} ${t('grok.addAccount')} ${createIcon('chevronDown', { size: 14 })}
+                                </button>
+                                <div class="kiro-add-account-menu" id="grokAddAccountMenu" style="display: none;">
+                                    <button class="dropdown-item" onclick="showAddGrokAccountDialog()">
+                                        <span class="dropdown-icon">${createIcon('plus', { size: 14 })}</span>
+                                        <span class="dropdown-text">${t('grok.addSingleAccount')}</span>
+                                    </button>
+                                    <button class="dropdown-item" onclick="showGrokBulkImportDialog()">
+                                        <span class="dropdown-icon">${createIcon('download', { size: 14 })}</span>
+                                        <span class="dropdown-text">${t('grok.bulkImport')}</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kiro-accounts-page-body">
+                        <div class="kiro-accounts-grid" id="grokAccountsGrid">
+                            <div class="loading">${t('common.loading')}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>`
 }
