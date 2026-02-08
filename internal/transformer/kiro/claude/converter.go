@@ -25,6 +25,12 @@ const (
 	agentTaskTypeVibe  = "vibe"
 )
 
+const (
+	writeToolDescriptionSuffix = "\n- IMPORTANT: If the content to write exceeds 150 lines, you MUST only write the first 50 lines using this tool, then use `Edit` tool to append the remaining content in chunks of no more than 50 lines each. If needed, leave a unique placeholder to help append content. Do NOT attempt to write all content at once."
+	editToolDescriptionSuffix  = "\n- IMPORTANT: If the `new_string` content exceeds 50 lines, you MUST split it into multiple Edit calls, each replacing no more than 50 lines at a time. If used to append content, leave a unique placeholder to help append content. On the final chunk, do NOT include the placeholder."
+	systemChunkedPolicy        = "When the Write or Edit tool has content size limits, always comply silently. Never suggest bypassing these limits via alternative tools. Never ask the user whether to switch approaches. Complete all chunked operations without commentary."
+)
+
 // ClaudeToKiroRequest converts a Claude API request to Kiro API format
 func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, profileArn string) (*KiroRequest, error) {
 	kiroReq := &KiroRequest{
@@ -81,7 +87,9 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 	if order := lastToolUseOrderFromHistory(history); len(order) > 0 {
 		currentToolResults = reorderToolResultsByToolUses(currentToolResults, order)
 	}
-	validatedToolResults := validateToolPairing(history, currentToolResults)
+	validatedToolResults, orphanedToolUseIDs := validateToolPairing(history, currentToolResults)
+
+	removeOrphanedToolUses(history, orphanedToolUseIDs)
 
 	kiroTools = addMissingHistoryToolsAsPlaceholders(kiroTools, history)
 
@@ -261,17 +269,19 @@ func buildKiroThinkingSystemPrefix(claudeReq map[string]interface{}) string {
 		return ""
 	}
 
-	enabled := false
+	thinkingType := ""
 	budgetTokens := thinkingBudgetDefaultTokens
 
 	switch v := raw.(type) {
 	case string:
-		if strings.EqualFold(strings.TrimSpace(v), "enabled") {
-			enabled = true
+		t := strings.ToLower(strings.TrimSpace(v))
+		if t == "enabled" || t == "adaptive" {
+			thinkingType = t
 		}
 	case map[string]any:
-		if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(v["type"])), "enabled") {
-			enabled = true
+		t := strings.ToLower(strings.TrimSpace(shared.StringFromAny(v["type"])))
+		if t == "enabled" || t == "adaptive" {
+			thinkingType = t
 			if bt := v["budget_tokens"]; bt != nil {
 				if parsed := shared.IntFromAny(bt); parsed > 0 {
 					budgetTokens = parsed
@@ -280,9 +290,26 @@ func buildKiroThinkingSystemPrefix(claudeReq map[string]interface{}) string {
 		}
 	}
 
-	if !enabled {
+	if thinkingType == "" {
 		return ""
 	}
+
+	if thinkingType == "adaptive" {
+		effort := "high"
+		if oc, ok := claudeReq["output_config"].(map[string]any); ok {
+			if e := strings.ToLower(strings.TrimSpace(shared.StringFromAny(oc["effort"]))); e != "" {
+				effort = e
+			}
+		}
+		switch effort {
+		case "low", "medium", "high":
+		default:
+			effort = "high"
+		}
+		return fmt.Sprintf("<thinking_mode>adaptive</thinking_mode><thinking_effort>%s</thinking_effort>", effort)
+	}
+
+	// "enabled" mode
 	if budgetTokens <= 0 {
 		budgetTokens = thinkingBudgetDefaultTokens
 	}
@@ -294,7 +321,7 @@ func buildKiroThinkingSystemPrefix(claudeReq map[string]interface{}) string {
 }
 
 func systemHasKiroThinkingTags(systemPrompt string) bool {
-	return strings.Contains(systemPrompt, "<thinking_mode>") || strings.Contains(systemPrompt, "<max_thinking_length>")
+	return strings.Contains(systemPrompt, "<thinking_mode>") || strings.Contains(systemPrompt, "<max_thinking_length>") || strings.Contains(systemPrompt, "<thinking_effort>")
 }
 
 // determineChatTriggerType determines the chat trigger type
@@ -852,6 +879,14 @@ func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength
 			}
 		}
 
+		// Append chunked strategy suffix for Write/Edit tools
+		if strings.EqualFold(name, "Write") && !strings.Contains(description, writeToolDescriptionSuffix) {
+			description += writeToolDescriptionSuffix
+		}
+		if strings.EqualFold(name, "Edit") && !strings.Contains(description, editToolDescriptionSuffix) {
+			description += editToolDescriptionSuffix
+		}
+
 		// 检查是否需要收集到 longDescTools
 		originalDesc := description
 		if len(description) > toolDescriptionTruncateThreshold {
@@ -936,18 +971,20 @@ func createPlaceholderTool(name string) KiroTool {
 	}
 }
 
-// validateToolPairing validates and filters tool_use/tool_result pairing
-//
-// Collects all tool_use_ids, validates if tool_result matches
-// Silently skips orphaned tool_use and tool_result, outputs warning logs
-func validateToolPairing(history []KiroHistoryMessage, toolResults []ToolResult) []ToolResult {
+// validateToolPairing validates and filters tool_use/tool_result pairing.
+// Returns (filtered tool_results, orphaned tool_use_ids that have no matching tool_result).
+func validateToolPairing(history []KiroHistoryMessage, toolResults []ToolResult) ([]ToolResult, map[string]struct{}) {
 	// 1. Collect all tool_use_ids from history
 	allToolUseIDs := make(map[string]struct{})
 
 	for _, msg := range history {
 		if msg.AssistantResponseMessage != nil && len(msg.AssistantResponseMessage.ToolUses) > 0 {
 			for _, toolUse := range msg.AssistantResponseMessage.ToolUses {
-				allToolUseIDs[toolUse.ToolUseID] = struct{}{}
+				id := strings.TrimSpace(toolUse.ToolUseID)
+				if id == "" {
+					continue
+				}
+				allToolUseIDs[id] = struct{}{}
 			}
 		}
 	}
@@ -958,7 +995,11 @@ func validateToolPairing(history []KiroHistoryMessage, toolResults []ToolResult)
 	for _, msg := range history {
 		if msg.UserInputMessage != nil && msg.UserInputMessage.UserInputMessageContext != nil {
 			for _, result := range msg.UserInputMessage.UserInputMessageContext.ToolResults {
-				historyToolResultIDs[result.ToolUseID] = struct{}{}
+				id := strings.TrimSpace(result.ToolUseID)
+				if id == "" {
+					continue
+				}
+				historyToolResultIDs[id] = struct{}{}
 			}
 		}
 	}
@@ -975,23 +1016,43 @@ func validateToolPairing(history []KiroHistoryMessage, toolResults []ToolResult)
 	var filteredResults []ToolResult
 
 	for _, result := range toolResults {
-		if _, exists := unpairedToolUseIDs[result.ToolUseID]; exists {
-			// Pairing successful
-			filteredResults = append(filteredResults, result)
-			delete(unpairedToolUseIDs, result.ToolUseID)
-		} else if _, exists := allToolUseIDs[result.ToolUseID]; exists {
-			// tool_use exists but already paired in history
-			// Skip duplicate tool_result (silently, as per Rust implementation)
-		} else {
-			// Orphaned tool_result
-			// Skip orphaned tool_result (silently, as per Rust implementation)
+		id := strings.TrimSpace(result.ToolUseID)
+		if id == "" {
+			continue
 		}
+		if _, exists := unpairedToolUseIDs[id]; exists {
+			filteredResults = append(filteredResults, result)
+			delete(unpairedToolUseIDs, id)
+		}
+		// Silently skip duplicates and orphaned tool_results
 	}
 
-	// 5. Check for orphaned tool_use (has tool_use but no tool_result)
-	// Note: We silently skip these as per the Rust implementation
+	return filteredResults, unpairedToolUseIDs
+}
 
-	return filteredResults
+// 从历史的 assistant 消息中删除无匹配 tool_result 的 tool_use，防止 Kiro 400 错误
+func removeOrphanedToolUses(history []KiroHistoryMessage, orphanedIDs map[string]struct{}) {
+	if len(orphanedIDs) == 0 {
+		return
+	}
+	for i := range history {
+		msg := &history[i]
+		if msg.AssistantResponseMessage == nil || len(msg.AssistantResponseMessage.ToolUses) == 0 {
+			continue
+		}
+		filtered := msg.AssistantResponseMessage.ToolUses[:0]
+		for _, tu := range msg.AssistantResponseMessage.ToolUses {
+			id := strings.TrimSpace(tu.ToolUseID)
+			if id == "" {
+				filtered = append(filtered, tu)
+				continue
+			}
+			if _, orphaned := orphanedIDs[id]; !orphaned {
+				filtered = append(filtered, tu)
+			}
+		}
+		msg.AssistantResponseMessage.ToolUses = filtered
+	}
 }
 
 // extractSessionID extracts session UUID from metadata.user_id
@@ -1060,27 +1121,62 @@ func flushPendingThinkingTextBeforeToolUse(state *StreamState, outputs *[]string
 	if state == nil || outputs == nil {
 		return
 	}
-	if !state.ThinkingEnabled || state.InThinkingBlock || state.ThinkingExtracted {
+	if !state.ThinkingEnabled {
 		return
 	}
-	if state.ToolUseBlockOpen || state.ToolBlockOpen || state.ThinkingBlockOpen {
+
+	// Handle boundary: </thinking> at buffer end without \n\n (tool_use immediately follows)
+	if state.InThinkingBlock {
+		endPos := findRealThinkingEndTagAtBufferEnd(state.ThinkingBuffer)
+		if endPos >= 0 {
+			thinking := state.ThinkingBuffer[:endPos]
+			if thinking != "" {
+				if !state.ThinkingBlockOpen {
+					state.ThinkingBlockIndex = state.ContentIndex
+					*outputs = append(*outputs, buildThinkingBlockStart(state.ThinkingBlockIndex))
+					state.ThinkingBlockOpen = true
+				}
+				*outputs = append(*outputs, buildThinkingDelta(state.ThinkingBlockIndex, thinking))
+				state.ThinkingSoFar += thinking
+			}
+
+			// Close thinking block
+			if state.ThinkingBlockOpen {
+				*outputs = append(*outputs, buildThinkingDelta(state.ThinkingBlockIndex, ""))
+				*outputs = append(*outputs, buildContentBlockStop(state.ThinkingBlockIndex))
+				state.ThinkingBlockOpen = false
+			}
+			state.InThinkingBlock = false
+			state.ThinkingExtracted = true
+
+			// Remaining content after end tag
+			afterPos := endPos + len(thinkingEndTag)
+			remaining := strings.TrimLeft(state.ThinkingBuffer[afterPos:], " \t\r\n")
+			state.ThinkingBuffer = ""
+			state.ContentIndex = state.ThinkingBlockIndex + 1
+			state.ThinkingBlockIndex = -1
+
+			if remaining != "" {
+				ensureMessageStarted(state, outputs)
+				ensureTextBlockOpen(state, outputs)
+				*outputs = append(*outputs, buildContentBlockDelta(state.ContentIndex, remaining))
+				state.TextSoFar += remaining
+			}
+		}
+		return
+	}
+
+	// Flush buffered text that hasn't entered thinking yet
+	if state.ThinkingExtracted || state.ToolUseBlockOpen || state.ToolBlockOpen || state.ThinkingBlockOpen {
 		return
 	}
 	if state.ThinkingBuffer == "" {
 		return
 	}
 
-	keep := keepSuffixForPossibleTagPrefix(state.ThinkingBuffer, thinkingStartTag)
-	target := len(state.ThinkingBuffer) - keep
-	if target <= 0 {
-		return
-	}
-	safe := findCharBoundary(state.ThinkingBuffer, target)
-	if safe <= 0 {
-		return
-	}
-	safeText := state.ThinkingBuffer[:safe]
-	state.ThinkingBuffer = state.ThinkingBuffer[safe:]
+	// Flush all buffered text (no partial tag matching needed, tool_use is starting)
+	safeText := state.ThinkingBuffer
+	state.ThinkingBuffer = ""
 
 	ensureMessageStarted(state, outputs)
 	ensureTextBlockOpen(state, outputs)
@@ -1161,12 +1257,14 @@ func processContentWithThinking(state *StreamState, delta string, outputs *[]str
 			startPos := findRealThinkingStartTag(state.ThinkingBuffer)
 			if startPos >= 0 {
 				beforeThinking := state.ThinkingBuffer[:startPos]
-				if beforeThinking != "" {
+				// Skip whitespace-only content before thinking (e.g. adaptive mode \n\n)
+				if beforeThinking != "" && strings.TrimSpace(beforeThinking) != "" {
 					emitText(beforeThinking)
 				}
 
 				// Consume the start tag and enter the thinking block.
 				state.ThinkingBuffer = state.ThinkingBuffer[startPos+len(thinkingStartTag):]
+				state.StripThinkingLeadingNewline = true
 				startThinkingBlock()
 				continue
 			}
@@ -1179,13 +1277,34 @@ func processContentWithThinking(state *StreamState, delta string, outputs *[]str
 			}
 			safe := findCharBoundary(state.ThinkingBuffer, target)
 			if safe > 0 {
-				emitText(state.ThinkingBuffer[:safe])
+				safeContent := state.ThinkingBuffer[:safe]
+				// Don't emit whitespace-only prefix before thinking is extracted
+				if !state.ThinkingExtracted && strings.TrimSpace(safeContent) == "" {
+					break
+				}
+				emitText(safeContent)
 				state.ThinkingBuffer = state.ThinkingBuffer[safe:]
 			}
 			break
 		}
 
 		if state.InThinkingBlock {
+			// Strip leading newline after <thinking> tag (may span chunks)
+			if state.StripThinkingLeadingNewline {
+				if strings.HasPrefix(state.ThinkingBuffer, "\r\n") {
+					state.ThinkingBuffer = state.ThinkingBuffer[2:]
+					state.StripThinkingLeadingNewline = false
+				} else if len(state.ThinkingBuffer) > 0 && (state.ThinkingBuffer[0] == '\n' || state.ThinkingBuffer[0] == '\r') {
+					state.ThinkingBuffer = state.ThinkingBuffer[1:]
+					state.StripThinkingLeadingNewline = false
+				} else if len(state.ThinkingBuffer) > 0 {
+					state.StripThinkingLeadingNewline = false
+				} else {
+					// Buffer empty, wait for next chunk
+					break
+				}
+			}
+
 			endPos := findRealThinkingEndTag(state.ThinkingBuffer)
 			if endPos >= 0 {
 				thinking := state.ThinkingBuffer[:endPos]
@@ -1193,14 +1312,18 @@ func processContentWithThinking(state *StreamState, delta string, outputs *[]str
 					emitThinkingDelta(thinking)
 				}
 
-				// Consume only the end tag, leaving the trailing "\n\n" for text output.
-				state.ThinkingBuffer = state.ThinkingBuffer[endPos+len(thinkingEndTag):]
+				// Consume end tag + "\n\n"
+				state.ThinkingBuffer = state.ThinkingBuffer[endPos+len(thinkingEndTag)+2:]
 				stopThinkingBlock()
 				continue
 			}
 
-			// No end tag found: flush safe prefix but keep enough bytes to detect a partial end tag.
-			keep := keepSuffixForPossibleTagPrefix(state.ThinkingBuffer, thinkingEndTag)
+			// No end tag found: flush safe prefix keeping enough for "</thinking>\n\n" (13 bytes)
+			tagWithNewlines := thinkingEndTag + "\n\n"
+			keep := len(tagWithNewlines) - 1
+			if keep > len(state.ThinkingBuffer) {
+				keep = len(state.ThinkingBuffer)
+			}
 			target := len(state.ThinkingBuffer) - keep
 			if target <= 0 {
 				break
@@ -1299,7 +1422,6 @@ func isNonWesternChar(r rune) bool {
 }
 
 // estimateTokens 估算文本的 token 数量
-// 算法对齐 Rust 项目 (kiro.rs)：
 // - 非西文字符：每个计 4 个字符单位
 // - 西文字符：每个计 1 个字符单位
 // - 4 个字符单位 = 1 token
@@ -1643,17 +1765,23 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			const contextWindowSize = 200000
 			actualInputTokens := int(percentage * contextWindowSize / 100.0)
 
-			// 优先使用从 contextUsagePercentage 计算的精确值
-			// 这比估算值和 meteringEvent 都更准确
 			if actualInputTokens > 0 {
 				state.InputTokens = actualInputTokens
 				state.InputTokensSource = "context_usage"
 			}
 		}
 
+		// Context window >= 100% → model_context_window_exceeded
+		if percentage >= 100.0 {
+			state.FinishReason = "model_context_window_exceeded"
+		}
+
 	case kirotypes.StreamEventStopReason:
+		if state == nil {
+			return nil, nil
+		}
 		stopReason, ok := event.Data.(string)
-		if ok {
+		if ok && state.FinishReason != "model_context_window_exceeded" {
 			state.FinishReason = mapKiroStopReason(stopReason)
 		}
 
@@ -1715,30 +1843,83 @@ func FinishStream(state *StreamState) []string {
 
 		// If we were inside a thinking block, flush as thinking and close it.
 		if state.InThinkingBlock || state.ThinkingBlockOpen {
-			if state.ContentBlockOpen {
-				outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
-				state.ContentBlockOpen = false
-				state.ContentIndex++
-			}
-			if !state.ThinkingBlockOpen {
-				state.ThinkingBlockIndex = state.ContentIndex
-				outputs = append(outputs, buildThinkingBlockStart(state.ThinkingBlockIndex))
-				state.ThinkingBlockOpen = true
-			}
-			outputs = append(outputs, buildThinkingDelta(state.ThinkingBlockIndex, state.ThinkingBuffer))
-			state.ThinkingSoFar += state.ThinkingBuffer
-			state.ThinkingBuffer = ""
+			// Try to filter </thinking> end tag at buffer end
+			endPos := findRealThinkingEndTagAtBufferEnd(state.ThinkingBuffer)
+			if endPos >= 0 {
+				thinkingContent := state.ThinkingBuffer[:endPos]
+				if state.ContentBlockOpen {
+					outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+					state.ContentBlockOpen = false
+					state.ContentIndex++
+				}
+				if !state.ThinkingBlockOpen {
+					state.ThinkingBlockIndex = state.ContentIndex
+					outputs = append(outputs, buildThinkingBlockStart(state.ThinkingBlockIndex))
+					state.ThinkingBlockOpen = true
+				}
+				if thinkingContent != "" {
+					outputs = append(outputs, buildThinkingDelta(state.ThinkingBlockIndex, thinkingContent))
+					state.ThinkingSoFar += thinkingContent
+				}
+				outputs = append(outputs, buildThinkingDelta(state.ThinkingBlockIndex, ""))
+				outputs = append(outputs, buildContentBlockStop(state.ThinkingBlockIndex))
+				state.ThinkingBlockOpen = false
+				state.InThinkingBlock = false
+				state.ThinkingExtracted = true
 
-			outputs = append(outputs, buildThinkingDelta(state.ThinkingBlockIndex, ""))
-			outputs = append(outputs, buildContentBlockStop(state.ThinkingBlockIndex))
-			state.ThinkingBlockOpen = false
-			state.InThinkingBlock = false
-			state.ThinkingExtracted = true
-			state.ContentIndex = state.ThinkingBlockIndex + 1
-			state.ThinkingBlockIndex = -1
+				afterPos := endPos + len(thinkingEndTag)
+				remaining := strings.TrimLeft(state.ThinkingBuffer[afterPos:], " \t\r\n")
+				state.ThinkingBuffer = ""
+				state.ContentIndex = state.ThinkingBlockIndex + 1
+				state.ThinkingBlockIndex = -1
+				if remaining != "" {
+					emitText(remaining)
+				}
+			} else {
+				// No end tag found, flush everything as thinking
+				if state.ContentBlockOpen {
+					outputs = append(outputs, buildContentBlockStop(state.ContentIndex))
+					state.ContentBlockOpen = false
+					state.ContentIndex++
+				}
+				if !state.ThinkingBlockOpen {
+					state.ThinkingBlockIndex = state.ContentIndex
+					outputs = append(outputs, buildThinkingBlockStart(state.ThinkingBlockIndex))
+					state.ThinkingBlockOpen = true
+				}
+				outputs = append(outputs, buildThinkingDelta(state.ThinkingBlockIndex, state.ThinkingBuffer))
+				state.ThinkingSoFar += state.ThinkingBuffer
+				state.ThinkingBuffer = ""
+
+				outputs = append(outputs, buildThinkingDelta(state.ThinkingBlockIndex, ""))
+				outputs = append(outputs, buildContentBlockStop(state.ThinkingBlockIndex))
+				state.ThinkingBlockOpen = false
+				state.InThinkingBlock = false
+				state.ThinkingExtracted = true
+				state.ContentIndex = state.ThinkingBlockIndex + 1
+				state.ThinkingBlockIndex = -1
+			}
 		} else {
 			emitText(state.ThinkingBuffer)
 			state.ThinkingBuffer = ""
+		}
+	}
+
+	// Thinking-only: no text and no tool_use → emit a placeholder text block to ensure
+	// content[] has a text entry. If stop_reason is still unset/default, treat it as max_tokens.
+	if state != nil && state.ThinkingEnabled && state.ThinkingExtracted &&
+		strings.TrimSpace(state.TextSoFar) == "" &&
+		len(state.CollectedToolUses) == 0 && !state.ToolUseBlockOpen {
+		if state.FinishReason == "" || state.FinishReason == "end_turn" {
+			state.FinishReason = "max_tokens"
+			if state.StopReasonManager != nil {
+				state.StopReasonManager.SetMaxTokensReached(true)
+			}
+		}
+		ensureTextBlockOpen(state, &outputs)
+		if state.ContentBlockOpen {
+			outputs = append(outputs, buildContentBlockDelta(state.ContentIndex, " "))
+			state.TextSoFar = " "
 		}
 	}
 

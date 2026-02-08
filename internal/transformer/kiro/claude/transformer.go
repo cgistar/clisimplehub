@@ -148,11 +148,13 @@ func newStreamState(modelName string, originalRequestRawJSON []byte) *StreamStat
 		if req, err := shared.DecodeJSONMap(originalRequestRawJSON); err == nil {
 			switch v := req["thinking"].(type) {
 			case map[string]any:
-				if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(v["type"])), "enabled") {
+				t := strings.ToLower(strings.TrimSpace(shared.StringFromAny(v["type"])))
+				if t == "enabled" || t == "adaptive" {
 					thinkingEnabled = true
 				}
 			case string:
-				if strings.EqualFold(strings.TrimSpace(v), "enabled") {
+				t := strings.ToLower(strings.TrimSpace(v))
+				if t == "enabled" || t == "adaptive" {
 					thinkingEnabled = true
 				}
 			}
@@ -277,11 +279,13 @@ func (t *Transformer) TransformResponseNonStream(
 		if req, err := shared.DecodeJSONMap(originalRequestRawJSON); err == nil {
 			switch v := req["thinking"].(type) {
 			case map[string]any:
-				if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(v["type"])), "enabled") {
+				t := strings.ToLower(strings.TrimSpace(shared.StringFromAny(v["type"])))
+				if t == "enabled" || t == "adaptive" {
 					thinkingEnabled = true
 				}
 			case string:
-				if strings.EqualFold(strings.TrimSpace(v), "enabled") {
+				t := strings.ToLower(strings.TrimSpace(v))
+				if t == "enabled" || t == "adaptive" {
 					thinkingEnabled = true
 				}
 			}

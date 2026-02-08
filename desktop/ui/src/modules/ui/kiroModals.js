@@ -447,11 +447,9 @@ export function kiroAccountEditModalTemplate() {
                         <input type="number" id="editKiroWeight" min="1" placeholder="1">
                         <small>${t('kiro.weightHelp')}</small>
                     </div>
-                    <hr style="margin: 12px 0; border: none; border-top: 1px solid var(--border);">
-                    <small style="display:block;margin-bottom:8px;color:var(--text-secondary);">${t('kiro.readonlyInfo')}</small>
                     <div class="form-group">
                         <label>MachineId</label>
-                        <input type="text" id="editKiroMachineId" readonly style="opacity:.7;">
+                        <input type="text" id="editKiroMachineId" placeholder="Optional unique machine identifier">
                     </div>
                 </div>
                 <div class="modal-footer">

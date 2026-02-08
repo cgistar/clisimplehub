@@ -1,6 +1,9 @@
 package claude
 
-import "unicode/utf8"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 const (
 	thinkingStartTag = "<thinking>"
@@ -79,6 +82,36 @@ func findRealThinkingEndTag(buffer string) int {
 			return -1
 		}
 		if buffer[after:after+2] == "\n\n" {
+			return pos
+		}
+
+		searchStart = pos + 1
+	}
+}
+
+// findRealThinkingEndTagAtBufferEnd finds </thinking> at the buffer end
+// where only whitespace follows the tag. Used for boundary events:
+// when tool_use immediately follows thinking, or stream ends.
+func findRealThinkingEndTagAtBufferEnd(buffer string) int {
+	searchStart := 0
+	for {
+		pos := indexOf(buffer, thinkingEndTag, searchStart)
+		if pos < 0 {
+			return -1
+		}
+
+		before := pos - 1
+		after := pos + len(thinkingEndTag)
+		hasQuoteBefore := pos > 0 && isQuoteChar(buffer, before)
+		hasQuoteAfter := isQuoteChar(buffer, after)
+		if hasQuoteBefore || hasQuoteAfter {
+			searchStart = pos + 1
+			continue
+		}
+
+		// Only match if everything after the tag is whitespace
+		remaining := buffer[after:]
+		if strings.TrimSpace(remaining) == "" {
 			return pos
 		}
 

@@ -63,9 +63,6 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 
 	fp := k.source.MachineID()
-	if fp == "" {
-		fp = "33e6db50359eab22e8c82e76d7f9e2f76e16daca79c68c1b1addcb011efe87b5"
-	}
 	fp = kiroShared.TruncateFingerprint(fp, 64)
 
 	userAgentBase := k.source.KiroUserAgentBase()

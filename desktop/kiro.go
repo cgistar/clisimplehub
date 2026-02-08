@@ -167,7 +167,7 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 	if newRegion == "" {
 		newRegion = "us-east-1"
 	}
-	machineID := kiroCore.ComputeMachineID(newRefreshToken)
+	fallbackMachineID := kiroCore.ComputeMachineID(newRefreshToken)
 
 	// Find or create account in kiro.json
 	account := multiConfig.FindAccountByRefreshToken(newRefreshToken)
@@ -194,7 +194,11 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 		// Update existing account
 		account.RefreshToken = newRefreshToken
 		account.Region = newRegion
-		account.MachineId = machineID
+		if mid := kiroShared.NormalizeMachineID(account.MachineId); mid != "" {
+			account.MachineId = mid
+		} else {
+			account.MachineId = fallbackMachineID
+		}
 		account.AuthMethod = config.AuthMethod
 		account.Provider = config.Provider
 		account.ClientId = config.ClientId
@@ -230,7 +234,7 @@ func (a *App) SaveKiroConfig(config *KiroConfig) error {
 		newAccount := &kiroShared.KiroAccount{
 			RefreshToken: newRefreshToken,
 			Region:       newRegion,
-			MachineId:    machineID,
+			MachineId:    fallbackMachineID,
 			AuthMethod:   config.AuthMethod,
 			Provider:     config.Provider,
 			ClientId:     config.ClientId,
@@ -753,7 +757,11 @@ func (a *App) AddKiroAccount(dto *KiroAccountDTO) (*KiroAccountDTO, error) {
 	// 创建新账号
 	now := time.Now()
 	account := dtoToAccount(dto)
-	account.MachineId = kiroCore.ComputeMachineID(account.RefreshToken)
+	if mid := kiroShared.NormalizeMachineID(account.MachineId); mid != "" {
+		account.MachineId = mid
+	} else {
+		account.MachineId = kiroCore.ComputeMachineID(account.RefreshToken)
+	}
 	account.CreatedAt = now
 	account.UpdatedAt = now
 	if account.Status == "" {
@@ -803,8 +811,9 @@ func (a *App) UpdateKiroAccount(dto *KiroAccountDTO) error {
 	account := dtoToAccount(dto)
 	account.CreatedAt = existing.CreatedAt // 保留创建时间
 	account.UpdatedAt = time.Now()
-	// 保留 machineId
-	if account.MachineId == "" {
+	if mid := kiroShared.NormalizeMachineID(account.MachineId); mid != "" {
+		account.MachineId = mid
+	} else {
 		account.MachineId = existing.MachineId
 	}
 
@@ -880,14 +889,12 @@ func (a *App) TestKiroAccount(refreshToken string) (*KiroTestResult, error) {
 			account.ExpiresAt = t
 		}
 	}
-	// 注意：refreshToken 变更时需要重新计算 machineId
+	// refreshToken 变更时，仅当 machineId 为空才重新计算
 	if result.RefreshToken != "" && result.RefreshToken != account.RefreshToken {
 		account.RefreshToken = result.RefreshToken
-		account.MachineId = kiroCore.ComputeMachineID(result.RefreshToken)
-	}
-	// 兼容历史数据：当 machineId 为空时，基于 refreshToken 补全并保存
-	if strings.TrimSpace(account.MachineId) == "" && strings.TrimSpace(account.RefreshToken) != "" {
-		account.MachineId = kiroCore.ComputeMachineID(account.RefreshToken)
+		if strings.TrimSpace(account.MachineId) == "" {
+			account.MachineId = kiroCore.ComputeMachineID(result.RefreshToken)
+		}
 	}
 	account.Status = kiroShared.KiroStatusValid
 	account.UpdatedAt = time.Now()

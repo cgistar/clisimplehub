@@ -46,13 +46,17 @@ func KiroVersionOrDefault(version string) string {
 func TruncateFingerprint(fp string, maxLen int) string {
 	fp = strings.TrimSpace(fp)
 	if fp == "" {
-		return "unknown"
+		return "33e6db50359eab22e8c82e76d7f9e2f76e16daca79c68c1b1addcb011efe87b5"
 	}
-	// Keep compatibility with 32-hex "UUID-without-dashes" style fingerprints by normalizing
-	// to the 64-hex machineId format used by Kiro clients.
-	// (mirrors kiro.rs behavior: 32 hex -> repeat once)
+	if len(fp) == 64 && isHexString(fp) {
+		return fp
+	}
 	if len(fp) == 32 && isHexString(fp) {
 		fp = fp + fp
+	}
+	noDash := strings.ReplaceAll(fp, "-", "")
+	if len(noDash) == 32 && isHexString(noDash) {
+		return noDash + noDash
 	}
 	if maxLen > 0 && len(fp) > maxLen {
 		return fp[:maxLen]
@@ -65,4 +69,12 @@ var hexStringRe = regexp.MustCompile(`^[0-9a-fA-F]+$`)
 func isHexString(s string) bool {
 	s = strings.TrimSpace(s)
 	return s != "" && hexStringRe.MatchString(s)
+}
+
+func NormalizeMachineID(mid string) string {
+	mid = strings.TrimSpace(mid)
+	if mid == "" {
+		return ""
+	}
+	return TruncateFingerprint(mid, 64)
 }

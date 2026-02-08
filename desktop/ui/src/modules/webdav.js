@@ -8,6 +8,7 @@ import { state } from './state.js';
 import { showError, showSuccess } from './utils.js';
 import { confirm, confirmWithOptions } from './confirm.js';
 import { loadServers } from './serverSync.js';
+import { createIcon } from './icons.js';
 
 // WebDAV configuration state
 export const webdavState = {
@@ -454,13 +455,13 @@ function renderBackupsList() {
         const loadBtn = document.createElement('button');
         loadBtn.className = 'btn btn-sm btn-primary';
         loadBtn.title = '载入配置';
-        loadBtn.textContent = '📥 载入';
+        loadBtn.innerHTML = `${createIcon('inbox', { size: 14 })} 载入`;
         loadBtn.addEventListener('click', () => loadConfigFromWebDAV(backup.filename)); // 安全：事件绑定
 
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn btn-sm btn-danger';
         deleteBtn.title = '删除备份';
-        deleteBtn.textContent = '🗑️';
+        deleteBtn.innerHTML = createIcon('trash', { size: 14 });
         deleteBtn.addEventListener('click', () => deleteBackupFromWebDAV(backup.filename));
 
         actions.appendChild(loadBtn);

@@ -141,8 +141,9 @@ type StreamState struct {
 	InThinkingBlock    bool
 	ThinkingExtracted  bool
 	ThinkingBlockOpen  bool
-	ThinkingBlockIndex int
-	ThinkingSoFar      string
+	ThinkingBlockIndex          int
+	ThinkingSoFar               string
+	StripThinkingLeadingNewline bool
 
 	// 新增：状态管理器（从第三方代码迁移）
 	SSEStateManager     *kiroresponse.SSEStateManager   // SSE 事件序列状态管理

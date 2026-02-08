@@ -56,7 +56,7 @@ func (srm *StopReasonManager) DetermineStopReason() string {
 	// 1. 如果上游明确返回了 stop_reason，优先使用
 	if srm.upstreamReason != "" {
 		switch srm.upstreamReason {
-		case "max_tokens", "stop_sequence":
+		case "max_tokens", "stop_sequence", "model_context_window_exceeded":
 			return srm.upstreamReason
 		case "tool_use":
 			// 确认确实有工具调用
@@ -107,6 +107,8 @@ func GetStopReasonDescription(stopReason string) string {
 		return "达到最大 token 限制"
 	case "stop_sequence":
 		return "遇到停止序列"
+	case "model_context_window_exceeded":
+		return "上下文窗口已满"
 	default:
 		return "未知原因"
 	}

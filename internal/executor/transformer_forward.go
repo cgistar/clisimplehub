@@ -240,15 +240,15 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	}
 	// when backend returns 401/403, force-refresh token and retry once.
 	if targetInterface == "kiro" && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
-		authErrBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		_ = resp.Body.Close()
-		if debugLogger != nil {
-			debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(resp.Status, resp.Header))
-			if len(authErrBody) > 0 {
-				debugLogger.SetSection("UpstreamResponseBody", truncateTextForLog(bytesToSafeText(authErrBody), 32*1024))
-				debugLogger.SetRawSection("UpstreamResponseRaw", authErrBody)
+			authErrBody, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if debugLogger != nil {
+				debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(resp.Status, resp.Header))
+				if len(authErrBody) > 0 {
+					debugLogger.SetSection("UpstreamResponseBody", bytesToSafeText(authErrBody))
+					debugLogger.SetRawSection("UpstreamResponseRaw", authErrBody)
+				}
 			}
-		}
 		refreshOK := false
 		if refresher, ok := tr.(interface{ ForceRefreshKiroToken() error }); ok && refresher != nil {
 			refreshErr := refresher.ForceRefreshKiroToken()
@@ -323,10 +323,10 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 			result.UpstreamResponseBody = capturedUpstreamResponseBody(body)
 		}
 
-		if debugLogger != nil && len(body) > 0 {
-			debugLogger.SetSection("UpstreamResponseBody", truncateTextForLog(bytesToSafeText(body), 32*1024))
-			debugLogger.SetRawSection("UpstreamResponseRaw", body)
-		}
+			if debugLogger != nil && len(body) > 0 {
+				debugLogger.SetSection("UpstreamResponseBody", bytesToSafeText(body))
+				debugLogger.SetRawSection("UpstreamResponseRaw", body)
+			}
 
 		// Check and update account status; attempt failover if applicable
 		_, canFailover := handleKiroErrorStatus(resp.StatusCode, body, tr)
@@ -526,10 +526,10 @@ func (c *ExecutionContext) tryHandleKiroWebSearchShortCircuit(
 		}
 		return c.writeKiroWebSearchResponse(ctx, w, req, result, model, query, toolUseID, nil, inputTokens, 0)
 	}
-	if debugLogger != nil && len(body) > 0 {
-		debugLogger.SetSection("UpstreamResponseBody", truncateTextForLog(bytesToSafeText(body), 32*1024))
-		debugLogger.SetRawSection("UpstreamResponseRaw", body)
-	}
+		if debugLogger != nil && len(body) > 0 {
+			debugLogger.SetSection("UpstreamResponseBody", bytesToSafeText(body))
+			debugLogger.SetRawSection("UpstreamResponseRaw", body)
+		}
 
 	// Failover for 402/403 errors (e.g., exhausted/banned discovered after refresh+retry)
 	if resp.StatusCode == 402 || resp.StatusCode == 403 {
@@ -880,6 +880,8 @@ readLoop:
 	// 记录上游原始响应（二进制，base64编码）
 	if debugLogger != nil && len(debugUpstreamRaw) > 0 {
 		debugLogger.SetRawSection("UpstreamResponseRaw", debugUpstreamRaw)
+		// 同时保存可读文本版本，便于日志分析（不截断）。
+		// debugLogger.SetSection("UpstreamResponseBody", bytesToSafeText(debugUpstreamRaw))
 	}
 
 	// 记录转换后的 Claude SSE 响应
@@ -994,6 +996,8 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 	// 记录上游原始响应
 	if debugLogger != nil && debugUpstreamRaw.Len() > 0 {
 		debugLogger.SetSection("UpstreamResponseRaw", debugUpstreamRaw.String())
+		// 同时保存到 UpstreamResponseBody，保持字段一致（不截断）。
+		// debugLogger.SetSection("UpstreamResponseBody", debugUpstreamRaw.String())
 	}
 
 	result.ResponseStream = capture.String()
@@ -1164,13 +1168,6 @@ func bytesToSafeText(b []byte) string {
 		return ""
 	}
 	return strings.ToValidUTF8(string(b), "�")
-}
-
-func truncateTextForLog(s string, maxLen int) string {
-	if maxLen <= 0 || len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "\n...(truncated)\n"
 }
 
 // handleKiroErrorStatus checks and updates Kiro account status on HTTP errors.

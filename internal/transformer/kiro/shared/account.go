@@ -180,7 +180,6 @@ func (c *KiroMultiConfig) DeleteAccount(refreshToken string) bool {
 }
 
 // IsMonthlyRequestCountError 检查错误消息是否为 MONTHLY_REQUEST_COUNT 错误
-// 参考 kiro.rs 的实现，支持三种检测方式：
 // 1. 直接字符串包含匹配
 // 2. JSON reason 字段
 // 3. JSON 嵌套 error.reason 字段

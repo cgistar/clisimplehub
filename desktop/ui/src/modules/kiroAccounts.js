@@ -767,6 +767,7 @@ window.saveKiroAccountEdit = async function () {
     userAgent: val('editKiroUserAgent'),
     version: val('editKiroVersion'),
     weight: parseInt(val('editKiroWeight'), 10) || 0,
+    machineId: val('editKiroMachineId'),
   }
 
   try {
@@ -908,6 +909,7 @@ function buildImportDTOs(jsonText) {
     const profileArn = getStringField(item, ['profileArn', 'profile_arn', 'ProfileArn'])
     const expiresAt = getStringField(item, ['expiresAt', 'expires_at', 'ExpiresAt'])
     const email = getStringField(item, ['email', 'Email'])
+    const machineId = getStringField(item, ['machineId', 'machine_id', 'MachineId'])
 
     const dto = {
       refreshToken,
@@ -920,6 +922,7 @@ function buildImportDTOs(jsonText) {
       profileArn,
       expiresAt,
       email,
+      machineId,
     }
 
     Object.keys(dto).forEach((k) => {

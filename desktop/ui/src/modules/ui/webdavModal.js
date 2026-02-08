@@ -1,12 +1,13 @@
 import { t } from '../../i18n/index.js'
 import { serverSyncSectionHTML } from '../serverSync.js'
+import { createIcon } from '../icons.js'
 
 export function webdavModalTemplate() {
     return `
         <div id="webdavModal" class="modal">
             <div class="modal-content modal-large">
                 <div class="modal-header">
-                    <h2>🔄 ${t('webdav.title')}</h2>
+                    <h2>${createIcon('sync', { size: 18 })} ${t('webdav.title')}</h2>
                     <button class="modal-close" onclick="closeWebDAVModal()">×</button>
                 </div>
                 <div class="modal-body">
@@ -21,7 +22,7 @@ export function webdavModalTemplate() {
                             <div class="model-input-wrapper">
                                 <input type="text" id="webdavServerUrl" placeholder="https://dav.example.com/backup">
                                 <button class="btn btn-sm btn-secondary" onclick="testWebDAVConnection()" id="webdavTestBtn">
-                                    🧪 测试
+                                    ${createIcon('testTube', { size: 14 })} 测试
                                 </button>
                             </div>
                             <small>请输入WebDAV服务器地址（支持https/http）</small>
@@ -38,7 +39,7 @@ export function webdavModalTemplate() {
                         </div>
                         <div class="form-row" style="justify-content: flex-end;">
                             <button class="btn btn-primary" onclick="backupToWebDAV()" id="webdavBackupBtn">
-                                💾 备份配置
+                                ${createIcon('save', { size: 14 })} 备份配置
                             </button>
                         </div>
                     </div>
@@ -48,7 +49,7 @@ export function webdavModalTemplate() {
                         <h3>备份记录</h3>
                         <div class="backup-actions-bar">
                             <button class="btn btn-sm btn-secondary" onclick="loadBackupsList()">
-                                🔄 刷新列表
+                                ${createIcon('refresh', { size: 14 })} 刷新列表
                             </button>
                         </div>
                         <div class="webdav-backups-list" id="webdavBackupsList">

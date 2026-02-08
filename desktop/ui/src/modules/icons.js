@@ -42,7 +42,10 @@ const iconMap = {
     list: 'List',
     zap: 'Zap',
     clock: 'Clock',
-    server: 'Server'
+    server: 'Server',
+    sync: 'RefreshCw',
+    testTube: 'TestTube2',
+    inbox: 'Inbox'
 }
 
 /**

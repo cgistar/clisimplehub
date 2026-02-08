@@ -31,6 +31,11 @@ func buildHistory(conversationMsgs []map[string]interface{}, modelID string, sys
 		}
 	}
 
+	// 追加分块写入策略到系统消息（避免重复追加）
+	if systemContent != "" && !strings.Contains(systemContent, systemChunkedPolicy) {
+		systemContent = strings.TrimRight(systemContent, "\r\n") + "\n" + systemChunkedPolicy
+	}
+
 	// 系统消息作为 user + assistant 配对
 	if systemContent != "" {
 		history = append(history, buildHistoryUserMessage(systemContent, modelID, nil, nil))

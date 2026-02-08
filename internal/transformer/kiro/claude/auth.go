@@ -203,11 +203,13 @@ func (m *KiroAuthManager) userAgent() string {
 		return kiroShared.DefaultKiroVersion + "-unknown"
 	}
 	version := kiroShared.KiroVersionOrDefault(m.clientVersion)
-	refreshToken := ""
+	fp := ""
 	if m.creds != nil {
-		refreshToken = m.creds.RefreshToken
+		fp = strings.TrimSpace(m.creds.MachineID)
 	}
-	fp := kiroapi.ComputeMachineID(refreshToken)
+	if fp == "" && m.creds != nil {
+		fp = kiroapi.ComputeMachineID(m.creds.RefreshToken)
+	}
 	fp = kiroShared.TruncateFingerprint(fp, 64)
 	return version + "-" + fp
 }
@@ -393,7 +395,7 @@ func (m *KiroAuthManager) persistRefreshAuthFields(prevRefreshToken string) {
 		ProfileArn:   m.creds.ProfileArn,
 		ExpiresAt:    m.creds.ExpiresAt,
 	}
-	if strings.TrimSpace(authFields.RefreshToken) != "" {
+	if strings.TrimSpace(authFields.RefreshToken) != "" && strings.TrimSpace(m.creds.MachineID) == "" {
 		authFields.MachineID = kiroapi.ComputeMachineID(authFields.RefreshToken)
 	}
 
