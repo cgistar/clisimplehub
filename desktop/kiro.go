@@ -348,6 +348,12 @@ func (a *App) SaveKiroGlobalConfig(dto *KiroGlobalConfigDTO) error {
 	if err := kiroShared.SaveKiroMultiConfig(multiPath, mc); err != nil {
 		return fmt.Errorf("failed to save kiro config: %w", err)
 	}
+
+	// Ensure the process-wide cached values used by request transformation are updated immediately,
+	// even if no transformer instance has been created yet.
+	kiroClaude.SetCachedBufferedStream(mc.BufferedStream)
+	kiroClaude.SetCachedModelMapping(mc.ModelMapping)
+
 	if err := kiroClaude.ReloadAllTransformers(); err != nil {
 		return fmt.Errorf("saved kiro config but failed to reload transformers: %w", err)
 	}

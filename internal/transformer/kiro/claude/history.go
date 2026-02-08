@@ -133,6 +133,7 @@ func processHistoryMessages(messages []map[string]interface{}, modelID string) (
 }
 
 // mergeUserMessagesFromBuffer 合并 buffer 中的多个 user 消息
+// 注意：不再重新排序 toolResults，保持原始顺序
 func mergeUserMessagesFromBuffer(buffer []map[string]interface{}, modelID string, lastToolUseOrder []string) (KiroHistoryMessage, error) {
 	if len(buffer) == 0 {
 		return KiroHistoryMessage{}, fmt.Errorf("empty user buffer")
@@ -149,17 +150,19 @@ func mergeUserMessagesFromBuffer(buffer []map[string]interface{}, modelID string
 				toolResults = []ToolResult{*r}
 			}
 			toolResults = mergeToolResultsByToolUseID(toolResults)
-			if len(toolResults) > 0 && len(lastToolUseOrder) > 0 {
-				toolResults = reorderToolResultsByToolUses(toolResults, lastToolUseOrder)
-			}
+			// 注意：不要重新排序 toolResults，保持原始顺序
+			// if len(toolResults) > 0 && len(lastToolUseOrder) > 0 {
+			// 	toolResults = reorderToolResultsByToolUses(toolResults, lastToolUseOrder)
+			// }
 			return buildHistoryUserMessage("", modelID, nil, toolResults), nil
 		}
 
 		text, images := extractMessageContentWithImages(msg)
 		toolResults := mergeToolResultsByToolUseID(extractToolResults(msg))
-		if len(toolResults) > 0 && len(lastToolUseOrder) > 0 {
-			toolResults = reorderToolResultsByToolUses(toolResults, lastToolUseOrder)
-		}
+		// 注意：不要重新排序 toolResults，保持原始顺序
+		// if len(toolResults) > 0 && len(lastToolUseOrder) > 0 {
+		// 	toolResults = reorderToolResultsByToolUses(toolResults, lastToolUseOrder)
+		// }
 		return buildHistoryUserMessage(text, modelID, images, toolResults), nil
 	}
 
@@ -215,11 +218,12 @@ func mergeUserMessagesFromBuffer(buffer []map[string]interface{}, modelID string
 		content = appendThinkingHint(content, thinkingHint)
 	}
 
-	// 处理 tool_results：去重和重排序
+	// 处理 tool_results：去重（但不重新排序，保持原始顺序）
 	toolResults = mergeToolResultsByToolUseID(toolResults)
-	if len(toolResults) > 0 && len(lastToolUseOrder) > 0 {
-		toolResults = reorderToolResultsByToolUses(toolResults, lastToolUseOrder)
-	}
+	// 注意：不要重新排序 toolResults，保持原始顺序
+	// if len(toolResults) > 0 && len(lastToolUseOrder) > 0 {
+	// 	toolResults = reorderToolResultsByToolUses(toolResults, lastToolUseOrder)
+	// }
 
 	return buildHistoryUserMessage(content, modelID, keptImages, toolResults), nil
 }

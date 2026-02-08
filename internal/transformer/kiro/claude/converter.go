@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	kirotypes "clisimplehub/internal/transformer/kiro/types"
@@ -11,9 +12,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const defaultToolDescriptionMaxLength = 10240
-const toolDescriptionTruncateThreshold = 10240
-const toolDescriptionTruncateLength = 10100
+const defaultToolDescriptionMaxLength = 10000
+const toolDescriptionTruncateThreshold = 10000
+const toolDescriptionTruncateSuffix = "...(Full description provided in TOOL DOCUMENTATION section)"
+const toolDescriptionTruncateLength = 9940 // 10000 - 60 (suffix length)
 const (
 	thinkingBudgetDefaultTokens = 20000
 	thinkingBudgetMaxTokens     = 24576
@@ -64,11 +66,10 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 		return nil, fmt.Errorf("messages is required and must be non-empty")
 	}
 
-	// Convert tools and collect long description tools
+	// Convert tools (不再收集 longDescTools，因为工具文档会导致 400 错误)
 	var kiroTools []KiroTool
-	var longDescTools []LongDescTool
 	if tools, ok := claudeReq["tools"].([]interface{}); ok && len(tools) > 0 {
-		kiroTools, longDescTools = convertClaudeToolsToKiroTruncated(tools, defaultToolDescriptionMaxLength)
+		kiroTools, _ = convertClaudeToolsToKiroTruncated(tools, defaultToolDescriptionMaxLength)
 	}
 
 	// buildHistory 内部会处理 thinking 标签注入
@@ -84,26 +85,21 @@ func ClaudeToKiroRequest(claudeReq map[string]interface{}, modelName string, pro
 		currentText, currentImages, currentToolResults = "Continue", nil, nil
 	}
 	currentToolResults = mergeToolResultsByToolUseID(currentToolResults)
-	if order := lastToolUseOrderFromHistory(history); len(order) > 0 {
-		currentToolResults = reorderToolResultsByToolUses(currentToolResults, order)
-	}
+	// 注意：不要重新排序 toolResults！
+	// Kiro API 期望 toolResults 保持原始顺序（Claude 返回的顺序）
+	// 重新排序会导致 400 Bad Request 错误
+	// if order := lastToolUseOrderFromHistory(history); len(order) > 0 {
+	// 	currentToolResults = reorderToolResultsByToolUses(currentToolResults, order)
+	// }
 	validatedToolResults, orphanedToolUseIDs := validateToolPairing(history, currentToolResults)
 
 	removeOrphanedToolUses(history, orphanedToolUseIDs)
 
 	kiroTools = addMissingHistoryToolsAsPlaceholders(kiroTools, history)
 
-	// 如果有超长描述工具，在 currentText 前注入 TOOL DOCUMENTATION
-	if len(longDescTools) > 0 {
-		toolDoc := buildToolDocumentation(longDescTools)
-		if toolDoc != "" {
-			if strings.TrimSpace(currentText) == "" {
-				currentText = toolDoc
-			} else {
-				currentText = toolDoc + "\n\n" + currentText
-			}
-		}
-	}
+	// 过滤掉 currentText 中的 TOOL DOCUMENTATION 块
+	// 这些文档会导致 Kiro API 返回 400 错误
+	currentText = filterToolDocumentation(currentText)
 
 	kiroReq.ConversationState.History = history
 	kiroReq.ConversationState.CurrentMessage = buildCurrentUserMessage(currentText, currentImages, kiroModelID, kiroTools, validatedToolResults)
@@ -896,7 +892,7 @@ func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength
 			})
 			// 截断并添加提示
 			description = truncateByRunes(description, toolDescriptionTruncateLength) +
-				"...(Full description provided in TOOL DOCUMENTATION section)"
+				toolDescriptionTruncateSuffix
 		} else if maxDescriptionLength > 0 && maxDescriptionLength < len(originalDesc) {
 			description = truncateByRunes(description, maxDescriptionLength)
 		}
@@ -919,19 +915,29 @@ func convertClaudeToolsToKiroTruncated(tools []interface{}, maxDescriptionLength
 }
 
 // buildToolDocumentation 生成 TOOL DOCUMENTATION 块
+// 注意：此函数已废弃，不再使用。工具文档会导致 Kiro API 返回 400 错误。
 func buildToolDocumentation(longDescTools []LongDescTool) string {
-	if len(longDescTools) == 0 {
-		return ""
+	// 不再生成工具文档，直接返回空字符串
+	return ""
+}
+
+// filterToolDocumentation 过滤掉文本中的 TOOL DOCUMENTATION 块
+// 这些文档会导致 Kiro API 返回 400 Bad Request 错误
+func filterToolDocumentation(content string) string {
+	if content == "" {
+		return content
 	}
 
-	var parts []string
-	for _, tool := range longDescTools {
-		doc := fmt.Sprintf("--- TOOL DOCUMENTATION BEGIN ---\nTool: %s\nFull Description:\n%s\n--- TOOL DOCUMENTATION END ---",
-			tool.Name, tool.FullDescription)
-		parts = append(parts, doc)
-	}
+	// 使用正则表达式移除 --- TOOL DOCUMENTATION BEGIN --- ... --- TOOL DOCUMENTATION END --- 块
+	// (?s) 使 . 匹配换行符
+	re := regexp.MustCompile(`(?s)--- TOOL DOCUMENTATION BEGIN ---.*?--- TOOL DOCUMENTATION END ---\s*`)
+	filtered := re.ReplaceAllString(content, "")
 
-	return strings.Join(parts, "\n\n")
+	// 清理多余的空行（连续3个以上换行符压缩为2个）
+	re2 := regexp.MustCompile(`\n{3,}`)
+	filtered = re2.ReplaceAllString(filtered, "\n\n")
+
+	return strings.TrimSpace(filtered)
 }
 
 func truncateByRunes(s string, max int) string {
