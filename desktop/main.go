@@ -52,6 +52,12 @@ func main() {
 
 	log.Println("Starting Cli Simple Hub in GUI mode...")
 
+	// Register URL scheme (kiro://) on Windows
+	// This allows the browser to launch the app when clicking kiro:// links
+	if err := RegisterURLScheme(); err != nil {
+		log.Printf("Warning: Failed to register URL scheme: %v", err)
+	}
+
 	// Get data directory with priority:
 	// 1. CODESP_DATA environment variable (highest priority)
 	// 2. Current directory (if config.json exists)
