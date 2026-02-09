@@ -3,6 +3,7 @@ package openai
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -86,9 +87,11 @@ func handleImageGeneration(w http.ResponseWriter, ctx context.Context, body []by
 
 	aspectRatio := mapSizeToAspectRatio(req.Size)
 
-	// WebSocket image generation path
+	// 使用 HTTP API 方式（对齐参考项目实现）
+	// WebSocket 方式已废弃，因为无法正确接收图片数据
 	settings := grokPool.GetSettings()
-	if settings != nil && settings.GetImageWs() {
+	useWebSocket := false // 强制禁用 WebSocket
+	if settings != nil && settings.GetImageWs() && useWebSocket {
 		handleImageGenerationWS(w, ctx, account.SsoToken, proxyURL, req.Prompt, req.N,
 			aspectRatio, req.ResponseFormat, settings)
 		return
@@ -117,7 +120,7 @@ func handleImageGeneration(w http.ResponseWriter, ctx context.Context, body []by
 	if len(urls) > req.N {
 		urls = urls[:req.N]
 	}
-	writeImageSuccess(w, urls, req.ResponseFormat, proxyURL)
+	writeImageSuccess(w, urls, req.ResponseFormat, proxyURL, account.SsoToken)
 }
 
 // --- edit ---
@@ -253,7 +256,7 @@ func handleImageEdit(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeImageError(w, http.StatusInternalServerError, "no images generated")
 		return
 	}
-	writeImageSuccess(w, urls, "url", proxyURL)
+	writeImageSuccess(w, urls, "url", proxyURL, account.SsoToken)
 }
 
 // --- shared helpers ---
@@ -286,21 +289,26 @@ func buildImageChatPayload(prompt string, info ModelInfo, modelConfigOverride ma
 		settings = &def
 	}
 	p := map[string]any{
-		"temporary":             settings.GetTemporary(),
-		"modelName":             info.GrokModel,
-		"message":               prompt,
-		"fileAttachments":       []any{},
-		"imageAttachments":      []any{},
-		"disableSearch":         false,
-		"enableImageGeneration": true,
-		"returnImageBytes":      false,
-		"enableImageStreaming":  true,
-		"imageGenerationCount":  2,
-		"forceConcise":          false,
-		"toolOverrides":         map[string]any{},
-		"enableSideBySide":      true,
-		"sendFinalMetadata":     true,
-		"disableMemory":         settings.GetDisableMemory(),
+		"temporary":                 settings.GetTemporary(),
+		"modelName":                 info.GrokModel,
+		"message":                   prompt,
+		"fileAttachments":           []any{},
+		"imageAttachments":          []any{},
+		"disableSearch":             false,
+		"enableImageGeneration":     true,
+		"returnImageBytes":          false,
+		"returnRawGrokInXaiRequest": false,
+		"enableImageStreaming":      false,
+		"imageGenerationCount":      1,
+		"forceConcise":              false,
+		"toolOverrides": map[string]any{
+			"imageGen": true, // 关键：启用图片生成
+		},
+		"enableSideBySide":   true,
+		"isPreset":           false,
+		"sendFinalMetadata":  true,
+		"customInstructions": "",
+		"disableMemory":      settings.GetDisableMemory(),
 	}
 	if info.ModelMode != "" {
 		p["modelMode"] = info.ModelMode
@@ -334,7 +342,19 @@ func sendGrokChatRequest(ctx context.Context, ssoToken, proxyURL string, body []
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("grok returned %d: %s", resp.StatusCode, string(errBody))
 	}
-	return io.ReadAll(resp.Body)
+
+	// 处理 gzip 压缩的响应
+	reader := resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer gzReader.Close()
+		reader = gzReader
+	}
+
+	return io.ReadAll(reader)
 }
 
 func uploadToGrok(ctx context.Context, ssoToken, proxyURL, filename, mimeType string, data []byte) (string, error) {
@@ -381,6 +401,7 @@ func collectImageURLs(data []byte) []string {
 		if len(line) == 0 {
 			continue
 		}
+
 		var obj map[string]any
 		if json.Unmarshal(line, &obj) != nil {
 			continue
@@ -393,13 +414,32 @@ func collectImageURLs(data []byte) []string {
 		if resp == nil {
 			continue
 		}
-		mr, _ := resp["modelResponse"].(map[string]any)
-		if mr == nil {
-			continue
+
+		// Check for cachedImageGenerationResponse (primary source for image URLs)
+		if cachedResp, ok := resp["cachedImageGenerationResponse"].(map[string]any); ok {
+			if imageURL, ok := cachedResp["imageUrl"].(string); ok && imageURL != "" && !seen[imageURL] {
+				// 补全为完整 URL
+				fullURL := normalizeImageURL(imageURL)
+				seen[imageURL] = true
+				urls = append(urls, fullURL)
+			}
 		}
-		walkImageURLs(mr, seen, &urls)
+
+		// Also check modelResponse for backward compatibility
+		if mr, ok := resp["modelResponse"].(map[string]any); ok {
+			walkImageURLs(mr, seen, &urls)
+		}
 	}
 	return urls
+}
+
+// normalizeImageURL converts relative URLs to absolute URLs
+func normalizeImageURL(imageURL string) string {
+	if strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://") {
+		return imageURL
+	}
+	// 相对路径，补全为完整 URL
+	return "https://assets.grok.com/" + strings.TrimPrefix(imageURL, "/")
 }
 
 func walkImageURLs(v any, seen map[string]bool, out *[]string) {
@@ -412,13 +452,15 @@ func walkImageURLs(v any, seen map[string]bool, out *[]string) {
 					for _, elem := range u {
 						if s, ok := elem.(string); ok && s != "" && !seen[s] {
 							seen[s] = true
-							*out = append(*out, s)
+							fullURL := normalizeImageURL(s)
+							*out = append(*out, fullURL)
 						}
 					}
 				case string:
 					if u != "" && !seen[u] {
 						seen[u] = true
-						*out = append(*out, u)
+						fullURL := normalizeImageURL(u)
+						*out = append(*out, fullURL)
 					}
 				}
 				continue
@@ -440,8 +482,8 @@ func writeImageError(w http.ResponseWriter, code int, msg string) {
 	})
 }
 
-func writeImageSuccess(w http.ResponseWriter, urls []string, responseFormat string, proxyURL string) {
-	data := wrapURLs(urls, responseFormat, proxyURL)
+func writeImageSuccess(w http.ResponseWriter, urls []string, responseFormat string, proxyURL string, ssoToken string) {
+	data := wrapURLs(urls, responseFormat, proxyURL, ssoToken)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"created": time.Now().Unix(),
@@ -531,12 +573,12 @@ func mapSizeToAspectRatio(size string) string {
 }
 
 // wrapURLs converts URLs to response format (url or b64_json)
-func wrapURLs(urls []string, format string, proxyURL string) []map[string]any {
+func wrapURLs(urls []string, format string, proxyURL string, ssoToken string) []map[string]any {
 	data := make([]map[string]any, len(urls))
 	for i, u := range urls {
 		if format == "b64_json" || format == "base64" {
 			// Try to download and convert to base64
-			b64, err := downloadAndConvertToBase64(u, proxyURL)
+			b64, err := downloadAndConvertToBase64(u, proxyURL, ssoToken)
 			if err == nil && b64 != "" {
 				data[i] = map[string]any{"b64_json": b64}
 			} else {
@@ -551,13 +593,25 @@ func wrapURLs(urls []string, format string, proxyURL string) []map[string]any {
 }
 
 // downloadAndConvertToBase64 downloads an image and converts it to base64
-func downloadAndConvertToBase64(imageURL string, proxyURL string) (string, error) {
+func downloadAndConvertToBase64(imageURL string, proxyURL string, ssoToken string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if err != nil {
 		return "", err
+	}
+
+	// 添加必要的请求头，特别是 Cookie
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	req.Header.Set("Origin", "https://grok.com")
+	req.Header.Set("Referer", "https://grok.com/")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+
+	// 关键：添加 SSO Token Cookie
+	if ssoToken != "" {
+		req.Header.Set("Cookie", "sso="+ssoToken)
 	}
 
 	client := newProxyClient(proxyURL, 30*time.Second)
@@ -662,7 +716,22 @@ func handleImageGenerationStream(w http.ResponseWriter, ctx context.Context, sso
 	}
 	defer resp.Body.Close()
 
-	scanner := bufio.NewScanner(resp.Body)
+	// 处理 gzip 压缩的响应
+	reader := io.Reader(resp.Body)
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			fmt.Fprintf(w, "data: %s\n\n", toJSON(map[string]any{
+				"error": map[string]any{"message": "failed to decompress response", "type": "upstream_error"},
+			}))
+			flusher.Flush()
+			return
+		}
+		defer gzReader.Close()
+		reader = gzReader
+	}
+
+	scanner := bufio.NewScanner(reader)
 	seen := make(map[string]bool)
 	var collectedURLs []string
 
@@ -686,6 +755,15 @@ func handleImageGenerationStream(w http.ResponseWriter, ctx context.Context, sso
 			continue
 		}
 
+		// Check for cachedImageGenerationResponse (primary source)
+		if cachedResp, ok := response["cachedImageGenerationResponse"].(map[string]any); ok {
+			if imageURL, ok := cachedResp["imageUrl"].(string); ok && imageURL != "" && !seen[imageURL] {
+				seen[imageURL] = true
+				fullURL := normalizeImageURL(imageURL)
+				collectedURLs = append(collectedURLs, fullURL)
+			}
+		}
+
 		// Check for progress events
 		if imgResp, ok := response["streamingImageGenerationResponse"].(map[string]any); ok {
 			imageIndex, _ := imgResp["imageIndex"].(float64)
@@ -701,7 +779,7 @@ func handleImageGenerationStream(w http.ResponseWriter, ctx context.Context, sso
 			continue
 		}
 
-		// Check for final images
+		// Check for final images in modelResponse (backward compatibility)
 		if mr, ok := response["modelResponse"].(map[string]any); ok {
 			var urls []string
 			walkImageURLs(mr, seen, &urls)
@@ -720,7 +798,7 @@ func handleImageGenerationStream(w http.ResponseWriter, ctx context.Context, sso
 	for i, u := range collectedURLs {
 		var eventData map[string]any
 		if responseFormat == "b64_json" || responseFormat == "base64" {
-			b64, _ := downloadAndConvertToBase64(u, proxyURL)
+			b64, _ := downloadAndConvertToBase64(u, proxyURL, ssoToken)
 			eventData = map[string]any{
 				"type":     "image_generation.completed",
 				"index":    i,

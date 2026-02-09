@@ -122,3 +122,22 @@ func normalizeAccountTimes(account *KiroAccount) {
 	}
 }
 
+// ExpandTilde expands ~ to user home directory
+func ExpandTilde(path string) string {
+	if strings.TrimSpace(path) == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return home
+		}
+		return path
+	}
+
+	if strings.HasPrefix(path, "~"+string(filepath.Separator)) || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+

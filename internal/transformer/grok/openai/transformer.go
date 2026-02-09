@@ -28,17 +28,17 @@ type ModelInfo struct {
 }
 
 var modelRegistry = map[string]ModelInfo{
-	"grok-3":             {GrokModel: "grok-3", ModelMode: "MODEL_MODE_GROK_3"},
-	"grok-3-mini":        {GrokModel: "grok-3", ModelMode: "MODEL_MODE_GROK_3_MINI_THINKING"},
-	"grok-3-thinking":    {GrokModel: "grok-3", ModelMode: "MODEL_MODE_GROK_3_THINKING"},
-	"grok-4":             {GrokModel: "grok-4", ModelMode: "MODEL_MODE_GROK_4"},
-	"grok-4-mini":        {GrokModel: "grok-4-mini", ModelMode: "MODEL_MODE_GROK_4_MINI_THINKING"},
-	"grok-4-thinking":    {GrokModel: "grok-4", ModelMode: "MODEL_MODE_GROK_4_THINKING"},
-	"grok-4-heavy":       {GrokModel: "grok-4", ModelMode: "MODEL_MODE_HEAVY"},
-	"grok-4.1-mini":      {GrokModel: "grok-4-1-thinking-1129", ModelMode: "MODEL_MODE_GROK_4_1_MINI_THINKING"},
-	"grok-4.1-fast":      {GrokModel: "grok-4-1-thinking-1129", ModelMode: "MODEL_MODE_FAST"},
-	"grok-4.1-expert":    {GrokModel: "grok-4-1-thinking-1129", ModelMode: "MODEL_MODE_EXPERT"},
-	"grok-4.1-thinking":  {GrokModel: "grok-4-1-thinking-1129", ModelMode: "MODEL_MODE_GROK_4_1_THINKING"},
+	"grok-3":                 {GrokModel: "grok-3", ModelMode: "MODEL_MODE_GROK_3"},
+	"grok-3-mini":            {GrokModel: "grok-3", ModelMode: "MODEL_MODE_GROK_3_MINI_THINKING"},
+	"grok-3-thinking":        {GrokModel: "grok-3", ModelMode: "MODEL_MODE_GROK_3_THINKING"},
+	"grok-4":                 {GrokModel: "grok-4", ModelMode: "MODEL_MODE_GROK_4"},
+	"grok-4-mini":            {GrokModel: "grok-4-mini", ModelMode: "MODEL_MODE_GROK_4_MINI_THINKING"},
+	"grok-4-thinking":        {GrokModel: "grok-4", ModelMode: "MODEL_MODE_GROK_4_THINKING"},
+	"grok-4-heavy":           {GrokModel: "grok-4", ModelMode: "MODEL_MODE_HEAVY"},
+	"grok-4.1-mini":          {GrokModel: "grok-4-1-thinking-1129", ModelMode: "MODEL_MODE_GROK_4_1_MINI_THINKING"},
+	"grok-4.1-fast":          {GrokModel: "grok-4-1-thinking-1129", ModelMode: "MODEL_MODE_FAST"},
+	"grok-4.1-expert":        {GrokModel: "grok-4-1-thinking-1129", ModelMode: "MODEL_MODE_EXPERT"},
+	"grok-4.1-thinking":      {GrokModel: "grok-4-1-thinking-1129", ModelMode: "MODEL_MODE_GROK_4_1_THINKING"},
 	"grok-imagine-1.0":       {GrokModel: "grok-3", ModelMode: "MODEL_MODE_FAST", IsImage: true},
 	"grok-imagine-1.0-edit":  {GrokModel: "imagine-image-edit", ModelMode: "MODEL_MODE_FAST", IsImage: true},
 	"grok-imagine-1.0-video": {GrokModel: "grok-3", ModelMode: "MODEL_MODE_FAST", IsVideo: true},
@@ -221,21 +221,26 @@ func buildGrokRequest(modelName string, rawJSON []byte, stream bool, ssoToken, p
 	}
 
 	grokReq := map[string]any{
-		"temporary":             settings.GetTemporary(),
-		"modelName":             info.GrokModel,
-		"message":               result.Message,
-		"fileAttachments":       fileAttachments,
-		"imageAttachments":      []any{},
-		"disableSearch":         false,
-		"enableImageGeneration": true,
-		"returnImageBytes":      false,
-		"enableImageStreaming":   true,
-		"imageGenerationCount":  2,
-		"forceConcise":          false,
-		"toolOverrides":         map[string]any{},
-		"enableSideBySide":      true,
-		"sendFinalMetadata":     true,
-		"disableMemory":         settings.GetDisableMemory(),
+		"temporary":                 settings.GetTemporary(),
+		"modelName":                 info.GrokModel,
+		"message":                   result.Message,
+		"fileAttachments":           fileAttachments,
+		"imageAttachments":          []any{},
+		"disableSearch":             false,
+		"enableImageGeneration":     true,
+		"returnImageBytes":          false,
+		"returnRawGrokInXaiRequest": false,
+		"enableImageStreaming":      false,
+		"imageGenerationCount":      1,
+		"forceConcise":              false,
+		"toolOverrides": map[string]any{
+			"imageGen": info.IsImage, // 根据模型类型启用图片生成
+		},
+		"enableSideBySide":  true,
+		"isPreset":          false,
+		"sendFinalMetadata": true,
+		"customInstructions": "",
+		"disableMemory":     settings.GetDisableMemory(),
 		"responseMetadata": map[string]any{
 			"modelConfigOverride": map[string]any{"modelMap": map[string]any{}},
 			"requestModelDetails": map[string]any{"modelId": info.GrokModel},
@@ -273,10 +278,6 @@ func transformStreamLine(modelName string, rawLine []byte, state *any) ([]string
 	if result == nil {
 		return nil, nil
 	}
-	response, _ := result["response"].(map[string]any)
-	if response == nil {
-		return nil, nil
-	}
 
 	if state == nil {
 		return nil, fmt.Errorf("nil state pointer")
@@ -312,6 +313,67 @@ func transformStreamLine(modelName string, rawLine []byte, state *any) ([]string
 
 	var results []string
 
+	// Collect provider metadata (conversation/title/final metadata), even if this line isn't a token.
+	ss.ensureProviderMeta()
+	if conv, ok := result["conversation"].(map[string]any); ok && conv != nil {
+		if id, _ := conv["conversationId"].(string); id != "" {
+			ss.providerMeta["conversation_id"] = id
+		}
+	}
+	if titleObj, ok := result["title"].(map[string]any); ok && titleObj != nil {
+		if title, _ := titleObj["newTitle"].(string); title != "" {
+			ss.providerMeta["title"] = title
+		}
+	}
+
+	response, _ := result["response"].(map[string]any)
+	if response == nil {
+		return nil, nil
+	}
+
+	// Handle cachedImageGenerationResponse (primary source for image URLs)
+	// 下载图片并转换为 base64 内联，避免 403 错误
+	if cachedResp, ok := response["cachedImageGenerationResponse"].(map[string]any); ok {
+		if imageURL, ok := cachedResp["imageUrl"].(string); ok && imageURL != "" {
+			// 补全为完整 URL
+			fullURL := normalizeImageURL(imageURL)
+
+			// 获取当前账号的 SSO Token 和 Proxy
+			ssoToken := ""
+			proxyURL := ""
+			if pool := grokPool.GetPool(); pool != nil {
+				if account := pool.Select(); account != nil {
+					ssoToken = account.SsoToken
+					proxyURL = account.ProxyUrl
+				}
+			}
+
+			// 下载图片并转换为 base64
+			b64, err := downloadAndConvertToBase64(fullURL, proxyURL, ssoToken)
+			var imgMarkdown string
+			if err == nil && b64 != "" {
+				// 成功下载，返回 base64 内联
+				imgMarkdown = fmt.Sprintf("![image](data:image/jpeg;base64,%s)", b64)
+			} else {
+				// 下载失败，fallback 到原始 URL（可能会 403）
+				imgMarkdown = fmt.Sprintf("![image](%s)", fullURL)
+			}
+
+			chunk := buildSSEChunk(modelName, imgMarkdown, "", "", ss.isFirst)
+			ss.isFirst = false
+			results = append(results, chunk)
+			// 不要立即返回，继续处理后续响应
+		}
+	}
+
+	// Pass-through provider-specific metadata if present.
+	if pvrm, ok := response["pvrm"]; ok && pvrm != nil {
+		ss.providerMeta["upstream_pvrm"] = pvrm
+	}
+	if fm, ok := response["finalMetadata"].(map[string]any); ok && fm != nil {
+		ss.providerMeta["final_metadata"] = fm
+	}
+
 	// Handle streaming image generation progress
 	if imgResp, ok := response["streamingImageGenerationResponse"].(map[string]any); ok {
 		if ss.settings.GetThinking() {
@@ -327,6 +389,14 @@ func transformStreamLine(modelName string, rawLine []byte, state *any) ([]string
 
 	// Handle modelResponse (final message with possible images)
 	if modelResp, ok := response["modelResponse"].(map[string]any); ok {
+		// Capture model response metadata (request trace, suggestions, etc.).
+		if meta, ok := modelResp["metadata"].(map[string]any); ok && meta != nil {
+			ss.providerMeta["model_response_metadata"] = meta
+		}
+		if rid, _ := modelResp["responseId"].(string); rid != "" {
+			ss.providerMeta["response_id"] = rid
+		}
+
 		// Collect image URLs
 		seen := make(map[string]bool)
 		var imgURLs []string
@@ -335,7 +405,8 @@ func transformStreamLine(modelName string, rawLine []byte, state *any) ([]string
 		if len(imgURLs) > 0 {
 			var imgMarkdown strings.Builder
 			for i, u := range imgURLs {
-				imgMarkdown.WriteString(fmt.Sprintf("![image_%d](%s)", i, u))
+				fullURL := normalizeImageURL(u)
+				fmt.Fprintf(&imgMarkdown, "![image_%d](%s)", i, fullURL)
 				if i < len(imgURLs)-1 {
 					imgMarkdown.WriteString("\n")
 				}
@@ -352,7 +423,11 @@ func transformStreamLine(modelName string, rawLine []byte, state *any) ([]string
 			results = append(results, chunk)
 		}
 
-		stopChunk := buildSSEChunk(modelName, "", "", "stop", ss.isFirst)
+		ext := map[string]any(nil)
+		if len(ss.providerMeta) > 0 {
+			ext = map[string]any{"pvrm": ss.providerMeta}
+		}
+		stopChunk := buildSSEChunkWithExt(modelName, "", "", "stop", ss.isFirst, ext)
 		ss.isFirst = false
 		results = append(results, stopChunk)
 		return results, nil
@@ -393,13 +468,27 @@ func transformStreamLine(modelName string, rawLine []byte, state *any) ([]string
 }
 
 type streamState struct {
-	prevText  string
-	isFirst   bool
-	tagFilter *TagFilter
-	settings  *shared.GrokSettings
+	prevText     string
+	isFirst      bool
+	tagFilter    *TagFilter
+	settings     *shared.GrokSettings
+	providerMeta map[string]any
+}
+
+func (s *streamState) ensureProviderMeta() {
+	if s == nil {
+		return
+	}
+	if s.providerMeta == nil {
+		s.providerMeta = make(map[string]any)
+	}
 }
 
 func buildSSEChunk(model, content, fingerprint, finishReason string, isFirst bool) string {
+	return buildSSEChunkWithExt(model, content, fingerprint, finishReason, isFirst, nil)
+}
+
+func buildSSEChunkWithExt(model, content, fingerprint, finishReason string, isFirst bool, ext map[string]any) string {
 	delta := map[string]any{}
 	if isFirst {
 		delta["role"] = "assistant"
@@ -428,6 +517,16 @@ func buildSSEChunk(model, content, fingerprint, finishReason string, isFirst boo
 	if fingerprint != "" {
 		chunk["system_fingerprint"] = fingerprint
 	}
+	for k, v := range ext {
+		if k == "" || v == nil {
+			continue
+		}
+		// Avoid overwriting standard OpenAI fields.
+		if _, exists := chunk[k]; exists {
+			continue
+		}
+		chunk[k] = v
+	}
 
 	data, _ := json.Marshal(chunk)
 	return "data: " + string(data) + "\n\n"
@@ -444,6 +543,7 @@ func transformNonStream(modelName string, rawJSON []byte) ([]byte, error) {
 		settings = &def
 	}
 
+	providerMeta := map[string]any{}
 	var imgURLs []string
 	imgSeen := make(map[string]bool)
 
@@ -460,13 +560,48 @@ func transformNonStream(modelName string, rawJSON []byte) ([]byte, error) {
 		if result == nil {
 			continue
 		}
+
+		if conv, ok := result["conversation"].(map[string]any); ok && conv != nil {
+			if id, _ := conv["conversationId"].(string); id != "" {
+				providerMeta["conversation_id"] = id
+			}
+		}
+		if titleObj, ok := result["title"].(map[string]any); ok && titleObj != nil {
+			if title, _ := titleObj["newTitle"].(string); title != "" {
+				providerMeta["title"] = title
+			}
+		}
+
 		response, _ := result["response"].(map[string]any)
 		if response == nil {
 			continue
 		}
+
+		// Handle cachedImageGenerationResponse (primary source for image URLs)
+		if cachedResp, ok := response["cachedImageGenerationResponse"].(map[string]any); ok {
+			if imageURL, ok := cachedResp["imageUrl"].(string); ok && imageURL != "" && !imgSeen[imageURL] {
+				imgSeen[imageURL] = true
+				fullURL := normalizeImageURL(imageURL)
+				imgURLs = append(imgURLs, fullURL)
+			}
+		}
+
+		if pvrm, ok := response["pvrm"]; ok && pvrm != nil {
+			providerMeta["upstream_pvrm"] = pvrm
+		}
+		if fm, ok := response["finalMetadata"].(map[string]any); ok && fm != nil {
+			providerMeta["final_metadata"] = fm
+		}
+
 		if modelResp, ok := response["modelResponse"].(map[string]any); ok {
 			if msg, ok := modelResp["message"].(string); ok {
 				fullText = msg
+			}
+			if meta, ok := modelResp["metadata"].(map[string]any); ok && meta != nil {
+				providerMeta["model_response_metadata"] = meta
+			}
+			if rid, _ := modelResp["responseId"].(string); rid != "" {
+				providerMeta["response_id"] = rid
 			}
 			walkImageURLs(modelResp, imgSeen, &imgURLs)
 		}
@@ -483,12 +618,31 @@ func transformNonStream(modelName string, rawJSON []byte) ([]byte, error) {
 	// Apply tag filter
 	fullText = FilterContent(fullText, settings.GetFilterTags())
 
-	// Append image URLs as markdown
+	// Append image URLs as markdown (下载并转换为 base64)
 	if len(imgURLs) > 0 {
+		// 获取当前账号的 SSO Token 和 Proxy
+		ssoToken := ""
+		proxyURL := ""
+		if pool := grokPool.GetPool(); pool != nil {
+			if account := pool.Select(); account != nil {
+				ssoToken = account.SsoToken
+				proxyURL = account.ProxyUrl
+			}
+		}
+
 		var imgMarkdown strings.Builder
 		imgMarkdown.WriteString("\n\n")
 		for i, u := range imgURLs {
-			imgMarkdown.WriteString(fmt.Sprintf("![image_%d](%s)", i, u))
+			fullURL := normalizeImageURL(u)
+			// 下载图片并转换为 base64
+			b64, err := downloadAndConvertToBase64(fullURL, proxyURL, ssoToken)
+			if err == nil && b64 != "" {
+				// 成功下载，返回 base64 内联
+				fmt.Fprintf(&imgMarkdown, "![image_%d](data:image/jpeg;base64,%s)", i, b64)
+			} else {
+				// 下载失败，fallback 到原始 URL
+				fmt.Fprintf(&imgMarkdown, "![image_%d](%s)", i, fullURL)
+			}
 			if i < len(imgURLs)-1 {
 				imgMarkdown.WriteString("\n")
 			}
@@ -519,6 +673,9 @@ func transformNonStream(modelName string, rawJSON []byte) ([]byte, error) {
 	}
 	if fingerprint != "" {
 		resp["system_fingerprint"] = fingerprint
+	}
+	if len(providerMeta) > 0 {
+		resp["pvrm"] = providerMeta
 	}
 
 	return json.Marshal(resp)

@@ -11,6 +11,20 @@ import (
 // KiroAccountStatus 账号状态枚举
 type KiroAccountStatus string
 
+type KiroCredentials struct {
+	AccessToken  string            `json:"accessToken"`
+	RefreshToken string            `json:"refreshToken"`
+	ProfileArn   string            `json:"profileArn"`
+	ExpiresAt    time.Time         `json:"expiresAt"`
+	Region       string            `json:"region,omitempty"`
+	MachineID    string            `json:"machineId,omitempty"`
+	AuthMethod   string            `json:"authMethod,omitempty"`
+	Provider     string            `json:"provider,omitempty"`
+	ClientId     string            `json:"clientId,omitempty"`
+	ClientSecret string            `json:"clientSecret,omitempty"`
+	Status       KiroAccountStatus `json:"status,omitempty"`
+}
+
 const (
 	KiroStatusValid     KiroAccountStatus = "valid"
 	KiroStatusBanned    KiroAccountStatus = "banned"

@@ -21,7 +21,7 @@ export function grokAccountEditModalTemplate() {
             </select>
           </div>
           <div class="form-group">
-            <label>${t('grok.proxyUrl')}</label>
+            <label>${t('grok.proxyUrl')} (${t('common.optional')})</label>
             <input type="text" id="editGrokProxyUrl" placeholder="${t('grok.proxyUrlPlaceholder')}">
           </div>
           <div class="form-group">
@@ -59,7 +59,7 @@ export function grokAccountAddModalTemplate() {
             </select>
           </div>
           <div class="form-group">
-            <label>${t('grok.proxyUrl')}</label>
+            <label>${t('grok.proxyUrl')} (${t('common.optional')})</label>
             <input type="text" id="addGrokProxyUrl" placeholder="${t('grok.proxyUrlPlaceholder')}">
           </div>
           <div class="form-group">
@@ -94,7 +94,7 @@ export function grokGlobalConfigModalTemplate() {
             </select>
           </div>
           <div class="form-group">
-            <label>${t('grok.proxyUrl')}</label>
+            <label>${t('grok.proxyUrl')} (${t('common.optional')})</label>
             <input type="text" id="grokGlobalProxyUrl" placeholder="${t('grok.proxyUrlPlaceholder')}">
           </div>
         </div>
@@ -140,9 +140,9 @@ export function grokBulkImportModalTemplate() {
           <div id="grokBulkImportProgress" style="display: none; margin-top: 16px;">
             <div class="progress-info" style="display: flex; justify-content: space-between; margin-bottom: 8px;">
               <span id="grokBulkImportProgressText">${t('common.processing')}</span>
-              <span id="grokBulkImportProgressCount">0/0</span>
+              <span id="grokBulkImportProgressCount" style="min-width: 60px; text-align: right;">0/0</span>
             </div>
-            <div class="progress-bar" style="width: 100%; height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden;">
+            <div class="progress-container" style="width: 100%; height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden;">
               <div id="grokBulkImportProgressBar" style="width: 0%; height: 100%; background: var(--primary); transition: width 0.3s;"></div>
             </div>
           </div>

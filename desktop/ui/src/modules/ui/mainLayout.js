@@ -104,8 +104,14 @@ export function mainLayoutTemplate() {
                     <div class="card-header">
                         <h2>${createIcon('users', { size: 16 })} ${t('grok.accountsTitle')}</h2>
                         <div class="card-header-actions">
+                            <button class="btn btn-sm btn-success" style="margin-right: 8px;" onclick="reviveAllGrokAccounts()" title="${t('grok.reviveAll')}">
+                                ${createIcon('heart', { size: 14 })} ${t('grok.reviveAll')}
+                            </button>
                             <button class="btn btn-sm btn-secondary" style="margin-right: 8px;" onclick="showGrokGlobalConfigModal()" title="${t('grok.globalConfig')}">
                                 ${createIcon('settings', { size: 14 })} ${t('grok.globalConfig')}
+                            </button>
+                            <button class="btn btn-sm btn-danger" style="margin-right: 8px;" onclick="showGrokBulkDeleteDialog()" title="${t('grok.bulkDelete')}">
+                                ${createIcon('trash', { size: 14 })} ${t('common.delete')}
                             </button>
                             <div class="kiro-add-account-dropdown">
                                 <button class="btn btn-sm btn-primary" onclick="toggleGrokAddAccountDropdown(event)" title="${t('grok.addAccount')}">

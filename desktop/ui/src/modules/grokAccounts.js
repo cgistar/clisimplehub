@@ -434,3 +434,149 @@ window.executeGrokBulkImport = async function () {
     if (progress) progress.style.display = 'none'
   }
 }
+
+// 全部复活
+window.reviveAllGrokAccounts = async function () {
+  const confirmed = await confirmDialog(t('grok.reviveAllConfirm'), { danger: false })
+  if (!confirmed) return
+
+  try {
+    await window.go.main.App.ReviveAllGrokAccounts()
+    showSuccess(t('grok.reviveAllSuccess'))
+    await loadGrokAccounts()
+    renderGrokAccountCards()
+  } catch (e) {
+    showError(t('grok.reviveAllFailed') + (e?.message || e))
+  }
+}
+
+// 批量删除对话框
+window.showGrokBulkDeleteDialog = function () {
+  if (!grokAccounts || grokAccounts.length === 0) {
+    showError(t('grok.noAccounts') || 'No accounts')
+    return
+  }
+
+  const modal = document.createElement('div')
+  modal.className = 'modal active'
+  modal.id = 'grokBulkDeleteModal'
+
+  const listHtml = grokAccounts
+    .map((acc) => {
+      const isInvalid = acc.status === 'invalid'
+      const label = truncateSsoToken(acc.ssoToken)
+      const statusText = getGrokStatusText(acc.status)
+      const statusClass = getGrokStatusBadgeClass(acc.status)
+      const encodedToken = btoa(acc.ssoToken)
+
+      return `
+            <div class="kiro-bulk-item" style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid var(--border-light); hover: background-color: var(--bg-secondary);">
+                <input type="checkbox" class="grok-bulk-checkbox" value="${encodedToken}" data-invalid="${isInvalid}" id="chk-${encodedToken}" style="margin-right: 12px; transform: scale(1.2);">
+                <label for="chk-${encodedToken}" style="flex: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 500; font-size: 13px;">${escapeHTML(label)}</span>
+                    <span class="kiro-status-badge ${statusClass}">${statusText}</span>
+                </label>
+            </div>
+        `
+    })
+    .join('')
+
+  modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px; display: flex; flex-direction: column; max-height: 85vh;">
+            <div class="modal-header">
+                <h2>${t('grok.bulkDelete') || '批量删除账号'}</h2>
+                <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+            </div>
+            <div class="modal-body" style="flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 0;">
+                <div class="kiro-bulk-actions" style="padding: 15px; border-bottom: 1px solid var(--border-light); display: flex; gap: 10px; background: var(--bg-secondary);">
+                    <button class="btn btn-sm btn-secondary" onclick="toggleGrokBulkDeleteAll(true)">${t('grok.selectAll') || '全选'}</button>
+                    <button class="btn btn-sm btn-secondary" onclick="toggleGrokBulkDeleteAll(false)">${t('grok.deselectAll') || '全不选'}</button>
+                    <button class="btn btn-sm btn-warning" onclick="selectGrokBulkDeleteInvalid()">
+                        ${t('grok.selectInvalid') || '全选无效项'}
+                    </button>
+                </div>
+                <div class="kiro-bulk-list" style="overflow-y: auto; padding: 0 15px;">
+                    ${listHtml}
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 15px; border-top: 1px solid var(--border-light);">
+                <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">${t('common.cancel')}</button>
+                <button class="btn btn-danger" onclick="executeGrokBulkDelete()">${t('common.delete')}</button>
+            </div>
+        </div>
+    `
+
+  document.body.appendChild(modal)
+}
+
+// 批量全选/全不选
+window.toggleGrokBulkDeleteAll = function (checked) {
+  const checkboxes = document.querySelectorAll('#grokBulkDeleteModal .grok-bulk-checkbox')
+  checkboxes.forEach((cb) => (cb.checked = checked))
+}
+
+// 选中所有无效账号
+window.selectGrokBulkDeleteInvalid = function () {
+  const checkboxes = document.querySelectorAll('#grokBulkDeleteModal .grok-bulk-checkbox')
+  checkboxes.forEach((cb) => {
+    if (cb.dataset.invalid === 'true') {
+      cb.checked = true
+    }
+  })
+}
+
+// 执行批量删除
+window.executeGrokBulkDelete = async function () {
+  const checkboxes = document.querySelectorAll('#grokBulkDeleteModal .grok-bulk-checkbox:checked')
+  if (checkboxes.length === 0) {
+    showError(t('grok.noAccountSelected') || '请至少选择一个账号')
+    return
+  }
+
+  const confirmed = await confirmDialog(`${t('grok.bulkDeleteConfirm') || '确定要删除选中的账号吗？'} (${checkboxes.length})`, {
+    danger: true,
+  })
+  if (!confirmed) {
+    return
+  }
+
+  const modal = document.getElementById('grokBulkDeleteModal')
+  const deleteBtn = modal.querySelector('.btn-danger')
+  const originalText = deleteBtn.innerHTML
+
+  if (deleteBtn) {
+    deleteBtn.disabled = true
+    deleteBtn.innerHTML = 'Deleting...'
+  }
+
+  try {
+    let successCount = 0
+    const total = checkboxes.length
+
+    for (const cb of checkboxes) {
+      try {
+        const ssoToken = atob(cb.value)
+        if (window.go?.main?.App?.DeleteGrokAccount) {
+          await window.go.main.App.DeleteGrokAccount(ssoToken)
+          successCount++
+        }
+      } catch (e) {
+        console.error('Delete failed for token', cb.value, e)
+      }
+    }
+
+    showSuccess(`${t('grok.bulkDeleteSuccess') || '删除成功'} (${successCount}/${total})`)
+
+    modal.remove()
+    await loadGrokAccounts()
+    renderGrokAccountCards()
+  } catch (e) {
+    console.error('Bulk delete error', e)
+    showError(t('grok.bulkDeleteFailed') || '批量删除失败')
+  } finally {
+    if (document.body.contains(modal) && deleteBtn) {
+      deleteBtn.disabled = false
+      deleteBtn.innerHTML = originalText
+    }
+  }
+}

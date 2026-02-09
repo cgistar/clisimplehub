@@ -45,7 +45,8 @@ const iconMap = {
     server: 'Server',
     sync: 'RefreshCw',
     testTube: 'TestTube2',
-    inbox: 'Inbox'
+    inbox: 'Inbox',
+    heart: 'Heart'
 }
 
 /**

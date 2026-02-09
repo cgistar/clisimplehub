@@ -238,7 +238,7 @@ done:
 	if len(urls) > n {
 		urls = urls[:n]
 	}
-	writeImageSuccess(w, urls, responseFormat, proxyURL)
+	writeImageSuccess(w, urls, responseFormat, proxyURL, ssoToken)
 }
 
 func buildWSHeaders(ssoToken string, settings *shared.GrokSettings) http.Header {

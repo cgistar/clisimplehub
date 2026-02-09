@@ -152,7 +152,12 @@ func (a *App) SetActiveGrokAccount(ssoToken string) error {
 		return fmt.Errorf("account not found")
 	}
 	config.ActiveSsoToken = ssoToken
-	return grokShared.SaveGrokMultiConfig(a.getGrokMultiConfigPath(), config)
+	if err := grokShared.SaveGrokMultiConfig(a.getGrokMultiConfigPath(), config); err != nil {
+		return err
+	}
+	// 重新加载 pool
+	a.reloadGrokPool()
+	return nil
 }
 
 // AddGrokAccount 添加新的 Grok 账号
@@ -196,6 +201,9 @@ func (a *App) AddGrokAccount(dto *GrokAccountDTO) (*GrokAccountDTO, error) {
 		return nil, fmt.Errorf("failed to save grok config: %w", err)
 	}
 
+	// 重新加载或初始化 pool
+	a.reloadGrokPool()
+
 	// 添加后自动测试账号，更新真实状态和配额
 	// 测试失败不影响添加操作，只是状态可能不准确
 	go func() {
@@ -232,7 +240,12 @@ func (a *App) UpdateGrokAccount(dto *GrokAccountDTO) error {
 	if !config.UpdateAccount(account) {
 		return fmt.Errorf("failed to update account")
 	}
-	return grokShared.SaveGrokMultiConfig(a.getGrokMultiConfigPath(), config)
+	if err := grokShared.SaveGrokMultiConfig(a.getGrokMultiConfigPath(), config); err != nil {
+		return err
+	}
+	// 重新加载 pool
+	a.reloadGrokPool()
+	return nil
 }
 
 // DeleteGrokAccount 删除 Grok 账号
@@ -248,7 +261,12 @@ func (a *App) DeleteGrokAccount(ssoToken string) error {
 	if !config.DeleteAccount(ssoToken) {
 		return fmt.Errorf("account not found")
 	}
-	return grokShared.SaveGrokMultiConfig(a.getGrokMultiConfigPath(), config)
+	if err := grokShared.SaveGrokMultiConfig(a.getGrokMultiConfigPath(), config); err != nil {
+		return err
+	}
+	// 重新加载 pool
+	a.reloadGrokPool()
+	return nil
 }
 
 // TestGrokAccount 测试 Grok SSO Token 是否有效（通过 rate-limits 接口）
@@ -415,4 +433,45 @@ func (a *App) SaveGrokGlobalConfig(dto *GrokGlobalConfigDTO) error {
 		pool.Reload()
 	}
 	return nil
+}
+
+// ReviveAllGrokAccounts 将所有 Grok 账号状态改为 valid
+func (a *App) ReviveAllGrokAccounts() error {
+	config, err := a.loadOrCreateGrokMultiConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load grok config: %w", err)
+	}
+
+	if len(config.Accounts) == 0 {
+		return fmt.Errorf("no accounts to revive")
+	}
+
+	now := time.Now()
+	for i := range config.Accounts {
+		config.Accounts[i].Status = grokShared.GrokStatusValid
+		config.Accounts[i].FailCount = 0
+		config.Accounts[i].UpdatedAt = now
+	}
+
+	if err := grokShared.SaveGrokMultiConfig(a.getGrokMultiConfigPath(), config); err != nil {
+		return fmt.Errorf("failed to save grok config: %w", err)
+	}
+
+	a.reloadGrokPool()
+	return nil
+}
+
+// reloadGrokPool 重新加载或初始化 Grok 账号池
+func (a *App) reloadGrokPool() {
+	pool := grokAuth.GetPool()
+	if pool != nil {
+		// pool 已存在，重新加载配置
+		pool.Reload()
+	} else {
+		// pool 不存在，尝试初始化
+		grokJsonPath := a.getGrokMultiConfigPath()
+		if err := grokAuth.InitPool(grokJsonPath); err != nil {
+			log.Printf("Warning: failed to initialize grok pool: %v", err)
+		}
+	}
 }
