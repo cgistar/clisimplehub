@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"clisimplehub/internal/config"
@@ -76,6 +77,9 @@ type App struct {
 	wsHub        *proxy.WSHub
 	configLoader *config.ConfigLoader
 	usageStats   *statsdb.SQLiteUsageStatsStore
+
+	pendingDeeplinkMu sync.Mutex
+	pendingDeeplink   string
 }
 
 // NewApp creates a new App application struct
@@ -87,6 +91,7 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.flushPendingDeeplink()
 }
 
 // SetStorage sets the storage instance for the app
@@ -142,14 +147,28 @@ func (a *App) onUrlOpen(urlStr string) {
 func (a *App) onSecondInstanceLaunch(data options.SecondInstanceData) {
 	log.Printf("Second instance launched with %d args", len(data.Args))
 
-	// 从参数中提取 kiro:// URL
-	for _, arg := range data.Args {
-		if strings.HasPrefix(arg, "kiro://") {
-			log.Printf("Found deeplink in args: %s", sanitizeDeeplinkForLog(arg))
-			a.handleDeeplink(arg)
-			break
+	if deeplink := extractKiroDeeplinkFromArgs(data.Args); deeplink != "" {
+		log.Printf("Found deeplink in args: %s", sanitizeDeeplinkForLog(deeplink))
+		a.handleDeeplink(deeplink)
+	}
+}
+
+func extractKiroDeeplinkFromArgs(args []string) string {
+	for _, arg := range args {
+		normalized := normalizeDeeplinkArg(arg)
+		lower := strings.ToLower(normalized)
+		if strings.HasPrefix(lower, "kiro://") || strings.HasPrefix(lower, "kiro:") {
+			return normalized
 		}
 	}
+	return ""
+}
+
+func normalizeDeeplinkArg(arg string) string {
+	normalized := strings.TrimSpace(arg)
+	normalized = strings.Trim(normalized, "\"")
+	normalized = strings.Trim(normalized, "'")
+	return normalized
 }
 
 // handleDeeplink 统一处理 deeplink
@@ -162,17 +181,17 @@ func (a *App) handleDeeplink(urlStr string) {
 	}
 
 	// 白名单验证
-	if parsedURL.Scheme != "kiro" {
+	if !strings.EqualFold(parsedURL.Scheme, "kiro") {
 		log.Printf("Invalid deeplink scheme: %s", parsedURL.Scheme)
 		return
 	}
 
-	if parsedURL.Host != "kiro.kiroAgent" {
+	if !strings.EqualFold(parsedURL.Host, "kiro.kiroAgent") {
 		log.Printf("Invalid deeplink host: %s", parsedURL.Host)
 		return
 	}
 
-	if parsedURL.Path != "/authenticate-success" {
+	if parsedURL.Path != "/authenticate-success" && parsedURL.Path != "/authenticate-success/" {
 		log.Printf("Invalid deeplink path: %s", parsedURL.Path)
 		return
 	}
@@ -182,59 +201,16 @@ func (a *App) handleDeeplink(urlStr string) {
 		runtime.EventsEmit(a.ctx, "deeplink-callback", urlStr)
 		log.Printf("Deeplink event emitted to frontend")
 	} else {
-		log.Printf("Warning: ctx not ready, deeplink event not emitted")
-		// TODO: 实现队列机制缓存 deeplink 事件
+		log.Printf("Warning: ctx not ready, queueing deeplink event")
+		a.queuePendingDeeplink(urlStr)
 	}
 }
 
 func (a *App) GetKiroProtocolHandlerStatus() (*KiroProtocolHandlerStatus, error) {
-	status := &KiroProtocolHandlerStatus{
-		Supported:        true,
-		Scheme:           "kiro",
-		IsDefaultHandler: false,
-	}
-
-	ourBundleID, err := getMainBundleIdentifier()
-	if err != nil {
-		if errors.Is(err, errURLSchemeHandlerUnsupported) {
-			status.Supported = false
-			status.Note = err.Error()
-			return status, nil
-		}
-		status.Note = err.Error()
-		return status, nil
-	}
-	status.OurBundleID = ourBundleID
-
-	defaultHandlerBundleID, err := getDefaultHandlerBundleIDForURLScheme("kiro")
-	if err != nil {
-		status.Note = err.Error()
-		return status, nil
-	}
-	status.DefaultHandlerBundleID = defaultHandlerBundleID
-	status.IsDefaultHandler = ourBundleID != "" && ourBundleID == defaultHandlerBundleID
-	return status, nil
+	return getKiroProtocolHandlerStatusPlatform()
 }
 
 func (a *App) EnsureKiroProtocolHandler() (*KiroProtocolHandlerStatus, error) {
-	status, err := a.GetKiroProtocolHandlerStatus()
-	if err != nil || status == nil {
-		return status, err
-	}
-	if !status.Supported || status.IsDefaultHandler {
-		return status, nil
-	}
-	if status.OurBundleID == "" {
-		return status, fmt.Errorf("bundle id is empty, cannot set default handler")
-	}
-
-	if err := setDefaultHandlerBundleIDForURLScheme("kiro", status.OurBundleID); err != nil {
-		return status, err
-	}
-	return a.GetKiroProtocolHandlerStatus()
-}
-
-func (a *App) RestoreKiroProtocolHandler(bundleID string) (*KiroProtocolHandlerStatus, error) {
 	status, err := a.GetKiroProtocolHandlerStatus()
 	if err != nil || status == nil {
 		return status, err
@@ -243,15 +219,73 @@ func (a *App) RestoreKiroProtocolHandler(bundleID string) (*KiroProtocolHandlerS
 		return status, nil
 	}
 
-	bundleID = strings.TrimSpace(bundleID)
-	if bundleID == "" {
-		return status, fmt.Errorf("bundle id is empty, cannot restore default handler")
+	// If already default handler, nothing to do
+	if status.IsDefaultHandler {
+		return status, nil
 	}
 
-	if err := setDefaultHandlerBundleIDForURLScheme("kiro", bundleID); err != nil {
+	// macOS path
+	if status.OurBundleID != "" {
+		if err := setDefaultHandlerBundleIDForURLScheme("kiro", status.OurBundleID); err != nil {
+			return status, err
+		}
+		return a.GetKiroProtocolHandlerStatus()
+	}
+
+	// Windows path: register current executable
+	if err := RegisterURLScheme(); err != nil {
 		return status, err
 	}
 	return a.GetKiroProtocolHandlerStatus()
+}
+
+func (a *App) RestoreKiroProtocolHandler(bundleIDOrPath string) (*KiroProtocolHandlerStatus, error) {
+	status, err := a.GetKiroProtocolHandlerStatus()
+	if err != nil || status == nil {
+		return status, err
+	}
+	if !status.Supported {
+		return status, nil
+	}
+
+	bundleIDOrPath = strings.TrimSpace(bundleIDOrPath)
+
+	// macOS path
+	if status.OurBundleID != "" {
+		if bundleIDOrPath == "" {
+			return status, fmt.Errorf("bundle id is empty, cannot restore default handler")
+		}
+		if err := setDefaultHandlerBundleIDForURLScheme("kiro", bundleIDOrPath); err != nil {
+			return status, err
+		}
+		return a.GetKiroProtocolHandlerStatus()
+	}
+
+	// Windows path: restore or unregister
+	if err := RestoreRegistration(bundleIDOrPath); err != nil {
+		return status, err
+	}
+	return a.GetKiroProtocolHandlerStatus()
+}
+
+func (a *App) queuePendingDeeplink(urlStr string) {
+	a.pendingDeeplinkMu.Lock()
+	defer a.pendingDeeplinkMu.Unlock()
+	a.pendingDeeplink = urlStr
+}
+
+func (a *App) flushPendingDeeplink() {
+	a.pendingDeeplinkMu.Lock()
+	pending := a.pendingDeeplink
+	a.pendingDeeplink = ""
+	a.pendingDeeplinkMu.Unlock()
+
+	if pending == "" || a.ctx == nil {
+		return
+	}
+
+	runtime.EventsEmit(a.ctx, "deeplink-callback", pending)
+	log.Printf("Flushed pending deeplink event to frontend")
 }
 
 // sanitizeDeeplinkForLog 对 deeplink URL 进行脱敏处理
@@ -3575,10 +3609,26 @@ func (a *App) SyncConfigToServer(index int) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Only sync vendors + endpoints; avoid leaking local app settings and credentials.
-	payload := &config.AppConfig{
+	// 同步 vendors + endpoints + kiro.json；避免泄露本地 app settings 和 credentials。
+	type syncPayload struct {
+		Vendors           []config.VendorConfig   `json:"vendors"`
+		Endpoints         []config.EndpointConfig `json:"endpoints"`
+		KiroConfigEncoded string                  `json:"kiroConfigEncoded,omitempty"` // gzip+base64，避免明文传输
+	}
+	payload := syncPayload{
 		Vendors:   cfg.Vendors,
 		Endpoints: cfg.Endpoints,
+	}
+
+	// 附加 kiro 多账号配置：gzip+base64 编码，避免凭据明文传输
+	if mc, loadErr := a.loadOrCreateMultiConfig(); loadErr == nil && len(mc.Accounts) > 0 {
+		if raw, marshalErr := json.Marshal(mc); marshalErr == nil {
+			var buf bytes.Buffer
+			gz := gzip.NewWriter(&buf)
+			_, _ = gz.Write(raw)
+			_ = gz.Close()
+			payload.KiroConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
+		}
 	}
 
 	body, err := json.Marshal(payload)

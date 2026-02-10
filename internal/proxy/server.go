@@ -14,6 +14,7 @@ import (
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
+	kiroShared "clisimplehub/internal/transformer/kiro/shared"
 )
 
 // ProxyServer represents the main proxy server implementation
@@ -582,9 +583,16 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 	const maxSyncConfigBytes = 10 << 20 // 10 MiB
 	r.Body = http.MaxBytesReader(w, r.Body, maxSyncConfigBytes)
 
-	var incoming config.AppConfig
+	// 扩展 payload：vendors + endpoints + kiroConfig（支持 gzip+base64 编码或明文两种方式）
+	type syncConfigRequest struct {
+		config.AppConfig
+		KiroConfigEncoded string                    `json:"kiroConfigEncoded,omitempty"` // gzip+base64 编码
+		KiroConfig        *kiroShared.KiroMultiConfig `json:"kiroConfig,omitempty"`        // 明文（向后兼容）
+	}
+
+	var req syncConfigRequest
 	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&incoming); err != nil {
+	if err := dec.Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error": "invalid request body: " + err.Error(),
 		})
@@ -596,6 +604,8 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	incoming := req.AppConfig
 
 	// Validate endpoints
 	var validationErrs []string
@@ -635,6 +645,27 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 同步 kiro.json：优先使用 gzip+base64 编码格式，向后兼容明文
+	var kiroResult map[string]interface{}
+	var kiroMC *kiroShared.KiroMultiConfig
+	if req.KiroConfigEncoded != "" {
+		mc, decErr := decodeKiroConfigEncoded(req.KiroConfigEncoded)
+		if decErr != nil {
+			kiroResult = map[string]interface{}{"synced": false, "warning": "decode failed: " + decErr.Error()}
+		} else {
+			kiroMC = mc
+		}
+	} else if req.KiroConfig != nil {
+		kiroMC = req.KiroConfig
+	}
+	if kiroMC != nil && kiroResult == nil {
+		if err := p.syncKiroConfig(kiroMC); err != nil {
+			kiroResult = map[string]interface{}{"synced": false, "warning": err.Error()}
+		} else {
+			kiroResult = map[string]interface{}{"synced": true}
+		}
+	}
+
 	// Trigger hot reload
 	p.mu.RLock()
 	reloadFunc := p.reloadFunc
@@ -644,7 +675,11 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		reloadFunc()
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"message": "config synced and reloaded successfully",
-	})
+	}
+	if kiroResult != nil {
+		resp["kiro"] = kiroResult
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

@@ -1,13 +1,19 @@
 package proxy
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"clisimplehub/internal/storage"
@@ -41,6 +47,9 @@ type UsageInfo struct {
 	Used  int `json:"used"`
 	Limit int `json:"limit"`
 }
+
+// kiroConfigWriteMu 串行化 kiro.json 写入，避免并发请求导致文件损坏
+var kiroConfigWriteMu sync.Mutex
 
 // handleKiroConfig 处理 Kiro 配置更新请求
 func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
@@ -371,6 +380,71 @@ func (p *ProxyServer) ensureKiroEndpoint() error {
 	}
 
 	return nil
+}
+
+// syncKiroConfig 将同步过来的 kiro 配置保存到 kiro.json 并重载 transformer。
+func (p *ProxyServer) syncKiroConfig(mc *kiroShared.KiroMultiConfig) error {
+	if mc == nil {
+		return nil
+	}
+
+	p.mu.RLock()
+	configPath := p.configPath
+	p.mu.RUnlock()
+
+	if configPath == "" {
+		return errors.New("syncKiroConfig skipped: configPath not set")
+	}
+
+	// 防御 null accounts
+	if mc.Accounts == nil {
+		mc.Accounts = []kiroShared.KiroAccount{}
+	}
+
+	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
+
+	kiroConfigWriteMu.Lock()
+	defer kiroConfigWriteMu.Unlock()
+
+	if err := kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc); err != nil {
+		return fmt.Errorf("failed to save synced kiro config: %w", err)
+	}
+
+	// 重载 transformer 缓存
+	kiroClaude.SetCachedBufferedStream(mc.BufferedStream)
+	kiroClaude.SetCachedModelMapping(mc.ModelMapping)
+
+	var warn error
+	if err := kiroClaude.ReloadAllTransformers(); err != nil {
+		warn = errors.Join(warn, fmt.Errorf("failed to reload transformers: %w", err))
+	}
+
+	if err := p.ensureKiroEndpoint(); err != nil {
+		warn = errors.Join(warn, fmt.Errorf("failed to ensure kiro endpoint: %w", err))
+	}
+	return warn
+}
+
+// decodeKiroConfigEncoded 解码 gzip+base64 编码的 KiroMultiConfig
+func decodeKiroConfigEncoded(encoded string) (*kiroShared.KiroMultiConfig, error) {
+	compressed, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, fmt.Errorf("gzip reader: %w", err)
+	}
+	defer gz.Close()
+	raw, err := io.ReadAll(gz)
+	if err != nil {
+		return nil, fmt.Errorf("gzip decompress: %w", err)
+	}
+	var mc kiroShared.KiroMultiConfig
+	if err := json.Unmarshal(raw, &mc); err != nil {
+		return nil, fmt.Errorf("json unmarshal: %w", err)
+	}
+	return &mc, nil
 }
 
 // handleKiroGetUsage 处理获取 Kiro 使用量请求

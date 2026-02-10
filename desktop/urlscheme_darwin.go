@@ -78,6 +78,21 @@ import (
 	"unsafe"
 )
 
+// RegisterURLScheme is a no-op on macOS (handled by Info.plist)
+func RegisterURLScheme() error {
+	return nil
+}
+
+// UnregisterURLScheme is a no-op on macOS
+func UnregisterURLScheme() error {
+	return nil
+}
+
+// CleanupKiroProtocolIfNeeded is a no-op on macOS (protocol handler managed by Launch Services)
+func CleanupKiroProtocolIfNeeded() error {
+	return nil
+}
+
 func getMainBundleIdentifier() (string, error) {
 	bundle := C.CFBundleGetMainBundle()
 	if bundle == 0 {
@@ -134,4 +149,45 @@ func setDefaultHandlerBundleIDForURLScheme(scheme, bundleID string) error {
 		return fmt.Errorf("LSSetDefaultHandlerForURLScheme failed: %d", int(status))
 	}
 	return nil
+}
+
+// GetRegisteredExecutablePath is not applicable on macOS (uses bundle IDs)
+func GetRegisteredExecutablePath() (string, error) {
+	return "", nil
+}
+
+// RestoreRegistration is not applicable on macOS (uses bundle IDs)
+func RestoreRegistration(_ string) error {
+	return nil
+}
+
+func getKiroProtocolHandlerStatusPlatform() (*KiroProtocolHandlerStatus, error) {
+	status := &KiroProtocolHandlerStatus{
+		Supported:        true,
+		Scheme:           "kiro",
+		IsDefaultHandler: false,
+	}
+
+	ourBundleID, err := getMainBundleIdentifier()
+	if err != nil && !errors.Is(err, errURLSchemeHandlerUnsupported) {
+		status.Note = err.Error()
+		return status, nil
+	}
+
+	if ourBundleID == "" {
+		status.Note = "bundle id is empty"
+		return status, nil
+	}
+
+	status.OurBundleID = ourBundleID
+
+	defaultHandlerBundleID, err := getDefaultHandlerBundleIDForURLScheme("kiro")
+	if err != nil {
+		status.Note = err.Error()
+		return status, nil
+	}
+
+	status.DefaultHandlerBundleID = defaultHandlerBundleID
+	status.IsDefaultHandler = ourBundleID == defaultHandlerBundleID
+	return status, nil
 }

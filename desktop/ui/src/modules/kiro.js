@@ -36,6 +36,17 @@ async function isDarwinPlatform() {
   }
 }
 
+async function isWindowsPlatform() {
+  if (!window.runtime?.Environment) return false
+  try {
+    const env = await window.runtime.Environment()
+    return env?.platform === 'windows'
+  } catch (e) {
+    console.warn('Failed to detect platform via runtime.Environment:', e)
+    return false
+  }
+}
+
 async function restoreKiroProtocolHandlerIfNeeded() {
   if (!socialLoginState.didOverrideKiroHandler) return
   if (!socialLoginState.originalKiroHandlerBundleId) return
@@ -1579,14 +1590,26 @@ export async function startSocialLogin(provider, fromAccountManagement = false) 
     // 0. 清理旧的监听器（防止重复注册）
     resetSocialLoginState()
 
-    // 0.1 确保本应用能接收到 kiro:// 回调（macOS 上如果被 kiro.app 抢占，会导致回调落到别的应用）
-    if ((await isDarwinPlatform()) && window.go?.main?.App?.EnsureKiroProtocolHandler) {
+    // 0.1 确保本应用能接收到 kiro:// 回调
+    // macOS: 如果被 kiro.app 抢占，会导致回调落到别的应用
+    // Windows: 需要临时注册 kiro:// 协议
+    const isDarwin = await isDarwinPlatform()
+    const isWindows = await isWindowsPlatform()
+
+    if ((isDarwin || isWindows) && window.go?.main?.App?.EnsureKiroProtocolHandler) {
       try {
+        // 获取当前状态（保存之前的 handler）
         if (window.go?.main?.App?.GetKiroProtocolHandlerStatus) {
           const existing = await window.go.main.App.GetKiroProtocolHandlerStatus()
-          socialLoginState.originalKiroHandlerBundleId = existing?.defaultHandlerBundleId || ''
+          if (isDarwin) {
+            socialLoginState.originalKiroHandlerBundleId = existing?.defaultHandlerBundleId || ''
+          } else if (isWindows) {
+            // Windows: 保存之前注册的应用路径
+            socialLoginState.originalKiroHandlerBundleId = existing?.defaultHandlerBundleId || ''
+          }
         }
 
+        // 注册当前应用为 kiro:// 协议处理器
         const status = await window.go.main.App.EnsureKiroProtocolHandler()
         if (status?.supported === false) {
           showError(t('kiro.protocolHandlerUnsupported'))
@@ -1596,10 +1619,17 @@ export async function startSocialLogin(provider, fromAccountManagement = false) 
           showError(t('kiro.protocolHandlerNotDefault'))
           return
         }
-        socialLoginState.didOverrideKiroHandler =
-          !!socialLoginState.originalKiroHandlerBundleId &&
-          !!status?.ourBundleId &&
-          socialLoginState.originalKiroHandlerBundleId !== status.ourBundleId
+
+        // 记录是否临时抢占了 handler
+        if (isDarwin) {
+          socialLoginState.didOverrideKiroHandler =
+            !!socialLoginState.originalKiroHandlerBundleId &&
+            !!status?.ourBundleId &&
+            socialLoginState.originalKiroHandlerBundleId !== status.ourBundleId
+        } else if (isWindows) {
+          // Windows: 如果之前有注册（且不是当前应用），则标记为临时抢占
+          socialLoginState.didOverrideKiroHandler = !!socialLoginState.originalKiroHandlerBundleId
+        }
       } catch (e) {
         console.warn('EnsureKiroProtocolHandler failed:', e)
         showError(t('kiro.protocolHandlerSetFailed') + ': ' + (e?.message || e))
@@ -1633,7 +1663,10 @@ export async function startSocialLogin(provider, fromAccountManagement = false) 
     // 4. 显示等待 Modal
     showSocialLoginModal()
 
-    // 5. 打开浏览器（带降级方案）
+    // 5. 开始监听 deeplink 回调（避免回调过快导致错过事件）
+    startDeeplinkListener()
+
+    // 6. 打开浏览器（带降级方案）
     try {
       if (window.go?.main?.App?.OpenURLInIncognito) {
         await window.go.main.App.OpenURLInIncognito(loginUrl)
@@ -1644,9 +1677,6 @@ export async function startSocialLogin(provider, fromAccountManagement = false) 
       console.warn('Failed to open browser, falling back to window.open:', browserError)
       window.open(loginUrl, '_blank', 'noopener,noreferrer')
     }
-
-    // 6. 开始监听 deeplink 回调
-    startDeeplinkListener()
 
     // 7. 设置超时定时器（5 分钟）
     socialLoginState.timeoutTimer = setTimeout(

@@ -52,10 +52,12 @@ func main() {
 
 	log.Println("Starting Cli Simple Hub in GUI mode...")
 
-	// Register URL scheme (kiro://) on Windows
-	// This allows the browser to launch the app when clicking kiro:// links
-	if err := RegisterURLScheme(); err != nil {
-		log.Printf("Warning: Failed to register URL scheme: %v", err)
+	// Cleanup leftover kiro:// protocol registration (if any)
+	// This handles:
+	// - Cancelled login sessions (protocol not restored)
+	// - Application path changes (moved or renamed)
+	if err := CleanupKiroProtocolIfNeeded(); err != nil {
+		log.Printf("Warning: Failed to cleanup kiro protocol: %v", err)
 	}
 
 	// Get data directory with priority:
