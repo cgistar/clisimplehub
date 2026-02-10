@@ -65,6 +65,11 @@ export function mainLayoutTemplate() {
                                     ${createIcon('plus', { size: 14 })} ${t('kiro.addAccount')} ${createIcon('chevronDown', { size: 14 })}
                                 </button>
                                 <div class="kiro-add-account-menu" id="kiroAddAccountMenu" style="display: none;">
+                                    <button class="dropdown-item" onclick="startAddAccountLogin('kiro-sign')">
+                                        <span class="dropdown-icon">${createIcon('key', { size: 14 })}</span>
+                                        <span class="dropdown-text">${t('kiro.kiroSignLogin')}</span>
+                                    </button>
+                                    <div class="dropdown-divider"></div>
                                     <button class="dropdown-item" onclick="importKiroAccountsFromJson()">
                                         <span class="dropdown-icon">${createIcon('download', { size: 14 })}</span>
                                         <span class="dropdown-text">${t('kiro.jsonImport')}</span>

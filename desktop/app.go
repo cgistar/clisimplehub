@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +81,18 @@ type App struct {
 
 	pendingDeeplinkMu sync.Mutex
 	pendingDeeplink   string
+
+	kiroProtocolHandlerMu         sync.Mutex
+	kiroProtocolHandlerOverridden bool
+	kiroProtocolHandlerOriginal   string
+
+	kiroSignServer  *http.Server
+	kiroSignMu      sync.Mutex
+	kiroSignTimeout *time.Timer
+
+	kiroSignIdcServer  *http.Server
+	kiroSignIdcMu      sync.Mutex
+	kiroSignIdcTimeout *time.Timer
 }
 
 // NewApp creates a new App application struct
@@ -224,19 +237,43 @@ func (a *App) EnsureKiroProtocolHandler() (*KiroProtocolHandlerStatus, error) {
 		return status, nil
 	}
 
-	// macOS path
-	if status.OurBundleID != "" {
+	switch goruntime.GOOS {
+	case "darwin":
+		if status.OurBundleID == "" {
+			return status, fmt.Errorf("bundle id is empty, cannot set default handler")
+		}
+
+		a.kiroProtocolHandlerMu.Lock()
+		if !a.kiroProtocolHandlerOverridden {
+			a.kiroProtocolHandlerOriginal = strings.TrimSpace(status.DefaultHandlerBundleID)
+		}
+		a.kiroProtocolHandlerMu.Unlock()
+
 		if err := setDefaultHandlerBundleIDForURLScheme("kiro", status.OurBundleID); err != nil {
 			return status, err
 		}
+		a.kiroProtocolHandlerMu.Lock()
+		a.kiroProtocolHandlerOverridden = true
+		a.kiroProtocolHandlerMu.Unlock()
 		return a.GetKiroProtocolHandlerStatus()
-	}
+	case "windows":
+		a.kiroProtocolHandlerMu.Lock()
+		if !a.kiroProtocolHandlerOverridden {
+			a.kiroProtocolHandlerOriginal = strings.TrimSpace(status.DefaultHandlerBundleID)
+		}
+		a.kiroProtocolHandlerMu.Unlock()
 
-	// Windows path: register current executable
-	if err := RegisterURLScheme(); err != nil {
-		return status, err
+		// Windows path: register current executable
+		if err := RegisterURLScheme(); err != nil {
+			return status, err
+		}
+		a.kiroProtocolHandlerMu.Lock()
+		a.kiroProtocolHandlerOverridden = true
+		a.kiroProtocolHandlerMu.Unlock()
+		return a.GetKiroProtocolHandlerStatus()
+	default:
+		return status, nil
 	}
-	return a.GetKiroProtocolHandlerStatus()
 }
 
 func (a *App) RestoreKiroProtocolHandler(bundleIDOrPath string) (*KiroProtocolHandlerStatus, error) {
@@ -250,22 +287,71 @@ func (a *App) RestoreKiroProtocolHandler(bundleIDOrPath string) (*KiroProtocolHa
 
 	bundleIDOrPath = strings.TrimSpace(bundleIDOrPath)
 
-	// macOS path
-	if status.OurBundleID != "" {
+	switch goruntime.GOOS {
+	case "darwin":
 		if bundleIDOrPath == "" {
 			return status, fmt.Errorf("bundle id is empty, cannot restore default handler")
 		}
 		if err := setDefaultHandlerBundleIDForURLScheme("kiro", bundleIDOrPath); err != nil {
 			return status, err
 		}
+		a.kiroProtocolHandlerMu.Lock()
+		a.kiroProtocolHandlerOverridden = false
+		a.kiroProtocolHandlerOriginal = ""
+		a.kiroProtocolHandlerMu.Unlock()
 		return a.GetKiroProtocolHandlerStatus()
+	case "windows":
+		// Windows path: restore or unregister
+		if err := RestoreRegistration(bundleIDOrPath); err != nil {
+			return status, err
+		}
+		a.kiroProtocolHandlerMu.Lock()
+		a.kiroProtocolHandlerOverridden = false
+		a.kiroProtocolHandlerOriginal = ""
+		a.kiroProtocolHandlerMu.Unlock()
+		return a.GetKiroProtocolHandlerStatus()
+	default:
+		return status, nil
+	}
+}
+
+func (a *App) cleanupKiroProtocolHandlerOnExit() {
+	a.kiroProtocolHandlerMu.Lock()
+	overridden := a.kiroProtocolHandlerOverridden
+	original := strings.TrimSpace(a.kiroProtocolHandlerOriginal)
+	a.kiroProtocolHandlerMu.Unlock()
+
+	if !overridden {
+		return
 	}
 
-	// Windows path: restore or unregister
-	if err := RestoreRegistration(bundleIDOrPath); err != nil {
-		return status, err
+	switch goruntime.GOOS {
+	case "darwin":
+		// macOS: restore previous default handler bundle id (best-effort)
+		if original == "" {
+			log.Printf("Warning: kiro protocol handler was overridden but original bundle id is empty, skip restore")
+		} else if err := setDefaultHandlerBundleIDForURLScheme("kiro", original); err != nil {
+			log.Printf("Warning: failed to restore kiro:// default handler to '%s': %v", original, err)
+		} else {
+			log.Printf("Restored kiro:// default handler to '%s'", original)
+		}
+	case "windows":
+		// Windows: restore previous registration or unregister if none (best-effort)
+		if err := RestoreRegistration(original); err != nil {
+			log.Printf("Warning: failed to restore/unregister kiro:// protocol: %v", err)
+		} else if original == "" {
+			log.Printf("Unregistered kiro:// protocol")
+		} else {
+			log.Printf("Restored kiro:// protocol to previous handler: %s", original)
+		}
+	default:
+		// no-op
 	}
-	return a.GetKiroProtocolHandlerStatus()
+
+	a.kiroProtocolHandlerMu.Lock()
+	a.kiroProtocolHandlerOverridden = false
+	a.kiroProtocolHandlerOriginal = ""
+	a.kiroProtocolHandlerMu.Unlock()
 }
 
 func (a *App) queuePendingDeeplink(urlStr string) {
@@ -2353,7 +2439,7 @@ func (a *App) getDefaultClaudeSettings() string {
 		"env": map[string]string{
 			"ANTHROPIC_AUTH_TOKEN":                     apiKey,
 			"ANTHROPIC_BASE_URL":                       proxyURL,
-			"CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+			"CLAUDE_CODE_ATTRIBUTION_HEADER":           "0",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 		},
 		"permissions": map[string]interface{}{
@@ -2735,8 +2821,8 @@ func (a *App) GetComputerName() (string, error) {
 
 // BackupDataResponse 备份数据响应（包含文件名和数据）
 type BackupDataResponse struct {
-	Filename string              `json:"filename"`
-	Data     *config.BackupData  `json:"data"`
+	Filename string             `json:"filename"`
+	Data     *config.BackupData `json:"data"`
 }
 
 // CreateBackupData 创建完整的备份数据

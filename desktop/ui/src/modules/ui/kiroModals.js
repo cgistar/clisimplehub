@@ -367,6 +367,43 @@ export function kiroGlobalConfigModalTemplate() {
         </div>`
 }
 
+export function kiroSignLoginModalTemplate() {
+  return `
+        <div id="kiroSignLoginModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>${t('kiro.kiroSignLoginTitle')}</h2>
+                    <button class="modal-close" onclick="closeKiroSignLoginModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group" style="text-align: center; padding: 20px 0;">
+                        <div class="loading-spinner"></div>
+                        <p style="margin-top: 15px;">${t('kiro.kiroSignLoginWaiting')}</p>
+                        <small class="muted">${t('kiro.kiroSignLoginInstruction')}</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>${t('kiro.loginUrlLabel')}</label>
+                        <div class="link-panel">
+                            <div class="link-text" id="kiroSignLoginUrl" title="">—</div>
+                            <div class="link-actions">
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="copyKiroSignLoginUrl()">
+                                    ${t('kiro.copyLink')}
+                                </button>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="openKiroSignLoginUrl()">
+                                    ${t('kiro.openLink')}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeKiroSignLoginModal()">${t('settings.cancel')}</button>
+                </div>
+            </div>
+        </div>`
+}
+
 export function kiroAccountEditModalTemplate() {
   return `
         <div id="kiroAccountEditModal" class="modal">

@@ -45,3 +45,34 @@ type PollTokenResponse struct {
 	TokenType    string `json:"tokenType,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
+
+// AuthCodeRegisterRequest Authorization Code Flow 客户端注册请求
+type AuthCodeRegisterRequest struct {
+	Region   string
+	IssuerUrl string
+}
+
+// AuthCodeRegisterResponse Authorization Code Flow 客户端注册响应
+type AuthCodeRegisterResponse struct {
+	ClientId     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+}
+
+// AuthCodeTokenRequest Authorization Code Flow token 交换请求
+type AuthCodeTokenRequest struct {
+	Region       string
+	ClientId     string
+	ClientSecret string
+	Code         string
+	RedirectUri  string
+	CodeVerifier string
+}
+
+// AuthCodeTokenResponse Authorization Code Flow token 交换响应
+type AuthCodeTokenResponse struct {
+	AccessToken  string `json:"accessToken,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+	ExpiresIn    int    `json:"expiresIn,omitempty"`
+	TokenType    string `json:"tokenType,omitempty"`
+	Error        string `json:"error,omitempty"`
+}

@@ -45,7 +45,6 @@ const (
 	ConfigKeyListenAddr = "listenAddr"
 )
 
-
 func main() {
 	log.SetPrefix("[clisimplehub] ")
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -223,6 +222,8 @@ func main() {
 			// Graceful shutdown
 			// Requirements: 5.4
 			log.Println("Shutting down...")
+			// Best-effort: clear temporary kiro:// protocol handler override before exit
+			app.cleanupKiroProtocolHandlerOnExit()
 			if err := proxyServer.Stop(); err != nil {
 				log.Printf("Error stopping proxy server: %v", err)
 			}

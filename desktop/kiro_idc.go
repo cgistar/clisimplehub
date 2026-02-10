@@ -173,3 +173,93 @@ func (a *App) PollIdcToken(req *IdcPollTokenRequest) (*IdcPollTokenResponse, err
 		Error:        coreResp.Error,
 	}, nil
 }
+
+// IdcAuthCodeRegisterRequest Authorization Code Flow 客户端注册请求
+type IdcAuthCodeRegisterRequest struct {
+	Region    string `json:"region,omitempty"`
+	IssuerUrl string `json:"issuerUrl"`
+}
+
+// IdcAuthCodeRegisterResponse Authorization Code Flow 客户端注册响应
+type IdcAuthCodeRegisterResponse struct {
+	ClientId     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+}
+
+// IdcAuthCodeTokenRequest Authorization Code Flow token 交换请求
+type IdcAuthCodeTokenRequest struct {
+	Region       string `json:"region,omitempty"`
+	ClientId     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+	Code         string `json:"code"`
+	RedirectUri  string `json:"redirectUri"`
+	CodeVerifier string `json:"codeVerifier"`
+}
+
+// IdcAuthCodeTokenResponse Authorization Code Flow token 交换响应
+type IdcAuthCodeTokenResponse struct {
+	AccessToken  string `json:"accessToken,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+	ExpiresIn    int    `json:"expiresIn,omitempty"`
+	TokenType    string `json:"tokenType,omitempty"`
+}
+
+// RegisterIdcAuthCodeClient 注册 Authorization Code Flow OIDC 客户端
+func (a *App) RegisterIdcAuthCodeClient(req *IdcAuthCodeRegisterRequest) (*IdcAuthCodeRegisterResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("nil request")
+	}
+
+	proxyURL := a.getKiroProxyURL()
+	region := strings.TrimSpace(req.Region)
+	if region == "" {
+		region = "us-east-1"
+	}
+	client := kiroIdc.NewClient(proxyURL, region)
+
+	coreResp, err := client.RegisterAuthCodeClient(&kiroIdc.AuthCodeRegisterRequest{
+		Region:    region,
+		IssuerUrl: req.IssuerUrl,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &IdcAuthCodeRegisterResponse{
+		ClientId:     coreResp.ClientId,
+		ClientSecret: coreResp.ClientSecret,
+	}, nil
+}
+
+// ExchangeIdcAuthCode 用 authorization code 交换 token
+func (a *App) ExchangeIdcAuthCode(req *IdcAuthCodeTokenRequest) (*IdcAuthCodeTokenResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("nil request")
+	}
+
+	proxyURL := a.getKiroProxyURL()
+	region := strings.TrimSpace(req.Region)
+	if region == "" {
+		region = "us-east-1"
+	}
+	client := kiroIdc.NewClient(proxyURL, region)
+
+	coreResp, err := client.ExchangeAuthCode(&kiroIdc.AuthCodeTokenRequest{
+		Region:       region,
+		ClientId:     req.ClientId,
+		ClientSecret: req.ClientSecret,
+		Code:         req.Code,
+		RedirectUri:  req.RedirectUri,
+		CodeVerifier: req.CodeVerifier,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &IdcAuthCodeTokenResponse{
+		AccessToken:  coreResp.AccessToken,
+		RefreshToken: coreResp.RefreshToken,
+		ExpiresIn:    coreResp.ExpiresIn,
+		TokenType:    coreResp.TokenType,
+	}, nil
+}

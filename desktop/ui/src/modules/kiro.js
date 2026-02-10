@@ -1729,7 +1729,9 @@ async function handleDeeplinkCallback(url) {
     }
 
     // 3. 交换 token（获取完整响应）
-    const tokenResponse = await exchangeCodeForToken(code)
+    const tokenResponse = await exchangeCodeForToken(
+      code, socialLoginState.verifier, 'kiro://kiro.kiroAgent/authenticate-success'
+    )
 
     // 4. 回填到配置表单
     const refreshTokenEl = document.getElementById('kiroRefreshToken')
@@ -1830,7 +1832,7 @@ async function handleDeeplinkCallback(url) {
  * @param {string} code - 授权码
  * @returns {Promise<Object>} Token 响应对象
  */
-async function exchangeCodeForToken(code) {
+async function exchangeCodeForToken(code, codeVerifier, redirectUri) {
   const response = await fetch('https://prod.us-east-1.auth.desktop.kiro.dev/oauth/token', {
     method: 'POST',
     headers: {
@@ -1838,8 +1840,8 @@ async function exchangeCodeForToken(code) {
     },
     body: JSON.stringify({
       code: code,
-      code_verifier: socialLoginState.verifier,
-      redirect_uri: 'kiro://kiro.kiroAgent/authenticate-success',
+      code_verifier: codeVerifier,
+      redirect_uri: redirectUri,
     }),
   })
 
@@ -2004,6 +2006,355 @@ async function ensureKiroEndpoint() {
     console.error('Failed to ensure kiro endpoint:', error)
   }
 }
+
+// =============================================================================
+// Kiro Sign Login（统一登录页 app.kiro.dev/signin）
+// =============================================================================
+
+const kiroSignState = {
+  verifier: '',
+  state: '',
+  loginUrl: '',
+  isWaiting: false,
+  fromAccountManagement: false,
+}
+
+function loginOptionToProvider(loginOption) {
+  const opt = String(loginOption || '').toLowerCase()
+  if (opt === 'google') return { authMethod: 'social', provider: 'Google' }
+  if (opt === 'github') return { authMethod: 'social', provider: 'Github' }
+  return { authMethod: 'social', provider: loginOption || '' }
+}
+
+async function startKiroSignLogin(fromAccountManagement = false) {
+  try {
+    // 生成 PKCE 参数
+    const verifier = generateRandomString(128)
+    const challenge = await generateCodeChallenge(verifier)
+    const state = generateUUID()
+
+    const redirectUri = 'http://localhost:3128'
+    const loginUrl =
+      `https://app.kiro.dev/signin?` +
+      `state=${state}&` +
+      `code_challenge=${challenge}&` +
+      `code_challenge_method=S256&` +
+      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+      `redirect_from=KiroIDE`
+
+    // 保存状态
+    kiroSignState.verifier = verifier
+    kiroSignState.state = state
+    kiroSignState.loginUrl = loginUrl
+    kiroSignState.isWaiting = true
+    kiroSignState.fromAccountManagement = fromAccountManagement
+
+    // 启动回调服务器
+    if (!window.go?.main?.App?.StartKiroSignCallbackServer) {
+      throw new Error('StartKiroSignCallbackServer API not available')
+    }
+    await window.go.main.App.StartKiroSignCallbackServer()
+
+    // 显示等待 Modal
+    showKiroSignLoginModal()
+
+    // 监听回调事件
+    if (window.runtime?.EventsOn) {
+      window.runtime.EventsOn('kiro-sign-callback', handleKiroSignCallback)
+      window.runtime.EventsOn('kiro-sign-timeout', handleKiroSignTimeout)
+    }
+
+    // 打开浏览器
+    try {
+      if (window.go?.main?.App?.OpenURLInIncognito) {
+        await window.go.main.App.OpenURLInIncognito(loginUrl)
+      } else {
+        window.open(loginUrl, '_blank', 'noopener,noreferrer')
+      }
+    } catch (browserError) {
+      console.warn('Failed to open browser:', browserError)
+      window.open(loginUrl, '_blank', 'noopener,noreferrer')
+    }
+  } catch (error) {
+    console.error('Failed to start Kiro Sign login:', error)
+    const msg = String(error?.message || error || '')
+    if (msg.includes('3128')) {
+      showError(t('kiro.kiroSignLoginPortInUse'))
+    } else {
+      showError(t('kiro.kiroSignLoginFailed') + ': ' + msg)
+    }
+    closeKiroSignLoginModal()
+  }
+}
+
+async function handleKiroSignCallback(data) {
+  if (!kiroSignState.isWaiting) return
+
+  try {
+    // 验证 state
+    if (data.state !== kiroSignState.state) {
+      throw new Error('State mismatch')
+    }
+
+    if (data.type === 'social') {
+      // Social 登录：交换 token
+      // redirect_uri 必须与实际回调 URL 完全一致（含路径和查询参数）
+      const redirectUri = `http://localhost:3128/oauth/callback?login_option=${encodeURIComponent(data.loginOption)}`
+      const tokenResponse = await exchangeCodeForToken(
+        data.code, kiroSignState.verifier, redirectUri
+      )
+
+      const { authMethod, provider } = loginOptionToProvider(data.loginOption)
+
+      if (kiroSignState.fromAccountManagement) {
+        const { addKiroAccount } = await import('./kiroAccounts.js')
+        await addKiroAccount({
+          refreshToken: tokenResponse.refreshToken || '',
+          accessToken: tokenResponse.accessToken || '',
+          profileArn: tokenResponse.profileArn || '',
+          expiresAt: tokenResponse.expiresAt || '',
+          region: 'us-east-1',
+          authMethod,
+          provider,
+        })
+      } else {
+        // 回填到配置表单
+        const refreshTokenEl = document.getElementById('kiroRefreshToken')
+        const accessTokenEl = document.getElementById('kiroAccessToken')
+        const profileArnEl = document.getElementById('kiroProfileArn')
+        if (refreshTokenEl && tokenResponse.refreshToken) refreshTokenEl.value = tokenResponse.refreshToken
+        if (accessTokenEl && tokenResponse.accessToken) accessTokenEl.value = tokenResponse.accessToken
+        if (profileArnEl && tokenResponse.profileArn) profileArnEl.value = tokenResponse.profileArn
+
+        testedRefreshToken = tokenResponse.refreshToken || ''
+        testedKiroCreds = {
+          accessToken: tokenResponse.accessToken || '',
+          refreshToken: tokenResponse.refreshToken || '',
+          expiresAt: tokenResponse.expiresAt || '',
+          profileArn: tokenResponse.profileArn || '',
+          region: document.getElementById('kiroRegion')?.value || 'us-east-1',
+          authMethod,
+          provider,
+          clientId: '',
+          clientSecret: '',
+        }
+        updateKiroConfigButtons()
+      }
+
+      closeKiroSignLoginModal()
+      showSuccess(t('kiro.kiroSignLoginSuccess'))
+    } else if (data.type === 'idc') {
+      // IDC 登录：Authorization Code Flow with PKCE
+      closeKiroSignLoginModal()
+      await handleKiroSignIdcAuthCodeFlow(data)
+    }
+  } catch (error) {
+    console.error('Kiro Sign callback error:', error)
+    showError(t('kiro.kiroSignLoginFailed') + ': ' + (error?.message || error))
+    closeKiroSignLoginModal()
+  } finally {
+    resetKiroSignState()
+  }
+}
+
+// IDC Authorization Code Flow with PKCE（Builder ID / IAM Identity Center）
+async function handleKiroSignIdcAuthCodeFlow(data) {
+  const region = data.idcRegion || 'us-east-1'
+  const issuerUrl = data.issuerUrl || 'https://view.awsapps.com/start'
+  const provider = data.loginOption === 'builderid' ? 'BuilderId' : 'Enterprise'
+  const fromAccountManagement = kiroSignState.fromAccountManagement
+
+  try {
+    // 1. 注册 Auth Code 客户端
+    const regResp = await window.go.main.App.RegisterIdcAuthCodeClient({
+      region,
+      issuerUrl,
+    })
+
+    // 2. 生成 PKCE 参数
+    const verifier = generateRandomString(128)
+    const challenge = await generateCodeChallenge(verifier)
+    const state = generateUUID()
+
+    // 3. 启动随机端口回调服务器
+    const port = await window.go.main.App.StartKiroSignIdcCallbackServer()
+
+    const redirectUri = `http://127.0.0.1:${port}/oauth/callback`
+    const scopes = [
+      'codewhisperer:completions',
+      'codewhisperer:analysis',
+      'codewhisperer:conversations',
+      'codewhisperer:transformations',
+      'codewhisperer:taskassist',
+    ].join(',')
+
+    const authorizeUrl =
+      `https://oidc.${region}.amazonaws.com/authorize?` +
+      `response_type=code&` +
+      `client_id=${encodeURIComponent(regResp.clientId)}&` +
+      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+      `scopes=${encodeURIComponent(scopes)}&` +
+      `state=${state}&` +
+      `code_challenge=${challenge}&` +
+      `code_challenge_method=S256`
+
+    // 4. 等待回调的 Promise
+    const codeResult = await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        if (window.runtime?.EventsOff) {
+          window.runtime.EventsOff('kiro-sign-idc-callback')
+          window.runtime.EventsOff('kiro-sign-idc-timeout')
+        }
+      }
+
+      if (window.runtime?.EventsOn) {
+        window.runtime.EventsOn('kiro-sign-idc-callback', (cbData) => {
+          cleanup()
+          if (cbData.state !== state) {
+            reject(new Error('IDC auth code state mismatch'))
+          } else {
+            resolve(cbData)
+          }
+        })
+        window.runtime.EventsOn('kiro-sign-idc-timeout', () => {
+          cleanup()
+          reject(new Error(t('kiro.kiroSignLoginTimeout')))
+        })
+      }
+
+      // 5. 打开浏览器
+      if (window.go?.main?.App?.OpenURLInIncognito) {
+        window.go.main.App.OpenURLInIncognito(authorizeUrl).catch(() => {
+          window.open(authorizeUrl, '_blank', 'noopener,noreferrer')
+        })
+      } else {
+        window.open(authorizeUrl, '_blank', 'noopener,noreferrer')
+      }
+    })
+
+    // 6. 用 authorization code 交换 token
+    const tokenResp = await window.go.main.App.ExchangeIdcAuthCode({
+      region,
+      clientId: regResp.clientId,
+      clientSecret: regResp.clientSecret,
+      code: codeResult.code,
+      redirectUri: `http://127.0.0.1:${port}/oauth/callback`,
+      codeVerifier: verifier,
+    })
+
+    // 7. 处理结果
+    if (fromAccountManagement) {
+      const { addKiroAccount } = await import('./kiroAccounts.js')
+      await addKiroAccount({
+        refreshToken: tokenResp.refreshToken || '',
+        accessToken: tokenResp.accessToken || '',
+        region,
+        authMethod: 'idc',
+        provider,
+        clientId: regResp.clientId,
+        clientSecret: regResp.clientSecret,
+      })
+    } else {
+      const refreshTokenEl = document.getElementById('kiroRefreshToken')
+      const accessTokenEl = document.getElementById('kiroAccessToken')
+      if (refreshTokenEl && tokenResp.refreshToken) refreshTokenEl.value = tokenResp.refreshToken
+      if (accessTokenEl && tokenResp.accessToken) accessTokenEl.value = tokenResp.accessToken
+
+      const clientIdEl = document.getElementById('kiroClientId')
+      const clientSecretEl = document.getElementById('kiroClientSecret')
+      if (clientIdEl) clientIdEl.value = regResp.clientId
+      if (clientSecretEl) clientSecretEl.value = regResp.clientSecret
+
+      testedRefreshToken = tokenResp.refreshToken || ''
+      testedKiroCreds = {
+        accessToken: tokenResp.accessToken || '',
+        refreshToken: tokenResp.refreshToken || '',
+        expiresAt: '',
+        profileArn: '',
+        region,
+        authMethod: 'idc',
+        provider,
+        clientId: regResp.clientId,
+        clientSecret: regResp.clientSecret,
+      }
+      updateKiroConfigButtons()
+    }
+
+    showSuccess(t('kiro.kiroSignLoginSuccess'))
+  } catch (error) {
+    console.error('IDC auth code flow error:', error)
+    showError(t('kiro.kiroSignLoginFailed') + ': ' + (error?.message || error))
+    if (window.go?.main?.App?.StopKiroSignIdcCallbackServer) {
+      window.go.main.App.StopKiroSignIdcCallbackServer()
+    }
+  }
+}
+
+function handleKiroSignTimeout() {
+  if (!kiroSignState.isWaiting) return
+  showError(t('kiro.kiroSignLoginTimeout'))
+  closeKiroSignLoginModal()
+  resetKiroSignState()
+}
+
+function showKiroSignLoginModal() {
+  const modal = document.getElementById('kiroSignLoginModal')
+  if (modal) {
+    const urlEl = document.getElementById('kiroSignLoginUrl')
+    if (urlEl) {
+      urlEl.textContent = kiroSignState.loginUrl
+      urlEl.title = kiroSignState.loginUrl
+    }
+    modal.classList.add('active')
+  }
+}
+
+function closeKiroSignLoginModal() {
+  const modal = document.getElementById('kiroSignLoginModal')
+  if (modal) {
+    modal.classList.remove('active')
+  }
+}
+
+function resetKiroSignState() {
+  kiroSignState.verifier = ''
+  kiroSignState.state = ''
+  kiroSignState.loginUrl = ''
+  kiroSignState.isWaiting = false
+  kiroSignState.fromAccountManagement = false
+
+  if (window.runtime?.EventsOff) {
+    window.runtime.EventsOff('kiro-sign-callback')
+    window.runtime.EventsOff('kiro-sign-timeout')
+  }
+}
+
+function copyKiroSignLoginUrl() {
+  navigator.clipboard
+    .writeText(kiroSignState.loginUrl)
+    .then(() => showSuccess(t('kiro.linkCopied')))
+    .catch((err) => showError(t('kiro.copyFailed') + ': ' + err))
+}
+
+async function openKiroSignLoginUrl() {
+  if (window.go?.main?.App?.OpenURLInIncognito) {
+    await window.go.main.App.OpenURLInIncognito(kiroSignState.loginUrl)
+  } else {
+    window.open(kiroSignState.loginUrl, '_blank', 'noopener,noreferrer')
+  }
+}
+
+// 注册到 window
+window.startKiroSignLogin = startKiroSignLogin
+window.closeKiroSignLoginModal = function () {
+  closeKiroSignLoginModal()
+  resetKiroSignState()
+  if (window.go?.main?.App?.StopKiroSignCallbackServer) {
+    window.go.main.App.StopKiroSignCallbackServer()
+  }
+}
+window.copyKiroSignLoginUrl = copyKiroSignLoginUrl
+window.openKiroSignLoginUrl = openKiroSignLoginUrl
 
 // =============================================================================
 // Kiro Global Config Modal (model mapping + global settings)

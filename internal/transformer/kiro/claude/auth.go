@@ -16,6 +16,8 @@ import (
 	kiroapi "clisimplehub/internal/transformer/kiro"
 	kiroClient "clisimplehub/internal/transformer/kiro/client"
 	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -29,7 +31,7 @@ const (
 
 const (
 	// IDCAmzUserAgent is the x-amz-user-agent value used by AWS SSO OIDC (IdC) token refresh.
-	IDCAmzUserAgent = "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE"
+	IDCAmzUserAgent = "aws-sdk-js/3.980.0 ua/2.1 os/darwin#21.6.0 lang/js md/nodejs#22.21.1 api/sso-oidc#3.980.0 m/E KiroIDE"
 )
 
 // KiroAuthManager manages Kiro API authentication and token lifecycle
@@ -286,12 +288,14 @@ func (m *KiroAuthManager) refreshTokenLocked() error {
 				region = "us-east-1"
 			}
 			req.Header.Set("Host", "oidc."+region+".amazonaws.com")
-			req.Header.Set("Connection", "keep-alive")
-			req.Header.Set("x-amz-user-agent", IDCAmzUserAgent)
+			req.Header.Set("Connection", "close")
+			req.Header.Set("amz-sdk-request", "attempt=1; max=4")
+			req.Header.Set("x-amz-user-agent", kiroShared.KiroXAmzUserAgentBase(IDCAmzUserAgent)+" KiroIDE")
+			req.Header.Set("amz-sdk-invocation-id", uuid.NewString())
 			req.Header.Set("Accept", "*/*")
 			req.Header.Set("Accept-Language", "*")
 			req.Header.Set("sec-fetch-mode", "cors")
-			req.Header.Set("User-Agent", "node")
+			req.Header.Set("User-Agent", IDCAmzUserAgent)
 		} else {
 			region := m.creds.Region
 			if strings.TrimSpace(region) == "" {

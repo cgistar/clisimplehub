@@ -231,6 +231,15 @@ export default {
     resetDefaults: 'Reset Defaults',
     mappingAlias: 'Client Model Name',
     mappingName: 'Kiro Model ID',
+    // Kiro Sign Login
+    kiroSignLogin: 'Kiro Sign In',
+    kiroSignLoginTitle: 'Kiro Sign In',
+    kiroSignLoginWaiting: 'Waiting for browser authorization...',
+    kiroSignLoginInstruction: 'Please complete Kiro sign-in in your browser',
+    kiroSignLoginSuccess: 'Kiro sign-in successful',
+    kiroSignLoginFailed: 'Kiro sign-in failed',
+    kiroSignLoginTimeout: 'Kiro sign-in timed out (5 minutes), please retry',
+    kiroSignLoginPortInUse: 'Port 3128 is in use, please close the occupying program and retry',
   },
   endpoints: {
     title: 'Endpoints',

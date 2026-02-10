@@ -1042,6 +1042,10 @@ window.startAddAccountLogin = async function (authMethod, provider) {
           window.startIdcDeviceFlowLogin()
         }
       }
+    } else if (authMethod === 'kiro-sign') {
+      if (window.startKiroSignLogin) {
+        await window.startKiroSignLogin(true)
+      }
     }
   } finally {
     // 延迟 1 秒后清除标记，防止误操作

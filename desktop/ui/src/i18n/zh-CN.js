@@ -227,6 +227,15 @@ export default {
     resetDefaults: '恢复默认',
     mappingAlias: '客户端模型名',
     mappingName: 'Kiro 模型 ID',
+    // Kiro Sign Login
+    kiroSignLogin: 'Kiro 登录',
+    kiroSignLoginTitle: 'Kiro 登录',
+    kiroSignLoginWaiting: '等待浏览器授权中...',
+    kiroSignLoginInstruction: '请在浏览器中完成 Kiro 登录授权',
+    kiroSignLoginSuccess: 'Kiro 登录成功',
+    kiroSignLoginFailed: 'Kiro 登录失败',
+    kiroSignLoginTimeout: 'Kiro 登录超时（5分钟），请重试',
+    kiroSignLoginPortInUse: '端口 3128 被占用，请关闭占用程序后重试',
   },
   endpoints: {
     title: '端点',

@@ -11,6 +11,14 @@ import (
 	"time"
 
 	kiroClient "clisimplehub/internal/transformer/kiro/client"
+	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+
+	"github.com/google/uuid"
+)
+
+const (
+	// idcAuthCodeUserAgent 用于 IDC Auth Code Flow 的 User-Agent
+	idcAuthCodeUserAgent = "aws-sdk-js/3.980.0 ua/2.1 os/darwin#21.6.0 lang/js md/nodejs#22.21.1 api/sso-oidc#3.980.0 m/E KiroIDE"
 )
 
 // Client IDC 认证客户端
@@ -261,5 +269,130 @@ func (c *Client) PollToken(req *PollTokenRequest) (*PollTokenResponse, error) {
 		return nil, fmt.Errorf("token poll failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	return &result, nil
+}
+
+// RegisterAuthCodeClient 注册 Authorization Code Flow OIDC 客户端
+func (c *Client) RegisterAuthCodeClient(req *AuthCodeRegisterRequest) (*AuthCodeRegisterResponse, error) {
+	if req == nil {
+		req = &AuthCodeRegisterRequest{}
+	}
+
+	region := c.resolveRegion(req.Region)
+	registerURL := fmt.Sprintf("%s/client/register", c.getOidcURL(region))
+
+	payload := map[string]any{
+		"clientName": "Kiro IDE",
+		"clientType": "public",
+		"scopes": []string{
+			"codewhisperer:completions",
+			"codewhisperer:analysis",
+			"codewhisperer:conversations",
+			"codewhisperer:transformations",
+			"codewhisperer:taskassist",
+		},
+		"redirectUris": []string{"http://127.0.0.1/oauth/callback"},
+		"grantTypes":   []string{"authorization_code", "refresh_token"},
+		"issuerUrl":    strings.TrimSpace(req.IssuerUrl),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal register payload: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", registerURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create register request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Connection", "close")
+	httpReq.Header.Set("amz-sdk-request", "attempt=1; max=4")
+	httpReq.Header.Set("amz-sdk-invocation-id", uuid.NewString())
+	httpReq.Header.Set("User-Agent", idcAuthCodeUserAgent)
+	httpReq.Header.Set("x-amz-user-agent", kiroShared.KiroXAmzUserAgentBase(idcAuthCodeUserAgent)+" KiroIDE")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register auth code client: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read register response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("register failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result AuthCodeRegisterResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse register response: %w", err)
+	}
+	return &result, nil
+}
+
+// ExchangeAuthCode 用 authorization code 交换 token
+func (c *Client) ExchangeAuthCode(req *AuthCodeTokenRequest) (*AuthCodeTokenResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("nil request")
+	}
+
+	region := c.resolveRegion(req.Region)
+	tokenURL := fmt.Sprintf("%s/token", c.getOidcURL(region))
+
+	payload := map[string]string{
+		"clientId":     req.ClientId,
+		"clientSecret": req.ClientSecret,
+		"grantType":    "authorization_code",
+		"code":         req.Code,
+		"redirectUri":  req.RedirectUri,
+		"codeVerifier": req.CodeVerifier,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal token request: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", tokenURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Host", "oidc."+region+".amazonaws.com")
+	httpReq.Header.Set("Connection", "close")
+	httpReq.Header.Set("amz-sdk-request", "attempt=1; max=4")
+	httpReq.Header.Set("amz-sdk-invocation-id", uuid.NewString())
+	httpReq.Header.Set("User-Agent", idcAuthCodeUserAgent)
+	httpReq.Header.Set("x-amz-user-agent", kiroShared.KiroXAmzUserAgentBase(idcAuthCodeUserAgent)+" KiroIDE")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to exchange auth code: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read token response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("token exchange failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result AuthCodeTokenResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse token response: %w", err)
+	}
 	return &result, nil
 }
