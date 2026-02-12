@@ -8,13 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,8 +27,6 @@ import (
 	kiroShared "clisimplehub/internal/transformer/kiro/shared"
 
 	"github.com/google/uuid"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Settings represents the application settings exposed to frontend
@@ -79,13 +75,6 @@ type App struct {
 	configLoader *config.ConfigLoader
 	usageStats   *statsdb.SQLiteUsageStatsStore
 
-	pendingDeeplinkMu sync.Mutex
-	pendingDeeplink   string
-
-	kiroProtocolHandlerMu         sync.Mutex
-	kiroProtocolHandlerOverridden bool
-	kiroProtocolHandlerOriginal   string
-
 	kiroSignServer  *http.Server
 	kiroSignMu      sync.Mutex
 	kiroSignTimeout *time.Timer
@@ -104,7 +93,6 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.flushPendingDeeplink()
 }
 
 // SetStorage sets the storage instance for the app
@@ -135,267 +123,6 @@ func (a *App) SetUsageStats(store *statsdb.SQLiteUsageStatsStore) {
 // SetConfigLoader sets the config loader instance for the app
 func (a *App) SetConfigLoader(loader *config.ConfigLoader) {
 	a.configLoader = loader
-}
-
-// =============================================================================
-// Deeplink Handling Methods (Social Login OAuth)
-// =============================================================================
-
-type KiroProtocolHandlerStatus struct {
-	Supported              bool   `json:"supported"`
-	Scheme                 string `json:"scheme"`
-	OurBundleID            string `json:"ourBundleId,omitempty"`
-	DefaultHandlerBundleID string `json:"defaultHandlerBundleId,omitempty"`
-	IsDefaultHandler       bool   `json:"isDefaultHandler"`
-	Note                   string `json:"note,omitempty"`
-}
-
-// onUrlOpen handles deeplink on macOS
-func (a *App) onUrlOpen(urlStr string) {
-	log.Printf("Deeplink received (macOS): %s", sanitizeDeeplinkForLog(urlStr))
-	a.handleDeeplink(urlStr)
-}
-
-// onSecondInstanceLaunch handles deeplink on Windows
-func (a *App) onSecondInstanceLaunch(data options.SecondInstanceData) {
-	log.Printf("Second instance launched with %d args", len(data.Args))
-
-	if deeplink := extractKiroDeeplinkFromArgs(data.Args); deeplink != "" {
-		log.Printf("Found deeplink in args: %s", sanitizeDeeplinkForLog(deeplink))
-		a.handleDeeplink(deeplink)
-	}
-}
-
-func extractKiroDeeplinkFromArgs(args []string) string {
-	for _, arg := range args {
-		normalized := normalizeDeeplinkArg(arg)
-		lower := strings.ToLower(normalized)
-		if strings.HasPrefix(lower, "kiro://") || strings.HasPrefix(lower, "kiro:") {
-			return normalized
-		}
-	}
-	return ""
-}
-
-func normalizeDeeplinkArg(arg string) string {
-	normalized := strings.TrimSpace(arg)
-	normalized = strings.Trim(normalized, "\"")
-	normalized = strings.Trim(normalized, "'")
-	return normalized
-}
-
-// handleDeeplink 统一处理 deeplink
-func (a *App) handleDeeplink(urlStr string) {
-	// 验证 URL 格式（结构化解析）
-	parsedURL, err := url.Parse(urlStr)
-	if err != nil {
-		log.Printf("Invalid deeplink URL (parse error): %v", err)
-		return
-	}
-
-	// 白名单验证
-	if !strings.EqualFold(parsedURL.Scheme, "kiro") {
-		log.Printf("Invalid deeplink scheme: %s", parsedURL.Scheme)
-		return
-	}
-
-	if !strings.EqualFold(parsedURL.Host, "kiro.kiroAgent") {
-		log.Printf("Invalid deeplink host: %s", parsedURL.Host)
-		return
-	}
-
-	if parsedURL.Path != "/authenticate-success" && parsedURL.Path != "/authenticate-success/" {
-		log.Printf("Invalid deeplink path: %s", parsedURL.Path)
-		return
-	}
-
-	// 发送事件到前端
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "deeplink-callback", urlStr)
-		log.Printf("Deeplink event emitted to frontend")
-	} else {
-		log.Printf("Warning: ctx not ready, queueing deeplink event")
-		a.queuePendingDeeplink(urlStr)
-	}
-}
-
-func (a *App) GetKiroProtocolHandlerStatus() (*KiroProtocolHandlerStatus, error) {
-	return getKiroProtocolHandlerStatusPlatform()
-}
-
-func (a *App) EnsureKiroProtocolHandler() (*KiroProtocolHandlerStatus, error) {
-	status, err := a.GetKiroProtocolHandlerStatus()
-	if err != nil || status == nil {
-		return status, err
-	}
-	if !status.Supported {
-		return status, nil
-	}
-
-	// If already default handler, nothing to do
-	if status.IsDefaultHandler {
-		return status, nil
-	}
-
-	switch goruntime.GOOS {
-	case "darwin":
-		if status.OurBundleID == "" {
-			return status, fmt.Errorf("bundle id is empty, cannot set default handler")
-		}
-
-		a.kiroProtocolHandlerMu.Lock()
-		if !a.kiroProtocolHandlerOverridden {
-			a.kiroProtocolHandlerOriginal = strings.TrimSpace(status.DefaultHandlerBundleID)
-		}
-		a.kiroProtocolHandlerMu.Unlock()
-
-		if err := setDefaultHandlerBundleIDForURLScheme("kiro", status.OurBundleID); err != nil {
-			return status, err
-		}
-		a.kiroProtocolHandlerMu.Lock()
-		a.kiroProtocolHandlerOverridden = true
-		a.kiroProtocolHandlerMu.Unlock()
-		return a.GetKiroProtocolHandlerStatus()
-	case "windows":
-		a.kiroProtocolHandlerMu.Lock()
-		if !a.kiroProtocolHandlerOverridden {
-			a.kiroProtocolHandlerOriginal = strings.TrimSpace(status.DefaultHandlerBundleID)
-		}
-		a.kiroProtocolHandlerMu.Unlock()
-
-		// Windows path: register current executable
-		if err := RegisterURLScheme(); err != nil {
-			return status, err
-		}
-		a.kiroProtocolHandlerMu.Lock()
-		a.kiroProtocolHandlerOverridden = true
-		a.kiroProtocolHandlerMu.Unlock()
-		return a.GetKiroProtocolHandlerStatus()
-	default:
-		return status, nil
-	}
-}
-
-func (a *App) RestoreKiroProtocolHandler(bundleIDOrPath string) (*KiroProtocolHandlerStatus, error) {
-	status, err := a.GetKiroProtocolHandlerStatus()
-	if err != nil || status == nil {
-		return status, err
-	}
-	if !status.Supported {
-		return status, nil
-	}
-
-	bundleIDOrPath = strings.TrimSpace(bundleIDOrPath)
-
-	switch goruntime.GOOS {
-	case "darwin":
-		if bundleIDOrPath == "" {
-			return status, fmt.Errorf("bundle id is empty, cannot restore default handler")
-		}
-		if err := setDefaultHandlerBundleIDForURLScheme("kiro", bundleIDOrPath); err != nil {
-			return status, err
-		}
-		a.kiroProtocolHandlerMu.Lock()
-		a.kiroProtocolHandlerOverridden = false
-		a.kiroProtocolHandlerOriginal = ""
-		a.kiroProtocolHandlerMu.Unlock()
-		return a.GetKiroProtocolHandlerStatus()
-	case "windows":
-		// Windows path: restore or unregister
-		if err := RestoreRegistration(bundleIDOrPath); err != nil {
-			return status, err
-		}
-		a.kiroProtocolHandlerMu.Lock()
-		a.kiroProtocolHandlerOverridden = false
-		a.kiroProtocolHandlerOriginal = ""
-		a.kiroProtocolHandlerMu.Unlock()
-		return a.GetKiroProtocolHandlerStatus()
-	default:
-		return status, nil
-	}
-}
-
-func (a *App) cleanupKiroProtocolHandlerOnExit() {
-	a.kiroProtocolHandlerMu.Lock()
-	overridden := a.kiroProtocolHandlerOverridden
-	original := strings.TrimSpace(a.kiroProtocolHandlerOriginal)
-	a.kiroProtocolHandlerMu.Unlock()
-
-	if !overridden {
-		return
-	}
-
-	switch goruntime.GOOS {
-	case "darwin":
-		// macOS: restore previous default handler bundle id (best-effort)
-		if original == "" {
-			log.Printf("Warning: kiro protocol handler was overridden but original bundle id is empty, skip restore")
-		} else if err := setDefaultHandlerBundleIDForURLScheme("kiro", original); err != nil {
-			log.Printf("Warning: failed to restore kiro:// default handler to '%s': %v", original, err)
-		} else {
-			log.Printf("Restored kiro:// default handler to '%s'", original)
-		}
-	case "windows":
-		// Windows: restore previous registration or unregister if none (best-effort)
-		if err := RestoreRegistration(original); err != nil {
-			log.Printf("Warning: failed to restore/unregister kiro:// protocol: %v", err)
-		} else if original == "" {
-			log.Printf("Unregistered kiro:// protocol")
-		} else {
-			log.Printf("Restored kiro:// protocol to previous handler: %s", original)
-		}
-	default:
-		// no-op
-	}
-
-	a.kiroProtocolHandlerMu.Lock()
-	a.kiroProtocolHandlerOverridden = false
-	a.kiroProtocolHandlerOriginal = ""
-	a.kiroProtocolHandlerMu.Unlock()
-}
-
-func (a *App) queuePendingDeeplink(urlStr string) {
-	a.pendingDeeplinkMu.Lock()
-	defer a.pendingDeeplinkMu.Unlock()
-	a.pendingDeeplink = urlStr
-}
-
-func (a *App) flushPendingDeeplink() {
-	a.pendingDeeplinkMu.Lock()
-	pending := a.pendingDeeplink
-	a.pendingDeeplink = ""
-	a.pendingDeeplinkMu.Unlock()
-
-	if pending == "" || a.ctx == nil {
-		return
-	}
-
-	runtime.EventsEmit(a.ctx, "deeplink-callback", pending)
-	log.Printf("Flushed pending deeplink event to frontend")
-}
-
-// sanitizeDeeplinkForLog 对 deeplink URL 进行脱敏处理
-func sanitizeDeeplinkForLog(urlStr string) string {
-	parsedURL, err := url.Parse(urlStr)
-	if err != nil {
-		return "[invalid URL]"
-	}
-
-	// 脱敏 query 参数中的敏感字段
-	query := parsedURL.Query()
-	if query.Get("code") != "" {
-		query.Set("code", "***")
-	}
-	if query.Get("state") != "" {
-		// 只显示前8个字符
-		state := query.Get("state")
-		if len(state) > 8 {
-			query.Set("state", state[:8]+"...")
-		}
-	}
-
-	parsedURL.RawQuery = query.Encode()
-	return parsedURL.String()
 }
 
 // =============================================================================

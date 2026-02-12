@@ -101,10 +101,6 @@ import {
     closeIdcOrgLoginDialog,
     submitIdcOrgLogin,
     backToOrgLoginStep1,
-    startSocialLogin,
-    closeSocialLoginModal,
-    copySocialLoginUrl,
-    openSocialLoginUrl,
     showKiroGlobalConfigModal,
     closeKiroGlobalConfigModal,
     addKiroModelMappingRow,
@@ -256,10 +252,6 @@ window.startIdcOrgLogin = startIdcOrgLogin;
 window.closeIdcOrgLoginDialog = closeIdcOrgLoginDialog;
 window.submitIdcOrgLogin = submitIdcOrgLogin;
 window.backToOrgLoginStep1 = backToOrgLoginStep1;
-window.startSocialLogin = startSocialLogin;
-window.closeSocialLoginModal = closeSocialLoginModal;
-window.copySocialLoginUrl = copySocialLoginUrl;
-window.openSocialLoginUrl = openSocialLoginUrl;
 window.showKiroGlobalConfigModal = showKiroGlobalConfigModal;
 window.closeKiroGlobalConfigModal = closeKiroGlobalConfigModal;
 window.addKiroModelMappingRow = addKiroModelMappingRow;

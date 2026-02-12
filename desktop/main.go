@@ -19,7 +19,6 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:ui/dist
@@ -50,14 +49,6 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	log.Println("Starting Cli Simple Hub in GUI mode...")
-
-	// Cleanup leftover kiro:// protocol registration (if any)
-	// This handles:
-	// - Cancelled login sessions (protocol not restored)
-	// - Application path changes (moved or renamed)
-	if err := CleanupKiroProtocolIfNeeded(); err != nil {
-		log.Printf("Warning: Failed to cleanup kiro protocol: %v", err)
-	}
 
 	// Get data directory with priority:
 	// 1. CODESP_DATA environment variable (highest priority)
@@ -210,20 +201,11 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		Mac: &mac.Options{
-			OnUrlOpen: app.onUrlOpen,
-		},
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId:               "com.clisimplehub.app",
-			OnSecondInstanceLaunch: app.onSecondInstanceLaunch,
-		},
 		OnStartup: app.startup,
 		OnShutdown: func(ctx context.Context) {
 			// Graceful shutdown
 			// Requirements: 5.4
 			log.Println("Shutting down...")
-			// Best-effort: clear temporary kiro:// protocol handler override before exit
-			app.cleanupKiroProtocolHandlerOnExit()
 			if err := proxyServer.Stop(); err != nil {
 				log.Printf("Error stopping proxy server: %v", err)
 			}

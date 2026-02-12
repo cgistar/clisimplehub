@@ -12,7 +12,6 @@ export function mainLayoutTemplate() {
                     <div class="tabs" id="interfaceTabs">
                         <button class="tab-btn active" data-type="claude" onclick="switchTab('claude')">Claude</button>
                         <button class="tab-btn" data-type="codex" onclick="switchTab('codex')">Codex</button>
-                        <button class="tab-btn" data-type="gemini" onclick="switchTab('gemini')">Gemini</button>
                         <button class="tab-btn" data-type="chat" onclick="switchTab('chat')">Chat</button>
                         <button class="tab-btn tab-btn-right" onclick="openCLIConfigEditor()" title="${t('cliConfig.title')}">${createIcon('edit', { size: 14 })}</button>
                     </div>
@@ -73,14 +72,6 @@ export function mainLayoutTemplate() {
                                     <button class="dropdown-item" onclick="importKiroAccountsFromJson()">
                                         <span class="dropdown-icon">${createIcon('download', { size: 14 })}</span>
                                         <span class="dropdown-text">${t('kiro.jsonImport')}</span>
-                                    </button>
-                                    <button class="dropdown-item" onclick="startAddAccountLogin('social', 'Google')">
-                                        <span class="dropdown-icon">${createIcon('key', { size: 14 })}</span>
-                                        <span class="dropdown-text">Google</span>
-                                    </button>
-                                    <button class="dropdown-item" onclick="startAddAccountLogin('social', 'Github')">
-                                        <span class="dropdown-icon">${createIcon('key', { size: 14 })}</span>
-                                        <span class="dropdown-text">GitHub</span>
                                     </button>
                                     <button class="dropdown-item" onclick="startAddAccountLogin('idc', 'builder')">
                                         <span class="dropdown-icon">${createIcon('hammer', { size: 14 })}</span>

@@ -12,7 +12,6 @@ import {
     kiroConfigModalTemplate,
     idcOrgLoginModalTemplate,
     idcDeviceFlowModalTemplate,
-    socialLoginModalTemplate,
     kiroSignLoginModalTemplate,
     kiroGlobalConfigModalTemplate,
     kiroAccountEditModalTemplate
@@ -35,7 +34,6 @@ export function initUI() {
         kiroConfigModalTemplate(),
         idcOrgLoginModalTemplate(),
         idcDeviceFlowModalTemplate(),
-        socialLoginModalTemplate(),
         kiroSignLoginModalTemplate(),
         kiroGlobalConfigModalTemplate(),
         kiroAccountEditModalTemplate()

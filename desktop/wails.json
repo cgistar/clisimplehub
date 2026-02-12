@@ -10,14 +10,5 @@
   "author": {
     "name": "daiqing",
     "email": "daiqing@gmail.com"
-  },
-  "info": {
-    "protocols": [
-      {
-        "scheme": "kiro",
-        "description": "Kiro Authentication Protocol",
-        "role": "Editor"
-      }
-    ]
   }
 }

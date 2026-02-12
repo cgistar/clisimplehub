@@ -1019,12 +1019,7 @@ window.startAddAccountLogin = async function (authMethod, provider) {
 
   try {
     // 根据认证方式调用不同的登录流程
-    if (authMethod === 'social') {
-      // 使用 kiro.js 中的 Social 登录，传入 fromAccountManagement=true
-      if (window.startSocialLogin) {
-        await window.startSocialLogin(provider, true)
-      }
-    } else if (authMethod === 'idc') {
+    if (authMethod === 'idc') {
       // 账号管理界面发起的 IdC 登录：记录 provider 以便登录完成后写入 kiro.json
       // - AWS Builder ID -> BuilderId
       // - IAM Identity Center -> Enterprise
