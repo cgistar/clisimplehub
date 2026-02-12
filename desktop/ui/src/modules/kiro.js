@@ -605,7 +605,7 @@ export function onKiroRegionInput() {
 
   // Filter and render dropdown
   const filtered = AWS_REGIONS.filter(
-    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query),
+    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query)
   )
 
   renderKiroRegionDropdown(filtered)
@@ -820,7 +820,7 @@ export function onKiroGlobalRegionInput() {
   const query = (input.value || '').toLowerCase().trim()
 
   const filtered = AWS_REGIONS.filter(
-    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query),
+    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query)
   )
 
   renderKiroGlobalRegionDropdown(filtered)
@@ -892,7 +892,7 @@ export function onEditKiroRegionInput() {
 
   // Filter and render dropdown
   const filtered = AWS_REGIONS.filter(
-    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query),
+    (r) => r.value.toLowerCase().includes(query) || r.label.toLowerCase().includes(query)
   )
 
   renderEditKiroRegionDropdown(filtered)
@@ -1154,7 +1154,7 @@ async function pollIdcTokenOnce() {
         'pending',
         `${t('kiro.idcStatusSlowDown')} ${(idcDeviceFlowState.pollIntervalMs / 1000).toFixed(1)}s`,
         'PENDING',
-        idcDeviceFlowState.activeFlow,
+        idcDeviceFlowState.activeFlow
       )
       return
     }
@@ -1181,7 +1181,7 @@ async function pollIdcTokenOnce() {
         'error',
         `${t('kiro.idcStatusError')}: ${result.error}`,
         'ERROR',
-        idcDeviceFlowState.activeFlow,
+        idcDeviceFlowState.activeFlow
       )
       return
     }
@@ -1193,7 +1193,7 @@ async function pollIdcTokenOnce() {
       'pending',
       `${t('kiro.idcStatusPending')} (${errorMsg})`,
       'PENDING',
-      idcDeviceFlowState.activeFlow,
+      idcDeviceFlowState.activeFlow
     )
   } catch (error) {
     // 网络错误或其他异常 - 不停止轮询，继续重试
@@ -1203,7 +1203,7 @@ async function pollIdcTokenOnce() {
       'pending',
       `${t('kiro.idcStatusPending')} (${errorMsg})`,
       'PENDING',
-      idcDeviceFlowState.activeFlow,
+      idcDeviceFlowState.activeFlow
     )
   } finally {
     idcDeviceFlowState.pollInFlight = false
@@ -1679,16 +1679,13 @@ export async function startSocialLogin(provider, fromAccountManagement = false) 
     }
 
     // 7. 设置超时定时器（5 分钟）
-    socialLoginState.timeoutTimer = setTimeout(
-      () => {
-        if (socialLoginState.isWaiting) {
-          console.warn('Social login timeout after 5 minutes')
-          showError(t('kiro.socialLoginTimeout'))
-          closeSocialLoginModal()
-        }
-      },
-      5 * 60 * 1000,
-    ) // 5 分钟
+    socialLoginState.timeoutTimer = setTimeout(() => {
+      if (socialLoginState.isWaiting) {
+        console.warn('Social login timeout after 5 minutes')
+        showError(t('kiro.socialLoginTimeout'))
+        closeSocialLoginModal()
+      }
+    }, 5 * 60 * 1000) // 5 分钟
   } catch (error) {
     console.error('Failed to start social login:', error)
     showError(t('kiro.socialLoginFailed') + ': ' + (error?.message || error))
@@ -1730,7 +1727,9 @@ async function handleDeeplinkCallback(url) {
 
     // 3. 交换 token（获取完整响应）
     const tokenResponse = await exchangeCodeForToken(
-      code, socialLoginState.verifier, 'kiro://kiro.kiroAgent/authenticate-success'
+      code,
+      socialLoginState.verifier,
+      'kiro://kiro.kiroAgent/authenticate-success'
     )
 
     // 4. 回填到配置表单
@@ -2100,9 +2099,7 @@ async function handleKiroSignCallback(data) {
       // Social 登录：交换 token
       // redirect_uri 必须与实际回调 URL 完全一致（含路径和查询参数）
       const redirectUri = `http://localhost:3128/oauth/callback?login_option=${encodeURIComponent(data.loginOption)}`
-      const tokenResponse = await exchangeCodeForToken(
-        data.code, kiroSignState.verifier, redirectUri
-      )
+      const tokenResponse = await exchangeCodeForToken(data.code, kiroSignState.verifier, redirectUri)
 
       const { authMethod, provider } = loginOptionToProvider(data.loginOption)
 
@@ -2314,6 +2311,12 @@ function closeKiroSignLoginModal() {
   if (modal) {
     modal.classList.remove('active')
   }
+  // 停止回调服务器
+  if (window.go?.main?.App?.StopKiroSignCallbackServer) {
+    window.go.main.App.StopKiroSignCallbackServer().catch((err) => {
+      console.warn('Failed to stop Kiro Sign callback server:', err)
+    })
+  }
 }
 
 function resetKiroSignState() {
@@ -2337,9 +2340,19 @@ function copyKiroSignLoginUrl() {
 }
 
 async function openKiroSignLoginUrl() {
-  if (window.go?.main?.App?.OpenURLInIncognito) {
-    await window.go.main.App.OpenURLInIncognito(kiroSignState.loginUrl)
-  } else {
+  try {
+    if (!kiroSignState.loginUrl) {
+      console.warn('No login URL available')
+      return
+    }
+    if (window.go?.main?.App?.OpenURLInIncognito) {
+      await window.go.main.App.OpenURLInIncognito(kiroSignState.loginUrl)
+    } else {
+      window.open(kiroSignState.loginUrl, '_blank', 'noopener,noreferrer')
+    }
+  } catch (error) {
+    console.error('Failed to open login URL:', error)
+    // Fallback to window.open
     window.open(kiroSignState.loginUrl, '_blank', 'noopener,noreferrer')
   }
 }

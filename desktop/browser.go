@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 )
@@ -26,18 +27,23 @@ func (a *App) OpenURLInIncognito(url string) error {
 		return nil
 
 	case "windows":
-		// Try Chrome first, then Edge
-		cmd = exec.Command("cmd", "/c", "start", "chrome", "--incognito", url)
-		if err := cmd.Run(); err != nil {
-			// Fallback to Edge InPrivate mode
-			cmd = exec.Command("cmd", "/c", "start", "msedge", "--inprivate", url)
-			if err := cmd.Run(); err != nil {
-				// Final fallback to default browser
-				cmd = exec.Command("cmd", "/c", "start", url)
+		// Try common Chrome installation paths
+		chromePaths := []string{
+			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
+			os.Getenv("LOCALAPPDATA") + `\Google\Chrome\Application\chrome.exe`,
+		}
+
+		for _, chromePath := range chromePaths {
+			if _, err := os.Stat(chromePath); err == nil {
+				// Chrome found, launch it directly to avoid cmd.exe parsing issues
+				cmd = exec.Command(chromePath, "--incognito", url)
 				return cmd.Run()
 			}
 		}
-		return nil
+
+		// Chrome not found, return error
+		return fmt.Errorf("Chrome not found in common installation paths")
 
 	case "linux":
 		// Try Chrome/Chromium first, then Firefox
