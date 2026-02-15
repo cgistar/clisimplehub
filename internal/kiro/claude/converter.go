@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	kirotypes "clisimplehub/internal/kiro/types"
+	"clisimplehub/internal/kiro/response"
 	"clisimplehub/internal/transformer/shared"
 
 	"github.com/google/uuid"
@@ -1502,11 +1502,11 @@ func applyTokenAccounting(state *StreamState) {
 }
 
 // KiroStreamToClaudeSSE converts Kiro stream events to Claude SSE format
-func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]string, error) {
+func KiroStreamToClaudeSSE(event *response.StreamEvent, state *StreamState) ([]string, error) {
 	var outputs []string
 
 	switch event.Type {
-	case kirotypes.StreamEventContent:
+	case response.StreamEventContent:
 		content, ok := event.Data.(string)
 		if !ok {
 			return nil, nil
@@ -1527,7 +1527,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			}
 		}
 
-	case kirotypes.StreamEventToolStart:
+	case response.StreamEventToolStart:
 		data, ok := event.Data.(map[string]interface{})
 		if !ok {
 			return nil, nil
@@ -1566,7 +1566,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		state.ToolUseArgs = ""
 		state.ToolUseBlockOpen = true
 
-	case kirotypes.StreamEventToolInput:
+	case response.StreamEventToolInput:
 		if state == nil {
 			return nil, nil
 		}
@@ -1663,7 +1663,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			state.ToolUseArgs = ""
 		}
 
-	case kirotypes.StreamEventToolStop:
+	case response.StreamEventToolStop:
 		// 渐进式输出：立即输出已完成的 tool_use，避免批量发送导致前端卡顿
 		if state.ToolUseBlockOpen && state.CurrentToolUseID != "" {
 			ensureMessageStarted(state, &outputs)
@@ -1690,7 +1690,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			state.ToolUseArgs = ""
 		}
 
-	case kirotypes.StreamEventToolUses:
+	case response.StreamEventToolUses:
 		// Handle complete tool uses from assistantResponseMessage
 		// 渐进式输出：立即输出每个 tool_use
 		toolUses, ok := event.Data.([]interface{})
@@ -1734,7 +1734,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			state.ContentIndex++
 		}
 
-	case kirotypes.StreamEventUsage:
+	case response.StreamEventUsage:
 		// 注意：完全忽略 meteringEvent
 		// 原因：
 		// 1. meteringEvent 只包含 inputTokens，不包含 outputTokens
@@ -1743,7 +1743,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 		// 因此 meteringEvent 中的数据没有实际用途
 		return nil, nil
 
-	case kirotypes.StreamEventContextUsage:
+	case response.StreamEventContextUsage:
 		if state == nil {
 			return nil, nil
 		}
@@ -1782,7 +1782,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			state.FinishReason = "model_context_window_exceeded"
 		}
 
-	case kirotypes.StreamEventStopReason:
+	case response.StreamEventStopReason:
 		if state == nil {
 			return nil, nil
 		}
@@ -1791,7 +1791,7 @@ func KiroStreamToClaudeSSE(event *kirotypes.StreamEvent, state *StreamState) ([]
 			state.FinishReason = mapKiroStopReason(stopReason)
 		}
 
-	case kirotypes.StreamEventError:
+	case response.StreamEventError:
 		// Handle error event
 		errMsg := fmt.Sprintf("%v", event.Data)
 		return nil, fmt.Errorf("kiro API error: %s", errMsg)

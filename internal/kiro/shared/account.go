@@ -4,9 +4,43 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
+
+// KiroCredentials represents authentication credentials for a Kiro account.
+type KiroCredentials struct {
+	AccessToken  string            `json:"accessToken"`
+	RefreshToken string            `json:"refreshToken"`
+	ProfileArn   string            `json:"profileArn"`
+	ExpiresAt    time.Time         `json:"expiresAt"`
+	Region       string            `json:"region,omitempty"`
+	MachineID    string            `json:"machineId,omitempty"`
+	AuthMethod   string            `json:"authMethod,omitempty"`
+	Provider     string            `json:"provider,omitempty"`
+	ClientId     string            `json:"clientId,omitempty"`
+	ClientSecret string            `json:"clientSecret,omitempty"`
+	Status       KiroAccountStatus `json:"status,omitempty"`
+}
+
+// ExpandTilde expands ~ to user home directory
+func ExpandTilde(path string) string {
+	if strings.TrimSpace(path) == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return home
+		}
+		return path
+	}
+	if strings.HasPrefix(path, "~"+string(filepath.Separator)) || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
 
 // KiroAccountStatus 账号状态枚举
 type KiroAccountStatus string

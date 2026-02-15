@@ -5,9 +5,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
-
-	kirotypes "clisimplehub/internal/kiro/types"
 )
+
+// StreamEventType 表示从 Kiro EventStream（AWS EventStream 二进制帧）规范化后的事件类型。
+type StreamEventType string
+
+const (
+	StreamEventContent      StreamEventType = "content"
+	StreamEventToolStart    StreamEventType = "tool_start"
+	StreamEventToolInput    StreamEventType = "tool_input"
+	StreamEventToolStop     StreamEventType = "tool_stop"
+	StreamEventToolUses     StreamEventType = "tool_uses"
+	StreamEventUsage        StreamEventType = "usage"
+	StreamEventContextUsage StreamEventType = "context_usage"
+	StreamEventStopReason   StreamEventType = "stop_reason"
+	StreamEventError        StreamEventType = "error"
+)
+
+// StreamEvent 是 Kiro 流式返回的统一事件结构；不同 Type 对应的 Data 结构不同。
+type StreamEvent struct {
+	Type StreamEventType
+	Data any
+}
 
 const (
 	maxEventStreamBuffer = 4 * 1024 * 1024
@@ -37,7 +56,7 @@ func NewEventStreamParser() *EventStreamParser {
 }
 
 // Feed processes incoming data and returns parsed events
-func (p *EventStreamParser) Feed(chunk []byte) ([]*kirotypes.StreamEvent, error) {
+func (p *EventStreamParser) Feed(chunk []byte) ([]*StreamEvent, error) {
 	p.buffer = append(p.buffer, chunk...)
 
 	// Prevent unbounded buffer growth
@@ -47,7 +66,7 @@ func (p *EventStreamParser) Feed(chunk []byte) ([]*kirotypes.StreamEvent, error)
 		p.droppedBytes += dropped
 	}
 
-	var events []*kirotypes.StreamEvent
+	var events []*StreamEvent
 	for {
 		framePayload, consumed, needMore, err := parseEventStreamFrame(p.buffer)
 		if needMore {
@@ -238,7 +257,7 @@ func parseEventStreamHeaders(data []byte, headerLen int) (map[string]any, error)
 }
 
 // parseEvent 把 JSON payload 解析为统一事件结构（定义在 `kiro/types`）。
-func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent, error) {
+func (p *EventStreamParser) parseEvent(jsonData []byte) (*StreamEvent, error) {
 	var data map[string]any
 	if err := json.Unmarshal(jsonData, &data); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
@@ -253,7 +272,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 				// 流式文本响应
 				if content != p.lastContent {
 					p.lastContent = content
-					return &kirotypes.StreamEvent{Type: kirotypes.StreamEventContent, Data: content}, nil
+					return &StreamEvent{Type: StreamEventContent, Data: content}, nil
 				}
 				return nil, nil
 			}
@@ -267,13 +286,13 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 		if text, ok := delta["text"].(string); ok && text != "" {
 			if text != p.lastContent {
 				p.lastContent = text
-				return &kirotypes.StreamEvent{Type: kirotypes.StreamEventContent, Data: text}, nil
+				return &StreamEvent{Type: StreamEventContent, Data: text}, nil
 			}
 		}
 		// delta 中也可能有 tool 相关内容
 		if toolUseID, ok := delta["toolUseId"].(string); ok {
-			return &kirotypes.StreamEvent{
-				Type: kirotypes.StreamEventToolInput,
+			return &StreamEvent{
+				Type: StreamEventToolInput,
 				Data: map[string]any{
 					"toolUseId": toolUseID,
 					"input":     delta["input"],
@@ -291,7 +310,7 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 			return nil, nil
 		}
 		p.lastContent = content
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventContent, Data: content}, nil
+		return &StreamEvent{Type: StreamEventContent, Data: content}, nil
 	}
 
 	// assistantResponseMessage：非流式/聚合结构里也可能携带 content + toolUses
@@ -300,11 +319,11 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 		if content, ok := arm["content"].(string); ok {
 			if content != p.lastContent {
 				p.lastContent = content
-				return &kirotypes.StreamEvent{Type: kirotypes.StreamEventContent, Data: content}, nil
+				return &StreamEvent{Type: StreamEventContent, Data: content}, nil
 			}
 		}
 		if toolUses, ok := arm["toolUses"].([]any); ok && len(toolUses) > 0 {
-			return &kirotypes.StreamEvent{Type: kirotypes.StreamEventToolUses, Data: toolUses}, nil
+			return &StreamEvent{Type: StreamEventToolUses, Data: toolUses}, nil
 		}
 	}
 
@@ -346,9 +365,9 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 					p.toolManager.FinalizeToolCall(toolUseID)
 				}
 			}
-			return &kirotypes.StreamEvent{Type: kirotypes.StreamEventToolInput, Data: payload}, nil
+			return &StreamEvent{Type: StreamEventToolInput, Data: payload}, nil
 		}
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventToolInput, Data: input}, nil
+		return &StreamEvent{Type: StreamEventToolInput, Data: input}, nil
 	}
 
 	// tool stop：可能是独立对象，或 {"name":...,"toolUseId":...,"stop":true}（无 input）
@@ -366,10 +385,10 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 			if hasName {
 				payload["name"] = name
 			}
-			return &kirotypes.StreamEvent{Type: kirotypes.StreamEventToolInput, Data: payload}, nil
+			return &StreamEvent{Type: StreamEventToolInput, Data: payload}, nil
 		}
-		return &kirotypes.StreamEvent{
-			Type: kirotypes.StreamEventToolStop,
+		return &StreamEvent{
+			Type: StreamEventToolStop,
 			Data: map[string]any{
 				"name":      name,
 				"toolUseId": toolUseID,
@@ -384,8 +403,8 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 			p.toolManager.StartToolCall(toolUseID, name)
 		}
 
-		return &kirotypes.StreamEvent{
-			Type: kirotypes.StreamEventToolStart,
+		return &StreamEvent{
+			Type: StreamEventToolStart,
 			Data: map[string]any{
 				"name":      name,
 				"toolUseId": toolUseID,
@@ -395,31 +414,31 @@ func (p *EventStreamParser) parseEvent(jsonData []byte) (*kirotypes.StreamEvent,
 
 	// usage（两种字段格式都兼容）
 	if usage, ok := data["usage"].(map[string]any); ok {
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventUsage, Data: usage}, nil
+		return &StreamEvent{Type: StreamEventUsage, Data: usage}, nil
 	}
 	if meteringData, ok := data["meteringData"].(map[string]any); ok {
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventUsage, Data: meteringData}, nil
+		return &StreamEvent{Type: StreamEventUsage, Data: meteringData}, nil
 	}
 
 	// context_usage
 	if contextUsage, ok := data["contextUsagePercentage"]; ok {
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventContextUsage, Data: contextUsage}, nil
+		return &StreamEvent{Type: StreamEventContextUsage, Data: contextUsage}, nil
 	}
 
 	// error
 	if errMsg, ok := data["error"].(string); ok {
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventError, Data: errMsg}, nil
+		return &StreamEvent{Type: StreamEventError, Data: errMsg}, nil
 	}
 	if errObj, ok := data["error"].(map[string]any); ok {
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventError, Data: errObj}, nil
+		return &StreamEvent{Type: StreamEventError, Data: errObj}, nil
 	}
 
 	// stop_reason
 	if stopReason, ok := data["stop_reason"].(string); ok {
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventStopReason, Data: stopReason}, nil
+		return &StreamEvent{Type: StreamEventStopReason, Data: stopReason}, nil
 	}
 	if stopReason, ok := data["stopReason"].(string); ok {
-		return &kirotypes.StreamEvent{Type: kirotypes.StreamEventStopReason, Data: stopReason}, nil
+		return &StreamEvent{Type: StreamEventStopReason, Data: stopReason}, nil
 	}
 
 	return nil, nil

@@ -28,8 +28,9 @@ func init() {
 
 // KiroPlugin implements plugin.Plugin for all Kiro functionality.
 type KiroPlugin struct {
-	service *KiroService
-	mu      sync.RWMutex
+	desktopFacade // embeds plugin.KiroDesktopProvider
+	service       *KiroService
+	mu            sync.RWMutex
 }
 
 func (p *KiroPlugin) Name() string { return "kiro" }
@@ -80,7 +81,7 @@ func (p *KiroPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 		return
 	}
 	r.HandleFunc("/kiro/v1/messages", r.RequireAuth(svc.HandleMessages))
-	r.HandleFunc("/kiro/v1/models", svc.HandleModels)
+	r.HandleFunc("/kiro/v1/models", r.RequireAuth(svc.HandleModels))
 	r.HandleFunc("/kiro/config", r.RequireAuth(svc.HandleKiroConfig))
 	r.HandleFunc("/kiro/getUsage", r.RequireAuth(svc.HandleKiroGetUsage))
 }

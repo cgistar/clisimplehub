@@ -16,8 +16,6 @@ import (
 	kiroapi "clisimplehub/internal/kiro"
 	kiroClient "clisimplehub/internal/kiro/client"
 	kiroShared "clisimplehub/internal/kiro/shared"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -27,11 +25,6 @@ const (
 	MaxRetries = 3
 	// BaseRetryDelay is the initial delay for exponential backoff
 	BaseRetryDelay = 1 * time.Second
-)
-
-const (
-	// IDCAmzUserAgent is the x-amz-user-agent value used by AWS SSO OIDC (IdC) token refresh.
-	IDCAmzUserAgent = "aws-sdk-js/3.980.0 ua/2.1 os/darwin#21.6.0 lang/js md/nodejs#22.21.1 api/sso-oidc#3.980.0 m/E KiroIDE"
 )
 
 // KiroAuthManager manages Kiro API authentication and token lifecycle
@@ -49,10 +42,7 @@ func NewKiroAuthManager(creds *kiroShared.KiroCredentials, credsPath string, pro
 	if creds == nil {
 		creds = &kiroShared.KiroCredentials{}
 	}
-	region := creds.Region
-	if region == "" {
-		region = "us-east-1"
-	}
+	region := kiroapi.ResolveRegion(creds.Region)
 
 	// Create HTTP client with optional proxy support using unified client factory
 	httpClient := kiroClient.NewHTTPClientWithProxy(proxyURL, 30*time.Second)
@@ -257,10 +247,7 @@ func (m *KiroAuthManager) refreshTokenLocked() error {
 			return fmt.Errorf("failed to marshal IdC refresh payload: %w", err)
 		}
 
-		region := m.creds.Region
-		if region == "" {
-			region = "us-east-1"
-		}
+		region := kiroapi.ResolveRegion(m.creds.Region)
 		refreshURL = kiroapi.KiroIdcRefreshURL(region)
 	} else {
 		// Social authentication (default)
@@ -283,27 +270,15 @@ func (m *KiroAuthManager) refreshTokenLocked() error {
 
 		req.Header.Set("Content-Type", "application/json")
 		if authMethod == "idc" {
-			region := m.creds.Region
-			if strings.TrimSpace(region) == "" {
-				region = "us-east-1"
-			}
-			req.Header.Set("Host", "oidc."+region+".amazonaws.com")
-			req.Header.Set("Connection", "close")
-			req.Header.Set("amz-sdk-request", "attempt=1; max=4")
-			req.Header.Set("x-amz-user-agent", kiroShared.KiroXAmzUserAgentBase(IDCAmzUserAgent)+" KiroIDE")
-			req.Header.Set("amz-sdk-invocation-id", uuid.NewString())
+			kiroapi.ApplyIdcOidc(req)
+			req.Header.Set("Host", req.URL.Host)
 			req.Header.Set("Accept", "*/*")
 			req.Header.Set("Accept-Language", "*")
 			req.Header.Set("sec-fetch-mode", "cors")
-			req.Header.Set("User-Agent", IDCAmzUserAgent)
 		} else {
-			region := m.creds.Region
-			if strings.TrimSpace(region) == "" {
-				region = "us-east-1"
-			}
 			req.Header.Set("Accept", "application/json, text/plain, */*")
 			req.Header.Set("User-Agent", m.userAgent())
-			req.Header.Set("Host", "prod."+region+".auth.desktop.kiro.dev")
+			req.Header.Set("Host", req.URL.Host)
 			req.Header.Set("Connection", "close")
 		}
 

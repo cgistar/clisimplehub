@@ -2,40 +2,42 @@ package kiro
 
 import "strings"
 
+// ResolveRegion returns a trimmed region, defaulting to "us-east-1" if empty.
+func ResolveRegion(region string) string {
+	if r := strings.TrimSpace(region); r != "" {
+		return r
+	}
+	return "us-east-1"
+}
+
+// KiroOidcHost returns the OIDC hostname for the given region.
+func KiroOidcHost(region string) string {
+	return "oidc." + ResolveRegion(region) + ".amazonaws.com"
+}
+
+// KiroOidcBaseURL returns the OIDC base URL for the given region.
+func KiroOidcBaseURL(region string) string {
+	return "https://" + KiroOidcHost(region)
+}
+
 // KiroAPIHost 返回指定 region 的 Kiro/CodeWhisperer API 域名。
 func KiroAPIHost(region string) string {
-	region = strings.TrimSpace(region)
-	if region == "" {
-		region = "us-east-1"
-	}
-	return "codewhisperer." + region + ".amazonaws.com"
+	return "codewhisperer." + ResolveRegion(region) + ".amazonaws.com"
 }
 
 // KiroQHost 返回指定 region 的 Q API 域名（用于用量接口）。
 func KiroQHost(region string) string {
-	region = strings.TrimSpace(region)
-	if region == "" {
-		region = "us-east-1"
-	}
-	return "q." + region + ".amazonaws.com"
+	return "q." + ResolveRegion(region) + ".amazonaws.com"
 }
 
 // KiroRefreshURL 返回指定 region 的 token refresh URL (Social 认证)。
 func KiroRefreshURL(region string) string {
-	region = strings.TrimSpace(region)
-	if region == "" {
-		region = "us-east-1"
-	}
-	return "https://prod." + region + ".auth.desktop.kiro.dev/refreshToken"
+	return "https://prod." + ResolveRegion(region) + ".auth.desktop.kiro.dev/refreshToken"
 }
 
 // KiroIdcRefreshURL 返回指定 region 的 IdC token refresh URL (AWS SSO OIDC)。
 func KiroIdcRefreshURL(region string) string {
-	region = strings.TrimSpace(region)
-	if region == "" {
-		region = "us-east-1"
-	}
-	return "https://oidc." + region + ".amazonaws.com/token"
+	return KiroOidcBaseURL(region) + "/token"
 }
 
 // KiroGenerateURL 返回指定 region 的 generateAssistantResponse URL。

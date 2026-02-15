@@ -28,7 +28,17 @@ func NewAuthApplier(source KiroAuthSource) *AuthApplier {
 	return &AuthApplier{source: source}
 }
 
-// Apply applies Kiro-specific authentication headers to the request.
+// applyBaseHeaders sets the 6 common headers shared by all Kiro AWS requests.
+func applyBaseHeaders(req *http.Request, userAgent, xAmzUserAgent string, maxAttempts int) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connection", "close")
+	req.Header.Set("amz-sdk-invocation-id", uuid.NewString())
+	req.Header.Set("amz-sdk-request", fmt.Sprintf("attempt=1; max=%d", maxAttempts))
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("x-amz-user-agent", xAmzUserAgent)
+}
+
+// Apply applies Kiro API headers (Profile 1) to the request.
 func (k *AuthApplier) Apply(req *http.Request) error {
 	if req == nil {
 		return fmt.Errorf("nil request")
@@ -59,9 +69,6 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 		req.Host = req.URL.Host
 	}
 
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
 	fp := k.source.MachineID()
 	fp = kiroShared.TruncateFingerprint(fp, 64)
 
@@ -69,14 +76,20 @@ func (k *AuthApplier) Apply(req *http.Request) error {
 	kiroVersion := k.source.KiroVersion()
 
 	userAgent := strings.TrimSpace(userAgentBase) + " " + strings.TrimSpace(kiroVersion) + "-" + fp
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("x-amz-user-agent", kiroShared.KiroXAmzUserAgentBase(userAgentBase)+" "+strings.TrimSpace(kiroVersion)+"-"+fp)
+	xAmzUA := kiroShared.KiroXAmzUserAgentBase(userAgentBase) + " " + strings.TrimSpace(kiroVersion) + "-" + fp
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	applyBaseHeaders(req, userAgent, xAmzUA, 1)
+	req.Header.Set("Host", req.URL.Host)
 	req.Header.Set("x-amzn-codewhisperer-optout", "true")
 	req.Header.Set("x-amzn-kiro-agent-mode", "vibe")
-	req.Header.Set("amz-sdk-invocation-id", uuid.NewString())
-	req.Header.Set("amz-sdk-request", "attempt=1; max=1")
-	req.Header.Set("Host", req.URL.Host)
-	req.Header.Set("Connection", "close")
 
 	return nil
+}
+
+// ApplyIdcOidc applies IDC OIDC headers (Profile 2) to the request.
+func ApplyIdcOidc(req *http.Request) {
+	ua := kiroShared.IDCOidcUserAgent
+	xAmzUA := kiroShared.KiroXAmzUserAgentBase(ua) + " KiroIDE"
+	applyBaseHeaders(req, ua, xAmzUA, 4)
 }

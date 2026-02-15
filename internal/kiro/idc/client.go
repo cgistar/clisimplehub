@@ -10,15 +10,8 @@ import (
 	"strings"
 	"time"
 
+	kiroapi "clisimplehub/internal/kiro"
 	kiroClient "clisimplehub/internal/kiro/client"
-	kiroShared "clisimplehub/internal/kiro/shared"
-
-	"github.com/google/uuid"
-)
-
-const (
-	// idcAuthCodeUserAgent 用于 IDC Auth Code Flow 的 User-Agent
-	idcAuthCodeUserAgent = "aws-sdk-js/3.980.0 ua/2.1 os/darwin#21.6.0 lang/js md/nodejs#22.21.1 api/sso-oidc#3.980.0 m/E KiroIDE"
 )
 
 // Client IDC 认证客户端
@@ -29,16 +22,9 @@ type Client struct {
 
 // NewClient 创建 IDC 认证客户端
 func NewClient(proxyURL string, region string) *Client {
-	if strings.TrimSpace(region) == "" {
-		region = "us-east-1"
-	}
-
-	// 使用统一的 HTTP 客户端工厂
-	httpClient := kiroClient.NewHTTPClientWithProxy(proxyURL, 15*time.Second)
-
 	return &Client{
-		httpClient: httpClient,
-		region:     region,
+		httpClient: kiroClient.NewHTTPClientWithProxy(proxyURL, 15*time.Second),
+		region:     kiroapi.ResolveRegion(region),
 	}
 }
 
@@ -48,15 +34,7 @@ func (c *Client) resolveRegion(requestRegion string) string {
 	if region == "" {
 		region = c.region
 	}
-	if region == "" {
-		region = "us-east-1"
-	}
-	return region
-}
-
-// getOidcURL 返回指定 region 的 OIDC URL
-func (c *Client) getOidcURL(region string) string {
-	return fmt.Sprintf("https://oidc.%s.amazonaws.com", region)
+	return kiroapi.ResolveRegion(region)
 }
 
 // RegisterClient 注册 OIDC 客户端
@@ -66,8 +44,7 @@ func (c *Client) RegisterClient(req *RegisterRequest) (*RegisterResponse, error)
 	}
 
 	region := c.resolveRegion(req.Region)
-	oidcURL := c.getOidcURL(region)
-	registerURL := fmt.Sprintf("%s/client/register", oidcURL)
+	registerURL := kiroapi.KiroOidcBaseURL(region) + "/client/register"
 
 	// 构建注册请求
 	payload := map[string]any{
@@ -135,8 +112,7 @@ func (c *Client) StartDeviceAuthorization(req *DeviceAuthRequest) (*DeviceAuthRe
 	}
 
 	region := c.resolveRegion(req.Region)
-	oidcURL := c.getOidcURL(region)
-	deviceAuthURL := fmt.Sprintf("%s/device_authorization", oidcURL)
+	deviceAuthURL := kiroapi.KiroOidcBaseURL(region) + "/device_authorization"
 
 	// 使用自定义 Start URL，为空则使用默认 Builder ID URL
 	startURL := strings.TrimSpace(req.StartUrl)
@@ -207,8 +183,7 @@ func (c *Client) PollToken(req *PollTokenRequest) (*PollTokenResponse, error) {
 	}
 
 	region := c.resolveRegion(req.Region)
-	oidcURL := c.getOidcURL(region)
-	tokenURL := fmt.Sprintf("%s/token", oidcURL)
+	tokenURL := kiroapi.KiroOidcBaseURL(region) + "/token"
 
 	// 构建 token 请求
 	payload := map[string]string{
@@ -279,7 +254,7 @@ func (c *Client) RegisterAuthCodeClient(req *AuthCodeRegisterRequest) (*AuthCode
 	}
 
 	region := c.resolveRegion(req.Region)
-	registerURL := fmt.Sprintf("%s/client/register", c.getOidcURL(region))
+	registerURL := kiroapi.KiroOidcBaseURL(region) + "/client/register"
 
 	payload := map[string]any{
 		"clientName": "Kiro IDE",
@@ -309,11 +284,7 @@ func (c *Client) RegisterAuthCodeClient(req *AuthCodeRegisterRequest) (*AuthCode
 		return nil, fmt.Errorf("failed to create register request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Connection", "close")
-	httpReq.Header.Set("amz-sdk-request", "attempt=1; max=4")
-	httpReq.Header.Set("amz-sdk-invocation-id", uuid.NewString())
-	httpReq.Header.Set("User-Agent", idcAuthCodeUserAgent)
-	httpReq.Header.Set("x-amz-user-agent", kiroShared.KiroXAmzUserAgentBase(idcAuthCodeUserAgent)+" KiroIDE")
+	kiroapi.ApplyIdcOidc(httpReq)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -344,7 +315,7 @@ func (c *Client) ExchangeAuthCode(req *AuthCodeTokenRequest) (*AuthCodeTokenResp
 	}
 
 	region := c.resolveRegion(req.Region)
-	tokenURL := fmt.Sprintf("%s/token", c.getOidcURL(region))
+	tokenURL := kiroapi.KiroOidcBaseURL(region) + "/token"
 
 	payload := map[string]string{
 		"clientId":     req.ClientId,
@@ -367,13 +338,8 @@ func (c *Client) ExchangeAuthCode(req *AuthCodeTokenRequest) (*AuthCodeTokenResp
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Host", "oidc."+region+".amazonaws.com")
-	httpReq.Header.Set("Connection", "close")
-	httpReq.Header.Set("amz-sdk-request", "attempt=1; max=4")
-	httpReq.Header.Set("amz-sdk-invocation-id", uuid.NewString())
-	httpReq.Header.Set("User-Agent", idcAuthCodeUserAgent)
-	httpReq.Header.Set("x-amz-user-agent", kiroShared.KiroXAmzUserAgentBase(idcAuthCodeUserAgent)+" KiroIDE")
+	kiroapi.ApplyIdcOidc(httpReq)
+	httpReq.Header.Set("Host", httpReq.URL.Host)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {

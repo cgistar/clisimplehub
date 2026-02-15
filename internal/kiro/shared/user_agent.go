@@ -10,6 +10,8 @@ const (
 	DefaultKiroUserAgentBase = "aws-sdk-js/1.0.27 ua/2.1 os/darwin#24.6.0 lang/js md/nodejs#22.21.1 api/codewhispererstreaming#1.0.27 m/E"
 	// DefaultKiroVersion is the default Kiro client version token appended to user agent headers.
 	DefaultKiroVersion = "KiroIDE-0.9.2"
+	// IDCOidcUserAgent is the User-Agent for IDC OIDC auth code flow and token refresh.
+	IDCOidcUserAgent = "aws-sdk-js/3.980.0 ua/2.1 os/darwin#21.6.0 lang/js md/nodejs#22.21.1 api/sso-oidc#3.980.0 m/E KiroIDE"
 )
 
 func KiroUserAgentBaseOrDefault(userAgentBase string) string {

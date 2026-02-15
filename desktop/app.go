@@ -24,7 +24,6 @@ import (
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
-	kiroShared "clisimplehub/internal/kiro/shared"
 
 	"github.com/google/uuid"
 )
@@ -2654,31 +2653,19 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 
 // loadKiroMultiConfigDTO 加载 kiro.json 并转换为 DTO
 func (a *App) loadKiroMultiConfigDTO(path string) (*KiroMultiConfigDTO, error) {
-	config, err := kiroShared.LoadKiroMultiConfig(path)
+	kp := kiroProvider()
+	if kp == nil {
+		return nil, fmt.Errorf("kiro plugin not available")
+	}
+	raw, err := kp.LoadMultiConfigDTO(path)
 	if err != nil {
 		return nil, err
 	}
-	if config == nil || len(config.Accounts) == 0 {
-		return nil, fmt.Errorf("no accounts")
+	var dto KiroMultiConfigDTO
+	if err := json.Unmarshal(raw, &dto); err != nil {
+		return nil, err
 	}
-
-	accounts := make([]KiroAccountDTO, 0, len(config.Accounts))
-	for i := range config.Accounts {
-		isActive := config.Accounts[i].RefreshToken == config.ActiveRefreshToken
-		accounts = append(accounts, accountToDTO(&config.Accounts[i], isActive))
-	}
-
-	return &KiroMultiConfigDTO{
-		ActiveRefreshToken: config.ActiveRefreshToken,
-		Region:             config.Region,
-		ProxyURL:           config.ProxyURL,
-		UserAgent:          config.UserAgent,
-		Version:            config.Version,
-		BufferedStream:     config.BufferedStream,
-		RotationMode:       config.RotationMode,
-		ModelMapping:       config.ModelMapping,
-		Accounts:           accounts,
-	}, nil
+	return &dto, nil
 }
 
 // RestoreBackupData 从备份数据恢复配置
@@ -3434,14 +3421,12 @@ func (a *App) SyncConfigToServer(index int) error {
 	}
 
 	// 附加 kiro 多账号配置：gzip+base64 编码，避免凭据明文传输
-	if mc, loadErr := a.loadOrCreateMultiConfig(); loadErr == nil && len(mc.Accounts) > 0 {
-		if raw, marshalErr := json.Marshal(mc); marshalErr == nil {
-			var buf bytes.Buffer
-			gz := gzip.NewWriter(&buf)
-			_, _ = gz.Write(raw)
-			_ = gz.Close()
-			payload.KiroConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
-		}
+	if raw := a.kiroSyncExportRaw(); len(raw) > 0 {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write(raw)
+		_ = gz.Close()
+		payload.KiroConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
 	body, err := json.Marshal(payload)

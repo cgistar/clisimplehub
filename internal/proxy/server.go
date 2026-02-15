@@ -189,45 +189,14 @@ func (p *ProxyServer) getAuthKey() string {
 	return p.authKey
 }
 
-// requireAuth 是一个中间件，用于验证 API Key
-// 如果配置了 apiKey，则要求请求头中包含 Authorization: Bearer <apiKey>
 func (p *ProxyServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		apiKey := p.getAuthKey()
-
-		// 如果没有配置 apiKey，直接放行
-		if apiKey == "" {
-			next(w, r)
-			return
-		}
-
-		// 检查 Authorization 头
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
-				"error": "Missing Authorization header",
-			})
-			return
-		}
-
-		// 验证 Bearer token
-		const prefix = "Bearer "
-		if !strings.HasPrefix(authHeader, prefix) {
-			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
-				"error": "Invalid Authorization header format, expected: Bearer <token>",
-			})
-			return
-		}
-
-		token := strings.TrimSpace(authHeader[len(prefix):])
-		if token != apiKey {
+		if key := p.getAuthKey(); key != "" && !isAuthorized(r, key) {
 			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
 				"error": "Invalid API key",
 			})
 			return
 		}
-
-		// 验证通过，继续处理请求
 		next(w, r)
 	}
 }
