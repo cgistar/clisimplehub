@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	kiroapi "clisimplehub/internal/transformer/kiro"
-	kiroClient "clisimplehub/internal/transformer/kiro/client"
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroapi "clisimplehub/internal/kiro"
+	kiroClient "clisimplehub/internal/kiro/client"
+	kiroShared "clisimplehub/internal/kiro/shared"
 
 	"github.com/google/uuid"
 )

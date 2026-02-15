@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"clisimplehub/internal/executor"
-	kiroCore "clisimplehub/internal/transformer/kiro"
-	kiroClaude "clisimplehub/internal/transformer/kiro/claude"
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroCore "clisimplehub/internal/kiro"
+	kiroClaude "clisimplehub/internal/kiro/claude"
+	kiroShared "clisimplehub/internal/kiro/shared"
 )
 
 // =============================================================================

@@ -14,11 +14,12 @@ import (
 	"time"
 
 	"clisimplehub/internal/config"
+	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
-	kiro "clisimplehub/internal/transformer/kiro"
-	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
+
+	_ "clisimplehub/internal/kiro/plugin" // activate Kiro plugin
 )
 
 // Default configuration values
@@ -140,18 +141,24 @@ func main() {
 	proxyServer.SetUsageStatsStore(usageStatsStore)
 	proxyServer.SetConfigPath(configPath)
 
-	// Initialize kiro transformer config getter
-	kiro_claude.SetConfigGetter(func(key string) (string, error) {
-		if strings.TrimSpace(key) == "configPath" {
-			return configPath, nil
+	// Initialize all plugins
+	reloadOnce := func() {
+		reloadConfig(store, router, proxyServer)
+	}
+	for _, pl := range plugin.All() {
+		if err := pl.Init(plugin.InitConfig{
+			ConfigPath: configPath,
+			ConfigGetter: func(key string) (string, error) {
+				if strings.TrimSpace(key) == "configPath" {
+					return configPath, nil
+				}
+				return store.GetConfig(key)
+			},
+			Storage:       store,
+			TriggerReload: reloadOnce,
+		}); err != nil {
+			log.Printf("Warning: plugin %s init failed: %v", pl.Name(), err)
 		}
-		return store.GetConfig(key)
-	})
-
-	// Initialize kiro account pool
-	kiroJsonPath := filepath.Join(filepath.Dir(configPath), "kiro.json")
-	if err := kiro.InitPool(kiroJsonPath); err != nil {
-		log.Printf("Warning: failed to initialize kiro account pool: %v", err)
 	}
 
 	// Load API Key from environment variable (highest priority) or config.json
@@ -320,6 +327,13 @@ func reloadConfig(store storage.Storage, router *proxy.DefaultRouter, proxyServe
 			enabled := strings.TrimSpace(v) == "true"
 			proxyServer.SetFallbackEnabled(enabled)
 			log.Printf("Config reload: fallbackEnabled=%v", enabled)
+		}
+	}
+
+	// Reload all plugins
+	for _, pl := range plugin.All() {
+		if err := pl.Reload(); err != nil {
+			log.Printf("Config reload: plugin %s reload failed: %v", pl.Name(), err)
 		}
 	}
 

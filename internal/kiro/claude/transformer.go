@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	kiroapi "clisimplehub/internal/transformer/kiro"
-	kiroresponse "clisimplehub/internal/transformer/kiro/response"
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroapi "clisimplehub/internal/kiro"
+	kiroresponse "clisimplehub/internal/kiro/response"
+	kiroShared "clisimplehub/internal/kiro/shared"
 	"clisimplehub/internal/transformer/shared"
 )
 

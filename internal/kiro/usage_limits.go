@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroShared "clisimplehub/internal/kiro/shared"
 )
 
 type HTTPDoer interface {

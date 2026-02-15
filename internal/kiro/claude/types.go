@@ -1,8 +1,8 @@
 package claude
 
 import (
-	kiroresponse "clisimplehub/internal/transformer/kiro/response"
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroresponse "clisimplehub/internal/kiro/response"
+	kiroShared "clisimplehub/internal/kiro/shared"
 	"sync"
 )
 

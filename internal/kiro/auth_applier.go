@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroShared "clisimplehub/internal/kiro/shared"
 
 	"github.com/google/uuid"
 )

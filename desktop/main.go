@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"clisimplehub/internal/config"
+	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
-	kiro "clisimplehub/internal/transformer/kiro"
-	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
+
+	_ "clisimplehub/internal/kiro/plugin" // activate Kiro plugin
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -143,19 +144,23 @@ func main() {
 	proxyServer.SetListenAddr(listenAddr)
 	proxyServer.SetStorage(store)
 	proxyServer.SetUsageStatsStore(usageStatsStore)
+	proxyServer.SetConfigPath(configPath)
 
-	// Initialize kiro transformer config getter
-	kiro_claude.SetConfigGetter(func(key string) (string, error) {
-		if strings.TrimSpace(key) == "configPath" {
-			return configPath, nil
+	// Initialize all plugins
+	for _, pl := range plugin.All() {
+		if err := pl.Init(plugin.InitConfig{
+			ConfigPath: configPath,
+			ConfigGetter: func(key string) (string, error) {
+				if strings.TrimSpace(key) == "configPath" {
+					return configPath, nil
+				}
+				return store.GetConfig(key)
+			},
+			Storage:       store,
+			TriggerReload: nil,
+		}); err != nil {
+			log.Printf("Warning: plugin %s init failed: %v", pl.Name(), err)
 		}
-		return store.GetConfig(key)
-	})
-
-	// Initialize kiro account pool
-	kiroJsonPath := filepath.Join(filepath.Dir(configPath), "kiro.json")
-	if err := kiro.InitPool(kiroJsonPath); err != nil {
-		log.Printf("Warning: failed to initialize kiro account pool: %v", err)
 	}
 
 	if key, err := store.GetConfig(ConfigKeyAPIKey); err == nil {

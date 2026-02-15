@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	kiroIdc "clisimplehub/internal/transformer/kiro/idc"
+	kiroIdc "clisimplehub/internal/kiro/idc"
 )
 
 // =============================================================================

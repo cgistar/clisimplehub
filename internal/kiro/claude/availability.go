@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroShared "clisimplehub/internal/kiro/shared"
 )
 
 // HasValidLocalAccessToken reports whether local Kiro credentials exist and contain

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"clisimplehub/internal/transformer/kiro/claude"
+	"clisimplehub/internal/kiro/claude"
 	"clisimplehub/internal/transformer/shared"
 )
 

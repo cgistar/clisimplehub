@@ -1,27 +1,34 @@
-package proxy
+package kiroplugin
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
+	kiroapi "clisimplehub/internal/kiro"
+	kiroClaude "clisimplehub/internal/kiro/claude"
+	kiroClient "clisimplehub/internal/kiro/client"
+	kiroShared "clisimplehub/internal/kiro/shared"
 	"clisimplehub/internal/storage"
-	"clisimplehub/internal/transformer/kiro"
-	kiroClaude "clisimplehub/internal/transformer/kiro/claude"
-	kiroClient "clisimplehub/internal/transformer/kiro/client"
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
 )
+
+// StorageAccessor provides optional access to storage for endpoint management.
+type StorageAccessor interface {
+	GetStorage() storage.Storage
+	TriggerReload()
+}
+
+// SetStorageAccessor allows the server to inject storage access into the service.
+func (s *KiroService) SetStorageAccessor(sa StorageAccessor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.storageAccessor = sa
+}
 
 // KiroConfigRequest 请求结构
 type KiroConfigRequest struct {
@@ -48,18 +55,13 @@ type UsageInfo struct {
 	Limit int `json:"limit"`
 }
 
-// kiroConfigWriteMu 串行化 kiro.json 写入，避免并发请求导致文件损坏
-var kiroConfigWriteMu sync.Mutex
-
-// handleKiroConfig 处理 Kiro 配置更新请求
-func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
-	// 仅允许 POST 请求
+// HandleKiroConfig handles Kiro configuration update requests.
+func (s *KiroService) HandleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// 解析请求
 	var req KiroConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
@@ -68,7 +70,6 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 验证必填字段
 	refreshToken := strings.TrimSpace(req.RefreshToken)
 	if refreshToken == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
@@ -77,16 +78,13 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 设置默认值
 	region := strings.TrimSpace(req.Region)
 	if region == "" {
 		region = "us-east-1"
 	}
 
-	// 确定认证方式
 	authMethod := strings.ToLower(strings.TrimSpace(req.AuthMethod))
 	if authMethod == "" {
-		// 如果未指定，根据是否有 clientId 和 clientSecret 自动判断
 		if strings.TrimSpace(req.ClientId) != "" && strings.TrimSpace(req.ClientSecret) != "" {
 			authMethod = "idc"
 		} else {
@@ -94,7 +92,6 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 验证 IdC 认证方式的必填字段
 	if authMethod == "idc" {
 		if strings.TrimSpace(req.ClientId) == "" || strings.TrimSpace(req.ClientSecret) == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
@@ -104,11 +101,7 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 获取 kiro.json 路径
-	p.mu.RLock()
-	configPath := p.configPath
-	p.mu.RUnlock()
-
+	configPath := s.resolveConfigPath()
 	if configPath == "" {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error": "config path not set",
@@ -118,7 +111,6 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 
 	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 
-	// 从 kiro.json 读取 version, userAgent, bufferedStream
 	version := ""
 	userAgent := ""
 	oldBufferedStream := false
@@ -127,12 +119,9 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		userAgent = strings.TrimSpace(mc.UserAgent)
 		oldBufferedStream = mc.BufferedStream
 	}
-
-	// 应用默认值
 	version = kiroShared.KiroVersionOrDefault(version)
 	userAgent = kiroShared.KiroUserAgentBaseOrDefault(userAgent)
 
-	// 加载现有凭证 from kiro.json active account
 	var existingRefreshToken string
 	var existingAccessToken string
 	var existingExpiresAt time.Time
@@ -146,16 +135,10 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 检查 refreshToken 是否变化
 	refreshTokenChanged := existingRefreshToken != "" && refreshToken != "" && existingRefreshToken != refreshToken
-
-	// 计算新的 machineId
-	machineID := kiro.ComputeMachineID(refreshToken)
-
-	// 检查 bufferedStream 是否变化
+	machineID := kiroapi.ComputeMachineID(refreshToken)
 	bufferedStreamChanged := req.BufferedStream != oldBufferedStream
 
-	// 如果 refreshToken 未变化且存在有效凭证，检查是否只需要更新 bufferedStream
 	if !refreshTokenChanged && existingAccessToken != "" {
 		if !bufferedStreamChanged {
 			response := KiroConfigResponse{
@@ -168,13 +151,10 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
-
-		// 如果只是 bufferedStream 变化，更新 kiro.json
 		if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
 			mc.BufferedStream = req.BufferedStream
 			_ = kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc)
 		}
-
 		response := KiroConfigResponse{
 			AccessToken: existingAccessToken,
 			ProfileArn:  existingProfileArn,
@@ -186,9 +166,6 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// refreshToken 变化了，或者没有有效凭证，需要刷新 token
-
-	// 创建临时凭证用于测试
 	creds := &kiroShared.KiroCredentials{
 		RefreshToken: refreshToken,
 		Region:       region,
@@ -197,49 +174,33 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		ClientSecret: req.ClientSecret,
 	}
 
-	// 使用 KiroAuthManager 获取 accessToken
 	mgr := kiroClaude.NewKiroAuthManager(creds, "", strings.TrimSpace(req.ProxyURL), version)
 	accessToken, err := mgr.ForceRefresh()
 	if err != nil {
-		// 记录详细错误信息
 		fmt.Fprintf(os.Stderr, "Kiro token refresh failed: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Request details: authMethod=%s, region=%s, clientId=%s\n",
-			authMethod, region, req.ClientId)
-
 		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
 			"error": fmt.Sprintf("Failed to refresh token: %v", err),
 		})
 		return
 	}
-
-	// 检查 accessToken 是否为空
 	if accessToken == "" {
-		fmt.Fprintf(os.Stderr, "Warning: accessToken is empty after refresh\n")
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error": "Access token is empty after refresh",
 		})
 		return
 	}
 
-	// 获取 profileArn（从 manager 中获取）
 	profileArn := mgr.GetProfileArn()
-
-	// IdC tokens do not require (and typically do not return) a CodeWhisperer profileArn.
-	// Keeping a stale profileArn (e.g. from a prior Social login) can cause confusing upstream auth errors.
 	if authMethod == "idc" {
 		profileArn = ""
 	}
 
-	// 获取使用量信息
 	var usageInfo *UsageInfo
 	if accessToken != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-
-		// 使用统一的 HTTP 客户端工厂，支持代理配置
 		httpClient := kiroClient.NewHTTPClientWithProxy(strings.TrimSpace(req.ProxyURL), 10*time.Second)
-
-		usageQuery := kiro.UsageQuery{
+		usageQuery := kiroapi.UsageQuery{
 			AccessToken:   accessToken,
 			ProfileArn:    profileArn,
 			Region:        region,
@@ -247,8 +208,7 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 			UserAgentBase: userAgent,
 			Version:       version,
 		}
-
-		if usageResult, err := kiro.FetchUsage(ctx, httpClient, usageQuery); err == nil && usageResult != nil {
+		if usageResult, err := kiroapi.FetchUsage(ctx, httpClient, usageQuery); err == nil && usageResult != nil {
 			usageInfo = &UsageInfo{
 				Used:  int(usageResult.CurrentUsage),
 				Limit: int(usageResult.UsageLimit),
@@ -256,7 +216,6 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 准备要保存的凭证
 	saveCreds := &kiroShared.KiroCredentials{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -267,199 +226,46 @@ func (p *ProxyServer) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		ClientId:     req.ClientId,
 		ClientSecret: req.ClientSecret,
 	}
-
-	// 从 creds 中获取 ExpiresAt（ForceRefresh 会更新它）
 	if creds.ExpiresAt.IsZero() {
 		saveCreds.ExpiresAt = time.Now().Add(1 * time.Hour)
 	} else {
 		saveCreds.ExpiresAt = creds.ExpiresAt
 	}
 
-	// Sync credentials to kiro.json (single source of truth)
 	if err := kiroShared.SyncTokenToKiroJson(kiroJsonPath, existingRefreshToken, saveCreds); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync kiro.json: %v\n", err)
 	}
 
-	// 更新 kiro.json 中的 bufferedStream
 	if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
 		mc.BufferedStream = req.BufferedStream
-		if err := kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save bufferedStream to kiro.json: %v\n", err)
-		}
+		_ = kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc)
 	}
 
-	// 触发所有 Kiro Transformer 重新加载配置
-	if err := kiroClaude.ReloadAllTransformers(); err != nil {
-		// 记录错误但不影响响应，因为配置已经保存成功
-		fmt.Fprintf(os.Stderr, "Warning: failed to reload transformers: %v\n", err)
-	}
+	_ = kiroClaude.ReloadAllTransformers()
 
-	// 检查并创建 kiro/claude 端点
-	if err := p.ensureKiroEndpoint(); err != nil {
-		// 记录错误但不影响响应
-		fmt.Fprintf(os.Stderr, "Warning: failed to ensure kiro endpoint: %v\n", err)
-	}
+	s.ensureKiroEndpoint()
 
-	// 返回成功响应
 	expiresAt := ""
 	if !saveCreds.ExpiresAt.IsZero() {
 		expiresAt = saveCreds.ExpiresAt.Format(time.RFC3339Nano)
 	}
 
-	response := KiroConfigResponse{
+	writeJSON(w, http.StatusOK, KiroConfigResponse{
 		AccessToken: accessToken,
 		ExpiresAt:   expiresAt,
 		ProfileArn:  profileArn,
 		Usage:       usageInfo,
-	}
-
-	writeJSON(w, http.StatusOK, response)
+	})
 }
 
-// ensureKiroEndpoint 确保存在 kiro/claude 端点，如果不存在则创建
-func (p *ProxyServer) ensureKiroEndpoint() error {
-	p.mu.RLock()
-	store := p.store
-	p.mu.RUnlock()
-
-	if store == nil {
-		return fmt.Errorf("storage not initialized")
-	}
-
-	// 获取所有端点
-	endpoints, err := store.GetEndpoints()
-	if err != nil {
-		return fmt.Errorf("failed to get endpoints: %w", err)
-	}
-
-	// 检查是否已存在 kiro/claude 端点
-	for _, ep := range endpoints {
-		if ep.Transformer == "kiro/claude" && ep.InterfaceType == "claude" {
-			// 已存在，无需创建
-			return nil
-		}
-	}
-
-	// 不存在，创建新端点
-	newEndpoint := &storage.Endpoint{
-		Name:          "kiro",
-		APIURL:        "https://q.us-east-1.amazonaws.com",
-		APIKey:        "-",
-		Active:        false, // 默认不激活
-		Enabled:       true,
-		InterfaceType: "claude",
-		Transformer:   "kiro/claude",
-		Priority:      8,
-	}
-
-	// 检查是否是该 interfaceType 的唯一端点
-	sameTypeCount := 0
-	for _, ep := range endpoints {
-		if ep.InterfaceType == "claude" {
-			sameTypeCount++
-		}
-	}
-
-	// 如果是唯一端点，自动设为 active
-	if sameTypeCount == 0 {
-		newEndpoint.Active = true
-	}
-
-	// 保存端点（ID 会由 storage 层自动生成）
-	if err := store.SaveEndpoint(newEndpoint); err != nil {
-		return fmt.Errorf("failed to save kiro endpoint: %w", err)
-	}
-
-	// 触发配置重载
-	p.mu.RLock()
-	reloadFunc := p.reloadFunc
-	p.mu.RUnlock()
-
-	if reloadFunc != nil {
-		reloadFunc()
-	}
-
-	return nil
-}
-
-// syncKiroConfig 将同步过来的 kiro 配置保存到 kiro.json 并重载 transformer。
-func (p *ProxyServer) syncKiroConfig(mc *kiroShared.KiroMultiConfig) error {
-	if mc == nil {
-		return nil
-	}
-
-	p.mu.RLock()
-	configPath := p.configPath
-	p.mu.RUnlock()
-
-	if configPath == "" {
-		return errors.New("syncKiroConfig skipped: configPath not set")
-	}
-
-	// 防御 null accounts
-	if mc.Accounts == nil {
-		mc.Accounts = []kiroShared.KiroAccount{}
-	}
-
-	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
-
-	kiroConfigWriteMu.Lock()
-	defer kiroConfigWriteMu.Unlock()
-
-	if err := kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc); err != nil {
-		return fmt.Errorf("failed to save synced kiro config: %w", err)
-	}
-
-	// 重载 transformer 缓存
-	kiroClaude.SetCachedBufferedStream(mc.BufferedStream)
-	kiroClaude.SetCachedModelMapping(mc.ModelMapping)
-
-	var warn error
-	if err := kiroClaude.ReloadAllTransformers(); err != nil {
-		warn = errors.Join(warn, fmt.Errorf("failed to reload transformers: %w", err))
-	}
-
-	if err := p.ensureKiroEndpoint(); err != nil {
-		warn = errors.Join(warn, fmt.Errorf("failed to ensure kiro endpoint: %w", err))
-	}
-	return warn
-}
-
-// decodeKiroConfigEncoded 解码 gzip+base64 编码的 KiroMultiConfig
-func decodeKiroConfigEncoded(encoded string) (*kiroShared.KiroMultiConfig, error) {
-	compressed, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, fmt.Errorf("base64 decode: %w", err)
-	}
-	gz, err := gzip.NewReader(bytes.NewReader(compressed))
-	if err != nil {
-		return nil, fmt.Errorf("gzip reader: %w", err)
-	}
-	defer gz.Close()
-	raw, err := io.ReadAll(gz)
-	if err != nil {
-		return nil, fmt.Errorf("gzip decompress: %w", err)
-	}
-	var mc kiroShared.KiroMultiConfig
-	if err := json.Unmarshal(raw, &mc); err != nil {
-		return nil, fmt.Errorf("json unmarshal: %w", err)
-	}
-	return &mc, nil
-}
-
-// handleKiroGetUsage 处理获取 Kiro 使用量请求
-func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request) {
-	// 仅允许 GET 请求
+// HandleKiroGetUsage handles fetching Kiro usage information.
+func (s *KiroService) HandleKiroGetUsage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// 获取配置路径
-	p.mu.RLock()
-	configPath := p.configPath
-	p.mu.RUnlock()
-
+	configPath := s.resolveConfigPath()
 	if configPath == "" {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error": "config path not set",
@@ -467,7 +273,6 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 加载凭证 from kiro.json active account
 	kiroJsonPath := filepath.Join(filepath.Dir(configPath), filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 	mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath)
 	if err != nil {
@@ -484,7 +289,6 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 检查 accessToken 是否存在
 	accessToken := strings.TrimSpace(activeAccount.AccessToken)
 	if accessToken == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
@@ -493,7 +297,6 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 获取配置信息
 	region := strings.TrimSpace(activeAccount.Region)
 	if region == "" {
 		region = "us-east-1"
@@ -501,25 +304,20 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 
 	profileArn := strings.TrimSpace(activeAccount.ProfileArn)
 	refreshToken := strings.TrimSpace(activeAccount.RefreshToken)
-
-	// 从 kiro.json 读取 version, userAgent, proxyUrl
 	version := kiroShared.KiroVersionOrDefault(strings.TrimSpace(mc.Version))
 	userAgent := kiroShared.KiroUserAgentBaseOrDefault(strings.TrimSpace(mc.UserAgent))
 	proxyURL := strings.TrimSpace(mc.ProxyURL)
 
 	machineID := strings.TrimSpace(activeAccount.MachineId)
 	if machineID == "" && refreshToken != "" {
-		machineID = kiro.ComputeMachineID(refreshToken)
+		machineID = kiroapi.ComputeMachineID(refreshToken)
 	}
 
-	// 获取使用量信息
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 使用统一的 HTTP 客户端工厂，支持代理配置
 	httpClient := kiroClient.NewHTTPClientWithProxy(proxyURL, 10*time.Second)
-
-	usageQuery := kiro.UsageQuery{
+	usageQuery := kiroapi.UsageQuery{
 		AccessToken:   accessToken,
 		ProfileArn:    profileArn,
 		Region:        region,
@@ -528,14 +326,13 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 		Version:       version,
 	}
 
-	usageResult, err := kiro.FetchUsage(ctx, httpClient, usageQuery)
+	usageResult, err := kiroapi.FetchUsage(ctx, httpClient, usageQuery)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error": fmt.Sprintf("Failed to fetch usage: %v", err),
 		})
 		return
 	}
-
 	if usageResult == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error": "No usage data returned",
@@ -543,15 +340,73 @@ func (p *ProxyServer) handleKiroGetUsage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 返回使用量信息
-	response := map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"subscriptionTitle": usageResult.SubscriptionTitle,
 		"usageLimit":        usageResult.UsageLimit,
 		"currentUsage":      usageResult.CurrentUsage,
 		"balance":           usageResult.Balance,
 		"usagePct":          usageResult.UsagePct,
 		"isLowBalance":      usageResult.IsLowBalance,
+	})
+}
+
+// ensureKiroEndpoint ensures a kiro/claude endpoint exists.
+func (s *KiroService) ensureKiroEndpoint() {
+	s.mu.RLock()
+	sa := s.storageAccessor
+	s.mu.RUnlock()
+	if sa == nil {
+		return
+	}
+	store := sa.GetStorage()
+	if store == nil {
+		return
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	endpoints, err := store.GetEndpoints()
+	if err != nil {
+		return
+	}
+
+	for _, ep := range endpoints {
+		if ep.Transformer == "kiro/claude" && ep.InterfaceType == "claude" {
+			return
+		}
+	}
+
+	newEndpoint := &storage.Endpoint{
+		Name:          "kiro",
+		APIURL:        "https://q.us-east-1.amazonaws.com",
+		APIKey:        "-",
+		Active:        false,
+		Enabled:       true,
+		InterfaceType: "claude",
+		Transformer:   "kiro/claude",
+		Priority:      8,
+	}
+
+	sameTypeCount := 0
+	for _, ep := range endpoints {
+		if ep.InterfaceType == "claude" {
+			sameTypeCount++
+		}
+	}
+	if sameTypeCount == 0 {
+		newEndpoint.Active = true
+	}
+
+	if err := store.SaveEndpoint(newEndpoint); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save kiro endpoint: %v\n", err)
+		return
+	}
+
+	sa.TriggerReload()
+}
+
+// resolveConfigPath gets the config path from the config getter.
+func (s *KiroService) resolveConfigPath() string {
+	if v, err := kiroClaude.GetConfig("configPath"); err == nil {
+		return strings.TrimSpace(v)
+	}
+	return ""
 }

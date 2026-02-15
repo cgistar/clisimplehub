@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	kirotypes "clisimplehub/internal/transformer/kiro/types"
+	kirotypes "clisimplehub/internal/kiro/types"
 	"clisimplehub/internal/transformer/shared"
 
 	"github.com/google/uuid"

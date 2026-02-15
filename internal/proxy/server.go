@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"clisimplehub/internal/config"
+	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
 )
 
 // ProxyServer represents the main proxy server implementation
@@ -108,11 +108,15 @@ func (p *ProxyServer) Start() error {
 	mux.HandleFunc("/health", p.handleHealth)
 	mux.HandleFunc("/stats", p.handleStats)
 	mux.HandleFunc("/transformers", p.handleTransformers)
-	mux.HandleFunc("/kiro/config", p.requireAuth(p.handleKiroConfig))
-	mux.HandleFunc("/kiro/getUsage", p.requireAuth(p.handleKiroGetUsage))
 	mux.HandleFunc("/reload", p.requireAuth(p.handleReload))
 	mux.HandleFunc("/endpoint", p.requireAuth(p.handleEndpoint))
 	mux.HandleFunc("/sync/config", p.requireAuthStrict(p.handleSyncConfig))
+
+	// Register plugin routes
+	registrar := &proxyRouteRegistrar{mux: mux, p: p}
+	for _, pl := range plugin.All() {
+		pl.RegisterRoutes(registrar)
+	}
 
 	if p.wsHub != nil {
 		mux.HandleFunc("/ws", p.wsHub.HandleWebSocket)
@@ -300,6 +304,30 @@ func (p *ProxyServer) SetConfigPath(path string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.configPath = path
+}
+
+func (p *ProxyServer) getConfigPath() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.configPath
+}
+
+// proxyRouteRegistrar adapts ProxyServer into a plugin.RouteRegistrar.
+type proxyRouteRegistrar struct {
+	mux *http.ServeMux
+	p   *ProxyServer
+}
+
+func (r *proxyRouteRegistrar) HandleFunc(pattern string, handler http.HandlerFunc) {
+	r.mux.HandleFunc(pattern, handler)
+}
+
+func (r *proxyRouteRegistrar) RequireAuth(handler http.HandlerFunc) http.HandlerFunc {
+	return r.p.requireAuth(handler)
+}
+
+func (r *proxyRouteRegistrar) RequireAuthStrict(handler http.HandlerFunc) http.HandlerFunc {
+	return r.p.requireAuthStrict(handler)
 }
 
 // SetReloadFunc sets the config reload callback function
@@ -583,11 +611,11 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 	const maxSyncConfigBytes = 10 << 20 // 10 MiB
 	r.Body = http.MaxBytesReader(w, r.Body, maxSyncConfigBytes)
 
-	// 扩展 payload：vendors + endpoints + kiroConfig（支持 gzip+base64 编码或明文两种方式）
+	// 扩展 payload：vendors + endpoints + plugin configs (via json.RawMessage)
 	type syncConfigRequest struct {
 		config.AppConfig
-		KiroConfigEncoded string                    `json:"kiroConfigEncoded,omitempty"` // gzip+base64 编码
-		KiroConfig        *kiroShared.KiroMultiConfig `json:"kiroConfig,omitempty"`        // 明文（向后兼容）
+		KiroConfigEncoded string          `json:"kiroConfigEncoded,omitempty"` // gzip+base64 编码
+		KiroConfig        json.RawMessage `json:"kiroConfig,omitempty"`        // 明文（向后兼容）
 	}
 
 	var req syncConfigRequest
@@ -645,21 +673,32 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 同步 kiro.json：优先使用 gzip+base64 编码格式，向后兼容明文
+	// Sync plugin configs (kiro etc.) via plugin interfaces
 	var kiroResult map[string]interface{}
-	var kiroMC *kiroShared.KiroMultiConfig
-	if req.KiroConfigEncoded != "" {
-		mc, decErr := decodeKiroConfigEncoded(req.KiroConfigEncoded)
-		if decErr != nil {
-			kiroResult = map[string]interface{}{"synced": false, "warning": "decode failed: " + decErr.Error()}
-		} else {
-			kiroMC = mc
+	configPath := p.getConfigPath()
+	for _, pl := range plugin.All() {
+		importer, ok := pl.(plugin.ConfigSyncImporter)
+		if !ok {
+			continue
 		}
-	} else if req.KiroConfig != nil {
-		kiroMC = req.KiroConfig
-	}
-	if kiroMC != nil && kiroResult == nil {
-		if err := p.syncKiroConfig(kiroMC); err != nil {
+		// Try encoded first, then plaintext
+		var data json.RawMessage
+		if req.KiroConfigEncoded != "" {
+			if decoder, ok := pl.(plugin.ConfigSyncDecoder); ok {
+				decoded, err := decoder.SyncDecode(req.KiroConfigEncoded)
+				if err != nil {
+					kiroResult = map[string]interface{}{"synced": false, "warning": "decode failed: " + err.Error()}
+					continue
+				}
+				data = decoded
+			}
+		} else if len(req.KiroConfig) > 0 {
+			data = req.KiroConfig
+		}
+		if len(data) == 0 {
+			continue
+		}
+		if err := importer.SyncImport(configPath, data); err != nil {
 			kiroResult = map[string]interface{}{"synced": false, "warning": err.Error()}
 		} else {
 			kiroResult = map[string]interface{}{"synced": true}

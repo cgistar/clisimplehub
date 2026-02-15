@@ -13,8 +13,8 @@ import (
 
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/logger"
+	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/transformer"
-	kiroclaude "clisimplehub/internal/transformer/kiro/claude"
 
 	"github.com/google/uuid"
 )
@@ -207,9 +207,13 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON")
 			return
 		}
-		tokens := kiroclaude.EstimateClaudeInputTokens(bodyBytes)
-		if tokens < 1 {
-			tokens = 1
+		tokens := 1
+		for _, pl := range plugin.All() {
+			if te, ok := pl.(plugin.TokenEstimator); ok {
+				if t := te.EstimateInputTokens(bodyBytes); t > tokens {
+					tokens = t
+				}
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -262,11 +266,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			upstreamModel := executor.ResolveUpstreamModel(requestModel, endpoint)
 			targetPath := tr.TargetPath(isStreaming, upstreamModel)
 			if strings.TrimSpace(targetPath) != "" {
-				rawQuery := r.URL.RawQuery
-				if strings.EqualFold(strings.TrimSpace(tr.TargetInterfaceType()), "kiro") {
-					rawQuery = ""
-				}
-				if target, err := executor.BuildTargetURL(endpoint.APIURL, targetPath, rawQuery); err == nil && target != "" {
+				if target, err := executor.BuildTargetURL(endpoint.APIURL, targetPath, r.URL.RawQuery); err == nil && target != "" {
 					detail.TargetURL = target
 				}
 			}

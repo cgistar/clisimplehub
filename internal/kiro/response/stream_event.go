@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	kirotypes "clisimplehub/internal/transformer/kiro/types"
+	kirotypes "clisimplehub/internal/kiro/types"
 )
 
 const (

@@ -42,10 +42,6 @@ func ApplyAuthForInterfaceType(req *http.Request, apiKey string, interfaceType s
 			q.Set("alt", "sse")
 		}
 		req.URL.RawQuery = q.Encode()
-	case "kiro":
-		// Kiro auth handled by transformer's auth manager
-		// Do NOT set Authorization here - handled by kiro-specific logic
-		return
 	case "codex", "chat":
 		req.Header.Set("Authorization", "Bearer "+key)
 	default:

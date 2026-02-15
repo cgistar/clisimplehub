@@ -11,8 +11,9 @@ import (
 // ExecutionContext 执行上下文
 // 封装执行器和端点提供者，简化请求处理
 type ExecutionContext struct {
-	provider EndpointProvider
-	observer ExecutionObserver
+	provider              EndpointProvider
+	observer              ExecutionObserver
+	transformerForwarders map[string]TransformerForwarder // spec → forwarder
 }
 
 // ExecutionObserver 执行观察者接口
@@ -40,6 +41,21 @@ func NewExecutionContext(provider EndpointProvider) *ExecutionContext {
 // SetObserver 设置执行观察者
 func (c *ExecutionContext) SetObserver(observer ExecutionObserver) {
 	c.observer = observer
+}
+
+// RegisterTransformerForwarder registers a TransformerForwarder for a given transformer spec.
+func (c *ExecutionContext) RegisterTransformerForwarder(spec string, f TransformerForwarder) {
+	if c.transformerForwarders == nil {
+		c.transformerForwarders = make(map[string]TransformerForwarder)
+	}
+	c.transformerForwarders[strings.ToLower(strings.TrimSpace(spec))] = f
+}
+
+func (c *ExecutionContext) getTransformerForwarder(spec string) TransformerForwarder {
+	if c.transformerForwarders == nil {
+		return nil
+	}
+	return c.transformerForwarders[strings.ToLower(strings.TrimSpace(spec))]
 }
 
 // GetProvider 获取端点提供者

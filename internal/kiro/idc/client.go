@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	kiroClient "clisimplehub/internal/transformer/kiro/client"
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroClient "clisimplehub/internal/kiro/client"
+	kiroShared "clisimplehub/internal/kiro/shared"
 
 	"github.com/google/uuid"
 )

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"clisimplehub/internal/transformer/kiro/shared"
+	"clisimplehub/internal/kiro/shared"
 )
 
 // KiroAccountPool manages account selection with rotation strategies.

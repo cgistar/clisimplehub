@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	claude_gemini "clisimplehub/internal/transformer/claude/gemini"
 	claude_chat "clisimplehub/internal/transformer/claude/openai/chat-completions"
 	claude_responses "clisimplehub/internal/transformer/claude/openai/responses"
 	codex_chat "clisimplehub/internal/transformer/codex/openai/chat-completions"
-	kiro_claude "clisimplehub/internal/transformer/kiro/claude"
-	kiro_chat "clisimplehub/internal/transformer/kiro/openai/chat-completions"
 )
 
 type Transformer interface {
@@ -24,11 +23,66 @@ type Transformer interface {
 	OutputContentType(isStreaming bool) string
 }
 
+// --- Dynamic registration ---
+
+var (
+	regMu         sync.RWMutex
+	factories     = map[string]func() Transformer{} // key: "from/spec" e.g. "claude/kiro/claude"
+	availCheckers = map[string]func() map[string][]string{}
+)
+
+// RegisterFactory registers a transformer factory for a given (from, spec) pair.
+// Plugins call this during init to register their transformers.
+func RegisterFactory(from, spec string, factory func() Transformer) {
+	regMu.Lock()
+	defer regMu.Unlock()
+	key := strings.ToLower(from) + "/" + strings.ToLower(spec)
+	factories[key] = factory
+}
+
+// RegisterAvailability registers a named availability checker.
+// The function should return nil/empty when the plugin's transformers are not available.
+// Using a name key ensures idempotency on repeated Init() calls.
+func RegisterAvailability(name string, check func() map[string][]string) {
+	regMu.Lock()
+	defer regMu.Unlock()
+	availCheckers[name] = check
+}
+
+func getRegistered(from, spec string) (Transformer, bool) {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	key := strings.ToLower(from) + "/" + strings.ToLower(spec)
+	if f, ok := factories[key]; ok {
+		return f(), true
+	}
+	return nil, false
+}
+
+func registeredAvailability() map[string][]string {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	out := map[string][]string{}
+	for _, check := range availCheckers {
+		for k, v := range check() {
+			out[k] = append(out[k], v...)
+		}
+	}
+	return out
+}
+
+// --- Core ---
+
 func Get(fromInterfaceType, transformerSpec string) (Transformer, error) {
 	from := strings.ToLower(strings.TrimSpace(fromInterfaceType))
 	spec := strings.ToLower(strings.TrimSpace(transformerSpec))
 	if from == "" || spec == "" {
 		return nil, fmt.Errorf("invalid transformer: from=%q spec=%q", fromInterfaceType, transformerSpec)
+	}
+
+	// Check registered factories first
+	if tr, ok := getRegistered(from, spec); ok {
+		return tr, nil
 	}
 
 	switch from {
@@ -45,8 +99,6 @@ func Get(fromInterfaceType, transformerSpec string) (Transformer, error) {
 
 func getFromClaude(spec string) (Transformer, error) {
 	switch {
-	case strings.Contains(spec, "kiro"):
-		return kiro_claude.NewTransformer(), nil
 	case strings.Contains(spec, "chat-completions") || strings.Contains(spec, "chat/completions") || strings.Contains(spec, "chat"):
 		return claude_chat.Transformer{}, nil
 	case strings.Contains(spec, "responses") || strings.Contains(spec, "codex"):
@@ -54,7 +106,7 @@ func getFromClaude(spec string) (Transformer, error) {
 	case strings.Contains(spec, "gemini"):
 		return claude_gemini.Transformer{}, nil
 	default:
-		return nil, fmt.Errorf("unsupported claude transformer spec=%q (expected kiro/claude | openai/chat-completions | openai/responses | gemini)", spec)
+		return nil, fmt.Errorf("unsupported claude transformer spec=%q (expected openai/chat-completions | openai/responses | gemini)", spec)
 	}
 }
 
@@ -68,32 +120,23 @@ func getFromCodex(spec string) (Transformer, error) {
 }
 
 func getFromChat(spec string) (Transformer, error) {
-	switch {
-	case strings.Contains(spec, "kiro"):
-		return kiro_chat.NewTransformer(), nil
-	default:
-		return nil, fmt.Errorf("unsupported chat transformer spec=%q (expected kiro/chat)", spec)
-	}
+	return nil, fmt.Errorf("unsupported chat transformer spec=%q", spec)
 }
 
 // List returns canonical transformer specs for a given source interfaceType.
-// The returned specs are valid inputs for `Get(from, spec)`.
 func List(fromInterfaceType string) ([]string, error) {
+	avail := registeredAvailability()
+
 	switch strings.ToLower(strings.TrimSpace(fromInterfaceType)) {
 	case "claude":
-		out := []string{}
-		if kiro_claude.HasValidLocalAccessToken() {
-			out = append(out, "kiro/claude")
-		}
+		out := append([]string{}, avail["claude"]...)
 		out = append(out, "openai/chat-completions", "openai/responses", "gemini")
 		return out, nil
 	case "codex":
-		return []string{
-			"openai/chat-completions",
-		}, nil
+		return []string{"openai/chat-completions"}, nil
 	case "chat":
-		if kiro_claude.HasValidLocalAccessToken() {
-			return []string{"kiro/chat"}, nil
+		if specs, ok := avail["chat"]; ok && len(specs) > 0 {
+			return specs, nil
 		}
 		return []string{}, nil
 	default:
@@ -108,10 +151,13 @@ func ListAll() map[string][]string {
 		"codex":  {"openai/chat-completions"},
 		"chat":   {},
 	}
-	if kiro_claude.HasValidLocalAccessToken() {
-		out["claude"] = append([]string{"kiro/claude"}, out["claude"]...)
-		out["kiro"] = []string{"claude"}
-		out["chat"] = []string{"kiro/chat"}
+
+	for k, v := range registeredAvailability() {
+		if existing, ok := out[k]; ok {
+			out[k] = append(v, existing...)
+		} else {
+			out[k] = v
+		}
 	}
 	return out
 }

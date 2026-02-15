@@ -24,7 +24,7 @@ import (
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
-	kiroShared "clisimplehub/internal/transformer/kiro/shared"
+	kiroShared "clisimplehub/internal/kiro/shared"
 
 	"github.com/google/uuid"
 )

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/executor"
+	"clisimplehub/internal/plugin"
 )
 
 type proxyExecutor struct {
@@ -26,6 +27,17 @@ func (p *ProxyServer) ensureExecutor() *proxyExecutor {
 	execCtx := executor.NewExecutionContext(provider)
 	observer := &proxyExecutionObserver{server: p}
 	execCtx.SetObserver(observer)
+
+	// Register plugin-provided TransformerForwarders
+	for _, pl := range plugin.All() {
+		if fp, ok := pl.(plugin.TransformerForwarderProvider); ok {
+			if fwd, ok := pl.(executor.TransformerForwarder); ok {
+				for _, spec := range fp.TransformerForwarderSpecs() {
+					execCtx.RegisterTransformerForwarder(spec, fwd)
+				}
+			}
+		}
+	}
 
 	p.exec = &proxyExecutor{
 		provider: provider,
