@@ -156,6 +156,32 @@ jobs:
             echo "CGO_LDFLAGS: $CGO_LDFLAGS"
           fi
           wails build -platform ${{ matrix.platform }}/${{ matrix.arch }}
+          if [ "${{ matrix.platform }}" == "darwin" ] && [ -d "build/bin/CliSimpleHub.app" ]; then
+            mv build/bin/CliSimpleHub.app ../CliSimpleHub-proxy.app
+          elif [ -f "build/bin/cliSimpleHub" ]; then
+            mv build/bin/cliSimpleHub ../cliSimpleHub-proxy
+          else
+            echo "Desktop build output not found for proxy"
+            ls -la build/bin
+            exit 1
+          fi
+
+          wails build -platform ${{ matrix.platform }}/${{ matrix.arch }} -tags noxray
+          if [ "${{ matrix.platform }}" == "darwin" ] && [ -d "build/bin/CliSimpleHub.app" ]; then
+            echo "Desktop no-proxy app output ready: build/bin/CliSimpleHub.app"
+            if [ -d "../CliSimpleHub-proxy.app" ]; then
+              mv ../CliSimpleHub-proxy.app build/bin/CliSimpleHub-proxy.app
+            fi
+          elif [ -f "build/bin/cliSimpleHub" ]; then
+            echo "Desktop no-proxy binary output ready: build/bin/cliSimpleHub"
+            if [ -f "../cliSimpleHub-proxy" ]; then
+              mv ../cliSimpleHub-proxy build/bin/cliSimpleHub-proxy
+            fi
+          else
+            echo "Desktop build output not found for no-proxy"
+            ls -la build/bin
+            exit 1
+          fi
 
       - name: Build application (Windows)
         if: matrix.desktop && matrix.platform == 'windows'
@@ -163,6 +189,20 @@ jobs:
           $env:PATH += ";$(go env GOPATH)\bin"
           cd desktop
           wails build -platform ${{ matrix.platform }}/${{ matrix.arch }}
+          if (Test-Path "build\bin\cliSimpleHub.exe") {
+            Move-Item -Path "build\bin\cliSimpleHub.exe" -Destination "..\cliSimpleHub-proxy.exe" -Force
+          } else {
+            throw "Desktop build output not found for proxy"
+          }
+          wails build -platform ${{ matrix.platform }}/${{ matrix.arch }} -tags noxray
+          if (Test-Path "build\bin\cliSimpleHub.exe") {
+            Write-Output "Desktop no-proxy output ready: build\bin\cliSimpleHub.exe"
+            if (Test-Path "..\cliSimpleHub-proxy.exe") {
+              Move-Item -Path "..\cliSimpleHub-proxy.exe" -Destination "build\bin\cliSimpleHub-proxy.exe" -Force
+            }
+          } else {
+            throw "Desktop build output not found for no-proxy"
+          }
         shell: pwsh
 
       - name: Build headless server (Linux/macOS)
@@ -173,7 +213,8 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           GOFLAGS: -mod=mod
         run: |
-          go build -trimpath -ldflags "-s -w" -o cliSimpleHub-server ./cmd/server
+          go build -trimpath -ldflags "-s -w" -o cliSimpleHub-server-proxy ./cmd/server
+          go build -trimpath -tags noxray -ldflags "-s -w" -o cliSimpleHub-server ./cmd/server
 
       - name: Build headless server (Windows)
         if: matrix.platform == 'windows'
@@ -184,7 +225,8 @@ jobs:
           $env:GOOS = "${{ matrix.platform }}"
           $env:GOARCH = "${{ matrix.arch }}"
           $env:CGO_ENABLED = "0"
-          go build -trimpath -ldflags "-s -w" -o cliSimpleHub-server.exe .\cmd\server
+          go build -trimpath -ldflags "-s -w" -o cliSimpleHub-server-proxy.exe .\cmd\server
+          go build -trimpath -tags noxray -ldflags "-s -w" -o cliSimpleHub-server.exe .\cmd\server
         shell: pwsh
 
       - name: Package application (Linux)
@@ -192,35 +234,45 @@ jobs:
         run: |
           cd desktop/build/bin
           tar -czf cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub
+          tar -czf cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-proxy
           mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../
+          mv cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../
 
       - name: Package application (macOS)
         if: matrix.desktop && matrix.platform == 'darwin'
         run: |
           cd desktop/build/bin
-          if [ -d "CliSimpleHub.app" ]; then
+          if [ -d "CliSimpleHub.app" ] && [ -d "CliSimpleHub-proxy.app" ]; then
             zip -r cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip "CliSimpleHub.app"
+            zip -r cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip "CliSimpleHub-proxy.app"
           else
             tar -czf cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub
+            tar -czf cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-proxy
           fi
-          mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.* ../../../
+          mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip ../../../ 2>/dev/null || true
+          mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../ 2>/dev/null || true
+          mv cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip ../../../ 2>/dev/null || true
+          mv cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../ 2>/dev/null || true
 
       - name: Package application (Windows)
         if: matrix.desktop && matrix.platform == 'windows'
         run: |
           cd desktop/build/bin
-          Compress-Archive -Path cliSimpleHub.exe -DestinationPath ../../../cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          Compress-Archive -Path cliSimpleHub.exe -DestinationPath ../../../cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip -Force
+          Compress-Archive -Path cliSimpleHub-proxy.exe -DestinationPath ../../../cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip -Force
         shell: pwsh
 
       - name: Package headless server (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
           tar -czf cliSimpleHub-server-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-server
+          tar -czf cliSimpleHub-server-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-server-proxy
 
       - name: Package headless server (Windows)
         if: matrix.platform == 'windows'
         run: |
           Compress-Archive -Path cliSimpleHub-server.exe -DestinationPath cliSimpleHub-server-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          Compress-Archive -Path cliSimpleHub-server-proxy.exe -DestinationPath cliSimpleHub-server-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
         shell: pwsh
 
       - name: Upload artifacts

@@ -9,6 +9,7 @@ export function headerTemplate() {
                     <div class="header-tabs">
                         <button class="header-tab active" data-tab="home" onclick="switchMainTab('home')">🏠 ${t('header.home')}</button>
                         <button class="header-tab" data-tab="kiro-accounts" onclick="switchMainTab('kiro-accounts')">👥 ${t('kiro.accountsTitle')}</button>
+                        <button class="header-tab" data-tab="xray" onclick="switchMainTab('xray')">🌐 代理</button>
                     </div>
                 </div>
                 <div class="header-right">

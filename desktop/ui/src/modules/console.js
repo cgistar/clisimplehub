@@ -227,6 +227,32 @@ export function toggleBottomConsole() {
   }
 }
 
+export function closeBottomConsole() {
+  const bottomPanel = document.getElementById('bottomPanel')
+  const toggleBtn = document.getElementById('consoleToggleBtn')
+
+  bottomConsoleVisible = false
+
+  if (bottomPanel) {
+    bottomPanel.style.display = 'none'
+  }
+
+  if (toggleBtn) {
+    toggleBtn.classList.remove('active')
+  }
+}
+
+export function setConsoleToggleVisibility(visible) {
+  const toggleBtn = document.getElementById('consoleToggleBtn')
+  if (!toggleBtn) return
+
+  if (!visible) {
+    closeBottomConsole()
+  }
+
+  toggleBtn.style.display = visible ? '' : 'none'
+}
+
 // Initialize console with connection status
 export function initConsole() {
   logInfo('Console initialized')

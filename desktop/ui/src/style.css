@@ -903,7 +903,8 @@ input:disabled + .slider {
   margin-bottom: 6px;
 }
 
-.form-group input {
+.form-group input,
+.form-control {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border-color);
@@ -914,7 +915,15 @@ input:disabled + .slider {
     box-shadow 0.2s;
 }
 
-.form-group input:focus {
+.form-group input[type='checkbox'] {
+  width: auto;
+  padding: 0;
+  margin-right: 8px;
+  cursor: pointer;
+}
+
+.form-group input:focus,
+.form-control:focus {
   outline: none;
   border-color: var(--primary-color);
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
@@ -3062,13 +3071,15 @@ input:disabled + .slider {
    ============================================================================= */
 .kiro-accounts-view {
   display: none;
-  padding: 20px;
+  padding: 12px;
 }
 
 .kiro-accounts-page {
   width: 100%;
   max-width: 1400px;
   margin: 0 auto;
+  height: 100%;
+  min-height: 0;
 }
 
 .kiro-accounts-page .card {
@@ -3078,11 +3089,13 @@ input:disabled + .slider {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 140px);
+  height: 100%;
+  min-height: 0;
 }
 
 .kiro-accounts-page-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 20px;
 }
@@ -3519,4 +3532,428 @@ input:disabled + .slider {
   font-size: 14px;
   color: var(--text-primary);
   word-break: break-all;
+}
+
+/* =============================================================================
+   XRay View Styles
+   ============================================================================= */
+
+.xray-view {
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.xray-page {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.xray-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.xray-status-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.xray-status-dot {
+  font-size: 14px;
+}
+
+.xray-status-detail {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.xray-status-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.xray-section {
+  margin-bottom: 12px;
+}
+
+.xray-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.xray-sub-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.xray-input {
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.xray-input-name {
+  width: 120px;
+}
+
+.xray-input-url {
+  flex: 1;
+}
+
+.xray-sub-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.xray-sub-card {
+  background: var(--bg-primary);
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  min-height: 140px;
+  position: relative;
+  justify-content: space-between;
+}
+
+.xray-sub-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.xray-sub-card.active {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+.xray-sub-card.disabled {
+  opacity: 0.6;
+  background: var(--bg-secondary);
+}
+
+.xray-sub-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.xray-sub-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.xray-sub-badge {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+.xray-sub-badge.active {
+  background: rgba(76, 175, 80, 0.15);
+  color: #4caf50;
+}
+
+.xray-sub-badge.disabled {
+  background: rgba(158, 158, 158, 0.15);
+  color: #9e9e9e;
+}
+
+.xray-sub-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.xray-sub-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.xray-sub-enabled-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(76, 175, 80, 0.15);
+  color: #4caf50;
+}
+
+.xray-sub-count {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.xray-sub-selected-node {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xray-sub-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-light);
+}
+
+/* XRay Nodes Grid in Dialog */
+.xray-nodes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.xray-node-card {
+  background: var(--bg-primary);
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.xray-node-card:hover {
+  box-shadow: var(--shadow-sm);
+  border-color: var(--border-hover);
+}
+
+.xray-node-card.selected {
+  border-color: var(--primary-color);
+  background: var(--bg-accent);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+.xray-node-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.xray-node-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.xray-node-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.xray-node-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.xray-node-selected-badge {
+  color: var(--primary-color);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.xray-node-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.xray-node-card-server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.xray-node-card-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.xray-node-card-server {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.xray-sub-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.xray-node-container {
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 4px;
+}
+
+.xray-node-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: border-color 0.15s;
+}
+
+.xray-node-item:hover {
+  border-color: var(--border-color);
+}
+
+.xray-node-selected {
+  border-color: var(--accent-color);
+  background: var(--bg-accent);
+}
+
+.xray-node-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.xray-node-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.xray-node-type {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.xray-node-latency {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 50px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.xray-latency-good { color: #22c55e; }
+.xray-latency-ok { color: #f59e0b; }
+.xray-latency-bad { color: #ef4444; }
+
+.xray-node-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.xray-empty {
+  text-align: center;
+  padding: 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* XRay Card Body Padding */
+.xray-page .card {
+  height: calc(100vh - 100px);
+}
+
+.xray-page .card-header {
+  padding: 12px 16px;
+}
+
+/* XRay Card Body - 减少内边距 */
+.xray-page .card > div:not(.card-header) {
+  padding: 12px 16px;
+}
+
+/* XRay Section Content Padding */
+.xray-section > div:not(h3) {
+  padding: 0 4px;
+}
+
+.xray-sub-list {
+  padding: 0 4px;
+}
+
+.xray-sub-item {
+  padding: 6px 10px;
 }

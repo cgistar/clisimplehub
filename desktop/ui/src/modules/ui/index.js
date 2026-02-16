@@ -17,6 +17,8 @@ import {
     kiroAccountEditModalTemplate
 } from './kiroModals.js'
 import { cliConfigModalTemplate, errorToastTemplate } from './miscComponents.js'
+import { xrayViewTemplate } from './xrayView.js'
+import { xrayConfigModalTemplate } from './xrayModals.js'
 
 export function initUI() {
     const app = document.getElementById('app')
@@ -36,6 +38,8 @@ export function initUI() {
         idcDeviceFlowModalTemplate(),
         kiroSignLoginModalTemplate(),
         kiroGlobalConfigModalTemplate(),
-        kiroAccountEditModalTemplate()
+        kiroAccountEditModalTemplate(),
+        xrayViewTemplate(),
+        xrayConfigModalTemplate()
     ].join('')
 }

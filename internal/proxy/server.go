@@ -583,8 +583,10 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 	// 扩展 payload：vendors + endpoints + plugin configs (via json.RawMessage)
 	type syncConfigRequest struct {
 		config.AppConfig
-		KiroConfigEncoded string          `json:"kiroConfigEncoded,omitempty"` // gzip+base64 编码
-		KiroConfig        json.RawMessage `json:"kiroConfig,omitempty"`        // 明文（向后兼容）
+		KiroConfigEncoded  string          `json:"kiroConfigEncoded,omitempty"`
+		KiroConfig         json.RawMessage `json:"kiroConfig,omitempty"`
+		XRayConfigEncoded string          `json:"xrayConfigEncoded,omitempty"`
+		XRayConfig        json.RawMessage `json:"xrayConfig,omitempty"`
 	}
 
 	var req syncConfigRequest
@@ -642,35 +644,47 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sync plugin configs (kiro etc.) via plugin interfaces
-	var kiroResult map[string]interface{}
+	// Sync plugin configs via name-based dispatch
+	type pluginPayload struct {
+		encoded string
+		plain   json.RawMessage
+	}
+	pluginData := map[string]pluginPayload{
+		"kiro":  {req.KiroConfigEncoded, req.KiroConfig},
+		"xray": {req.XRayConfigEncoded, req.XRayConfig},
+	}
+
 	configPath := p.getConfigPath()
+	pluginResults := map[string]interface{}{}
 	for _, pl := range plugin.All() {
 		importer, ok := pl.(plugin.ConfigSyncImporter)
 		if !ok {
 			continue
 		}
-		// Try encoded first, then plaintext
+		pd, exists := pluginData[pl.Name()]
+		if !exists {
+			continue
+		}
 		var data json.RawMessage
-		if req.KiroConfigEncoded != "" {
+		if pd.encoded != "" {
 			if decoder, ok := pl.(plugin.ConfigSyncDecoder); ok {
-				decoded, err := decoder.SyncDecode(req.KiroConfigEncoded)
+				decoded, err := decoder.SyncDecode(pd.encoded)
 				if err != nil {
-					kiroResult = map[string]interface{}{"synced": false, "warning": "decode failed: " + err.Error()}
+					pluginResults[pl.Name()] = map[string]interface{}{"synced": false, "warning": "decode failed: " + err.Error()}
 					continue
 				}
 				data = decoded
 			}
-		} else if len(req.KiroConfig) > 0 {
-			data = req.KiroConfig
+		} else if len(pd.plain) > 0 {
+			data = pd.plain
 		}
 		if len(data) == 0 {
 			continue
 		}
 		if err := importer.SyncImport(configPath, data); err != nil {
-			kiroResult = map[string]interface{}{"synced": false, "warning": err.Error()}
+			pluginResults[pl.Name()] = map[string]interface{}{"synced": false, "warning": err.Error()}
 		} else {
-			kiroResult = map[string]interface{}{"synced": true}
+			pluginResults[pl.Name()] = map[string]interface{}{"synced": true}
 		}
 	}
 
@@ -686,8 +700,12 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"message": "config synced and reloaded successfully",
 	}
-	if kiroResult != nil {
-		resp["kiro"] = kiroResult
+	// Backward compatibility: expose kiro result at top level
+	if kr, ok := pluginResults["kiro"]; ok {
+		resp["kiro"] = kr
+	}
+	if len(pluginResults) > 0 {
+		resp["plugins"] = pluginResults
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

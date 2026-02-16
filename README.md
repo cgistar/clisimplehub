@@ -177,7 +177,33 @@ sudo chown -R 1000:1000 ./data
 - 方式 1 更安全，确保只有 UID 1000 可以写入
 - 方式 2 允许所有用户写入，适合测试环境
 
-#### 2. 构建并启动容器
+#### 2. 配置环境变量
+
+复制示例配置文件并根据需要修改：
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env` 文件：
+
+```bash
+# Proxy Server Configuration
+PORT=5600
+LISTEN_ADDR=0.0.0.0
+
+# API Authentication (optional)
+# API_KEY=your-secret-key-here
+
+# Data Directory
+DATA=/data
+
+# XRay Proxy Configuration
+XRAY_SOCKS_LISTEN=0.0.0.0
+XRAY_SOCKS_PORT=10808
+```
+
+#### 3. 构建并启动容器
 
 ```bash
 # 使用 docker-compose 启动
@@ -190,18 +216,20 @@ docker-compose logs -f
 docker-compose down
 ```
 
-#### 3. 配置说明
+#### 4. 配置说明
 
-编辑 `docker-compose.yml` 设置环境变量：
+`docker-compose.yml` 会自动读取 `.env` 文件中的环境变量：
 
 ```yaml
 services:
   clisimplehub-server:
     environment:
-      PORT: "5600"
-      LISTEN_ADDR: "0.0.0.0"
+      PORT: "${PORT:-5600}"
+      LISTEN_ADDR: "${LISTEN_ADDR:-0.0.0.0}"
       DATA: "/data"
-      API_KEY: "your-secret-key-here"  # 取消注释并设置您的 API Key
+      XRAY_SOCKS_LISTEN: "${XRAY_SOCKS_LISTEN:-0.0.0.0}"
+      XRAY_SOCKS_PORT: "${XRAY_SOCKS_PORT:-10808}"
+      # API_KEY: "${API_KEY}"  # 取消注释并在 .env 中设置
     volumes:
       - ./data:/data  # 配置文件将保存在 ./data 目录
 ```
@@ -209,14 +237,19 @@ services:
 **重要提示**：
 - ✅ 首次启动前必须创建 `./data` 目录
 - ✅ 配置文件会自动创建在 `./data/config.json`
+- ✅ XRay 配置保存在 `./data/xray-config.json`
 - ✅ 统计数据保存在 `./data/data.sqlite`
-- ⚠️ 生产环境强烈建议设置 `API_KEY` 环境变量
+- ⚠️ 生产环境强烈建议在 `.env` 中设置 `API_KEY`
+- ⚠️ XRay SOCKS5 端口会自动映射到主机
 
 #### 4. 验证部署
 
 ```bash
 # 检查服务状态
 curl http://localhost:5600/health
+
+# 检查 XRay SOCKS5 代理（如果已配置节点）
+curl -x socks5://localhost:10808 https://www.google.com
 
 # 测试 API（需要 API Key）
 curl http://localhost:5600/kiro/getUsage \
@@ -240,10 +273,13 @@ PORT=5600 CONFIG_PATH=/path/to/config.json go run ./cmd/server
 - `LISTEN_ADDR`: 监听地址（默认：0.0.0.0，Docker 环境推荐）
 - `API_KEY`: API 认证密钥（**最高优先级**，覆盖 config.json 中的配置）
 - `DATA`: 数据目录（配置文件备用位置）
+- `XRAY_SOCKS_LISTEN`: XRay SOCKS5 监听地址（默认：127.0.0.1，Docker 环境建议 0.0.0.0）
+- `XRAY_SOCKS_PORT`: XRay SOCKS5 端口（默认：10808）
 
 **优先级说明**：
 - `API_KEY` 环境变量优先级高于 `config.json` 中的 `appConfig.apiKey`
-- 如果设置了 `API_KEY` 环境变量，将忽略配置文件中的 apiKey
+- `XRAY_SOCKS_LISTEN` 和 `XRAY_SOCKS_PORT` 环境变量优先级高于 `xray-config.json` 中的配置
+- 如果设置了环境变量，将覆盖配置文件中的对应值
 - 适用于 Docker 部署或需要动态配置的场景
 
 ### API 认证

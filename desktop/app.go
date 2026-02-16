@@ -2640,6 +2640,11 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 		KiroMultiConfig: kiroMultiConfig,
 	}
 
+	// 7. 尝试获取 xray 同步数据
+	if raw := a.xraySyncExportRaw(); raw != nil {
+		backupData.XRayConfig = json.RawMessage(raw)
+	}
+
 	// 8. 生成备份文件名
 	computerName, _ := a.GetComputerName()
 	timestamp := time.Now().Format("2006-01-02T15-04-05")
@@ -2711,6 +2716,11 @@ func (a *App) RestoreBackupData(backupData *config.BackupData, mode string) erro
 		if err := a.saveKiroMultiConfigInternal(backupData.KiroMultiConfig, replaceMode); err != nil {
 			fmt.Printf("warning: failed to restore kiro.json: %v\n", err)
 		}
+	}
+
+	// 恢复 xray 配置
+	if backupData.XRayConfig != nil {
+		a.restoreXRayConfig(backupData.XRayConfig)
 	}
 
 	return nil
@@ -3409,11 +3419,12 @@ func (a *App) SyncConfigToServer(index int) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// 同步 vendors + endpoints + kiro.json；避免泄露本地 app settings 和 credentials。
+	// 同步 vendors + endpoints + plugin configs；避免泄露本地 app settings 和 credentials。
 	type syncPayload struct {
-		Vendors           []config.VendorConfig   `json:"vendors"`
-		Endpoints         []config.EndpointConfig `json:"endpoints"`
-		KiroConfigEncoded string                  `json:"kiroConfigEncoded,omitempty"` // gzip+base64，避免明文传输
+		Vendors            []config.VendorConfig   `json:"vendors"`
+		Endpoints          []config.EndpointConfig `json:"endpoints"`
+		KiroConfigEncoded  string                  `json:"kiroConfigEncoded,omitempty"`
+		XRayConfigEncoded string                  `json:"xrayConfigEncoded,omitempty"`
 	}
 	payload := syncPayload{
 		Vendors:   cfg.Vendors,
@@ -3427,6 +3438,15 @@ func (a *App) SyncConfigToServer(index int) error {
 		_, _ = gz.Write(raw)
 		_ = gz.Close()
 		payload.KiroConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
+	}
+
+	// 附加 xray 配置：gzip+base64 编码
+	if raw := a.xraySyncExportRaw(); len(raw) > 0 {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write(raw)
+		_ = gz.Close()
+		payload.XRayConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
 	body, err := json.Marshal(payload)

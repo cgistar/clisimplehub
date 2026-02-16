@@ -46,3 +46,4 @@ config.json
 data.sqlite
 .other
 test
+.env

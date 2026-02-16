@@ -18,8 +18,6 @@ import (
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
-
-	_ "clisimplehub/internal/kiro/plugin" // activate Kiro plugin
 )
 
 // Default configuration values

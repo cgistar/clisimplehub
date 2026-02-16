@@ -5,13 +5,15 @@ services:
       dockerfile: Dockerfile
     container_name: clisimplehub-server
     ports:
-      - "5600:5600"
+      - "${PORT:-5600}:5600"
+      - "${XRAY_SOCKS_PORT:-10808}:${XRAY_SOCKS_PORT:-10808}"
     environment:
-      PORT: "5600"
-      LISTEN_ADDR: "0.0.0.0"
+      PORT: "${PORT:-5600}"
+      LISTEN_ADDR: "${LISTEN_ADDR:-0.0.0.0}"
       DATA: "/data"
-      # API_KEY: "your-secret-key-here"  # Uncomment and set your API key for authentication
+      XRAY_SOCKS_LISTEN: "${XRAY_SOCKS_LISTEN:-0.0.0.0}"
+      XRAY_SOCKS_PORT: "${XRAY_SOCKS_PORT:-10808}"
+      # API_KEY: "${API_KEY}"  # Uncomment and set your API key for authentication
     volumes:
       - ./data:/data
     restart: unless-stopped
-
