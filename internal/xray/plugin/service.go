@@ -60,28 +60,18 @@ func (s *XRayService) Start() error {
 
 	cfg := s.config.Get()
 	activeIdx := activeSubscriptionIndex(cfg)
-
-	// Keep legacy configs usable: if none is active, use the first enabled subscription
 	if activeIdx < 0 {
-		fallbackIdx := firstEnabledSubscriptionIndex(cfg)
-		if fallbackIdx < 0 {
-			return fmt.Errorf("no active subscription")
-		}
-		// Use fallback subscription without updating config to avoid lock contention
-		activeIdx = fallbackIdx
-		log.Printf("[xray] no active subscription, using first enabled: %s", cfg.Subscriptions[activeIdx].Name)
+		return fmt.Errorf("no active subscription")
 	}
 
 	activeSub := cfg.Subscriptions[activeIdx]
 	selected := strings.TrimSpace(activeSub.SelectedNode)
 
-	// Auto-select first node if none selected or selected node doesn't exist
-	if selected == "" || !hasNodeByName(activeSub.Nodes, selected) {
-		if len(activeSub.Nodes) == 0 {
-			return fmt.Errorf("no nodes available in active subscription")
-		}
-		selected = activeSub.Nodes[0].Name
-		log.Printf("[xray] auto-selecting first node: %s", selected)
+	if selected == "" {
+		return fmt.Errorf("no selected node in active subscription")
+	}
+	if !hasNodeByName(activeSub.Nodes, selected) {
+		return fmt.Errorf("selected node not found in active subscription: %s", selected)
 	}
 
 	// Find node directly from subscription nodes (value copy — cfg is a snapshot)
@@ -96,13 +86,6 @@ func (s *XRayService) Start() error {
 	}
 	if !found {
 		return fmt.Errorf("selected node not found in active subscription: %s", selected)
-	}
-
-	// Persist selected node if it was auto-selected
-	if activeSub.SelectedNode != selected {
-		if err := s.setSubscriptionSelectedNode(activeSub.ID, selected); err != nil {
-			log.Printf("[xray] failed to persist selected node: %v", err)
-		}
 	}
 
 	return s.startWithNode(&node, cfg)
@@ -130,24 +113,35 @@ func (s *XRayService) stopLocked() error {
 	return nil
 }
 
-// Reload reloads config and restarts if running.
+// Reload reloads config, stops current instance (if any), then starts only when
+// there is an active subscription with a valid selected node.
 func (s *XRayService) Reload() error {
 	if err := s.config.Load(); err != nil {
 		return err
 	}
 	s.loadCachedNodes()
 
-	s.mu.RLock()
-	wasRunning := s.running
-	s.mu.RUnlock()
-
-	if wasRunning {
-		if err := s.Stop(); err != nil {
-			log.Printf("[xray] reload stop error: %v", err)
-		}
-		return s.Start()
+	if err := s.Stop(); err != nil {
+		log.Printf("[xray] reload stop error: %v", err)
 	}
-	return nil
+
+	cfg := s.config.Get()
+	activeIdx := activeSubscriptionIndex(cfg)
+	if activeIdx < 0 {
+		return nil
+	}
+
+	activeSub := cfg.Subscriptions[activeIdx]
+	selected := strings.TrimSpace(activeSub.SelectedNode)
+	if selected == "" {
+		return nil
+	}
+	if !hasNodeByName(activeSub.Nodes, selected) {
+		log.Printf("[xray] reload: selected node not found in active subscription: %s", selected)
+		return nil
+	}
+
+	return s.Start()
 }
 
 // SelectNode changes the selected node and restarts if running.
@@ -519,8 +513,7 @@ func (s *XRayService) ExportSyncData() *XRaySyncData {
 	return &XRaySyncData{Config: *cfg}
 }
 
-// ImportSyncData replaces config from sync data, rebuilds nodes from subscriptions,
-// and unconditionally starts xray if an active subscription has a selected node.
+// ImportSyncData replaces config from sync data and rebuilds nodes from subscriptions.
 func (s *XRayService) ImportSyncData(data *XRaySyncData) error {
 	if data == nil {
 		return fmt.Errorf("sync data is nil")
@@ -552,25 +545,6 @@ func (s *XRayService) ImportSyncData(data *XRaySyncData) error {
 
 	// 2. Rebuild in-memory nodes from subscription data
 	s.loadCachedNodes()
-
-	// 3. Read running state
-	s.mu.RLock()
-	wasRunning := s.running
-	s.mu.RUnlock()
-
-	// 4. Stop if was running
-	if wasRunning {
-		if err := s.Stop(); err != nil {
-			log.Printf("[xray] import: stop error: %v", err)
-		}
-	}
-
-	// 5. Unconditionally start if active subscription has a selected node
-	if activeSubscriptionIndex(&importedCfg) >= 0 && activeSelectedNode(&importedCfg) != "" {
-		if err := s.Start(); err != nil {
-			return fmt.Errorf("start after import: %w", err)
-		}
-	}
 	return nil
 }
 

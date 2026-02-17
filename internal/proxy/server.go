@@ -583,8 +583,8 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 	// 扩展 payload：vendors + endpoints + plugin configs (via json.RawMessage)
 	type syncConfigRequest struct {
 		config.AppConfig
-		KiroConfigEncoded  string          `json:"kiroConfigEncoded,omitempty"`
-		KiroConfig         json.RawMessage `json:"kiroConfig,omitempty"`
+		KiroConfigEncoded string          `json:"kiroConfigEncoded,omitempty"`
+		KiroConfig        json.RawMessage `json:"kiroConfig,omitempty"`
 		XRayConfigEncoded string          `json:"xrayConfigEncoded,omitempty"`
 		XRayConfig        json.RawMessage `json:"xrayConfig,omitempty"`
 	}
@@ -650,7 +650,7 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		plain   json.RawMessage
 	}
 	pluginData := map[string]pluginPayload{
-		"kiro":  {req.KiroConfigEncoded, req.KiroConfig},
+		"kiro": {req.KiroConfigEncoded, req.KiroConfig},
 		"xray": {req.XRayConfigEncoded, req.XRayConfig},
 	}
 

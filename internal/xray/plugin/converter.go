@@ -3,6 +3,7 @@ package xrayplugin
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // BuildRuntimeJSON generates xray-core runtime JSON for the given node and config.
@@ -205,7 +206,16 @@ func buildStreamSettings(node *ProxyNode) map[string]interface{} {
 		if node.SNI != "" {
 			tlsSettings["serverName"] = node.SNI
 		}
-		if node.AllowInsecure {
+		pcs := strings.TrimSpace(node.PinnedPeerCertSha256)
+		vcn := strings.TrimSpace(node.VerifyPeerCertByName)
+		if pcs != "" {
+			tlsSettings["pinnedPeerCertSha256"] = pcs
+		}
+		if vcn != "" {
+			tlsSettings["verifyPeerCertByName"] = vcn
+		}
+		// Prefer new TLS verification fields over deprecated allowInsecure.
+		if node.AllowInsecure && pcs == "" && vcn == "" {
 			tlsSettings["allowInsecure"] = true
 		}
 		if node.Fingerprint != "" {

@@ -130,6 +130,17 @@ func parseVmessURI(uri string) (*ProxyNode, error) {
 	if node.Cipher == "" {
 		node.Cipher = "auto"
 	}
+	node.PinnedPeerCertSha256 = firstNonEmptyValue(
+		getString(obj, "pcs"),
+		getString(obj, "pinnedPeerCertSha256"),
+	)
+	node.VerifyPeerCertByName = firstNonEmptyValue(
+		getString(obj, "vcn"),
+		getString(obj, "verifyPeerCertByName"),
+	)
+	if parseBoolString(getString(obj, "allowInsecure")) {
+		node.AllowInsecure = true
+	}
 
 	if node.Server == "" || node.Port == 0 || node.UUID == "" {
 		return nil, fmt.Errorf("vmess missing required fields (add/port/id)")
@@ -170,6 +181,11 @@ func parseVlessURI(uri string) (*ProxyNode, error) {
 	node.Fingerprint = q.Get("fp")
 	node.PublicKey = q.Get("pbk")
 	node.ShortId = q.Get("sid")
+	node.PinnedPeerCertSha256 = firstNonEmptyQueryValue(q, "pcs", "pinnedPeerCertSha256")
+	node.VerifyPeerCertByName = firstNonEmptyQueryValue(q, "vcn", "verifyPeerCertByName")
+	if queryBool(q, "allowInsecure") {
+		node.AllowInsecure = true
+	}
 
 	if node.Server == "" || node.Port == 0 || node.UUID == "" {
 		return nil, fmt.Errorf("vless missing required fields")
@@ -208,7 +224,9 @@ func parseTrojanURI(uri string) (*ProxyNode, error) {
 	node.SNI = q.Get("sni")
 	node.Path = q.Get("path")
 	node.Host = q.Get("host")
-	if q.Get("allowInsecure") == "1" {
+	node.PinnedPeerCertSha256 = firstNonEmptyQueryValue(q, "pcs", "pinnedPeerCertSha256")
+	node.VerifyPeerCertByName = firstNonEmptyQueryValue(q, "vcn", "verifyPeerCertByName")
+	if queryBool(q, "allowInsecure") {
 		node.AllowInsecure = true
 	}
 
@@ -331,6 +349,38 @@ func decodeFragment(frag string) string {
 		return frag
 	}
 	return decoded
+}
+
+func firstNonEmptyValue(values ...string) string {
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyQueryValue(q url.Values, keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(q.Get(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func queryBool(q url.Values, key string) bool {
+	return parseBoolString(q.Get(key))
+}
+
+func parseBoolString(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func getString(m map[string]interface{}, key string) string {

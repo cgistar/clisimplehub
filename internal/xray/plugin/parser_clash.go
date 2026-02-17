@@ -70,6 +70,8 @@ func parseClashTrojan(p map[string]interface{}, name string) (*ProxyNode, error)
 		node.SNI = sni
 	}
 	node.AllowInsecure = clashBool(p, "skip-cert-verify")
+	node.PinnedPeerCertSha256 = clashFirstNonEmptyStr(p, "pcs", "pinned-peer-cert-sha256", "pinnedPeerCertSha256")
+	node.VerifyPeerCertByName = clashFirstNonEmptyStr(p, "vcn", "verify-peer-cert-by-name", "verifyPeerCertByName")
 
 	// WebSocket transport
 	if network := clashStr(p, "network"); network != "" {
@@ -112,6 +114,8 @@ func parseClashVmess(p map[string]interface{}, name string) (*ProxyNode, error) 
 	}
 	node.SNI = clashStr(p, "sni")
 	node.AllowInsecure = clashBool(p, "skip-cert-verify")
+	node.PinnedPeerCertSha256 = clashFirstNonEmptyStr(p, "pcs", "pinned-peer-cert-sha256", "pinnedPeerCertSha256")
+	node.VerifyPeerCertByName = clashFirstNonEmptyStr(p, "vcn", "verify-peer-cert-by-name", "verifyPeerCertByName")
 
 	if wsOpts, ok := p["ws-opts"].(map[string]interface{}); ok {
 		node.Network = "ws"
@@ -146,6 +150,9 @@ func parseClashVless(p map[string]interface{}, name string) (*ProxyNode, error) 
 		node.Security = "tls"
 	}
 	node.SNI = clashStr(p, "sni")
+	node.AllowInsecure = clashBool(p, "skip-cert-verify")
+	node.PinnedPeerCertSha256 = clashFirstNonEmptyStr(p, "pcs", "pinned-peer-cert-sha256", "pinnedPeerCertSha256")
+	node.VerifyPeerCertByName = clashFirstNonEmptyStr(p, "vcn", "verify-peer-cert-by-name", "verifyPeerCertByName")
 
 	if realityOpts, ok := p["reality-opts"].(map[string]interface{}); ok {
 		node.Security = "reality"
@@ -371,4 +378,13 @@ func clashBool(m map[string]interface{}, key string) bool {
 	default:
 		return false
 	}
+}
+
+func clashFirstNonEmptyStr(m map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(clashStr(m, key)); v != "" {
+			return v
+		}
+	}
+	return ""
 }

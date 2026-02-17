@@ -26,9 +26,13 @@ type ProxyNode struct {
 	Security      string `json:"security,omitempty"` // tls/reality/none
 	SNI           string `json:"sni,omitempty"`
 	AllowInsecure bool   `json:"allowInsecure,omitempty"`
-	Fingerprint   string `json:"fingerprint,omitempty"`
-	PublicKey     string `json:"publicKey,omitempty"`
-	ShortId       string `json:"shortId,omitempty"`
+	// Comma-separated SHA256 cert fingerprints (Xray: pinnedPeerCertSha256 / pcs).
+	PinnedPeerCertSha256 string `json:"pinnedPeerCertSha256,omitempty"`
+	// Comma-separated peer names (Xray: verifyPeerCertByName / vcn).
+	VerifyPeerCertByName string `json:"verifyPeerCertByName,omitempty"`
+	Fingerprint          string `json:"fingerprint,omitempty"`
+	PublicKey            string `json:"publicKey,omitempty"`
+	ShortId              string `json:"shortId,omitempty"`
 }
 
 // Subscription represents a subscription source configuration.
@@ -69,7 +73,7 @@ type SpeedTestResult struct {
 
 // XRaySyncData holds the complete XRay state for sync/backup.
 type XRaySyncData struct {
-	Config XRayConfig `json:"config"`
+	Config XRayConfig  `json:"config"`
 	Nodes  []ProxyNode `json:"nodes,omitempty"` // legacy flat node payload (backward compatibility)
 }
 
