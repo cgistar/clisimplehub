@@ -238,7 +238,7 @@ export default {
     kiroSignLoginPortInUse: '端口 3128 被占用，请关闭占用程序后重试',
   },
   xray: {
-    title: 'XRay代理',
+    title: '科学上网',
     running: '运行中',
     stopped: '已停止',
     start: '启动',
@@ -296,7 +296,8 @@ export default {
     copyFailed: '复制失败：',
     addNode: '添加节点',
     addNodeTitle: '添加节点',
-    addNodePlaceholder: '在此粘贴节点内容：\n\n• URI 协议：vless://... vmess://... trojan://... ss://...\n• Clash YAML 代理列表\n• Clash JSON 代理对象或数组',
+    addNodePlaceholder:
+      '在此粘贴节点内容：\n\n• URI 协议：vless://... vmess://... trojan://... ss://...\n• Clash YAML 代理列表\n• Clash JSON 代理对象或数组',
     addNodeFailed: '添加节点失败：',
     deleteNode: '删除节点',
     deleteNodeConfirm: '确定要删除此节点吗？',

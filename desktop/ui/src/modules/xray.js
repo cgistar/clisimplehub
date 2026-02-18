@@ -627,9 +627,8 @@ export async function saveSelectedNode() {
       JSON.stringify(draftNodes),
       selectedNodeToSave || ''
     )
-    await Promise.all([loadXRayNodes(), loadXRayConfig()])
     await closeSubscriptionNodesDialog(true)
-    renderXRaySubscriptions()
+    await refreshXRayView()
   } catch (e) {
     alert(t('xray.saveNodeFailed') + e)
   }
