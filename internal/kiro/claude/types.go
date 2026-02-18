@@ -3,6 +3,8 @@ package claude
 import (
 	kiroresponse "clisimplehub/internal/kiro/response"
 	kiroShared "clisimplehub/internal/kiro/shared"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -206,6 +208,38 @@ func GetCachedBufferedStream() bool {
 	return cachedBufferedStream
 }
 
+// inferKiroModelID derives a Kiro model ID from an unmapped Claude model name.
+// Rule: claude-{family}-{major}-{minor}[-date] → claude-{family}-{major}.{minor}
+// e.g. "claude-sonnet-4-7" → "claude-sonnet-4.7"
+//      "claude-sonnet-4-7-20260101" → "claude-sonnet-4.7"
+func inferKiroModelID(claudeModel string) string {
+	parts := strings.Split(claudeModel, "-")
+	// strip trailing 8-digit date suffix
+	if len(parts) > 0 {
+		last := parts[len(parts)-1]
+		if len(last) == 8 {
+			if _, err := strconv.Atoi(last); err == nil {
+				parts = parts[:len(parts)-1]
+			}
+		}
+	}
+	// expect at least: claude, {family}, {major}, {minor}
+	if len(parts) < 4 {
+		return claudeModel
+	}
+	// parts[0]="claude", parts[1..n-2]=family segments, parts[n-1]=minor, parts[n-2]=major
+	minor := parts[len(parts)-1]
+	if _, err := strconv.Atoi(minor); err != nil {
+		return claudeModel
+	}
+	major := parts[len(parts)-2]
+	if _, err := strconv.Atoi(major); err != nil {
+		return claudeModel
+	}
+	prefix := strings.Join(parts[:len(parts)-2], "-")
+	return prefix + "-" + major + "." + minor
+}
+
 // GetKiroModelID returns the Kiro model ID for a given Claude model name
 func GetKiroModelID(claudeModel string) string {
 	cachedModelMu.RLock()
@@ -217,5 +251,5 @@ func GetKiroModelID(claudeModel string) string {
 	if kiroModel, ok := mapping[claudeModel]; ok {
 		return kiroModel
 	}
-	return "claude-sonnet-4.5"
+	return inferKiroModelID(claudeModel)
 }

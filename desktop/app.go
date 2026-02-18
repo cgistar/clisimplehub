@@ -2184,9 +2184,26 @@ func (a *App) getDefaultCodexConfig() string {
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d/v1", settings.Port)
 
 	return fmt.Sprintf(`disable_response_storage = true
-model = "gpt-5.2"
 model_provider = 'local'
+network_access = true
+sandbox_mode = "workspace-write"
+experimental_use_rmcp_client = true
+model = "gpt-5.3-codex"
 model_reasoning_effort = "high"
+personality = "pragmatic"
+web_search = "live"
+
+[features]
+plan_tool = true
+view_image_tool = true
+streamable_shell = false
+rmcp_client = true
+skills = true
+parallel = true
+unified_exec = true
+shell_snapshot = true
+collab = true
+steer = true
 
 [model_providers.local]
 name = 'local'

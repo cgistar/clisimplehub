@@ -1936,8 +1936,6 @@ window.openKiroSignLoginUrl = openKiroSignLoginUrl
 // Kiro Global Config Modal (model mapping + global settings)
 // =============================================================================
 
-let kiroGlobalConfigDefaults = null
-
 function renderKiroModelMappingList(mapping) {
   const container = document.getElementById('kiroModelMappingList')
   if (!container) return
@@ -2005,7 +2003,6 @@ export async function showKiroGlobalConfigModal() {
   try {
     if (!window.go?.main?.App?.GetKiroGlobalConfig) return
     const cfg = await window.go.main.App.GetKiroGlobalConfig()
-    kiroGlobalConfigDefaults = cfg?.modelMapping || {}
 
     document.getElementById('kiroGlobalProxyUrl').value = cfg?.proxyUrl || ''
     document.getElementById('kiroGlobalUserAgent').value = cfg?.userAgent || ''
@@ -2038,8 +2035,19 @@ export function addKiroModelMappingRow() {
   row.querySelector('.kiro-mm-alias')?.focus()
 }
 
-export function resetKiroModelMappingDefaults() {
-  renderKiroModelMappingList(kiroGlobalConfigDefaults)
+export async function resetKiroModelMappingDefaults() {
+  try {
+    if (!window.go?.main?.App?.GetKiroDefaultModelMapping) {
+      console.error('GetKiroDefaultModelMapping not available')
+      return
+    }
+    const defaults = await window.go.main.App.GetKiroDefaultModelMapping()
+    renderKiroModelMappingList(defaults || {})
+    showSuccess(t('kiro.resetDefaultsSuccess') || 'Defaults restored')
+  } catch (error) {
+    console.error('Failed to get default model mapping:', error)
+    showError(t('kiro.resetDefaultsFailed') || 'Failed to restore defaults')
+  }
 }
 
 export async function saveKiroGlobalConfig() {

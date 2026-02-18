@@ -115,6 +115,15 @@ func (a *App) SaveKiroGlobalConfig(dto *KiroGlobalConfigDTO) error {
 	return kp.SaveKiroGlobalConfig(a.getKiroMultiConfigPath(), dtoJSON)
 }
 
+// GetKiroDefaultModelMapping returns the default Claude model → Kiro model ID mapping
+func (a *App) GetKiroDefaultModelMapping() map[string]string {
+	kp := kiroProvider()
+	if kp == nil {
+		return map[string]string{}
+	}
+	return kp.DefaultModelMapping()
+}
+
 type KiroTestResult struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken,omitempty"`
