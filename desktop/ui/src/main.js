@@ -112,9 +112,11 @@ import {
     closeKiroAccountsModal,
     hideAddKiroAccountOptions,
     toggleKiroAddAccountDropdown,
-    hideKiroAddAccountDropdown
+    hideKiroAddAccountDropdown,
+    initKiroTabVisibility
 } from './modules/kiroAccounts.js';
 import { switchMainTab } from './modules/mainTabs.js';
+import { initXRayTabVisibility } from './modules/xray.js';
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', async () => {
@@ -126,7 +128,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Initialize UI
     initUI();
-    
+    await Promise.all([initXRayTabVisibility(), initKiroTabVisibility()]);
+
     // Load initial data
     await loadSettings();
     await loadEndpoints(state.currentTab);

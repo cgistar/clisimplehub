@@ -13,6 +13,11 @@ func xrayProvider() plugin.XRayDesktopProvider {
 	return plugin.GetXRayDesktopProviderCached()
 }
 
+// IsXRayAvailable returns true if the xray plugin is compiled and available.
+func (a *App) IsXRayAvailable() bool {
+	return xrayProvider() != nil
+}
+
 // GetXRayStatus returns the current XRay service status.
 func (a *App) GetXRayStatus() (map[string]interface{}, error) {
 	vp := xrayProvider()

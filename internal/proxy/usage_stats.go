@@ -11,7 +11,7 @@ import (
 	"clisimplehub/internal/statsdb"
 )
 
-func (p *ProxyServer) insertUsageStat(ctx context.Context, interfaceType InterfaceType, endpoint *executor.EndpointConfig, path string, targetHeaders map[string]string, requestBody string, responseBody string, durationMs int64, statusCode int, status string, tokens *executor.TokenUsage) {
+func (p *ProxyServer) insertUsageStat(_ context.Context, interfaceType InterfaceType, endpoint *executor.EndpointConfig, path string, targetHeaders map[string]string, requestBody string, responseBody string, durationMs int64, statusCode int, status string, tokens *executor.TokenUsage) {
 	p.mu.RLock()
 	usageStats := p.usageStats
 	p.mu.RUnlock()

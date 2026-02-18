@@ -24,6 +24,17 @@ function escapeHTML(value) {
   })
 }
 
+export async function initKiroTabVisibility() {
+  try {
+    const available = await window.go.main.App.IsKiroAvailable()
+    const tab = document.querySelector('.header-tab[data-tab="kiro-accounts"]')
+    if (tab) tab.style.display = available ? '' : 'none'
+  } catch (e) {
+    const tab = document.querySelector('.header-tab[data-tab="kiro-accounts"]')
+    if (tab) tab.style.display = 'none'
+  }
+}
+
 // 获取状态
 export function getKiroAccounts() {
   return kiroAccounts

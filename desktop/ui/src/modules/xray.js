@@ -36,6 +36,17 @@ function utf8Atob(str) {
   }).join(''))
 }
 
+export async function initXRayTabVisibility() {
+  try {
+    const available = await window.go.main.App.IsXRayAvailable()
+    const tab = document.querySelector('.header-tab[data-tab="xray"]')
+    if (tab) tab.style.display = available ? '' : 'none'
+  } catch (e) {
+    const tab = document.querySelector('.header-tab[data-tab="xray"]')
+    if (tab) tab.style.display = 'none'
+  }
+}
+
 export async function loadXRayStatus() {
   try {
     xrayStatus = await window.go.main.App.GetXRayStatus()

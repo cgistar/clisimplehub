@@ -37,6 +37,11 @@ func kiroProvider() plugin.KiroDesktopProvider {
 	return plugin.GetKiroDesktopProviderCached()
 }
 
+// IsKiroAvailable returns true if the kiro plugin is compiled and available.
+func (a *App) IsKiroAvailable() bool {
+	return kiroProvider() != nil
+}
+
 // GetKiroConfig retrieves Kiro configuration from kiro.json active account
 func (a *App) GetKiroConfig() (*KiroConfig, error) {
 	kp := kiroProvider()

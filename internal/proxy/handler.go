@@ -260,7 +260,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 如果配置了 transformer，提前计算实际转发目标 URL（用于 started 日志/控制台展示）。
-	if endpoint != nil && strings.TrimSpace(endpoint.Transformer) != "" {
+	if strings.TrimSpace(endpoint.Transformer) != "" {
 		if tr, err := transformer.Get(strings.TrimSpace(string(interfaceType)), endpoint.Transformer); err == nil && tr != nil {
 			requestModel := extractModelFromBody(bodyBytes)
 			upstreamModel := executor.ResolveUpstreamModel(requestModel, endpoint)
@@ -285,10 +285,8 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		debugLogger.SetMetadata("InterfaceType", string(interfaceType))
 		debugLogger.SetMetadata("Path", r.URL.Path)
 		debugLogger.SetMetadata("Method", r.Method)
-		if endpoint != nil {
-			debugLogger.SetMetadata("Endpoint", endpoint.Name)
-			debugLogger.SetMetadata("Transformer", endpoint.Transformer)
-		}
+		debugLogger.SetMetadata("Endpoint", endpoint.Name)
+		debugLogger.SetMetadata("Transformer", endpoint.Transformer)
 		debugLogger.Log("请求开始")
 		// 记录原始请求
 		debugLogger.SetSection("OriginalRequest", string(bodyBytes))
@@ -406,14 +404,12 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeResponseWithHeaders(w http.ResponseWriter, statusCode int, headers http.Header, body []byte) {
-	if headers != nil {
-		for key, values := range headers {
-			if strings.EqualFold(key, "Content-Length") {
-				continue
-			}
-			for _, v := range values {
-				w.Header().Add(key, v)
-			}
+	for key, values := range headers {
+		if strings.EqualFold(key, "Content-Length") {
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(key, v)
 		}
 	}
 	w.WriteHeader(statusCode)

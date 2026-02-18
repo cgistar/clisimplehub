@@ -167,20 +167,6 @@ func (r *DefaultRouter) LoadEndpoints(endpoints []*Endpoint) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Save current active endpoint IDs before clearing
-	previousActiveIDs := make(map[InterfaceType]int64)
-	for interfaceType, ep := range r.active {
-		if ep != nil && ep.ID != 0 {
-			previousActiveIDs[interfaceType] = ep.ID
-		}
-	}
-	previousPreferredKeys := make(map[InterfaceType]string)
-	for interfaceType, key := range r.preferred {
-		if strings.TrimSpace(key) != "" {
-			previousPreferredKeys[interfaceType] = key
-		}
-	}
-
 	// Clear existing endpoints and active map
 	r.endpoints = make(map[InterfaceType][]*Endpoint)
 	r.active = make(map[InterfaceType]*Endpoint)
@@ -207,41 +193,15 @@ func (r *DefaultRouter) LoadEndpoints(endpoints []*Endpoint) {
 		})
 	}
 
-	// Set active endpoints: restore previous active by ID, or use Active flag, or first enabled
+	// Set active endpoints: use explicit Active flag, or first enabled
 	for interfaceType, eps := range r.endpoints {
-		// First, try to restore the previously active endpoint by ID
-		if prevID, ok := previousActiveIDs[interfaceType]; ok && prevID != 0 {
-			for _, ep := range eps {
-				if ep.ID == prevID && ep.Enabled {
-					r.active[interfaceType] = ep
-					break
-				}
+		for _, ep := range eps {
+			if ep.Active && ep.Enabled {
+				r.active[interfaceType] = ep
+				break
 			}
 		}
 
-		// If not restored, try to restore the previously preferred endpoint (by key) and enabled
-		if r.active[interfaceType] == nil {
-			if prevKey := previousPreferredKeys[interfaceType]; strings.TrimSpace(prevKey) != "" {
-				for _, ep := range eps {
-					if ep != nil && ep.Enabled && endpointKey(ep) == prevKey {
-						r.active[interfaceType] = ep
-						break
-					}
-				}
-			}
-		}
-
-		// If not restored, try to find an endpoint marked as active and enabled
-		if r.active[interfaceType] == nil {
-			for _, ep := range eps {
-				if ep.Active && ep.Enabled {
-					r.active[interfaceType] = ep
-					break
-				}
-			}
-		}
-
-		// If still no active endpoint found, use the first enabled endpoint
 		if r.active[interfaceType] == nil {
 			for _, ep := range eps {
 				if ep.Enabled {
