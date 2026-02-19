@@ -310,10 +310,24 @@ func (a *App) restartProxyServerAsync() {
 		return
 	}
 
-	_ = a.proxyServer.Stop()
 	go func() {
+		port := a.proxyServer.GetPort()
+		listenAddr := a.proxyServer.GetListenAddr()
+		fmt.Printf("Restarting proxy server on %s:%d...\n", listenAddr, port)
+
+		// 先停止旧服务器，等待其完全关闭
+		if err := a.proxyServer.Stop(); err != nil {
+			fmt.Printf("Failed to stop proxy server: %v\n", err)
+			return
+		}
+
+		// 短暂延迟确保端口完全释放
+		time.Sleep(100 * time.Millisecond)
+
+		// 启动新服务器
+		fmt.Printf("Starting proxy server on %s:%d...\n", listenAddr, port)
 		if err := a.proxyServer.Start(); err != nil {
-			fmt.Printf("Proxy server error: %v\n", err)
+			fmt.Printf("Failed to start proxy server: %v\n", err)
 		}
 	}()
 }
