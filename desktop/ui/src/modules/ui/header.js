@@ -9,6 +9,7 @@ export function headerTemplate() {
                     <div class="header-tabs">
                         <button class="header-tab active" data-tab="home" onclick="switchMainTab('home')">${createIcon('home', { size: 14 })} ${t('header.home')}</button>
                         <button class="header-tab" data-tab="kiro-accounts" onclick="switchMainTab('kiro-accounts')">${createIcon('users', { size: 14 })} ${t('kiro.accountsTitle')}</button>
+                        <button class="header-tab" data-tab="codex-accounts" onclick="switchMainTab('codex-accounts')">${createIcon('users', { size: 14 })} Codex</button>
                         <button class="header-tab" data-tab="xray" onclick="switchMainTab('xray')">${createIcon('network', { size: 14 })} 科学</button>
                     </div>
                 </div>

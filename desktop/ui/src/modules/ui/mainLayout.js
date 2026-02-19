@@ -92,5 +92,44 @@ export function mainLayoutTemplate() {
                     </div>
                 </div>
             </div>
+        </div>
+
+        <div class="main-container kiro-accounts-view" id="codexAccountsView" style="display: none;">
+            <div class="kiro-accounts-page">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>${createIcon('users', { size: 16 })} ${t('codex.accountsTitle')}</h2>
+                        <div class="card-header-actions">
+                            <button class="btn btn-sm btn-secondary" style="margin-right: 8px;" onclick="showCodexGlobalConfigModal()" title="${t('codex.config')}">
+                                ${createIcon('settings', { size: 14 })} ${t('codex.config')}
+                            </button>
+                            <button class="btn btn-sm btn-danger" style="margin-right: 8px;" onclick="showCodexBulkDeleteDialog()" title="${t('common.delete')}">
+                                ${createIcon('trash', { size: 14 })} ${t('common.delete')}
+                            </button>
+                            <div class="kiro-add-account-dropdown">
+                                <button class="btn btn-sm btn-primary" onclick="toggleCodexAddAccountDropdown()" title="${t('codex.addAccount')}">
+                                    ${createIcon('plus', { size: 14 })} ${t('codex.add')} ${createIcon('chevronDown', { size: 14 })}
+                                </button>
+                                <div class="kiro-add-account-menu" id="codexAddAccountMenu" style="display: none;">
+                                    <button class="dropdown-item" onclick="startCodexOAuthLogin()">
+                                        <span class="dropdown-icon">${createIcon('key', { size: 14 })}</span>
+                                        <span class="dropdown-text">${t('codex.openaiLogin')}</span>
+                                    </button>
+                                    <div class="dropdown-divider"></div>
+                                    <button class="dropdown-item" onclick="showCodexJsonImportDialog()">
+                                        <span class="dropdown-icon">${createIcon('download', { size: 14 })}</span>
+                                        <span class="dropdown-text">${t('codex.jsonImportMenu')}</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kiro-accounts-page-body">
+                        <div class="kiro-accounts-grid" id="codexAccountsGrid">
+                            <div class="loading">${t('common.loading')}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>`
 }

@@ -2,6 +2,7 @@
  * 主标签页切换模块
  */
 import { loadKiroAccounts, renderKiroAccountCards, hideKiroAddAccountDropdown } from './kiroAccounts.js'
+import { loadCodexAccounts, renderCodexAccountCards, hideCodexAddAccountDropdown } from './codexAccounts.js'
 import { refreshXRayView } from './xray.js'
 import { setConsoleToggleVisibility } from './console.js'
 
@@ -23,15 +24,18 @@ export async function switchMainTab(tabName) {
   // 切换视图
   const homeView = document.getElementById('homeView')
   const kiroAccountsView = document.getElementById('kiroAccountsView')
+  const codexAccountsView = document.getElementById('codexAccountsView')
   const xrayView = document.getElementById('xrayView')
 
   if (tabName === 'home') {
     homeView.style.display = 'flex'
     kiroAccountsView.style.display = 'none'
+    if (codexAccountsView) codexAccountsView.style.display = 'none'
     if (xrayView) xrayView.style.display = 'none'
   } else if (tabName === 'kiro-accounts') {
     homeView.style.display = 'none'
     kiroAccountsView.style.display = 'flex'
+    if (codexAccountsView) codexAccountsView.style.display = 'none'
     if (xrayView) xrayView.style.display = 'none'
 
     // 加载账号列表
@@ -42,15 +46,29 @@ export async function switchMainTab(tabName) {
     setTimeout(() => {
       document.addEventListener('click', handleClickOutside)
     }, 0)
+  } else if (tabName === 'codex-accounts') {
+    homeView.style.display = 'none'
+    kiroAccountsView.style.display = 'none'
+    if (codexAccountsView) codexAccountsView.style.display = 'flex'
+    if (xrayView) xrayView.style.display = 'none'
+
+    await loadCodexAccounts()
+    renderCodexAccountCards()
+
+    setTimeout(() => {
+      document.addEventListener('click', handleCodexClickOutside)
+    }, 0)
   } else if (tabName === 'xray') {
     homeView.style.display = 'none'
     kiroAccountsView.style.display = 'none'
+    if (codexAccountsView) codexAccountsView.style.display = 'none'
     if (xrayView) xrayView.style.display = 'flex'
 
     await refreshXRayView()
   } else {
     // 移除点击事件监听
     document.removeEventListener('click', handleClickOutside)
+    document.removeEventListener('click', handleCodexClickOutside)
   }
 }
 
@@ -59,5 +77,15 @@ function handleClickOutside(event) {
   const dropdown = document.querySelector('.kiro-add-account-dropdown')
   if (dropdown && !dropdown.contains(event.target)) {
     hideKiroAddAccountDropdown()
+  }
+}
+
+function handleCodexClickOutside(event) {
+  const dropdown = document.getElementById('codexAddAccountMenu')
+  if (dropdown && dropdown.style.display !== 'none') {
+    const container = dropdown.closest('.kiro-add-account-dropdown')
+    if (container && !container.contains(event.target)) {
+      hideCodexAddAccountDropdown()
+    }
   }
 }

@@ -1503,14 +1503,22 @@ export async function openIdcVerifyUrl() {
       await window.go.main.App.OpenURLInIncognito(idcDeviceFlowState.verifyUrl)
       updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING', idcDeviceFlowState.activeFlow)
     } else {
-      // 降级方案：使用普通方式打开
-      window.open(idcDeviceFlowState.verifyUrl, '_blank', 'noopener,noreferrer')
+      // 降级方案：使用 Wails runtime BrowserOpenURL
+      if (window.runtime?.BrowserOpenURL) {
+        window.runtime.BrowserOpenURL(idcDeviceFlowState.verifyUrl)
+      } else {
+        window.open(idcDeviceFlowState.verifyUrl, '_blank', 'noopener,noreferrer')
+      }
       updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING', idcDeviceFlowState.activeFlow)
     }
   } catch (error) {
     console.warn('Failed to open in incognito mode, falling back to normal mode:', error)
-    // 降级方案：使用普通方式打开
-    window.open(idcDeviceFlowState.verifyUrl, '_blank', 'noopener,noreferrer')
+    // 降级方案：使用 Wails runtime BrowserOpenURL
+    if (window.runtime?.BrowserOpenURL) {
+      window.runtime.BrowserOpenURL(idcDeviceFlowState.verifyUrl)
+    } else {
+      window.open(idcDeviceFlowState.verifyUrl, '_blank', 'noopener,noreferrer')
+    }
     updateIdcDialogStatus('pending', t('kiro.idcLinkOpened'), 'PENDING', idcDeviceFlowState.activeFlow)
   }
 }
@@ -1631,11 +1639,21 @@ async function startKiroSignLogin(fromAccountManagement = false) {
       if (window.go?.main?.App?.OpenURLInIncognito) {
         await window.go.main.App.OpenURLInIncognito(loginUrl)
       } else {
-        window.open(loginUrl, '_blank', 'noopener,noreferrer')
+        // 降级方案：使用 Wails runtime BrowserOpenURL
+        if (window.runtime?.BrowserOpenURL) {
+          window.runtime.BrowserOpenURL(loginUrl)
+        } else {
+          window.open(loginUrl, '_blank', 'noopener,noreferrer')
+        }
       }
     } catch (browserError) {
       console.warn('Failed to open browser:', browserError)
-      window.open(loginUrl, '_blank', 'noopener,noreferrer')
+      // 降级方案：使用 Wails runtime BrowserOpenURL
+      if (window.runtime?.BrowserOpenURL) {
+        window.runtime.BrowserOpenURL(loginUrl)
+      } else {
+        window.open(loginUrl, '_blank', 'noopener,noreferrer')
+      }
     }
   } catch (error) {
     console.error('Failed to start Kiro Sign login:', error)
@@ -1785,10 +1803,20 @@ async function handleKiroSignIdcAuthCodeFlow(data) {
       // 5. 打开浏览器
       if (window.go?.main?.App?.OpenURLInIncognito) {
         window.go.main.App.OpenURLInIncognito(authorizeUrl).catch(() => {
-          window.open(authorizeUrl, '_blank', 'noopener,noreferrer')
+          // 降级方案：使用 Wails runtime BrowserOpenURL
+          if (window.runtime?.BrowserOpenURL) {
+            window.runtime.BrowserOpenURL(authorizeUrl)
+          } else {
+            window.open(authorizeUrl, '_blank', 'noopener,noreferrer')
+          }
         })
       } else {
-        window.open(authorizeUrl, '_blank', 'noopener,noreferrer')
+        // 降级方案：使用 Wails runtime BrowserOpenURL
+        if (window.runtime?.BrowserOpenURL) {
+          window.runtime.BrowserOpenURL(authorizeUrl)
+        } else {
+          window.open(authorizeUrl, '_blank', 'noopener,noreferrer')
+        }
       }
     })
 
@@ -1911,12 +1939,21 @@ async function openKiroSignLoginUrl() {
     if (window.go?.main?.App?.OpenURLInIncognito) {
       await window.go.main.App.OpenURLInIncognito(kiroSignState.loginUrl)
     } else {
-      window.open(kiroSignState.loginUrl, '_blank', 'noopener,noreferrer')
+      // 降级方案：使用 Wails runtime BrowserOpenURL
+      if (window.runtime?.BrowserOpenURL) {
+        window.runtime.BrowserOpenURL(kiroSignState.loginUrl)
+      } else {
+        window.open(kiroSignState.loginUrl, '_blank', 'noopener,noreferrer')
+      }
     }
   } catch (error) {
     console.error('Failed to open login URL:', error)
-    // Fallback to window.open
-    window.open(kiroSignState.loginUrl, '_blank', 'noopener,noreferrer')
+    // 降级方案：使用 Wails runtime BrowserOpenURL
+    if (window.runtime?.BrowserOpenURL) {
+      window.runtime.BrowserOpenURL(kiroSignState.loginUrl)
+    } else {
+      window.open(kiroSignState.loginUrl, '_blank', 'noopener,noreferrer')
+    }
   }
 }
 

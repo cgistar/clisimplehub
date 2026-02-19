@@ -48,6 +48,7 @@ const iconMap = {
   inbox: 'Inbox',
   network: 'Network',
   cloudUpload: 'CloudUpload',
+  eyeOff: 'EyeOff',
 }
 
 /**

@@ -114,8 +114,18 @@ import {
     hideKiroAddAccountDropdown,
     initKiroTabVisibility
 } from './modules/kiroAccounts.js';
+import {
+    initCodexTabVisibility,
+    toggleCodexAddAccountDropdown,
+    hideCodexAddAccountDropdown
+} from './modules/codexAccounts.js';
 import { switchMainTab } from './modules/mainTabs.js';
 import { initXRayTabVisibility } from './modules/xray.js';
+import {
+    showCodexGlobalConfigModal,
+    closeCodexGlobalConfigModal,
+    saveCodexGlobalConfig
+} from './modules/codex.js';
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', async () => {
@@ -127,7 +137,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Initialize UI
     initUI();
-    await Promise.all([initXRayTabVisibility(), initKiroTabVisibility()]);
+    await Promise.all([initXRayTabVisibility(), initKiroTabVisibility(), initCodexTabVisibility()]);
 
     // Load initial data
     await loadSettings();
@@ -262,3 +272,8 @@ window.hideAddKiroAccountOptions = hideAddKiroAccountOptions;
 window.toggleKiroAddAccountDropdown = toggleKiroAddAccountDropdown;
 window.hideKiroAddAccountDropdown = hideKiroAddAccountDropdown;
 window.switchMainTab = switchMainTab;
+window.showCodexGlobalConfigModal = showCodexGlobalConfigModal;
+window.closeCodexGlobalConfigModal = closeCodexGlobalConfigModal;
+window.saveCodexGlobalConfig = saveCodexGlobalConfig;
+window.toggleCodexAddAccountDropdown = toggleCodexAddAccountDropdown;
+window.hideCodexAddAccountDropdown = hideCodexAddAccountDropdown;

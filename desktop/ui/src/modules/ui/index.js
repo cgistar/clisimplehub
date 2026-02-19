@@ -16,6 +16,11 @@ import {
     kiroGlobalConfigModalTemplate,
     kiroAccountEditModalTemplate
 } from './kiroModals.js'
+import {
+    codexGlobalConfigModalTemplate,
+    codexAccountEditModalTemplate,
+    codexOAuthLoginModalTemplate
+} from './codexModals.js'
 import { cliConfigModalTemplate, errorToastTemplate } from './miscComponents.js'
 import { xrayViewTemplate } from './xrayView.js'
 import { xrayConfigModalTemplate } from './xrayModals.js'
@@ -39,7 +44,13 @@ export function initUI() {
         kiroSignLoginModalTemplate(),
         kiroGlobalConfigModalTemplate(),
         kiroAccountEditModalTemplate(),
+        codexGlobalConfigModalTemplate(),
+        codexAccountEditModalTemplate(),
+        // codexOAuthLoginModalTemplate is dynamically created, not pre-rendered
         xrayViewTemplate(),
         xrayConfigModalTemplate()
     ].join('')
+
+    // Expose modal templates to window for dynamic creation
+    window.codexOAuthLoginModalTemplate = codexOAuthLoginModalTemplate
 }

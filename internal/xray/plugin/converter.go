@@ -44,6 +44,23 @@ func BuildRuntimeJSON(node *ProxyNode, cfg *XRayConfig) ([]byte, error) {
 				"protocol": "blackhole",
 			},
 		},
+		"routing": map[string]interface{}{
+			"domainStrategy": "IPIfNonMatch",
+			"rules": []interface{}{
+				// Private IP ranges (RFC 1918) - direct connection
+				map[string]interface{}{
+					"type":        "field",
+					"ip":          []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"},
+					"outboundTag": "direct",
+				},
+				// Localhost and link-local - direct connection
+				map[string]interface{}{
+					"type":        "field",
+					"ip":          []string{"127.0.0.0/8", "169.254.0.0/16", "::1/128", "fe80::/10"},
+					"outboundTag": "direct",
+				},
+			},
+		},
 	}
 
 	return json.MarshalIndent(runtime, "", "  ")
