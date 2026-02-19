@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"clisimplehub/internal/executor"
 	kiroapi "clisimplehub/internal/kiro"
 	kiro_claude "clisimplehub/internal/kiro/claude"
-	"clisimplehub/internal/executor"
+	kiroShared "clisimplehub/internal/kiro/shared"
 	"clisimplehub/internal/transformer"
 	"clisimplehub/internal/usage"
 )
@@ -27,6 +28,49 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 		result.StatusCode = http.StatusInternalServerError
 		result.Error = fmt.Errorf("kiro transformer not initialized")
 		return result
+	}
+
+	// Check if any accounts are available before proceeding
+	pool := kiroapi.GetPool()
+	if pool != nil {
+		mode := pool.Mode()
+		noAvailableAccounts := false
+		switch mode {
+		case kiroShared.RotationFixed:
+			// Fixed mode is governed by the active account only.
+			noAvailableAccounts = pool.Select() == nil
+		default:
+			noAvailableAccounts = pool.AvailableCount() == 0
+		}
+		if noAvailableAccounts {
+			// No accounts available - return structured error immediately
+			result.StatusCode = http.StatusServiceUnavailable
+			result.Error = fmt.Errorf("no available kiro accounts in %s mode", mode)
+
+			var message string
+			switch mode {
+			case kiroShared.RotationFixed:
+				message = "No available Kiro accounts in fixed mode. The active account may be banned, exhausted, or unavailable."
+			case kiroShared.RotationFailover:
+				message = "No available Kiro accounts in failover mode. All accounts may be banned, exhausted, or unavailable."
+			case kiroShared.RotationLoadBalance:
+				message = "No available Kiro accounts in load balance mode. All accounts may be banned, exhausted, or unavailable."
+			default:
+				message = "No available Kiro accounts."
+			}
+
+			errJSON, _ := json.Marshal(map[string]any{
+				"error": map[string]any{
+					"type":    "no_available_accounts",
+					"message": message,
+					"code":    "kiro_account_unavailable",
+					"mode":    mode,
+				},
+			})
+			result.Body = errJSON
+			result.Headers = http.Header{"Content-Type": []string{"application/json"}}
+			return result
+		}
 	}
 
 	// Web search short-circuit
