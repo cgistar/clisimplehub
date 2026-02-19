@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"clisimplehub/internal/logger"
@@ -17,14 +18,38 @@ import (
 // DefaultHTTPTimeout 默认 HTTP 超时时间
 const DefaultHTTPTimeout = 300 * time.Second
 
+const (
+	// DisableHTTPClientTimeout disables http.Client-level total timeout.
+	// Passed through normalizeHTTPClientTimeout which converts it to 0.
+	DisableHTTPClientTimeout time.Duration = -1
+
+	DefaultHTTPDialTimeout       = 10 * time.Second
+	DefaultTLSHandshakeTimeout   = 10 * time.Second
+	DefaultResponseHeaderTimeout = 120 * time.Second
+
+	// DefaultStreamReadIdleTimeout is the max idle gap while reading streaming body.
+	DefaultStreamReadIdleTimeout = 300 * time.Second
+)
+
+var (
+	sharedTransportOnce sync.Once
+	sharedTransport     *http.Transport
+)
+
+func getSharedTransport() *http.Transport {
+	sharedTransportOnce.Do(func() {
+		sharedTransport = newBaseTransport()
+	})
+	return sharedTransport
+}
+
 // NewHTTPClient 创建 HTTP 客户端，支持代理配置
 // 优先级: plugin.GetGlobalProxyURL() > endpoint.ProxyURL > 默认直连
 func NewHTTPClient(endpoint *EndpointConfig, timeout time.Duration) *http.Client {
-	if timeout <= 0 {
-		timeout = DefaultHTTPTimeout
+	client := &http.Client{
+		Timeout:   normalizeHTTPClientTimeout(timeout),
+		Transport: getSharedTransport(),
 	}
-
-	client := &http.Client{Timeout: timeout}
 
 	// Global proxy takes highest priority.
 	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
@@ -56,14 +81,12 @@ func NewHTTPClient(endpoint *EndpointConfig, timeout time.Duration) *http.Client
 // NewHTTPClientForcedProxyURL creates an HTTP client that only uses the provided proxy URL.
 // When proxyURL is empty, it forces direct connection (does not use environment proxy variables).
 func NewHTTPClientForcedProxyURL(proxyURL string, timeout time.Duration) *http.Client {
-	if timeout <= 0 {
-		timeout = DefaultHTTPTimeout
-	}
-
-	client := &http.Client{Timeout: timeout}
-
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := newBaseTransport()
 	transport.Proxy = nil
+	client := &http.Client{
+		Timeout:   normalizeHTTPClientTimeout(timeout),
+		Transport: transport,
+	}
 
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
@@ -86,15 +109,17 @@ func NewHTTPClientForcedProxyURL(proxyURL string, timeout time.Duration) *http.C
 			password, _ := parsedURL.User.Password()
 			auth = &proxy.Auth{User: username, Password: password}
 		}
-		dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, proxy.Direct)
+		baseDialer := &net.Dialer{
+			Timeout:   DefaultHTTPDialTimeout,
+			KeepAlive: 30 * time.Second,
+		}
+		dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, baseDialer)
 		if err != nil {
 			logger.Warn("[Executor] create SOCKS5 dialer failed: %v", err)
 			client.Transport = transport
 			return client
 		}
-		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.Dial(network, addr)
-		}
+		transport.DialContext = dialContextFromProxyDialer(dialer)
 		client.Transport = transport
 		return client
 	case "http", "https":
@@ -125,12 +150,8 @@ func buildProxyTransport(proxyURL string) *http.Transport {
 	case "socks5":
 		return buildSOCKS5Transport(parsedURL)
 	case "http", "https":
-		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport := newBaseTransport()
 		transport.Proxy = http.ProxyURL(parsedURL)
-		transport.DisableKeepAlives = false
-		transport.MaxIdleConns = 100
-		transport.MaxIdleConnsPerHost = 10
-		transport.IdleConnTimeout = 90 * time.Second
 		return transport
 	default:
 		logger.Warn("[Executor] unsupported proxy scheme: %s", parsedURL.Scheme)
@@ -147,21 +168,31 @@ func buildSOCKS5Transport(parsedURL *url.URL) *http.Transport {
 		auth = &proxy.Auth{User: username, Password: password}
 	}
 
-	dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, proxy.Direct)
+	baseDialer := &net.Dialer{
+		Timeout:   DefaultHTTPDialTimeout,
+		KeepAlive: 30 * time.Second,
+	}
+	dialer, err := proxy.SOCKS5("tcp", parsedURL.Host, auth, baseDialer)
 	if err != nil {
 		logger.Warn("[Executor] create SOCKS5 dialer failed: %v", err)
 		return nil
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return dialer.Dial(network, addr)
-	}
-	transport.DisableKeepAlives = false
-	transport.MaxIdleConns = 100
-	transport.MaxIdleConnsPerHost = 10
-	transport.IdleConnTimeout = 90 * time.Second
+	transport := newBaseTransport()
+	transport.DialContext = dialContextFromProxyDialer(dialer)
 	return transport
+}
+
+// dialContextFromProxyDialer converts a proxy.Dialer into a DialContext function.
+// If the dialer implements proxy.ContextDialer (e.g. modern x/net SOCKS5), context
+// cancellation and deadlines are fully propagated. Otherwise falls back to Dial.
+func dialContextFromProxyDialer(d proxy.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if cd, ok := d.(proxy.ContextDialer); ok {
+		return cd.DialContext
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return d.Dial(network, addr)
+	}
 }
 
 // ApplyEndpointHeaders 应用端点配置的自定义 headers
@@ -218,4 +249,33 @@ func ResolveUpstreamModel(requestModel string, endpoint *EndpointConfig) string 
 	}
 
 	return requestModel
+}
+
+func normalizeHTTPClientTimeout(timeout time.Duration) time.Duration {
+	switch {
+	case timeout < 0:
+		return 0
+	case timeout == 0:
+		return DefaultHTTPTimeout
+	default:
+		return timeout
+	}
+}
+
+func newBaseTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	dialer := &net.Dialer{
+		Timeout:   DefaultHTTPDialTimeout,
+		KeepAlive: 30 * time.Second,
+	}
+	transport.DialContext = dialer.DialContext
+	transport.TLSHandshakeTimeout = DefaultTLSHandshakeTimeout
+	transport.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+
+	transport.DisableKeepAlives = false
+	transport.MaxIdleConns = 100
+	transport.MaxIdleConnsPerHost = 10
+	transport.IdleConnTimeout = 90 * time.Second
+	return transport
 }

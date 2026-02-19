@@ -124,7 +124,11 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(result.TargetHeaders))
 	}
 
-	client := NewHTTPClient(endpoint, 0)
+	clientTimeout := DefaultHTTPTimeout
+	if req.IsStreaming {
+		clientTimeout = DisableHTTPClientTimeout
+	}
+	client := NewHTTPClient(endpoint, clientTimeout)
 	resp, err := client.Do(proxyReq)
 	if err != nil && isRetryableEOF(err) {
 		if debugLogger != nil {
@@ -214,6 +218,7 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
 		defer closer.Close()
 	}
+	reader = NewIdleTimeoutReader(reader, resp.Body, DefaultStreamReadIdleTimeout)
 
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -228,17 +233,11 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 
 	var state any
 
+readLoop:
 	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			result.Error = ctx.Err()
-			result.Streamed = true
-			result.ResponseStream = capture.String()
-			if captureUpstream {
-				result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
-			}
-			return result
-		default:
+			break
 		}
 
 		line := scanner.Bytes()
@@ -267,14 +266,14 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 				continue
 			}
 			if _, err := w.Write([]byte(out)); err != nil {
-				result.Error = context.Canceled
-				break
+				result.Error = fmt.Errorf("downstream write failed: %w", err)
+				break readLoop
 			}
 			flusher.Flush()
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := scanner.Err(); err != nil && result.Error == nil {
 		result.Error = err
 	}
 
