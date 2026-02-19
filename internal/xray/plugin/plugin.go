@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -85,6 +87,29 @@ func (p *XRayPlugin) getService() *XRayService {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.service
+}
+
+// GetGlobalProxyURL implements plugin.GlobalProxyProvider.
+// Returns the SOCKS5 proxy URL when globalProxy is enabled and xray is running; otherwise "".
+func (p *XRayPlugin) GetGlobalProxyURL() string {
+	svc := p.getService()
+	if svc == nil {
+		return ""
+	}
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	cfg := svc.config.Get()
+	if !cfg.GlobalProxy || !svc.running {
+		return ""
+	}
+	if cfg.SocksPort <= 0 || cfg.SocksPort > 65535 {
+		return ""
+	}
+	listen := strings.TrimSpace(cfg.SocksListen)
+	if listen == "" {
+		listen = "127.0.0.1"
+	}
+	return "socks5://" + net.JoinHostPort(listen, strconv.Itoa(cfg.SocksPort))
 }
 
 // --- ConfigSyncExporter / ConfigSyncImporter / ConfigSyncDecoder ---

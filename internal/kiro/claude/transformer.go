@@ -12,6 +12,7 @@ import (
 	kiroapi "clisimplehub/internal/kiro"
 	kiroresponse "clisimplehub/internal/kiro/response"
 	kiroShared "clisimplehub/internal/kiro/shared"
+	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/transformer/shared"
 )
 
@@ -395,6 +396,7 @@ func (t *Transformer) bindAccountLocked(account *kiroShared.KiroAccount) {
 
 	// Reuse existing auth manager if available
 	if am, ok := t.authManagers[account.RefreshToken]; ok {
+		am.SetProxyURL(proxyURL)
 		t.authManager = am
 		return
 	}
@@ -404,8 +406,14 @@ func (t *Transformer) bindAccountLocked(account *kiroShared.KiroAccount) {
 	t.authManager = am
 }
 
-// resolveProxyURL returns per-account proxyUrl if set, else global proxyUrl.
+// resolveProxyURL returns the effective proxy URL.
+// Priority: global proxy (xray) -> per-account proxyUrl -> kiro.json proxyUrl.
 func (t *Transformer) resolveProxyURL(account *kiroShared.KiroAccount) string {
+	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
+		if gpURL := gp.GetGlobalProxyURL(); gpURL != "" {
+			return gpURL
+		}
+	}
 	if account != nil && strings.TrimSpace(account.ProxyUrl) != "" {
 		return strings.TrimSpace(account.ProxyUrl)
 	}
@@ -443,8 +451,15 @@ func (t *Transformer) CurrentAccountRefreshToken() string {
 }
 
 // KiroProxyURL returns the effective Kiro proxy URL for the currently bound account.
-// Priority: per-account proxyUrl -> kiro.json top-level proxyUrl.
+// Priority: global proxy (xray) -> per-account proxyUrl -> kiro.json top-level proxyUrl.
 func (t *Transformer) KiroProxyURL() string {
+	// Global proxy takes highest priority, no need for kiro init.
+	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
+		if gpURL := gp.GetGlobalProxyURL(); gpURL != "" {
+			return gpURL
+		}
+	}
+
 	_ = t.ensureInitialized()
 	t.mu.RLock()
 	account := t.currentAccount
@@ -507,6 +522,8 @@ func (t *Transformer) GetAccessToken() (string, error) {
 	if am == nil {
 		return "", fmt.Errorf("auth manager not initialized")
 	}
+	// Keep token refresh aligned with current global-proxy state.
+	am.SetProxyURL(t.KiroProxyURL())
 	return am.GetAccessToken()
 }
 
@@ -537,6 +554,8 @@ func (t *Transformer) ForceRefreshKiroToken() error {
 		return fmt.Errorf("nil transformer")
 	}
 	if am := t.GetAuthManager(); am != nil {
+		// Keep token refresh aligned with current global-proxy state.
+		am.SetProxyURL(t.KiroProxyURL())
 		_, err := am.ForceRefresh()
 		return err
 	}

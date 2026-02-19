@@ -243,6 +243,7 @@ export async function saveXRayConfig() {
   const socksListen = document.getElementById('xraySocksListen')
   const socksPort = document.getElementById('xraySocksPort')
   const logLevel = document.getElementById('xrayLogLevel')
+  const globalProxy = document.getElementById('xrayGlobalProxy')
 
   if (!socksListen || !socksPort || !logLevel) return
 
@@ -251,7 +252,8 @@ export async function saveXRayConfig() {
       ...xrayConfig,
       socksListen: socksListen.value.trim() || '127.0.0.1',
       socksPort: parseInt(socksPort.value) || 10808,
-      logLevel: logLevel.value
+      logLevel: logLevel.value,
+      globalProxy: globalProxy ? globalProxy.checked : false
     }
 
     await window.go.main.App.SaveXRayConfig(JSON.stringify(config))
@@ -267,11 +269,13 @@ export function showXRayConfigModal() {
   const socksListen = document.getElementById('xraySocksListen')
   const socksPort = document.getElementById('xraySocksPort')
   const logLevel = document.getElementById('xrayLogLevel')
+  const globalProxy = document.getElementById('xrayGlobalProxy')
 
   if (modal && socksListen && socksPort && logLevel && xrayConfig) {
     socksListen.value = xrayConfig.socksListen || '127.0.0.1'
     socksPort.value = xrayConfig.socksPort || 10808
     logLevel.value = xrayConfig.logLevel || 'warning'
+    if (globalProxy) globalProxy.checked = !!xrayConfig.globalProxy
     modal.style.display = 'flex'
   }
 }

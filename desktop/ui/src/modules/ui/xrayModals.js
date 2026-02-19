@@ -28,6 +28,14 @@ export function xrayConfigModalTemplate() {
                             <option value="none">None</option>
                         </select>
                     </div>
+                    <div class="form-group switch-form-group">
+                        <label class="switch-label-inline">${t('xray.globalProxy')}</label>
+                        <label class="switch">
+                            <input type="checkbox" id="xrayGlobalProxy">
+                            <span class="slider"></span>
+                        </label>
+                        <small>${t('xray.globalProxyHelp')}</small>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" onclick="closeXRayConfigModal()">${t('common.cancel')}</button>

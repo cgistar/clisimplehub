@@ -10,7 +10,7 @@ import { initUI } from './modules/ui.js';
 import { waitForWails } from './modules/utils.js';
 import { loadLanguage, changeLanguage, loadSettings, showSettingsModal, closeSettingsModal, saveSettings, refreshConfig, toggleDebugModeDropdown } from './modules/settings.js';
 import { switchTab, loadEndpoints, setActiveEndpoint, setActiveEndpointById, toggleEndpointEnabled, initEndpointsRealtimeUpdates, cleanupEndpointsRealtimeUpdates, pingSingleEndpoint, pingAllEndpoints, applyEndpointToConfig } from './modules/endpoints.js';
-import { loadRecentLogs, showLogDetail, closeLogDetailModal, initLogs, toggleRealtimeConnection } from './modules/logs.js';
+import { loadRecentLogs, showLogDetail, closeLogDetailModal, initLogs } from './modules/logs.js';
 import { loadTokenStats, showStatsModal, closeStatsModal, setStatsTimeRange, refreshStats, clearStatsData } from './modules/stats.js';
 import { initRealTime, getRealTimeManager, cleanupRealTime } from './modules/realtime.js';
 import {
@@ -187,7 +187,6 @@ window.deleteEndpoint = deleteEndpoint;
 window.deleteEndpointById = deleteEndpointById;
 window.showLogDetail = showLogDetail;
 window.closeLogDetailModal = closeLogDetailModal;
-window.toggleRealtimeConnection = toggleRealtimeConnection;
 window.toggleApiKeyVisibility = toggleApiKeyVisibility;
 window.toggleInterfaceTypeDropdown = toggleInterfaceTypeDropdown;
 window.onEndpointInterfaceTypeChange = onEndpointInterfaceTypeChange;

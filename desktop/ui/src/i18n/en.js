@@ -266,6 +266,8 @@ export default {
     socksListen: 'Listen Address',
     socksPort: 'SOCKS5 Port',
     logLevel: 'Log Level',
+    globalProxy: 'Global Proxy',
+    globalProxyHelp: 'Route all endpoint and Kiro plugin outbound requests through XRay proxy',
     subscriptions: 'Subscriptions',
     subName: 'Name',
     subUrl: 'Subscription URL',

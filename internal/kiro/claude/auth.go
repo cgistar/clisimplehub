@@ -35,6 +35,7 @@ type KiroAuthManager struct {
 	httpClient    *http.Client
 	refreshURL    string
 	clientVersion string
+	proxyURL      string
 }
 
 // NewKiroAuthManager creates a new authentication manager
@@ -44,6 +45,7 @@ func NewKiroAuthManager(creds *kiroShared.KiroCredentials, credsPath string, pro
 	}
 	region := kiroapi.ResolveRegion(creds.Region)
 
+	proxyURL = strings.TrimSpace(proxyURL)
 	// Create HTTP client with optional proxy support using unified client factory
 	httpClient := kiroClient.NewHTTPClientWithProxy(proxyURL, 30*time.Second)
 
@@ -53,7 +55,23 @@ func NewKiroAuthManager(creds *kiroShared.KiroCredentials, credsPath string, pro
 		httpClient:    httpClient,
 		refreshURL:    kiroapi.KiroRefreshURL(region),
 		clientVersion: kiroShared.KiroVersionOrDefault(version),
+		proxyURL:      proxyURL,
 	}
+}
+
+// SetProxyURL updates the proxy used for token refresh requests.
+func (m *KiroAuthManager) SetProxyURL(proxyURL string) {
+	if m == nil {
+		return
+	}
+	proxyURL = strings.TrimSpace(proxyURL)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if proxyURL == m.proxyURL {
+		return
+	}
+	m.proxyURL = proxyURL
+	m.httpClient = kiroClient.NewHTTPClientWithProxy(proxyURL, 30*time.Second)
 }
 
 // GetAccessToken returns a valid access token, refreshing if necessary

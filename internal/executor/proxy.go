@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/logger"
+	"clisimplehub/internal/plugin"
 
 	"golang.org/x/net/proxy"
 )
@@ -17,13 +18,23 @@ import (
 const DefaultHTTPTimeout = 300 * time.Second
 
 // NewHTTPClient 创建 HTTP 客户端，支持代理配置
-// 优先级: endpoint.ProxyURL > 默认直连
+// 优先级: plugin.GetGlobalProxyURL() > endpoint.ProxyURL > 默认直连
 func NewHTTPClient(endpoint *EndpointConfig, timeout time.Duration) *http.Client {
 	if timeout <= 0 {
 		timeout = DefaultHTTPTimeout
 	}
 
 	client := &http.Client{Timeout: timeout}
+
+	// Global proxy takes highest priority.
+	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
+		if gpURL := gp.GetGlobalProxyURL(); gpURL != "" {
+			if t := buildProxyTransport(gpURL); t != nil {
+				client.Transport = t
+				return client
+			}
+		}
+	}
 
 	if endpoint == nil {
 		return client

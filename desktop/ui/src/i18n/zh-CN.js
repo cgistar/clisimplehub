@@ -262,6 +262,8 @@ export default {
     socksListen: '监听地址',
     socksPort: 'SOCKS5 端口',
     logLevel: '日志级别',
+    globalProxy: '全局代理',
+    globalProxyHelp: '开启后，所有端点和 Kiro 插件的出站请求将通过 XRay 代理',
     subscriptions: '订阅源',
     subName: '订阅名称',
     subUrl: '订阅 URL',

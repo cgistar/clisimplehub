@@ -57,3 +57,27 @@ func GetXRayDesktopProviderCached() XRayDesktopProvider {
 	})
 	return xrayDesktopProviderInst
 }
+
+// GlobalProxyProvider returns the global proxy URL when XRay global proxy is enabled and running.
+type GlobalProxyProvider interface {
+	GetGlobalProxyURL() string
+}
+
+var (
+	globalProxyProviderOnce sync.Once
+	globalProxyProviderInst GlobalProxyProvider
+)
+
+// GetGlobalProxyProviderCached returns the cached GlobalProxyProvider (resolved once).
+func GetGlobalProxyProviderCached() GlobalProxyProvider {
+	globalProxyProviderOnce.Do(func() {
+		p := ByName("xray")
+		if p == nil {
+			return
+		}
+		if gp, ok := p.(GlobalProxyProvider); ok {
+			globalProxyProviderInst = gp
+		}
+	})
+	return globalProxyProviderInst
+}

@@ -53,6 +53,7 @@ type XRayConfig struct {
 	SocksListen   string         `json:"socksListen"`
 	SocksPort     int            `json:"socksPort"`
 	LogLevel      string         `json:"logLevel"`
+	GlobalProxy   bool           `json:"globalProxy"`
 	Subscriptions []Subscription `json:"subscriptions"`
 }
 

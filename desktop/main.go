@@ -207,10 +207,10 @@ func main() {
 			// Graceful shutdown
 			// Requirements: 5.4
 			log.Println("Shutting down...")
+			sseHub.Stop()
 			if err := proxyServer.Stop(); err != nil {
 				log.Printf("Error stopping proxy server: %v", err)
 			}
-			sseHub.Stop()
 			if err := store.Close(); err != nil {
 				log.Printf("Error closing storage: %v", err)
 			}

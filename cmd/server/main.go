@@ -222,6 +222,7 @@ func main() {
 shutdown:
 
 	// Graceful shutdown
+	sseHub.Stop()
 	if err := proxyServer.Stop(); err != nil {
 		log.Printf("Error during shutdown: %v", err)
 	}
