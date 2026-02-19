@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	codexShared "clisimplehub/internal/codex/shared"
+
 	"github.com/google/uuid"
 )
 
@@ -48,7 +49,6 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 }
 
 // ensureHeader sets header with priority: clientHeaders > targetHeaders > defaultValue
-// This matches CLIProxyAPIPlus's misc.EnsureHeader behavior
 func ensureHeader(targetHeaders http.Header, clientHeaders http.Header, key, defaultValue string) {
 	// Try to copy from client headers first (highest priority)
 	if clientHeaders != nil {

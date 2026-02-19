@@ -989,6 +989,7 @@ type EndpointInput struct {
 	Transformer    string                 `json:"transformer,omitempty"`
 	TransformerSet bool                   `json:"transformerSet,omitempty"`
 	ProxyURL       string                 `json:"proxyUrl,omitempty"`
+	ProxyURLSet    bool                   `json:"proxyUrlSet,omitempty"`
 	Models         []storage.ModelMapping `json:"models,omitempty"`
 	ModelsSet      bool                   `json:"modelsSet,omitempty"`
 	Routes         []string               `json:"routes,omitempty"`
@@ -1042,7 +1043,9 @@ func (a *App) SaveEndpointData(endpoint *EndpointInput) (*EndpointInfo, error) {
 		if !endpoint.TransformerSet && ep.Transformer == "" {
 			ep.Transformer = existing.Transformer
 		}
-		if ep.ProxyURL == "" {
+		// proxyUrl 支持显式清空：前端会发送 proxyUrlSet=true，
+		// 只有当旧客户端未发送该字段时才走“空值保留”逻辑，避免误清空。
+		if !endpoint.ProxyURLSet && ep.ProxyURL == "" {
 			ep.ProxyURL = existing.ProxyURL
 		}
 		if ep.Headers == nil {

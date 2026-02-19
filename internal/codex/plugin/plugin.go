@@ -15,8 +15,9 @@ func init() {
 
 type CodexPlugin struct {
 	desktopFacade
-	service *CodexService
-	mu      sync.RWMutex
+	service       *CodexService
+	codexJsonPath string
+	mu            sync.RWMutex
 }
 
 func (p *CodexPlugin) Name() string { return "codex-accounts" }
@@ -26,6 +27,7 @@ func (p *CodexPlugin) Init(cfg plugin.InitConfig) error {
 	_ = codex.InitPool(codexJsonPath) // non-fatal
 
 	p.mu.Lock()
+	p.codexJsonPath = codexJsonPath
 	p.service = NewCodexService()
 	p.mu.Unlock()
 
@@ -40,6 +42,8 @@ func (p *CodexPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 		return
 	}
 	r.HandleFunc("/codex/v1/responses", r.RequireAuth(svc.HandleResponses))
+	r.HandleFunc("/v0/management/codex-auth-url", r.RequireAuth(p.handleAuthURL))
+	r.HandleFunc("/v0/management/oauth-callback", r.RequireAuth(p.handleOAuthCallback))
 }
 
 func (p *CodexPlugin) Reload() error {

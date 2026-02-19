@@ -829,6 +829,7 @@ export async function saveEndpoint() {
         transformer: document.getElementById('endpointTransformer').value.trim(),
         transformerSet: true,
         proxyUrl: document.getElementById('endpointProxyUrl').value.trim(),
+        proxyUrlSet: true,
         providerName: document.getElementById('endpointVendor').value.trim(),
         models: models.length > 0 ? models : null,
         modelsSet: true,

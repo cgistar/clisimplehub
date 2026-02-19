@@ -56,7 +56,7 @@ func GeneratePKCECodes() (*PKCECodes, error) {
 	return &PKCECodes{CodeVerifier: verifier, CodeChallenge: challenge}, nil
 }
 
-func generateState() (string, error) {
+func GenerateState() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -70,7 +70,7 @@ func StartCodexLogin(ctx context.Context, proxyURL string) (*CodexLoginResult, e
 		return nil, fmt.Errorf("PKCE generation: %w", err)
 	}
 
-	state, err := generateState()
+	state, err := GenerateState()
 	if err != nil {
 		return nil, fmt.Errorf("state generation: %w", err)
 	}
@@ -86,7 +86,7 @@ func StartCodexLogin(ctx context.Context, proxyURL string) (*CodexLoginResult, e
 		_ = server.Shutdown(shutCtx)
 	}()
 
-	authURL := buildAuthURL(state, pkce)
+	authURL := BuildAuthURL(state, pkce)
 
 	// Return URL to caller; in desktop mode, the caller opens the browser
 	fmt.Printf("Open this URL to login:\n%s\n", authURL)
@@ -108,8 +108,7 @@ func StartCodexLogin(ctx context.Context, proxyURL string) (*CodexLoginResult, e
 		return nil, fmt.Errorf("state mismatch")
 	}
 
-	// Exchange code for tokens
-	return exchangeCodeForTokens(ctx, oauthResult.Code, pkce, proxyURL)
+	return ExchangeCodeForTokens(ctx, oauthResult.Code, pkce, proxyURL)
 }
 
 func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL string, waitFn func() (*CodexLoginResult, error), cleanup func(), err error) {
@@ -118,7 +117,7 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 		return "", nil, nil, fmt.Errorf("PKCE generation: %w", err)
 	}
 
-	state, err := generateState()
+	state, err := GenerateState()
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("state generation: %w", err)
 	}
@@ -135,7 +134,7 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 		_ = server.Shutdown(shutCtx)
 	}
 
-	authURL = buildAuthURL(state, pkce)
+	authURL = BuildAuthURL(state, pkce)
 
 	waitFn = func() (*CodexLoginResult, error) {
 		var oauthResult *OAuthResult
@@ -153,13 +152,13 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 		if oauthResult.State != state {
 			return nil, fmt.Errorf("state mismatch")
 		}
-		return exchangeCodeForTokens(ctx, oauthResult.Code, pkce, proxyURL)
+		return ExchangeCodeForTokens(ctx, oauthResult.Code, pkce, proxyURL)
 	}
 
 	return authURL, waitFn, cleanupFn, nil
 }
 
-func buildAuthURL(state string, pkce *PKCECodes) string {
+func BuildAuthURL(state string, pkce *PKCECodes) string {
 	params := url.Values{
 		"client_id":                  {ClientID},
 		"response_type":              {"code"},
@@ -175,7 +174,7 @@ func buildAuthURL(state string, pkce *PKCECodes) string {
 	return fmt.Sprintf("%s?%s", AuthURL, params.Encode())
 }
 
-func exchangeCodeForTokens(ctx context.Context, code string, pkce *PKCECodes, proxyURL string) (*CodexLoginResult, error) {
+func ExchangeCodeForTokens(ctx context.Context, code string, pkce *PKCECodes, proxyURL string) (*CodexLoginResult, error) {
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
 
 	data := url.Values{
