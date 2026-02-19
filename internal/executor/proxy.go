@@ -125,7 +125,13 @@ func buildProxyTransport(proxyURL string) *http.Transport {
 	case "socks5":
 		return buildSOCKS5Transport(parsedURL)
 	case "http", "https":
-		return &http.Transport{Proxy: http.ProxyURL(parsedURL)}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(parsedURL)
+		transport.DisableKeepAlives = false
+		transport.MaxIdleConns = 100
+		transport.MaxIdleConnsPerHost = 10
+		transport.IdleConnTimeout = 90 * time.Second
+		return transport
 	default:
 		logger.Warn("[Executor] unsupported proxy scheme: %s", parsedURL.Scheme)
 		return nil
@@ -147,11 +153,15 @@ func buildSOCKS5Transport(parsedURL *url.URL) *http.Transport {
 		return nil
 	}
 
-	return &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.Dial(network, addr)
-		},
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialer.Dial(network, addr)
 	}
+	transport.DisableKeepAlives = false
+	transport.MaxIdleConns = 100
+	transport.MaxIdleConnsPerHost = 10
+	transport.IdleConnTimeout = 90 * time.Second
+	return transport
 }
 
 // ApplyEndpointHeaders 应用端点配置的自定义 headers

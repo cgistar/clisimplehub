@@ -110,6 +110,10 @@ func buildProxyTransport(proxyURL string) *http.Transport {
 		return buildSOCKS5Transport(base, parsedURL)
 	case "http", "https":
 		base.Proxy = http.ProxyURL(parsedURL)
+		base.DisableKeepAlives = false
+		base.MaxIdleConns = 100
+		base.MaxIdleConnsPerHost = 10
+		base.IdleConnTimeout = 90 * time.Second
 		return base
 	default:
 		fmt.Fprintf(os.Stderr, "Warning: unsupported kiro proxy scheme: %s\n", parsedURL.Scheme)
@@ -140,5 +144,9 @@ func buildSOCKS5Transport(base *http.Transport, parsedURL *url.URL) *http.Transp
 	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return dialer.Dial(network, addr)
 	}
+	base.DisableKeepAlives = false
+	base.MaxIdleConns = 100
+	base.MaxIdleConnsPerHost = 10
+	base.IdleConnTimeout = 90 * time.Second
 	return base
 }
