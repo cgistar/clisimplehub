@@ -15,7 +15,7 @@ type StatsManager struct {
 	recentLogs []*RequestLog
 	tokenStats map[string]*TokenStats // keyed by endpoint name
 	mu         sync.RWMutex
-	wsHub      *WSHub          // WebSocket hub for broadcasting
+	sseHub     *SSEHub
 	storage    storage.Storage // Storage for vendor lookup
 }
 
@@ -27,11 +27,11 @@ func NewStatsManager() *StatsManager {
 	}
 }
 
-// SetWSHub sets the WebSocket hub for broadcasting
-func (s *StatsManager) SetWSHub(hub *WSHub) {
+// SetSSEHub sets the SSE hub for broadcasting.
+func (s *StatsManager) SetSSEHub(hub *SSEHub) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.wsHub = hub
+	s.sseHub = hub
 }
 
 // SetStorage sets the storage for persistence
@@ -78,13 +78,8 @@ func (s *StatsManager) RecordRequest(log *RequestLog) {
 	}
 
 broadcast:
-	// Broadcast via WebSocket
-	// Requirements: 7.1
-	if s.wsHub != nil {
-		s.wsHub.Broadcast(&WSMessage{
-			Type:    WSMessageTypeRequestLog,
-			Payload: log,
-		})
+	if s.sseHub != nil {
+		s.sseHub.BroadcastRequestLog(log)
 	}
 }
 
@@ -118,13 +113,8 @@ func (s *StatsManager) RecordTokens(endpointName string, tokens *TokenUsage) {
 	// Requirements: 8.3
 	stats.Total = stats.InputTokens + stats.CachedCreate + stats.CachedRead + stats.OutputTokens + stats.Reasoning
 
-	// Broadcast via WebSocket
-	// Requirements: 8.5
-	if s.wsHub != nil {
-		s.wsHub.Broadcast(&WSMessage{
-			Type:    WSMessageTypeTokenStats,
-			Payload: stats,
-		})
+	if s.sseHub != nil {
+		s.sseHub.BroadcastTokenStats(stats)
 	}
 }
 

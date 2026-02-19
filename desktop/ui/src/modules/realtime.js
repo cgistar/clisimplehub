@@ -1,21 +1,22 @@
 /**
- * Real-time request manager
- * Manages WebSocket connection and event distribution for live request updates
- * Inspired by cli_proxy's RealTimeManager pattern
+ * Real-time event manager using Server-Sent Events (SSE)
  */
 import { state } from './state.js';
+import { loadTokenStats } from './stats.js';
+import { loadEndpoints } from './endpoints.js';
+import { logInfo, logDebug } from './console.js';
+
+let tokenStatsRefreshTimer = null;
+let endpointsRefreshTimer = null;
+let endpointsRestoreTimer = null;
 
 class RealTimeManager {
     constructor() {
-        this.connection = null;
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 1000;
+        this.eventSource = null;
         this.listeners = new Set();
         this.isDestroyed = false;
-        this.heartbeatInterval = null;
         this.connectionStatus = false;
-        
+
         // Active requests map for real-time tracking
         this.activeRequests = new Map();
         this.maxActiveRequests = 50;
@@ -23,7 +24,7 @@ class RealTimeManager {
 
     /**
      * Add event listener
-     * @param {Function} callback Event callback function
+     * @param {Function} callback
      * @returns {Function} Unsubscribe function
      */
     addListener(callback) {
@@ -35,144 +36,156 @@ class RealTimeManager {
     }
 
     /**
-     * Connect to WebSocket server
+     * Connect to SSE endpoint
      */
     async connect() {
-        if (this.isDestroyed) {
-            console.warn('RealTimeManager is destroyed, cannot connect');
-            return;
-        }
+        if (this.isDestroyed) return;
+        if (this.eventSource) return;
 
-        if (this.connection && this.connection.readyState === WebSocket.OPEN) {
-            console.log('WebSocket already connected');
-            return;
-        }
-
-        // Get WebSocket URL from backend
-        let wsUrl;
+        let sseUrl;
         try {
-            if (window.go?.main?.App?.GetWebSocketURL) {
-                wsUrl = await window.go.main.App.GetWebSocketURL();
+            if (window.go?.main?.App?.GetSSEURL) {
+                sseUrl = await window.go.main.App.GetSSEURL();
             } else {
-                // Fallback to default
-                wsUrl = `ws://localhost:${state.settings.port || 5600}/ws`;
+                sseUrl = `http://localhost:${state.settings.port || 5600}/sse`;
             }
-        } catch (error) {
-            console.error('Failed to get WebSocket URL:', error);
-            wsUrl = `ws://localhost:5600/ws`;
+        } catch {
+            sseUrl = `http://localhost:5600/sse`;
         }
 
-        console.log(`Connecting to WebSocket: ${wsUrl}`);
+        console.log(`Connecting to SSE: ${sseUrl}`);
 
-        try {
-            this.connection = new WebSocket(wsUrl);
+        this.eventSource = new EventSource(sseUrl);
 
-            // Connection timeout
-            const connectTimeout = setTimeout(() => {
-                if (this.connection && this.connection.readyState === WebSocket.CONNECTING) {
-                    console.error('WebSocket connection timeout');
-                    this.connection.close();
-                    this.scheduleReconnect();
-                }
-            }, 5000);
+        this.eventSource.onopen = () => {
+            console.log('SSE connected');
+            this.connectionStatus = true;
+            logInfo(`SSE connected to ${sseUrl}`);
+            this.notifyListeners({ type: 'connection', status: 'connected' });
+        };
 
-            this.connection.onopen = () => {
-                clearTimeout(connectTimeout);
-                console.log('WebSocket connected');
-                this.connectionStatus = true;
-                this.reconnectAttempts = 0;
-                this.startHeartbeat();
-                this.notifyListeners({ type: 'connection', status: 'connected' });
-            };
-
-            this.connection.onmessage = (event) => {
-                this.handleMessage(event);
-            };
-
-            this.connection.onclose = (event) => {
-                clearTimeout(connectTimeout);
-                console.log('WebSocket disconnected', event.code, event.reason);
+        this.eventSource.onerror = () => {
+            // EventSource auto-reconnects; just update status
+            if (this.connectionStatus) {
+                console.log('SSE disconnected, auto-reconnecting...');
+                logInfo('SSE disconnected, auto-reconnecting...');
                 this.connectionStatus = false;
-                this.stopHeartbeat();
-                this.notifyListeners({ 
-                    type: 'connection', 
-                    status: 'disconnected',
-                    code: event.code,
-                    reason: event.reason
-                });
-
-                if (!this.isDestroyed && event.code !== 1000) {
-                    this.scheduleReconnect();
-                }
-            };
-
-            this.connection.onerror = (error) => {
-                clearTimeout(connectTimeout);
-                console.error('WebSocket error:', error);
-                this.notifyListeners({ type: 'connection', status: 'error', error });
-            };
-
-        } catch (error) {
-            console.error('Failed to create WebSocket connection:', error);
-            this.scheduleReconnect();
-        }
-    }
-
-    /**
-     * Handle incoming WebSocket message
-     */
-    handleMessage(event) {
-        try {
-            // Handle multiple messages separated by newlines
-            const messages = event.data.split('\n').filter(m => m.trim());
-            
-            for (const msgStr of messages) {
-                const message = JSON.parse(msgStr);
-                
-                // Skip ping messages
-                if (message.type === 'ping') {
-                    return;
-                }
-
-                // Process request_log messages
-                if (message.type === 'request_log' && message.payload) {
-                    this.processRequestLog(message.payload);
-                }
-
-                // Process token_stats messages
-                if (message.type === 'token_stats' && message.payload) {
-                    this.notifyListeners({
-                        type: 'token_stats',
-                        data: message.payload
-                    });
-                }
-
-                // Process debug_log messages (backend debug logs for UI console)
-                if (message.type === 'debug_log' && message.payload) {
-                    this.notifyListeners({
-                        type: 'debug_log',
-                        data: message.payload
-                    });
-                }
+                this.notifyListeners({ type: 'connection', status: 'disconnected' });
             }
-        } catch (error) {
-            console.error('Failed to parse WebSocket message:', error, event.data);
-        }
+        };
+
+        // Named event listeners — no JSON envelope parsing needed
+        this.eventSource.addEventListener('request_log', (e) => {
+            try {
+                const log = JSON.parse(e.data);
+                this.processRequestLog(log);
+            } catch (err) {
+                console.error('Failed to parse request_log:', err);
+            }
+        });
+
+        this.eventSource.addEventListener('token_stats', (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                this.notifyListeners({ type: 'token_stats', data });
+                this.debouncedRefreshTokenStats();
+            } catch (err) {
+                console.error('Failed to parse token_stats:', err);
+            }
+        });
+
+        this.eventSource.addEventListener('debug_log', (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                this.notifyListeners({ type: 'debug_log', data });
+            } catch (err) {
+                console.error('Failed to parse debug_log:', err);
+            }
+        });
+
+        this.eventSource.addEventListener('fallback_switch', (e) => {
+            try {
+                const payload = JSON.parse(e.data);
+                this.handleFallbackSwitch(payload);
+            } catch (err) {
+                console.error('Failed to parse fallback_switch:', err);
+            }
+        });
+
+        this.eventSource.addEventListener('endpoint_temp_disabled', (e) => {
+            try {
+                const payload = JSON.parse(e.data);
+                this.handleEndpointTempDisabled(payload);
+            } catch (err) {
+                console.error('Failed to parse endpoint_temp_disabled:', err);
+            }
+        });
     }
 
-    /**
-     * Process request log update
-     */
+    debouncedRefreshTokenStats() {
+        if (tokenStatsRefreshTimer) return;
+        tokenStatsRefreshTimer = setTimeout(async () => {
+            tokenStatsRefreshTimer = null;
+            try {
+                await loadTokenStats();
+            } catch (e) {
+                logDebug(`Failed to refresh token stats: ${e?.message || e}`);
+            }
+        }, 500);
+    }
+
+    handleFallbackSwitch(payload) {
+        if (!payload) return;
+        const { fromEndpoint, toEndpoint, path, statusCode, errorMessage } = payload;
+        const failureInfo = statusCode > 0
+            ? `状态码: ${statusCode}`
+            : (errorMessage || '请求失败');
+        logInfo(`请求失败: ${fromEndpoint}, 路径: ${path}, ${failureInfo}`);
+        logInfo(`当前端点故障，转到 ${toEndpoint}`);
+    }
+
+    handleEndpointTempDisabled(payload) {
+        if (!payload) return;
+        const { interfaceType, endpointName, disabledUntil } = payload;
+        if (interfaceType && endpointName && disabledUntil) {
+            const until = new Date(disabledUntil);
+            logInfo(`端点临时禁用: ${interfaceType}-${endpointName}，恢复时间: ${until.toLocaleTimeString()}`);
+        }
+
+        if (interfaceType && interfaceType !== state.currentTab) return;
+
+        this.refreshCurrentTabEndpointsDebounced();
+
+        if (endpointsRestoreTimer) {
+            clearTimeout(endpointsRestoreTimer);
+            endpointsRestoreTimer = null;
+        }
+        const delayMs = Math.max(0, (disabledUntil || 0) - Date.now() + 1000);
+        endpointsRestoreTimer = setTimeout(() => {
+            this.refreshCurrentTabEndpointsDebounced();
+            endpointsRestoreTimer = null;
+        }, delayMs);
+    }
+
+    refreshCurrentTabEndpointsDebounced() {
+        if (endpointsRefreshTimer) return;
+        endpointsRefreshTimer = setTimeout(async () => {
+            endpointsRefreshTimer = null;
+            try {
+                await loadEndpoints(state.currentTab);
+            } catch (e) {
+                logDebug(`Failed to refresh endpoints: ${e?.message || e}`);
+            }
+        }, 200);
+    }
+
     processRequestLog(log) {
         if (!log || !log.id) return;
 
         const requestId = log.id;
         const existingRequest = this.activeRequests.get(requestId);
-
-        // Determine request status
         const status = this.determineStatus(log);
-        
-        // Build request object
+
         const request = {
             request_id: requestId,
             interfaceType: log.interfaceType || '',
@@ -190,18 +203,13 @@ class RealTimeManager {
             requestHeaders: log.requestHeaders || {},
             requestStream: log.requestStream || '',
             responseStream: log.responseStream || '',
-            // Computed display values
             displayDuration: log.runTime || 0,
             startTime: existingRequest?.startTime || new Date().toISOString()
         };
 
-        // Update or add to active requests
         this.activeRequests.set(requestId, request);
-
-        // Cleanup old requests if needed
         this.cleanupOldRequests();
 
-        // Determine event type
         let eventType = 'progress';
         if (!existingRequest) {
             eventType = 'started';
@@ -209,116 +217,29 @@ class RealTimeManager {
             eventType = status === 'COMPLETED' ? 'completed' : 'failed';
         }
 
-        // Notify listeners
-        this.notifyListeners({
-            type: eventType,
-            request_id: requestId,
-            data: request
-        });
+        this.notifyListeners({ type: eventType, request_id: requestId, data: request });
 
-        // Immediately remove completed requests from active map
-        // They will be shown in the logs list instead
         if (status === 'COMPLETED' || status === 'FAILED') {
             this.activeRequests.delete(requestId);
-            this.notifyListeners({
-                type: 'removed',
-                request_id: requestId
-            });
+            this.notifyListeners({ type: 'removed', request_id: requestId });
         }
     }
 
-    /**
-     * Determine request status from log
-     */
     determineStatus(log) {
-        if (log.status === 'in_progress') {
-            return 'PENDING';
-        }
-        if (log.status === 'success' || log.statusCode === 200) {
-            return 'COMPLETED';
-        }
-        if (log.status === 'canceled') {
-            return 'FAILED';
-        }
-        if (log.status && log.status.startsWith('error')) {
-            return 'FAILED';
-        }
+        if (log.status === 'in_progress') return 'PENDING';
+        if (log.status === 'success' || log.statusCode === 200) return 'COMPLETED';
+        if (log.status === 'canceled') return 'FAILED';
+        if (log.status && log.status.startsWith('error')) return 'FAILED';
         return 'PENDING';
     }
 
-    /**
-     * Cleanup old requests to prevent memory bloat
-     */
     cleanupOldRequests() {
         if (this.activeRequests.size <= this.maxActiveRequests) return;
-
-        // Sort by timestamp and remove oldest
         const sorted = Array.from(this.activeRequests.entries())
             .sort((a, b) => new Date(b[1].startTime) - new Date(a[1].startTime));
-
-        const toRemove = sorted.slice(this.maxActiveRequests);
-        toRemove.forEach(([id]) => this.activeRequests.delete(id));
+        sorted.slice(this.maxActiveRequests).forEach(([id]) => this.activeRequests.delete(id));
     }
 
-    /**
-     * Start heartbeat to keep connection alive
-     */
-    startHeartbeat() {
-        this.stopHeartbeat();
-        this.heartbeatInterval = setInterval(() => {
-            if (this.connection && this.connection.readyState === WebSocket.OPEN) {
-                try {
-                    this.connection.send('{"type":"ping"}');
-                } catch (error) {
-                    console.error('Heartbeat failed:', error);
-                    this.stopHeartbeat();
-                }
-            }
-        }, 30000);
-    }
-
-    /**
-     * Stop heartbeat
-     */
-    stopHeartbeat() {
-        if (this.heartbeatInterval) {
-            clearInterval(this.heartbeatInterval);
-            this.heartbeatInterval = null;
-        }
-    }
-
-    /**
-     * Schedule reconnection with exponential backoff
-     */
-    scheduleReconnect() {
-        if (this.isDestroyed) return;
-
-        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            console.error(`Max reconnect attempts (${this.maxReconnectAttempts}) reached`);
-            return;
-        }
-
-        // Fast reconnect for first 3 attempts, then exponential backoff
-        let delay;
-        if (this.reconnectAttempts < 3) {
-            delay = 2000;
-        } else {
-            delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 3);
-        }
-
-        this.reconnectAttempts++;
-        console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-
-        setTimeout(() => {
-            if (!this.isDestroyed) {
-                this.connect();
-            }
-        }, delay);
-    }
-
-    /**
-     * Notify all listeners
-     */
     notifyListeners(event) {
         this.listeners.forEach(listener => {
             try {
@@ -329,63 +250,51 @@ class RealTimeManager {
         });
     }
 
-    /**
-     * Get connection status
-     */
     isConnected() {
         return this.connectionStatus;
     }
 
-    /**
-     * Get all active requests
-     */
     getActiveRequests() {
         return Array.from(this.activeRequests.values())
             .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
     }
 
-    /**
-     * Manual reconnect
-     */
     reconnect() {
-        if (this.connection) {
-            this.connection.close();
-        }
-        this.reconnectAttempts = 0;
+        this.disconnect();
         this.connect();
     }
 
-    /**
-     * Disconnect
-     */
     disconnect() {
-        if (this.connection) {
-            this.connection.close(1000, 'User disconnect');
+        if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
         }
-        this.stopHeartbeat();
+        if (tokenStatsRefreshTimer) {
+            clearTimeout(tokenStatsRefreshTimer);
+            tokenStatsRefreshTimer = null;
+        }
+        if (endpointsRefreshTimer) {
+            clearTimeout(endpointsRefreshTimer);
+            endpointsRefreshTimer = null;
+        }
+        if (endpointsRestoreTimer) {
+            clearTimeout(endpointsRestoreTimer);
+            endpointsRestoreTimer = null;
+        }
         this.connectionStatus = false;
     }
 
-    /**
-     * Destroy manager
-     */
     destroy() {
-        console.log('Destroying RealTimeManager...');
         this.isDestroyed = true;
         this.disconnect();
         this.listeners.clear();
         this.activeRequests.clear();
-        console.log('RealTimeManager destroyed');
     }
 
-    /**
-     * Get manager status
-     */
     getStatus() {
         return {
             isDestroyed: this.isDestroyed,
             connected: this.connectionStatus,
-            reconnectAttempts: this.reconnectAttempts,
             activeRequests: this.activeRequests.size,
             listeners: this.listeners.size
         };
@@ -395,9 +304,6 @@ class RealTimeManager {
 // Singleton instance
 let realtimeManager = null;
 
-/**
- * Get or create RealTimeManager instance
- */
 export function getRealTimeManager() {
     if (!realtimeManager) {
         realtimeManager = new RealTimeManager();
@@ -405,18 +311,12 @@ export function getRealTimeManager() {
     return realtimeManager;
 }
 
-/**
- * Initialize real-time connection
- */
 export async function initRealTime() {
     const manager = getRealTimeManager();
     await manager.connect();
     return manager;
 }
 
-/**
- * Cleanup real-time manager
- */
 export function cleanupRealTime() {
     if (realtimeManager) {
         realtimeManager.destroy();

@@ -19,7 +19,6 @@ export const state = {
         debugMode: ''
     },
     language: 'en',
-    wsConnection: null,
     // Manage modal state
     vendors: [],
     selectedVendor: null,

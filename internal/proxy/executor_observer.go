@@ -7,17 +7,15 @@ import (
 	"clisimplehub/internal/executor"
 )
 
-// proxyExecutionObserver 负责把执行器侧的事件转为 WebSocket 广播（解耦 server.go）。
+// proxyExecutionObserver 负责把执行器侧的事件转为 SSE 广播（解耦 server.go）。
 type proxyExecutionObserver struct {
 	server *ProxyServer
 }
 
 func (o *proxyExecutionObserver) OnRequestStart(requestID string, interfaceType string, endpoint *executor.EndpointConfig, path string) {
-	// 请求日志由 proxy handler 统一记录，这里保持空实现。
 }
 
 func (o *proxyExecutionObserver) OnRequestComplete(requestID string, interfaceType string, endpoint *executor.EndpointConfig, result *executor.ForwardResult, duration time.Duration) {
-	// 请求日志由 proxy handler 统一记录，这里保持空实现。
 }
 
 func (o *proxyExecutionObserver) OnEndpointSwitch(from, to *executor.EndpointConfig, path string, statusCode int, errorMsg string) {
@@ -39,12 +37,10 @@ func (o *proxyExecutionObserver) OnDebugLog(requestID string, level int, message
 		return
 	}
 
-	// 输出到控制台（无头模式）
 	logDebugToConsole(requestID, level, message)
 
-	// 广播到 WebSocket（GUI模式）
-	if o.server.wsHub != nil {
-		o.server.wsHub.BroadcastDebugLog(&DebugLogPayload{
+	if o.server.sseHub != nil {
+		o.server.sseHub.BroadcastDebugLog(&DebugLogPayload{
 			RequestID: strings.TrimSpace(requestID),
 			Level:     level,
 			Message:   strings.TrimSpace(message),

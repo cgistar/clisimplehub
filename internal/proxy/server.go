@@ -24,7 +24,7 @@ type ProxyServer struct {
 	router     Router
 	server     *http.Server
 	stats      *StatsManager
-	wsHub      *WSHub
+	sseHub     *SSEHub
 	mu         sync.RWMutex
 	authKey    string
 	store      storage.Storage
@@ -46,29 +46,27 @@ func NewProxyServer(port int, router Router) *ProxyServer {
 	}
 }
 
-// NewProxyServerWithWSHub creates a new ProxyServer with WebSocket hub integration
-// Requirements: 7.1, 8.5
-func NewProxyServerWithWSHub(port int, router Router, wsHub *WSHub) *ProxyServer {
+// NewProxyServerWithSSEHub creates a new ProxyServer with SSE hub integration.
+func NewProxyServerWithSSEHub(port int, router Router, sseHub *SSEHub) *ProxyServer {
 	stats := NewStatsManager()
-	stats.SetWSHub(wsHub)
+	stats.SetSSEHub(sseHub)
 
 	return &ProxyServer{
 		port:       port,
 		listenAddr: "0.0.0.0",
 		router:     router,
 		stats:      stats,
-		wsHub:      wsHub,
+		sseHub:     sseHub,
 	}
 }
 
-// SetWSHub sets the WebSocket hub for real-time updates
-// Requirements: 7.1, 8.5
-func (p *ProxyServer) SetWSHub(hub *WSHub) {
+// SetSSEHub sets the SSE hub for real-time updates.
+func (p *ProxyServer) SetSSEHub(hub *SSEHub) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.wsHub = hub
+	p.sseHub = hub
 	if p.stats != nil {
-		p.stats.SetWSHub(hub)
+		p.stats.SetSSEHub(hub)
 	}
 }
 
@@ -88,12 +86,11 @@ func (p *ProxyServer) SetUsageStatsStore(store statsdb.UsageStatsStore) {
 	p.usageStats = store
 }
 
-// GetWSHub returns the WebSocket hub
-// Requirements: 7.1, 8.5
-func (p *ProxyServer) GetWSHub() *WSHub {
+// GetSSEHub returns the SSE hub.
+func (p *ProxyServer) GetSSEHub() *SSEHub {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return p.wsHub
+	return p.sseHub
 }
 
 // Start starts the proxy server
@@ -118,8 +115,8 @@ func (p *ProxyServer) Start() error {
 		pl.RegisterRoutes(registrar)
 	}
 
-	if p.wsHub != nil {
-		mux.HandleFunc("/ws", p.wsHub.HandleWebSocket)
+	if p.sseHub != nil {
+		mux.HandleFunc("/sse", p.sseHub.HandleSSE)
 	}
 
 	// Get listen address (default to 0.0.0.0 if not set)

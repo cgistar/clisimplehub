@@ -131,14 +131,12 @@ func main() {
 	proxyEndpoints := convertEndpoints(endpoints)
 	router.LoadEndpoints(proxyEndpoints)
 
-	// Initialize WebSocket hub for real-time updates
-	// Requirements: 7.1, 8.5
-	wsHub := proxy.NewWSHub()
-	go wsHub.Run()
+	// Initialize SSE hub for real-time updates
+	sseHub := proxy.NewSSEHub()
+	go sseHub.Run()
 
-	// Initialize proxy server with WebSocket hub
-	// Requirements: 1.1, 5.1, 7.1, 8.5
-	proxyServer := proxy.NewProxyServerWithWSHub(port, router, wsHub)
+	// Initialize proxy server with SSE hub
+	proxyServer := proxy.NewProxyServerWithSSEHub(port, router, sseHub)
 	proxyServer.SetListenAddr(listenAddr)
 	proxyServer.SetStorage(store)
 	proxyServer.SetUsageStatsStore(usageStatsStore)
@@ -179,7 +177,7 @@ func main() {
 	app.SetStorage(store)
 	app.SetProxyServer(proxyServer)
 	app.SetRouter(router)
-	app.SetWSHub(wsHub)
+	app.SetSSEHub(sseHub)
 	app.SetConfigLoader(configLoader)
 	if sqliteStore, ok := usageStatsStore.(*statsdb.SQLiteUsageStatsStore); ok {
 		app.SetUsageStats(sqliteStore)
@@ -212,7 +210,7 @@ func main() {
 			if err := proxyServer.Stop(); err != nil {
 				log.Printf("Error stopping proxy server: %v", err)
 			}
-			wsHub.Stop()
+			sseHub.Stop()
 			if err := store.Close(); err != nil {
 				log.Printf("Error closing storage: %v", err)
 			}

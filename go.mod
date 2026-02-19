@@ -4,7 +4,6 @@ go 1.25.7
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/wailsapp/wails/v2 v2.11.0
 	github.com/xtls/xray-core v1.260206.0
 	golang.org/x/net v0.50.0
@@ -22,6 +21,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/btree v1.1.2 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/juju/ratelimit v1.0.2 // indirect
 	github.com/klauspost/compress v1.17.4 // indirect

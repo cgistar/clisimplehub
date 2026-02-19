@@ -70,7 +70,7 @@ type App struct {
 	storage      storage.Storage
 	proxyServer  *proxy.ProxyServer
 	router       *proxy.DefaultRouter
-	wsHub        *proxy.WSHub
+	sseHub       *proxy.SSEHub
 	configLoader *config.ConfigLoader
 	usageStats   *statsdb.SQLiteUsageStatsStore
 
@@ -109,9 +109,9 @@ func (a *App) SetRouter(r *proxy.DefaultRouter) {
 	a.router = r
 }
 
-// SetWSHub sets the WebSocket hub instance for the app
-func (a *App) SetWSHub(hub *proxy.WSHub) {
-	a.wsHub = hub
+// SetSSEHub sets the SSE hub instance for the app
+func (a *App) SetSSEHub(hub *proxy.SSEHub) {
+	a.sseHub = hub
 }
 
 // SetUsageStats sets the usage stats store instance for the app
@@ -1165,13 +1165,13 @@ func (a *App) SetLanguage(lang string) error {
 	return a.storage.SetConfig("language", lang)
 }
 
-// GetWebSocketURL returns the WebSocket URL for real-time updates
-func (a *App) GetWebSocketURL() string {
+// GetSSEURL returns the SSE URL for real-time updates
+func (a *App) GetSSEURL() string {
 	port := 5600
 	if a.proxyServer != nil {
 		port = a.proxyServer.GetPort()
 	}
-	return fmt.Sprintf("ws://localhost:%d/ws", port)
+	return fmt.Sprintf("http://localhost:%d/sse", port)
 }
 
 // =============================================================================

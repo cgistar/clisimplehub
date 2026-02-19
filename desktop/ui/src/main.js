@@ -12,8 +12,7 @@ import { loadLanguage, changeLanguage, loadSettings, showSettingsModal, closeSet
 import { switchTab, loadEndpoints, setActiveEndpoint, setActiveEndpointById, toggleEndpointEnabled, initEndpointsRealtimeUpdates, cleanupEndpointsRealtimeUpdates, pingSingleEndpoint, pingAllEndpoints, applyEndpointToConfig } from './modules/endpoints.js';
 import { loadRecentLogs, showLogDetail, closeLogDetailModal, initLogs, toggleRealtimeConnection } from './modules/logs.js';
 import { loadTokenStats, showStatsModal, closeStatsModal, setStatsTimeRange, refreshStats, clearStatsData } from './modules/stats.js';
-import { connectWebSocket } from './modules/websocket.js';
-import { initRealTime, cleanupRealTime } from './modules/realtime.js';
+import { initRealTime, getRealTimeManager, cleanupRealTime } from './modules/realtime.js';
 import {
     showManageModal,
     closeManageModal,
@@ -136,10 +135,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadRecentLogs();
     await loadTokenStats();
     
-    // Connect WebSocket for real-time updates
-    connectWebSocket();
-    
-    // Initialize real-time request manager
+    // Initialize real-time SSE connection (replaces both WebSocket connections)
     await initRealTime();
     initLogs();
     initEndpointsRealtimeUpdates();
@@ -147,9 +143,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize console
     initConsole();
     
-    // Set up periodic refresh as fallback
+    // Set up periodic refresh as fallback when SSE is disconnected
     setInterval(async () => {
-        if (state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) return;
+        if (getRealTimeManager().isConnected()) return;
         await loadRecentLogs();
         await loadTokenStats();
     }, 5000);

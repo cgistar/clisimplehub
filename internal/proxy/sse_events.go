@@ -25,7 +25,7 @@ func (p *ProxyServer) getVendorNameByID(vendorID int64) string {
 }
 
 func (p *ProxyServer) broadcastFallbackSwitch(fromEndpoint, toEndpoint *executor.EndpointConfig, path string, statusCode int, errorMsg string) {
-	if p == nil || p.wsHub == nil || !p.IsFallbackEnabled() {
+	if p == nil || p.sseHub == nil || !p.IsFallbackEnabled() {
 		return
 	}
 
@@ -43,15 +43,15 @@ func (p *ProxyServer) broadcastFallbackSwitch(fromEndpoint, toEndpoint *executor
 		payload.ToEndpoint = toEndpoint.Name
 	}
 
-	p.wsHub.BroadcastFallbackSwitch(payload)
+	p.sseHub.BroadcastFallbackSwitch(payload)
 }
 
 func (p *ProxyServer) broadcastEndpointTempDisabled(interfaceType string, endpoint *executor.EndpointConfig, disabledUntil time.Time) {
-	if p == nil || p.wsHub == nil || endpoint == nil || disabledUntil.IsZero() {
+	if p == nil || p.sseHub == nil || endpoint == nil || disabledUntil.IsZero() {
 		return
 	}
 
-	p.wsHub.BroadcastEndpointTempDisabled(&EndpointTempDisabledPayload{
+	p.sseHub.BroadcastEndpointTempDisabled(&EndpointTempDisabledPayload{
 		InterfaceType: strings.TrimSpace(interfaceType),
 		EndpointID:    endpoint.ID,
 		EndpointName:  endpoint.Name,

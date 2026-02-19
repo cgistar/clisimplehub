@@ -125,15 +125,13 @@ func main() {
 	proxyEndpoints := convertEndpoints(endpoints)
 	router.LoadEndpoints(proxyEndpoints)
 
-	// Initialize WebSocket hub for real-time updates
-	// Requirements: 7.1, 8.5
-	wsHub := proxy.NewWSHub()
-	go wsHub.Run()
-	defer wsHub.Stop()
+	// Initialize SSE hub for real-time updates
+	sseHub := proxy.NewSSEHub()
+	go sseHub.Run()
+	defer sseHub.Stop()
 
 	// Initialize proxy server
-	// Requirements: 5.1
-	proxyServer := proxy.NewProxyServerWithWSHub(port, router, wsHub)
+	proxyServer := proxy.NewProxyServerWithSSEHub(port, router, sseHub)
 	proxyServer.SetListenAddr(listenAddr)
 	proxyServer.SetStorage(store)
 	proxyServer.SetUsageStatsStore(usageStatsStore)
