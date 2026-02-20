@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,6 +37,12 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 		}
 		// Continue with original body if processing fails
 		processedBody = body
+	}
+	if rewrittenBody, rewritten := applyResolvedModelToBody(processedBody, model); rewritten {
+		processedBody = rewrittenBody
+		if debugLogger != nil {
+			debugLogger.Log("应用模型映射/覆盖: upstreamModel=%q", strings.TrimSpace(model))
+		}
 	}
 
 	pool := codex.GetPool()
@@ -518,4 +525,28 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 		TargetURL:      upstreamURL,
 		Error:          streamErr,
 	}
+}
+
+func applyResolvedModelToBody(body []byte, resolvedModel string) ([]byte, bool) {
+	resolvedModel = strings.TrimSpace(resolvedModel)
+	if resolvedModel == "" {
+		return body, false
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, false
+	}
+
+	currentModel, _ := payload["model"].(string)
+	if strings.EqualFold(strings.TrimSpace(currentModel), resolvedModel) {
+		return body, false
+	}
+
+	payload["model"] = resolvedModel
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return body, false
+	}
+	return updated, true
 }
