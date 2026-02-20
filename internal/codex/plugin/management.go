@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -25,21 +24,20 @@ type oauthSession struct {
 }
 
 var (
-	oauthSessions   = make(map[string]*oauthSession)
+	oauthSessions  = make(map[string]*oauthSession)
 	oauthSessionsMu sync.Mutex
 	sessionTTL      = 10 * time.Minute
 
-	webUILoginMu      sync.Mutex
-	webUILoginCancel   context.CancelFunc
-	webUILoginCleanup  func()
-	webUILoginGen      uint64
-	saveAccountMu      sync.Mutex
+	webUILoginMu     sync.Mutex
+	webUILoginCancel  context.CancelFunc
+	webUILoginCleanup func()
+	webUILoginGen     uint64
+	saveAccountMu     sync.Mutex
 )
 
 func storeSession(state string, s *oauthSession) {
 	oauthSessionsMu.Lock()
 	defer oauthSessionsMu.Unlock()
-	// Purge expired entries
 	now := time.Now()
 	for k, v := range oauthSessions {
 		if now.Sub(v.CreatedAt) > sessionTTL {
@@ -63,7 +61,6 @@ func popSession(state string) *oauthSession {
 	return s
 }
 
-// GET /codex-auth-url
 func (p *CodexPlugin) handleAuthURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -129,7 +126,6 @@ func (p *CodexPlugin) handleAuthURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Basic mode: generate PKCE + state, store session for /codex/oauth-callback
 	pkce, err := codexAuth.GeneratePKCECodes()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "PKCE generation failed"})
@@ -156,7 +152,6 @@ func (p *CodexPlugin) handleAuthURL(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /codex/oauth-callback
 func (p *CodexPlugin) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -177,7 +172,6 @@ func (p *CodexPlugin) handleOAuthCallback(w http.ResponseWriter, r *http.Request
 	code := body.Code
 	state := body.State
 
-	// Extract code/state from redirect_url if provided (CLIProxyAPIPlus compat)
 	if body.RedirectURL != "" {
 		if u, err := url.Parse(body.RedirectURL); err == nil {
 			if c := u.Query().Get("code"); c != "" {
@@ -233,35 +227,41 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 		return fmt.Errorf("accountId is required from OAuth login")
 	}
 
+	store := p.GetAccountStore()
+	if store == nil {
+		return fmt.Errorf("account store not initialized")
+	}
+
 	p.mu.RLock()
 	codexJsonPath := p.codexJsonPath
 	p.mu.RUnlock()
 
-	mc, err := codexShared.LoadCodexMultiConfig(codexJsonPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("load config: %w", err)
+	ctx := context.Background()
+	existing, _ := store.GetByID(ctx, result.AccountID)
+
+	var expiresAt time.Time
+	if result.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
+			expiresAt = t
 		}
-		mc = &codexShared.CodexMultiConfig{}
 	}
 
-	existingAccount := mc.FindAccountByAccountID(result.AccountID)
-	if existingAccount != nil {
-		existingAccount.RefreshToken = result.RefreshToken
-		existingAccount.AccessToken = result.AccessToken
-		existingAccount.IDToken = result.IDToken
-		existingAccount.Email = result.Email
-		existingAccount.PlanType = result.PlanType
-		existingAccount.Status = codexShared.CodexStatusValid
-		existingAccount.UpdatedAt = time.Now()
-		if result.ExpiresAt != "" {
-			if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
-				existingAccount.ExpiresAt = t
-			}
+	if existing != nil {
+		existing.RefreshToken = result.RefreshToken
+		existing.AccessToken = result.AccessToken
+		existing.IDToken = result.IDToken
+		existing.Email = result.Email
+		existing.PlanType = result.PlanType
+		existing.Status = codexShared.CodexStatusValid
+		existing.ExpiresAt = expiresAt
+		existing.CooldownUntil = time.Time{}
+		existing.CooldownReason = ""
+		if err := store.Update(ctx, existing); err != nil {
+			return fmt.Errorf("update account: %w", err)
 		}
 	} else {
 		now := time.Now()
-		account := codexShared.CodexAccount{
+		account := &codexShared.CodexAccount{
 			RefreshToken: result.RefreshToken,
 			AccessToken:  result.AccessToken,
 			IDToken:      result.IDToken,
@@ -269,33 +269,31 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 			Email:        result.Email,
 			PlanType:     result.PlanType,
 			Status:       codexShared.CodexStatusValid,
+			ExpiresAt:    expiresAt,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
-		if result.ExpiresAt != "" {
-			if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
-				account.ExpiresAt = t
-			}
+		if err := store.Insert(ctx, account); err != nil {
+			return fmt.Errorf("insert account: %w", err)
 		}
-		mc.Accounts = append(mc.Accounts, account)
 	}
 
+	// Update active in codex.json if needed
+	mc, _ := codexShared.LoadCodexMultiConfig(codexJsonPath)
+	if mc == nil {
+		mc = &codexShared.CodexMultiConfig{}
+	}
 	if mc.ActiveAccountID == "" {
 		mc.ActiveAccountID = result.AccountID
-		mc.ActiveRefreshToken = result.RefreshToken
+		_ = codexShared.SaveCodexMultiConfig(codexJsonPath, mc)
 	}
 
 	if svc := p.GetService(); svc != nil {
-		if err := svc.SaveConfigAndEnsureEndpoint(codexJsonPath, mc); err != nil {
-			return fmt.Errorf("save config: %w", err)
-		}
-	} else {
-		if err := codexShared.SaveCodexMultiConfig(codexJsonPath, mc); err != nil {
-			return fmt.Errorf("save config: %w", err)
-		}
-		if pool := codex.GetPool(); pool != nil {
-			pool.Reload()
-		}
+		svc.ensureCodexEndpoint()
+	}
+
+	if pool := codex.GetPool(); pool != nil {
+		pool.Reload()
 	}
 
 	return nil

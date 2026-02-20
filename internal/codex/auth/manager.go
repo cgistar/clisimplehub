@@ -33,11 +33,11 @@ type CodexAuthManager struct {
 	planType     string
 	expiresAt    time.Time
 	proxyURL     string
-	configPath   string
+	store        codexShared.CodexAccountStore
 	mu           sync.Mutex
 }
 
-func NewCodexAuthManager(account *codexShared.CodexAccount, configPath string) *CodexAuthManager {
+func NewCodexAuthManager(account *codexShared.CodexAccount, store codexShared.CodexAccountStore) *CodexAuthManager {
 	m := &CodexAuthManager{
 		refreshToken: account.RefreshToken,
 		accessToken:  account.AccessToken,
@@ -47,7 +47,7 @@ func NewCodexAuthManager(account *codexShared.CodexAccount, configPath string) *
 		planType:     account.PlanType,
 		expiresAt:    account.ExpiresAt,
 		proxyURL:     account.ProxyUrl,
-		configPath:   configPath,
+		store:        store,
 	}
 	return m
 }
@@ -88,13 +88,10 @@ func (m *CodexAuthManager) resolveProxyURL() string {
 }
 
 func (m *CodexAuthManager) refreshTokenLocked() error {
-	// If refreshToken is empty, this is a temporary account with only accessToken
-	// Skip refresh and use existing accessToken
 	if m.refreshToken == "" {
 		if m.accessToken == "" {
 			return fmt.Errorf("neither refresh token nor access token is set")
 		}
-		// Temporary account: cannot refresh, just use existing token
 		return nil
 	}
 
@@ -145,7 +142,9 @@ func (m *CodexAuthManager) refreshTokenLocked() error {
 
 		bodyStr := strings.TrimSpace(string(body))
 		if resp.StatusCode == http.StatusUnauthorized && strings.Contains(bodyStr, "refresh_token_reused") {
-			_ = codexShared.UpdateAccountStatusByRefreshToken(m.refreshToken, codexShared.CodexStatusReused, m.configPath)
+			if m.store != nil {
+				_ = m.store.UpdateStatus(context.Background(), m.accountID, codexShared.CodexStatusReused)
+			}
 		}
 
 		return fmt.Errorf("token refresh failed (HTTP %d): %s", resp.StatusCode, bodyStr)
@@ -196,20 +195,16 @@ func (m *CodexAuthManager) handleRefreshResponse(body []byte) error {
 	}
 	m.expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
 
-	m.persistToConfig()
+	m.persistToStore()
 	return nil
 }
 
-func (m *CodexAuthManager) persistToConfig() {
-	if strings.TrimSpace(m.configPath) == "" {
+func (m *CodexAuthManager) persistToStore() {
+	if m.store == nil || m.accountID == "" {
 		return
 	}
-	_ = codexShared.SyncTokenToCodexJson(
-		m.configPath, m.refreshToken,
-		m.accessToken, m.idToken,
-		m.accountID, m.email, m.planType,
-		m.expiresAt,
-	)
+	_ = m.store.UpdateTokens(context.Background(),
+		m.accountID, m.accessToken, m.idToken, m.refreshToken, m.expiresAt)
 }
 
 func RefreshAndTest(refreshToken, proxyURL, configPath string) (accessToken, idToken, accountID, email, planType string, expiresAt time.Time, err error) {
@@ -238,9 +233,6 @@ func RefreshAndTest(refreshToken, proxyURL, configPath string) (accessToken, idT
 
 	if resp.StatusCode != http.StatusOK {
 		bodyStr := strings.TrimSpace(string(body))
-		if resp.StatusCode == http.StatusUnauthorized && strings.Contains(bodyStr, "refresh_token_reused") {
-			_ = codexShared.UpdateAccountStatusByRefreshToken(refreshToken, codexShared.CodexStatusReused, configPath)
-		}
 		return "", "", "", "", "", time.Time{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodyStr)
 	}
 

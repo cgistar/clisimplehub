@@ -43,6 +43,8 @@ type CodexAccountDTO struct {
 	Status            string         `json:"status"`
 	Weight            int            `json:"weight,omitempty"`
 	ProxyUrl          string         `json:"proxyUrl,omitempty"`
+	Password          string         `json:"password,omitempty"`
+	MFACode           string         `json:"mfaCode,omitempty"`
 	ExpiresAt         string         `json:"expiresAt,omitempty"`
 	CooldownUntil     string         `json:"cooldownUntil,omitempty"`
 	CooldownReason    string         `json:"cooldownReason,omitempty"`
@@ -50,6 +52,8 @@ type CodexAccountDTO struct {
 	CodexUsage        map[string]any `json:"codexUsage,omitempty"`
 	CreatedAt         string         `json:"createdAt,omitempty"`
 	UpdatedAt         string         `json:"updatedAt,omitempty"`
+	TodayRequests     int64          `json:"todayRequests,omitempty"`
+	TodayTotalTokens  int64          `json:"todayTotalTokens,omitempty"`
 	IsActive          bool           `json:"isActive"`
 }
 
@@ -57,6 +61,17 @@ type CodexAccountsResponse struct {
 	ActiveRefreshToken string            `json:"activeRefreshToken"`
 	ActiveAccountID    string            `json:"activeAccountId"`
 	Accounts           []CodexAccountDTO `json:"accounts"`
+}
+
+type CodexAccountsPageResponse struct {
+	ActiveRefreshToken string            `json:"activeRefreshToken"`
+	ActiveAccountID    string            `json:"activeAccountId"`
+	Accounts           []CodexAccountDTO `json:"accounts"`
+	Offset             int               `json:"offset"`
+	Limit              int               `json:"limit"`
+	NextOffset         int               `json:"nextOffset"`
+	Total              int               `json:"total"`
+	HasMore            bool              `json:"hasMore"`
 }
 
 type CodexGlobalConfigDTO struct {
@@ -96,6 +111,22 @@ func (a *App) GetCodexAccounts() (*CodexAccountsResponse, error) {
 		return nil, err
 	}
 	var resp CodexAccountsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (a *App) GetCodexAccountsPage(offset int, limit int) (*CodexAccountsPageResponse, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	raw, err := cp.GetAccountsPage(a.getCodexMultiConfigPath(), offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	var resp CodexAccountsPageResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, err
 	}
@@ -304,4 +335,31 @@ func (a *App) GetCodexAccountUsage(accountId string) (*CodexUsageResult, error) 
 		return nil, err
 	}
 	return &result, nil
+}
+
+type CodexAccountStatsDTO struct {
+	AccountID    string  `json:"accountId"`
+	AccountEmail string  `json:"accountEmail"`
+	RequestCount int64   `json:"requestCount"`
+	InputTokens  int64   `json:"inputTokens"`
+	OutputTokens int64   `json:"outputTokens"`
+	TotalTokens  int64   `json:"totalTokens"`
+	ErrorCount   int64   `json:"errorCount"`
+	AvgDuration  float64 `json:"avgDurationMs"`
+}
+
+func (a *App) GetCodexAccountStats(timeRange string) ([]CodexAccountStatsDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	raw, err := cp.GetCodexAccountStats(context.Background(), timeRange)
+	if err != nil {
+		return nil, err
+	}
+	var result []CodexAccountStatsDTO
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

@@ -11,6 +11,7 @@ type CodexDesktopProvider interface {
 	GetCodexGlobalConfig(configPath string) (json.RawMessage, error)
 	SaveCodexGlobalConfig(configPath string, dto json.RawMessage) error
 	GetAccounts(configPath string) (json.RawMessage, error)
+	GetAccountsPage(configPath string, offset, limit int) (json.RawMessage, error)
 	GetActiveAccount(configPath string) (json.RawMessage, error)
 	SetActiveAccount(configPath, refreshToken string) error
 	AddAccount(configPath string, dto json.RawMessage) (json.RawMessage, error)
@@ -21,6 +22,7 @@ type CodexDesktopProvider interface {
 	WaitForLoginCallback(ctx context.Context) (json.RawMessage, error)
 	TestAccount(configPath, refreshToken string) (json.RawMessage, error)
 	GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
+	GetCodexAccountStats(ctx context.Context, timeRange string) (json.RawMessage, error)
 }
 
 func GetCodexDesktopProvider() CodexDesktopProvider {

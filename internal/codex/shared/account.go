@@ -2,9 +2,6 @@ package shared
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
 	"strings"
 	"time"
 )
@@ -46,30 +43,32 @@ func ComputeResetMeta(updatedAt time.Time, resetAfterSeconds int) (resetAt time.
 }
 
 type CodexAccount struct {
-	RefreshToken  string             `json:"refreshToken"`
-	AccessToken   string             `json:"accessToken,omitempty"`
-	IDToken       string             `json:"idToken,omitempty"`
-	AccountID     string             `json:"accountId,omitempty"`
-	Email         string             `json:"email,omitempty"`
-	PlanType      string             `json:"planType,omitempty"`
-	ExpiresAt     time.Time          `json:"expiresAt,omitempty"`
-	Status        CodexAccountStatus `json:"status,omitempty"`
-	Weight        int                `json:"weight,omitempty"`
-	ProxyUrl      string             `json:"proxyUrl,omitempty"`
-	CooldownUntil time.Time          `json:"cooldownUntil,omitempty"`
-	CooldownReason string            `json:"cooldownReason,omitempty"`
-	CodexUsage    *CodexUsageSnapshot `json:"codexUsage,omitempty"`
-	CreatedAt     time.Time          `json:"createdAt,omitempty"`
-	UpdatedAt     time.Time          `json:"updatedAt,omitempty"`
+	RefreshToken   string              `json:"refreshToken"`
+	AccessToken    string              `json:"accessToken,omitempty"`
+	IDToken        string              `json:"idToken,omitempty"`
+	AccountID      string              `json:"accountId,omitempty"`
+	Email          string              `json:"email,omitempty"`
+	PlanType       string              `json:"planType,omitempty"`
+	Password       string              `json:"password,omitempty"`
+	MFACode        string              `json:"mfaCode,omitempty"`
+	ExpiresAt      time.Time           `json:"expiresAt,omitempty"`
+	Status         CodexAccountStatus  `json:"status,omitempty"`
+	Weight         int                 `json:"weight,omitempty"`
+	ProxyUrl       string              `json:"proxyUrl,omitempty"`
+	CooldownUntil  time.Time           `json:"cooldownUntil,omitempty"`
+	CooldownReason string              `json:"cooldownReason,omitempty"`
+	CodexUsage     *CodexUsageSnapshot `json:"codexUsage,omitempty"`
+	CreatedAt      time.Time           `json:"createdAt,omitempty"`
+	UpdatedAt      time.Time           `json:"updatedAt,omitempty"`
+	TodayRequests  int64               `json:"todayRequests,omitempty"`
+	TodayTokens    int64               `json:"todayTotalTokens,omitempty"`
 }
 
 type CodexMultiConfig struct {
-	ActiveRefreshToken string         `json:"activeRefreshToken"` // Deprecated: use ActiveAccountID
-	ActiveAccountID    string         `json:"activeAccountId,omitempty"`
-	RotationMode       string         `json:"rotationMode,omitempty"`
-	ProxyUrl           string         `json:"proxyUrl,omitempty"`
-	Accounts           []CodexAccount `json:"accounts"`
-	Config             CodexConfig    `json:"config,omitempty"`
+	ActiveAccountID string      `json:"activeAccountId,omitempty"`
+	RotationMode    string      `json:"rotationMode,omitempty"`
+	ProxyUrl        string      `json:"proxyUrl,omitempty"`
+	Config          CodexConfig `json:"config,omitempty"`
 }
 
 // CodexConfig holds configurable parameters for Codex API requests
@@ -104,116 +103,6 @@ func (a *CodexAccount) ClearCooldownIfExpired() bool {
 		return true
 	}
 	return false
-}
-
-func (c *CodexMultiConfig) GetActiveAccount() *CodexAccount {
-	if c == nil || len(c.Accounts) == 0 {
-		return nil
-	}
-	// Use ActiveAccountID only
-	if c.ActiveAccountID != "" {
-		for i := range c.Accounts {
-			if c.Accounts[i].AccountID == c.ActiveAccountID {
-				return &c.Accounts[i]
-			}
-		}
-	}
-	// Compatibility fallback: return first account with a usable AccountID
-	for i := range c.Accounts {
-		if strings.TrimSpace(c.Accounts[i].AccountID) != "" {
-			return &c.Accounts[i]
-		}
-	}
-	return nil
-}
-
-func (c *CodexMultiConfig) FindAccountByRefreshToken(refreshToken string) *CodexAccount {
-	refreshToken = strings.TrimSpace(refreshToken)
-	if c == nil || refreshToken == "" {
-		return nil
-	}
-	for i := range c.Accounts {
-		if strings.TrimSpace(c.Accounts[i].RefreshToken) == refreshToken {
-			return &c.Accounts[i]
-		}
-	}
-	return nil
-}
-
-func (c *CodexMultiConfig) FindAccountByAccountID(accountId string) *CodexAccount {
-	accountId = strings.TrimSpace(accountId)
-	if c == nil || accountId == "" {
-		return nil
-	}
-	for i := range c.Accounts {
-		if strings.TrimSpace(c.Accounts[i].AccountID) == accountId {
-			return &c.Accounts[i]
-		}
-	}
-	return nil
-}
-
-func (c *CodexMultiConfig) UpdateAccount(account *CodexAccount) bool {
-	if c == nil || account == nil {
-		return false
-	}
-	accountID := strings.TrimSpace(account.AccountID)
-	if accountID == "" {
-		return false
-	}
-	// Use AccountID only
-	for i := range c.Accounts {
-		if strings.TrimSpace(c.Accounts[i].AccountID) == accountID {
-			c.Accounts[i] = *account
-			return true
-		}
-	}
-	return false
-}
-
-func (c *CodexMultiConfig) DeleteAccount(refreshToken string) bool {
-	refreshToken = strings.TrimSpace(refreshToken)
-	if c == nil || refreshToken == "" {
-		return false
-	}
-	for i := range c.Accounts {
-		if strings.TrimSpace(c.Accounts[i].RefreshToken) == refreshToken {
-			deletedAccountID := strings.TrimSpace(c.Accounts[i].AccountID)
-			c.Accounts = append(c.Accounts[:i], c.Accounts[i+1:]...)
-			// Update active account if deleted
-			if strings.TrimSpace(c.ActiveRefreshToken) == refreshToken ||
-				(deletedAccountID != "" && strings.TrimSpace(c.ActiveAccountID) == deletedAccountID) {
-				if len(c.Accounts) > 0 {
-					c.ActiveRefreshToken = c.Accounts[0].RefreshToken
-					c.ActiveAccountID = c.Accounts[0].AccountID
-				} else {
-					c.ActiveRefreshToken = ""
-					c.ActiveAccountID = ""
-				}
-			}
-			return true
-		}
-	}
-	return false
-}
-
-func (c *CodexMultiConfig) GetAvailableAccounts() []*CodexAccount {
-	if c == nil {
-		return nil
-	}
-	var result []*CodexAccount
-	for i := range c.Accounts {
-		a := &c.Accounts[i]
-		if a.Status == CodexStatusBanned || a.Status == CodexStatusExhausted || a.Status == CodexStatusReused {
-			continue
-		}
-		a.ClearCooldownIfExpired()
-		if a.IsCoolingDown() {
-			continue
-		}
-		result = append(result, a)
-	}
-	return result
 }
 
 func (c *CodexMultiConfig) GetRotationMode() string {
@@ -264,114 +153,24 @@ func GetDefaultCodexMultiConfigPath() string {
 	return "codex.json"
 }
 
-func UpdateAccountStatusByRefreshToken(refreshToken string, status CodexAccountStatus, multiConfigPath string) error {
-	if refreshToken == "" {
-		return errors.New("refreshToken is required")
-	}
-
-	multiConfig, err := LoadCodexMultiConfig(multiConfigPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to load codex.json: %w", err)
-	}
-
-	updated := false
-	for i := range multiConfig.Accounts {
-		if multiConfig.Accounts[i].RefreshToken == refreshToken {
-			multiConfig.Accounts[i].Status = status
-			multiConfig.Accounts[i].UpdatedAt = time.Now()
-			updated = true
-		}
-	}
-
-	if updated {
-		if err := SaveCodexMultiConfig(multiConfigPath, multiConfig); err != nil {
-			return fmt.Errorf("failed to save codex.json: %w", err)
-		}
-	}
-	return nil
-}
-
-func SetAccountCooldown(refreshToken, reason string, until time.Time, multiConfigPath string) error {
-	if strings.TrimSpace(refreshToken) == "" {
-		return nil
-	}
-	multiConfig, err := LoadCodexMultiConfig(multiConfigPath)
-	if err != nil {
-		return err
-	}
-	for i := range multiConfig.Accounts {
-		if multiConfig.Accounts[i].RefreshToken == refreshToken {
-			multiConfig.Accounts[i].CooldownUntil = until
-			multiConfig.Accounts[i].CooldownReason = reason
-			multiConfig.Accounts[i].UpdatedAt = time.Now()
-			break
-		}
-	}
-	return SaveCodexMultiConfig(multiConfigPath, multiConfig)
-}
-
-func SyncTokenToCodexJson(codexJsonPath, previousRefreshToken string, accessToken, idToken, accountID, email, planType string, expiresAt time.Time) error {
-	if strings.TrimSpace(codexJsonPath) == "" {
-		return nil
-	}
-	nextRefreshToken := strings.TrimSpace(previousRefreshToken)
-	if nextRefreshToken == "" {
-		return nil
-	}
-
-	if _, err := os.Stat(codexJsonPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	multiConfig, err := LoadCodexMultiConfig(codexJsonPath)
-	if err != nil || multiConfig == nil {
-		return err
-	}
-
-	account := multiConfig.FindAccountByRefreshToken(nextRefreshToken)
-	if account == nil {
-		return nil
-	}
-
-	account.AccessToken = accessToken
-	account.IDToken = idToken
-	account.ExpiresAt = expiresAt
-	if accountID != "" {
-		account.AccountID = accountID
-	}
-	if email != "" {
-		account.Email = email
-	}
-	if planType != "" {
-		account.PlanType = planType
-	}
-	if strings.TrimSpace(accessToken) == "" {
-		account.ExpiresAt = time.Time{}
-	}
-
-	return SaveCodexMultiConfig(codexJsonPath, multiConfig)
-}
-
 // MarshalAccountForFrontend returns a JSON-safe representation with cooldown remaining info.
 func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interface{} {
 	if a == nil {
 		return nil
 	}
 	m := map[string]interface{}{
-		"refreshToken": a.RefreshToken,
-		"email":        a.Email,
-		"planType":     a.PlanType,
-		"accountId":    a.AccountID,
-		"status":       string(a.Status),
-		"weight":       a.Weight,
-		"proxyUrl":     a.ProxyUrl,
-		"isActive":     isActive,
+		"refreshToken":     a.RefreshToken,
+		"email":            a.Email,
+		"planType":         a.PlanType,
+		"accountId":        a.AccountID,
+		"status":           string(a.Status),
+		"weight":           a.Weight,
+		"proxyUrl":         a.ProxyUrl,
+		"password":         a.Password,
+		"mfaCode":          a.MFACode,
+		"isActive":         isActive,
+		"todayRequests":    a.TodayRequests,
+		"todayTotalTokens": a.TodayTokens,
 	}
 	if !a.ExpiresAt.IsZero() {
 		m["expiresAt"] = a.ExpiresAt.Format(time.RFC3339)
@@ -411,29 +210,20 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 	return m
 }
 
-func MarshalAccountsResponse(config *CodexMultiConfig) (json.RawMessage, error) {
-	if config == nil {
-		return json.Marshal(map[string]interface{}{
-			"activeRefreshToken": "",
-			"activeAccountId":    "",
-			"accounts":           []map[string]interface{}{},
-		})
-	}
-
-	activeAccountID := strings.TrimSpace(config.ActiveAccountID)
+func MarshalAccountsResponse(activeAccountID string, accounts []CodexAccount) (json.RawMessage, error) {
+	activeAccountID = strings.TrimSpace(activeAccountID)
 
 	resp := map[string]interface{}{
-		"activeRefreshToken": config.ActiveRefreshToken,
-		"activeAccountId":    activeAccountID,
+		"activeAccountId": activeAccountID,
 	}
 
-	accounts := make([]map[string]interface{}, 0, len(config.Accounts))
-	for i := range config.Accounts {
-		a := &config.Accounts[i]
+	list := make([]map[string]interface{}, 0, len(accounts))
+	for i := range accounts {
+		a := &accounts[i]
 		isActive := activeAccountID != "" && strings.TrimSpace(a.AccountID) == activeAccountID
-		accounts = append(accounts, MarshalAccountForFrontend(a, isActive))
+		list = append(list, MarshalAccountForFrontend(a, isActive))
 	}
 
-	resp["accounts"] = accounts
+	resp["accounts"] = list
 	return json.Marshal(resp)
 }

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 )
 
 func LoadCodexMultiConfig(path string) (*CodexMultiConfig, error) {
@@ -27,16 +26,7 @@ func LoadCodexMultiConfig(path string) (*CodexMultiConfig, error) {
 		return nil, err
 	}
 
-	for i := range config.Accounts {
-		normalizeAccountTimes(&config.Accounts[i])
-		config.Accounts[i].AccountID = strings.TrimSpace(config.Accounts[i].AccountID)
-		config.Accounts[i].RefreshToken = strings.TrimSpace(config.Accounts[i].RefreshToken)
-	}
-
-	// Normalize active account fields
 	config.ActiveAccountID = strings.TrimSpace(config.ActiveAccountID)
-	config.ActiveRefreshToken = strings.TrimSpace(config.ActiveRefreshToken)
-
 	return &config, nil
 }
 
@@ -92,13 +82,4 @@ func SaveCodexMultiConfig(path string, config *CodexMultiConfig) error {
 		}
 	}
 	return nil
-}
-
-func normalizeAccountTimes(account *CodexAccount) {
-	if account.CreatedAt.IsZero() {
-		account.CreatedAt = time.Now()
-	}
-	if account.UpdatedAt.IsZero() {
-		account.UpdatedAt = account.CreatedAt
-	}
 }

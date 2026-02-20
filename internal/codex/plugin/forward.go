@@ -130,9 +130,43 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	var finalStatusCode int
 	var finalStatus string
 	var usedAccount *codexShared.CodexAccount
+	var finalInputTokens, finalOutputTokens int64
+	requestModel := extractModelFromBody(processedBody)
 
 	// Check if any accounts are available before retrying
 	mode := pool.Mode()
+
+	// Deferred stat recording
+	defer func() {
+		if store := pool.Store(); store != nil && usedAccount != nil {
+			now := time.Now()
+			stat := &codexShared.CodexAccountStat{
+				AccountID:    usedAccount.AccountID,
+				AccountEmail: usedAccount.Email,
+				Model:        requestModel,
+				Date:         now.Format("2006-01-02"),
+				Hour:         now.Hour(),
+				InputTokens:  finalInputTokens,
+				OutputTokens: finalOutputTokens,
+				TotalTokens:  finalInputTokens + finalOutputTokens,
+				StatusCode:   finalStatusCode,
+				DurationMs:   time.Since(startTime).Milliseconds(),
+				RequestPath:  r.URL.Path,
+			}
+			if finalStatusCode == http.StatusOK {
+				stat.Status = "success"
+			} else {
+				stat.Status = "error"
+				stat.ErrorType = finalStatus
+			}
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = store.InsertStat(ctx, stat)
+			}()
+		}
+	}()
+
 	firstAccount := pool.Select()
 	if firstAccount == nil {
 		// No accounts available in any mode - return error immediately
@@ -193,14 +227,14 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result, retryable := s.forwardToUpstream(ctx, account, processedBody, isStreaming, w, pool, clientHeaders, r.URL.Path)
-		if result == nil {
-			// 流式响应已写入
+		if result.streamed {
 			finalStatusCode = http.StatusOK
 			finalStatus = "success"
+			finalInputTokens = result.inputTokens
+			finalOutputTokens = result.outputTokens
 			if debugLogger != nil {
 				debugLogger.Log("流式响应已写入")
 			}
-			// 打印控制台日志
 			runTime := time.Since(startTime).Milliseconds()
 			logCodexRequestToConsole(requestID, r.Method, r.URL.Path, account, finalStatusCode, finalStatus, runTime)
 			return
@@ -209,6 +243,8 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		finalStatusCode = result.statusCode
 		if result.statusCode == http.StatusOK {
 			finalStatus = "success"
+			finalInputTokens = result.inputTokens
+			finalOutputTokens = result.outputTokens
 		} else {
 			finalStatus = result.errMsg
 		}
@@ -256,10 +292,13 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 }
 
 type forwardResult struct {
-	statusCode int
-	headers    http.Header
-	body       []byte
-	errMsg     string
+	statusCode   int
+	headers      http.Header
+	body         []byte
+	errMsg       string
+	inputTokens  int64
+	outputTokens int64
+	streamed     bool
 }
 
 func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, clientHeaders http.Header, requestPath string) (result *forwardResult, retryable bool) {
@@ -475,8 +514,8 @@ func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, i
 		if debugLogger != nil {
 			debugLogger.Log("开始流式响应")
 		}
-		s.streamResponse(ctx, resp, w)
-		return nil, false // response already written
+		input, output := s.streamResponse(ctx, resp, w)
+		return &forwardResult{statusCode: http.StatusOK, streamed: true, inputTokens: input, outputTokens: output}, false
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
@@ -496,10 +535,11 @@ func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, i
 		}
 	}
 
-	return &forwardResult{statusCode: resp.StatusCode, headers: resp.Header.Clone(), body: respBody}, false
+	input, output := parseCodexBodyUsage(respBody)
+	return &forwardResult{statusCode: resp.StatusCode, headers: resp.Header.Clone(), body: respBody, inputTokens: input, outputTokens: output}, false
 }
 
-func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, w http.ResponseWriter) {
+func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, w http.ResponseWriter) (int64, int64) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
 	flusher, ok := w.(http.Flusher)
@@ -511,7 +551,8 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(respBody)
-		return
+		in, out := parseCodexBodyUsage(respBody)
+		return in, out
 	}
 
 	for k, vals := range resp.Header {
@@ -530,6 +571,7 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 
 	eventCount := 0
 	var totalBytes int64
+	var capturedInput, capturedOutput int64
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -540,13 +582,15 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 		eventCount++
 		totalBytes += int64(len(line)) + 1
 
-		// 解析 usage 信息（仅用于日志）
-		if debugLogger != nil && bytes.HasPrefix(line, []byte("data: ")) {
+		if bytes.HasPrefix(line, []byte("data: ")) {
 			data := bytes.TrimPrefix(line, []byte("data: "))
 			if bytes.Contains(data, []byte(`"type":"response.completed"`)) {
-				inputTokens, outputTokens := parseCodexUsage(data)
-				if inputTokens > 0 || outputTokens > 0 {
-					debugLogger.Log("Token 使用: input=%d, output=%d", inputTokens, outputTokens)
+				in, out := parseCodexUsage(data)
+				if in > 0 || out > 0 {
+					capturedInput, capturedOutput = in, out
+					if debugLogger != nil {
+						debugLogger.Log("Token 使用: input=%d, output=%d", in, out)
+					}
 				}
 			}
 		}
@@ -560,10 +604,11 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 		if debugLogger != nil {
 			debugLogger.Log("流式传输错误: %v", err)
 		}
-		// Write a terminal SSE error event if stream was truncated
 		_, _ = fmt.Fprintf(w, "data: {\"error\":\"stream read error: %s\"}\n\n", err.Error())
 		flusher.Flush()
 	}
+
+	return capturedInput, capturedOutput
 }
 
 func writeResult(w http.ResponseWriter, result *forwardResult) {
@@ -683,6 +728,30 @@ func parseCodexUsage(data []byte) (inputTokens, outputTokens int64) {
 		return 0, 0
 	}
 	return event.Response.Usage.InputTokens, event.Response.Usage.OutputTokens
+}
+
+// parseCodexBodyUsage extracts token usage from a non-streaming response body
+func parseCodexBodyUsage(body []byte) (int64, int64) {
+	var resp struct {
+		Usage struct {
+			InputTokens  int64 `json:"input_tokens"`
+			OutputTokens int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(body, &resp) == nil {
+		return resp.Usage.InputTokens, resp.Usage.OutputTokens
+	}
+	return 0, 0
+}
+
+func extractModelFromBody(body []byte) string {
+	var m struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(body, &m) == nil {
+		return m.Model
+	}
+	return ""
 }
 
 // Placeholder for token estimation

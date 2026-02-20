@@ -1,6 +1,7 @@
 package codexplugin
 
 import (
+	"context"
 	"sync"
 
 	codex "clisimplehub/internal/codex"
@@ -9,7 +10,6 @@ import (
 	"clisimplehub/internal/storage"
 )
 
-// StorageAccessor provides access to storage and reload functionality.
 type StorageAccessor interface {
 	GetStorage() storage.Storage
 	TriggerReload()
@@ -18,6 +18,7 @@ type StorageAccessor interface {
 type CodexService struct {
 	authManagers    map[string]*codexAuth.CodexAuthManager
 	storageAccessor StorageAccessor
+	store           codexShared.CodexAccountStore
 	mu              sync.RWMutex
 }
 
@@ -33,8 +34,13 @@ func (s *CodexService) SetStorageAccessor(sa StorageAccessor) {
 	s.storageAccessor = sa
 }
 
+func (s *CodexService) SetAccountStore(store codexShared.CodexAccountStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.store = store
+}
+
 func (s *CodexService) GetOrCreateAuthManager(accountId, configPath, proxyURL string) *codexAuth.CodexAuthManager {
-	// Fast path: check if manager exists with read lock
 	s.mu.RLock()
 	if m, ok := s.authManagers[accountId]; ok {
 		s.mu.RUnlock()
@@ -43,40 +49,30 @@ func (s *CodexService) GetOrCreateAuthManager(accountId, configPath, proxyURL st
 	}
 	s.mu.RUnlock()
 
-	// Slow path: create new manager with write lock
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Double-check after acquiring write lock
 	if m, ok := s.authManagers[accountId]; ok {
 		m.SetProxyURL(proxyURL)
 		return m
 	}
 
-	// Load account from config to get full details
-	cfg, err := codexShared.LoadCodexMultiConfig(configPath)
-	if err != nil {
-		// Fallback: create minimal manager
-		m := codexAuth.NewCodexAuthManager(&codexShared.CodexAccount{
-			AccountID: accountId,
-			ProxyUrl:  proxyURL,
-		}, configPath)
-		s.authManagers[accountId] = m
-		return m
+	// Load account from store
+	var account *codexShared.CodexAccount
+	if s.store != nil {
+		account, _ = s.store.GetByID(context.Background(), accountId)
 	}
 
-	account := cfg.FindAccountByAccountID(accountId)
 	if account == nil {
-		// Fallback: create minimal manager
 		m := codexAuth.NewCodexAuthManager(&codexShared.CodexAccount{
 			AccountID: accountId,
 			ProxyUrl:  proxyURL,
-		}, configPath)
+		}, s.store)
 		s.authManagers[accountId] = m
 		return m
 	}
 
-	m := codexAuth.NewCodexAuthManager(account, configPath)
+	m := codexAuth.NewCodexAuthManager(account, s.store)
 	m.SetProxyURL(proxyURL)
 	s.authManagers[accountId] = m
 	return m
@@ -88,27 +84,16 @@ func (s *CodexService) RemoveAuthManager(accountId string) {
 	delete(s.authManagers, accountId)
 }
 
-// SaveConfigAndEnsureEndpoint saves the config and ensures endpoint exists.
-// This is a wrapper around SaveCodexMultiConfig that also triggers endpoint creation.
-func (s *CodexService) SaveConfigAndEnsureEndpoint(configPath string, mc *codexShared.CodexMultiConfig) error {
+func (s *CodexService) SaveConfigAndReload(configPath string, mc *codexShared.CodexMultiConfig) error {
 	if err := codexShared.SaveCodexMultiConfig(configPath, mc); err != nil {
 		return err
 	}
-
-	// Reload pool
 	if pool := codex.GetPool(); pool != nil {
 		pool.Reload()
 	}
-
-	// Ensure endpoint exists if there are accounts
-	if len(mc.Accounts) > 0 {
-		s.ensureCodexEndpoint()
-	}
-
 	return nil
 }
 
-// ensureCodexEndpoint ensures a openai/codex endpoint exists.
 func (s *CodexService) ensureCodexEndpoint() {
 	s.mu.RLock()
 	sa := s.storageAccessor
@@ -116,24 +101,22 @@ func (s *CodexService) ensureCodexEndpoint() {
 	if sa == nil {
 		return
 	}
-	store := sa.GetStorage()
-	if store == nil {
+	st := sa.GetStorage()
+	if st == nil {
 		return
 	}
 
-	endpoints, err := store.GetEndpoints()
+	endpoints, err := st.GetEndpoints()
 	if err != nil {
 		return
 	}
 
-	// Check if a codex endpoint with openai/codex transformer already exists
 	for _, ep := range endpoints {
 		if ep.Transformer == "openai/codex" && ep.InterfaceType == "codex" {
 			return
 		}
 	}
 
-	// Create new endpoint
 	newEndpoint := &storage.Endpoint{
 		Name:          "Codex Provider",
 		APIURL:        "https://chatgpt.com/backend-api/codex",
@@ -145,7 +128,6 @@ func (s *CodexService) ensureCodexEndpoint() {
 		Priority:      9,
 	}
 
-	// If no other codex endpoints exist, make this one active
 	sameTypeCount := 0
 	for _, ep := range endpoints {
 		if ep.InterfaceType == "codex" {
@@ -156,8 +138,7 @@ func (s *CodexService) ensureCodexEndpoint() {
 		newEndpoint.Active = true
 	}
 
-	if err := store.SaveEndpoint(newEndpoint); err != nil {
-		// Silent failure - don't block account creation
+	if err := st.SaveEndpoint(newEndpoint); err != nil {
 		return
 	}
 

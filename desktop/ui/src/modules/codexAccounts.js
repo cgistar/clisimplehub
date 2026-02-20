@@ -2,13 +2,25 @@
  * Codex 多账号管理模块
  * accountId 作为账号主键
  */
-import { showError, showSuccess } from './utils.js'
+import { formatTokensWithUnit, showError, showSuccess } from './utils.js'
 import { t } from '../i18n/index.js'
 import { createIcon } from './icons.js'
 import { confirm as confirmDialog } from './confirm.js'
 
 let codexAccounts = []
 let activeAccountId = null
+const CODEX_BATCH_SIZE = 20
+const CODEX_SCROLL_THRESHOLD = 120
+let codexIsLoading = false
+let codexPagination = {
+  offset: 0,
+  limit: CODEX_BATCH_SIZE,
+  nextOffset: 0,
+  total: 0,
+  hasMore: true,
+}
+let codexScrollContainer = null
+let codexScrollListener = null
 
 function escapeHTML(value) {
   return String(value ?? '').replace(/[&<>"']/g, (ch) => {
@@ -50,24 +62,138 @@ export function getActiveCodexAccountId() {
   return activeAccountId
 }
 
-export async function loadCodexAccounts() {
-  try {
-    if (!window.go?.main?.App?.GetCodexAccounts) {
-      console.warn('GetCodexAccounts API not available')
-      return
+function ensureCodexScrollLoader() {
+  const grid = document.getElementById('codexAccountsGrid')
+  if (!grid) return
+  if (codexScrollContainer === grid && codexScrollListener) return
+  if (codexScrollContainer && codexScrollListener) {
+    codexScrollContainer.removeEventListener('scroll', codexScrollListener)
+  }
+  codexScrollListener = async () => {
+    if (codexIsLoading || !codexPagination.hasMore) return
+    if (grid.scrollTop + grid.clientHeight < grid.scrollHeight - CODEX_SCROLL_THRESHOLD) return
+    await loadCodexAccounts({ reset: false })
+  }
+  grid.addEventListener('scroll', codexScrollListener)
+  codexScrollContainer = grid
+}
+
+async function fetchCodexAccountsPage(offset, limit) {
+  if (window.go?.main?.App?.GetCodexAccountsPage) {
+    return await window.go.main.App.GetCodexAccountsPage(offset, limit)
+  }
+  if (!window.go?.main?.App?.GetCodexAccounts) {
+    throw new Error('GetCodexAccounts API not available')
+  }
+  const result = await window.go.main.App.GetCodexAccounts()
+  const allAccounts = result?.accounts || []
+  const pageAccounts = allAccounts.slice(offset, offset + limit)
+  const nextOffset = offset + pageAccounts.length
+  return {
+    activeAccountId: result?.activeAccountId || '',
+    activeRefreshToken: result?.activeRefreshToken || '',
+    accounts: pageAccounts,
+    offset,
+    limit,
+    nextOffset,
+    total: allAccounts.length,
+    hasMore: nextOffset < allAccounts.length,
+  }
+}
+
+export async function loadCodexAccounts(options = {}) {
+  const reset = options.reset !== false
+  if (codexIsLoading) return null
+
+  if (reset) {
+    codexAccounts = []
+    codexPagination = {
+      offset: 0,
+      limit: CODEX_BATCH_SIZE,
+      nextOffset: 0,
+      total: 0,
+      hasMore: true,
     }
-    const result = await window.go.main.App.GetCodexAccounts()
-    codexAccounts = result?.accounts || []
+  } else if (!codexPagination.hasMore) {
+    return {
+      accounts: codexAccounts,
+      activeAccountId,
+      offset: codexPagination.offset,
+      limit: codexPagination.limit,
+      nextOffset: codexPagination.nextOffset,
+      total: codexPagination.total,
+      hasMore: codexPagination.hasMore,
+    }
+  }
+
+  codexIsLoading = true
+  try {
+    ensureCodexScrollLoader()
+    if (reset) renderCodexAccountCards()
+
+    const result = await fetchCodexAccountsPage(codexPagination.nextOffset, codexPagination.limit)
+    const pageAccounts = result?.accounts || []
+
+    if (reset) {
+      codexAccounts = pageAccounts
+    } else {
+      codexAccounts = codexAccounts.concat(pageAccounts)
+    }
+
     activeAccountId = result?.activeAccountId || null
     if (!activeAccountId && result?.activeRefreshToken) {
       const activeByToken = codexAccounts.find((a) => a.refreshToken === result.activeRefreshToken)
       activeAccountId = activeByToken?.accountId || null
     }
-    return { accounts: codexAccounts, activeAccountId, activeRefreshToken: result?.activeRefreshToken || null }
+
+    codexPagination.offset = result?.offset ?? codexPagination.nextOffset
+    codexPagination.limit = result?.limit || CODEX_BATCH_SIZE
+    codexPagination.nextOffset = result?.nextOffset ?? codexAccounts.length
+    codexPagination.total = result?.total ?? codexAccounts.length
+    codexPagination.hasMore =
+      typeof result?.hasMore === 'boolean' ? result.hasMore : pageAccounts.length >= codexPagination.limit
+
+    renderCodexAccountCards()
+
+    return {
+      accounts: codexAccounts,
+      activeAccountId,
+      activeRefreshToken: result?.activeRefreshToken || null,
+      offset: codexPagination.offset,
+      limit: codexPagination.limit,
+      nextOffset: codexPagination.nextOffset,
+      total: codexPagination.total,
+      hasMore: codexPagination.hasMore,
+    }
   } catch (error) {
     console.error('Failed to load codex accounts:', error)
     showError(t('codex.loadAccountsFailed') + (error?.message || error))
     return null
+  } finally {
+    codexIsLoading = false
+    renderCodexAccountCards()
+  }
+}
+
+window.refreshCodexAccountsPage = async function (btn) {
+  if (codexIsLoading) return
+  const originalHTML = btn?.innerHTML
+  if (btn) {
+    btn.disabled = true
+    btn.classList.add('loading')
+  }
+  try {
+    await loadCodexAccounts({ reset: true })
+    const grid = document.getElementById('codexAccountsGrid')
+    if (grid) grid.scrollTop = 0
+  } catch (error) {
+    showError(t('codex.refreshCurrentFailed') + (error?.message || error))
+  } finally {
+    if (btn) {
+      btn.disabled = false
+      btn.classList.remove('loading')
+      if (originalHTML) btn.innerHTML = originalHTML
+    }
   }
 }
 
@@ -258,11 +384,10 @@ function getTokenExpireInfo(expiresAt) {
   return { text: `${diffMinutes}m`, isExpired: false }
 }
 
-function renderUsageBars(codexUsage) {
-  if (!codexUsage) return ''
-  const primary = codexUsage.primary
-  const secondary = codexUsage.secondary
-  if (!primary && !secondary) return ''
+function renderUsageBars(account) {
+  const codexUsage = account?.codexUsage
+  const primary = codexUsage?.primary
+  const secondary = codexUsage?.secondary
 
   const barColor = (pct) =>
     pct >= 90 ? 'var(--error-color)' : pct >= 70 ? 'var(--warning-color)' : 'var(--primary-color)'
@@ -301,6 +426,9 @@ function renderUsageBars(codexUsage) {
         ${resetText(secondary.remainingSeconds) ? `<span style="font-size:10px;color:var(--text-tertiary);">${resetText(secondary.remainingSeconds)}</span>` : ''}
       </div>`
   }
+  const todayRequests = Number(account?.todayRequests || 0)
+  const todayTokens = Number(account?.todayTotalTokens || 0)
+  html += `<div class="codex-today-usage">${t('codex.todayUsage')}: ${todayRequests}${t('codex.requestUnit')} / ${formatTokensWithUnit(todayTokens)}</div>`
   return html
 }
 
@@ -339,7 +467,7 @@ function renderAccountCard(account) {
         ${isActive ? `<span class="kiro-badge-active" style="margin-left: auto;">${t('codex.active')}</span>` : ''}
       </div>
       <div class="kiro-card-body">
-        ${renderUsageBars(account.codexUsage)}
+        ${renderUsageBars(account)}
         <div class="kiro-usage-meta" style="display: flex; justify-content: space-between; align-items: center;">
           ${account.proxyUrl ? `<span style="font-size: 11px; color: var(--text-tertiary);">${t('codex.proxy')}: ${escapeHTML(account.proxyUrl.substring(0, 30))}${account.proxyUrl.length > 30 ? '...' : ''}</span>` : '<span></span>'}
         </div>
@@ -366,11 +494,21 @@ export function renderCodexAccountCards() {
   if (!container) return
 
   if (codexAccounts.length === 0) {
-    container.innerHTML = `<div class="kiro-no-accounts"><p>${t('codex.noAccounts')}</p></div>`
+    container.innerHTML = codexIsLoading
+      ? `<div class="loading">${t('common.loading')}</div>`
+      : `<div class="kiro-no-accounts"><p>${t('codex.noAccounts')}</p></div>`
     return
   }
 
-  container.innerHTML = codexAccounts.map(renderAccountCard).join('')
+  let loadMoreTip = ''
+  if (codexIsLoading && codexPagination.nextOffset > 0) {
+    loadMoreTip = `<div class="codex-load-more-indicator">${t('codex.loadingMore')}</div>`
+  } else if (codexPagination.hasMore) {
+    loadMoreTip = `<div class="codex-load-more-indicator">${t('codex.scrollLoadMore')}</div>`
+  } else {
+    loadMoreTip = `<div class="codex-load-more-indicator codex-load-more-done">${t('codex.loadedAll')}: ${codexPagination.total || codexAccounts.length}</div>`
+  }
+  container.innerHTML = codexAccounts.map(renderAccountCard).join('') + loadMoreTip
 }
 
 function decodeAccountId(encoded) {
@@ -559,6 +697,8 @@ window.editCodexAccountFromCard = function (encodedToken) {
     if (el) el.value = v || ''
   }
   set('editCodexRefreshToken', account.refreshToken)
+  set('editCodexPassword', account.password)
+  set('editCodexMFACode', account.mfaCode)
   set('editCodexProxyUrl', account.proxyUrl)
   set('editCodexWeight', account.weight > 0 ? String(account.weight) : '')
 
@@ -575,12 +715,15 @@ window.closeCodexAccountEditModal = function () {
 
 window.saveCodexAccountEdit = async function () {
   if (!editingAccountId || !editingAccount) return
-  const val = (id) => (document.getElementById(id)?.value || '').trim()
+  const rawVal = (id) => document.getElementById(id)?.value || ''
+  const trimmedVal = (id) => rawVal(id).trim()
   const dto = {
     ...editingAccount,
     accountId: editingAccountId,
-    proxyUrl: val('editCodexProxyUrl'),
-    weight: parseInt(val('editCodexWeight'), 10) || 0,
+    password: rawVal('editCodexPassword'),
+    mfaCode: trimmedVal('editCodexMFACode'),
+    proxyUrl: trimmedVal('editCodexProxyUrl'),
+    weight: parseInt(trimmedVal('editCodexWeight'), 10) || 0,
   }
   try {
     await updateCodexAccount(dto)

@@ -103,6 +103,9 @@ export function mainLayoutTemplate() {
                             <button class="btn btn-sm btn-secondary" style="margin-right: 8px;" onclick="showCodexGlobalConfigModal()" title="${t('codex.config')}">
                                 ${createIcon('settings', { size: 14 })} ${t('codex.config')}
                             </button>
+                            <button class="btn btn-sm btn-secondary" style="margin-right: 8px;" onclick="refreshCodexAccountsPage(this)" title="${t('codex.refreshList')}">
+                                ${createIcon('refreshCw', { size: 14 })} ${t('codex.refreshList')}
+                            </button>
                             <button class="btn btn-sm btn-danger" style="margin-right: 8px;" onclick="showCodexBulkDeleteDialog()" title="${t('common.delete')}">
                                 ${createIcon('trash', { size: 14 })} ${t('common.delete')}
                             </button>

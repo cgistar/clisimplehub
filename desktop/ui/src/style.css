@@ -3297,6 +3297,24 @@ input:disabled + .slider {
   color: var(--text-secondary);
 }
 
+.codex-today-usage {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.codex-load-more-indicator {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: 10px 0 4px;
+}
+
+.codex-load-more-done {
+  color: var(--text-secondary);
+}
+
 /* 底部: 基础信息(左) + 操作按钮(右) */
 .kiro-card-footer {
   display: flex;

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,7 +22,6 @@ func init() {
 	plugin.Register(&CodexPlugin{})
 }
 
-// pluginStorageAccessor bridges plugin.InitConfig to the StorageAccessor interface.
 type pluginStorageAccessor struct {
 	store  storage.Storage
 	reload func()
@@ -40,23 +38,38 @@ type CodexPlugin struct {
 	desktopFacade
 	service       *CodexService
 	codexJsonPath string
+	accountStore  codexShared.CodexAccountStore
 	mu            sync.RWMutex
 }
 
 func (p *CodexPlugin) Name() string { return "codex-accounts" }
 
-// GetService returns the CodexService instance (for internal use).
 func (p *CodexPlugin) GetService() *CodexService {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.service
 }
 
+func (p *CodexPlugin) GetAccountStore() codexShared.CodexAccountStore {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.accountStore
+}
+
 func (p *CodexPlugin) Init(cfg plugin.InitConfig) error {
 	codexJsonPath := codexJsonPathFromConfig(cfg.ConfigPath)
-	_ = codex.InitPool(codexJsonPath) // non-fatal
 
-	// Register transformer availability
+	// Open CodexAccountStore using same data.sqlite as usage stats
+	dataDir := filepath.Dir(cfg.ConfigPath)
+	dbPath := filepath.Join(dataDir, "data.sqlite")
+	accountStore, err := codexShared.OpenCodexAccountStore(dbPath)
+	if err != nil {
+		// Non-fatal: log and continue without store
+		fmt.Printf("[codex-plugin] Warning: failed to open account store (%s): %v\n", dbPath, err)
+	}
+
+	_ = codex.InitPool(codexJsonPath, accountStore)
+
 	transformer.RegisterAvailability("codex", func() map[string][]string {
 		return map[string][]string{
 			"codex": {"openai/codex"},
@@ -65,10 +78,11 @@ func (p *CodexPlugin) Init(cfg plugin.InitConfig) error {
 
 	p.mu.Lock()
 	p.codexJsonPath = codexJsonPath
+	p.accountStore = accountStore
 	p.service = NewCodexService()
+	p.service.SetAccountStore(accountStore)
 	p.mu.Unlock()
 
-	// Inject storage accessor if available
 	if cfg.Storage != nil {
 		p.service.SetStorageAccessor(&pluginStorageAccessor{
 			store:  cfg.Storage,
@@ -86,7 +100,6 @@ func (p *CodexPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	if svc == nil {
 		return
 	}
-	// Register both standard and compact endpoints (aligned with claude-relay-service)
 	r.HandleFunc("/codex/v1/responses", r.RequireAuth(svc.HandleResponses))
 	r.HandleFunc("/codex/v1/responses/compact", r.RequireAuth(svc.HandleResponses))
 	r.HandleFunc("/v0/management/codex-auth-url", r.RequireAuth(p.handleAuthURL))
@@ -124,7 +137,6 @@ func (p *CodexPlugin) Forward(ctx context.Context, body []byte, model string, is
 
 // AddAccount wraps desktopFacade.AddAccount to ensure endpoint creation.
 func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (json.RawMessage, error) {
-	// Parse the DTO to get account info
 	var dto struct {
 		RefreshToken string `json:"refreshToken"`
 		Email        string `json:"email"`
@@ -134,13 +146,14 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		IDToken      string `json:"idToken"`
 		ExpiresAt    string `json:"expiresAt"`
 		ProxyUrl     string `json:"proxyUrl"`
+		Password     string `json:"password"`
+		MFACode      string `json:"mfaCode"`
 		Weight       int    `json:"weight"`
 	}
 	if err := json.Unmarshal(dtoJSON, &dto); err != nil {
 		return nil, err
 	}
 
-	// Trim all string fields
 	dto.RefreshToken = strings.TrimSpace(dto.RefreshToken)
 	dto.AccessToken = strings.TrimSpace(dto.AccessToken)
 	dto.IDToken = strings.TrimSpace(dto.IDToken)
@@ -149,29 +162,26 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	dto.PlanType = strings.TrimSpace(dto.PlanType)
 	dto.ProxyUrl = strings.TrimSpace(dto.ProxyUrl)
 
-	// Allow temporary accounts with only accessToken (no refreshToken)
 	if dto.RefreshToken == "" && dto.AccessToken == "" {
 		return nil, fmt.Errorf("either refreshToken or accessToken is required")
 	}
-	// AccountID is now required for new accounts
 	if dto.AccountID == "" {
 		return nil, fmt.Errorf("accountId is required")
 	}
 
-	mc, err := codexShared.LoadCodexMultiConfig(configPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-		mc = &codexShared.CodexMultiConfig{}
+	store := p.GetAccountStore()
+	if store == nil {
+		return nil, fmt.Errorf("account store not initialized")
 	}
 
-	// Check duplicate by AccountID or RefreshToken
-	if mc.FindAccountByAccountID(dto.AccountID) != nil {
+	existing, _ := store.GetByID(context.Background(), dto.AccountID)
+	if existing != nil {
 		return nil, fmt.Errorf("account with this accountId already exists")
 	}
-	if dto.RefreshToken != "" && mc.FindAccountByRefreshToken(dto.RefreshToken) != nil {
-		return nil, fmt.Errorf("account with this refreshToken already exists")
+	if dto.RefreshToken != "" {
+		if rt, _ := store.GetByRefreshToken(context.Background(), dto.RefreshToken); rt != nil {
+			return nil, fmt.Errorf("account with this refreshToken already exists")
+		}
 	}
 
 	now := time.Now()
@@ -182,6 +192,8 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		AccountID:    dto.AccountID,
 		Email:        dto.Email,
 		PlanType:     dto.PlanType,
+		Password:     dto.Password,
+		MFACode:      dto.MFACode,
 		ProxyUrl:     dto.ProxyUrl,
 		Weight:       dto.Weight,
 		Status:       codexShared.CodexStatusValid,
@@ -194,26 +206,30 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		}
 	}
 
-	mc.Accounts = append(mc.Accounts, account)
-	if mc.ActiveAccountID == "" {
-		mc.ActiveAccountID = account.AccountID
-		mc.ActiveRefreshToken = account.RefreshToken
+	if err := store.Insert(context.Background(), &account); err != nil {
+		return nil, err
 	}
 
-	// Use SaveConfigAndEnsureEndpoint to save and create endpoint
-	svc := p.GetService()
-	if svc != nil {
-		if err := svc.SaveConfigAndEnsureEndpoint(configPath, mc); err != nil {
-			return nil, err
-		}
-	} else {
-		// Fallback
-		if err := codexShared.SaveCodexMultiConfig(configPath, mc); err != nil {
-			return nil, err
-		}
-		if pool := codex.GetPool(); pool != nil {
-			pool.Reload()
-		}
+	// Update active account in codex.json if first account
+	p.mu.RLock()
+	codexJsonPath := p.codexJsonPath
+	p.mu.RUnlock()
+
+	mc, _ := codexShared.LoadCodexMultiConfig(codexJsonPath)
+	if mc == nil {
+		mc = &codexShared.CodexMultiConfig{}
+	}
+	if mc.ActiveAccountID == "" {
+		mc.ActiveAccountID = account.AccountID
+		_ = codexShared.SaveCodexMultiConfig(codexJsonPath, mc)
+	}
+
+	if svc := p.GetService(); svc != nil {
+		svc.ensureCodexEndpoint()
+	}
+
+	if pool := codex.GetPool(); pool != nil {
+		pool.Reload()
 	}
 
 	isActive := account.AccountID == mc.ActiveAccountID

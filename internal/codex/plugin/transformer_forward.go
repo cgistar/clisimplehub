@@ -21,7 +21,52 @@ import (
 // Forward implements the TransformerForwarder interface for Codex plugin.
 // It handles the complete request lifecycle including account selection, authentication,
 // HTTP forwarding, and response streaming.
-func (s *CodexService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
+func (s *CodexService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) (ret *executor.ForwardResult) {
+	startTime := time.Now()
+	var usedAccount *codexShared.CodexAccount
+	requestModel := model
+	if requestModel == "" {
+		requestModel = extractModelFromBody(body)
+	}
+
+	defer func() {
+		pool := codex.GetPool()
+		if pool == nil || ret == nil || usedAccount == nil {
+			return
+		}
+		store := pool.Store()
+		if store == nil {
+			return
+		}
+		now := time.Now()
+		stat := &codexShared.CodexAccountStat{
+			AccountID:    usedAccount.AccountID,
+			AccountEmail: usedAccount.Email,
+			Model:        requestModel,
+			Date:         now.Format("2006-01-02"),
+			Hour:         now.Hour(),
+			StatusCode:   ret.StatusCode,
+			DurationMs:   time.Since(startTime).Milliseconds(),
+			RequestPath:  requestPath,
+		}
+		if ret.Error != nil {
+			stat.Status = "error"
+			stat.ErrorType = ret.Error.Error()
+		} else {
+			stat.Status = "success"
+		}
+		if ret.Tokens != nil {
+			stat.InputTokens = ret.Tokens.InputTokens
+			stat.OutputTokens = ret.Tokens.OutputTokens
+			stat.TotalTokens = ret.Tokens.InputTokens + ret.Tokens.OutputTokens
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = store.InsertStat(ctx, stat)
+		}()
+	}()
+
 	result := &executor.ForwardResult{}
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
@@ -104,6 +149,7 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 				break
 			}
 		}
+		usedAccount = account
 
 		if debugLogger != nil {
 			debugLogger.Log("尝试账号 %s (attempt %d)", maskToken(account.RefreshToken), attempt+1)

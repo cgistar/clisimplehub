@@ -1,7 +1,9 @@
 package codex
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -10,11 +12,14 @@ import (
 )
 
 type CodexAccountPool struct {
-	mu         sync.RWMutex
-	config     *shared.CodexMultiConfig
-	configPath string
-	wrrCounters []int
-	failed     map[string]shared.CodexAccountStatus
+	mu              sync.RWMutex
+	accounts        []shared.CodexAccount
+	store           shared.CodexAccountStore
+	config          *shared.CodexMultiConfig
+	configPath      string
+	activeAccountID string
+	wrrCounters     []int
+	failed          map[string]shared.CodexAccountStatus
 }
 
 var (
@@ -22,7 +27,7 @@ var (
 	globalPoolMu sync.Mutex
 )
 
-func InitPool(codexJsonPath string) error {
+func InitPool(codexJsonPath string, store shared.CodexAccountStore) error {
 	globalPoolMu.Lock()
 	defer globalPoolMu.Unlock()
 
@@ -32,14 +37,26 @@ func InitPool(codexJsonPath string) error {
 
 	cfg, err := shared.LoadCodexMultiConfig(codexJsonPath)
 	if err != nil {
-		return nil
+		cfg = &shared.CodexMultiConfig{}
 	}
 
 	pool := &CodexAccountPool{
-		config:     cfg,
-		configPath: codexJsonPath,
-		failed:     make(map[string]shared.CodexAccountStatus),
+		config:          cfg,
+		configPath:      codexJsonPath,
+		store:           store,
+		activeAccountID: cfg.ActiveAccountID,
+		failed:          make(map[string]shared.CodexAccountStatus),
 	}
+
+	if store != nil {
+		accounts, err := store.ListAccounts(context.Background())
+		if err != nil {
+			log.Printf("[codex-pool] failed to load accounts from store: %v", err)
+		} else {
+			pool.accounts = accounts
+		}
+	}
+
 	pool.resetWRR()
 	globalPool = pool
 	return nil
@@ -49,6 +66,15 @@ func GetPool() *CodexAccountPool {
 	globalPoolMu.Lock()
 	defer globalPoolMu.Unlock()
 	return globalPool
+}
+
+func (p *CodexAccountPool) Store() shared.CodexAccountStore {
+	if p == nil {
+		return nil
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.store
 }
 
 func (p *CodexAccountPool) Select() *shared.CodexAccount {
@@ -87,40 +113,52 @@ func (p *CodexAccountPool) MarkFailed(accountId string, status shared.CodexAccou
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.config == nil {
-		return fmt.Errorf("pool config is nil")
-	}
 	if p.failed == nil {
 		p.failed = make(map[string]shared.CodexAccountStatus)
 	}
 
-	// Add to failed map for permanent failures.
-	// Rate-limited accounts use cooldown only and auto-recover.
 	if status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused {
 		p.failed[id] = status
 	}
 
-	for i := range p.config.Accounts {
-		if strings.TrimSpace(p.config.Accounts[i].AccountID) == id {
+	var cooldownUntil time.Time
+	if cooldownDuration > 0 {
+		cooldownUntil = time.Now().Add(cooldownDuration)
+	}
+
+	for i := range p.accounts {
+		if strings.TrimSpace(p.accounts[i].AccountID) == id {
 			if status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused {
-				p.config.Accounts[i].Status = status
+				p.accounts[i].Status = status
 			}
 			if cooldownDuration > 0 {
-				p.config.Accounts[i].CooldownUntil = time.Now().Add(cooldownDuration)
-				p.config.Accounts[i].CooldownReason = cooldownReason
+				p.accounts[i].CooldownUntil = cooldownUntil
+				p.accounts[i].CooldownReason = cooldownReason
 			}
 			break
 		}
 	}
 
-	_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
+	// Async persist to store
+	if p.store != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused {
+				_ = p.store.UpdateStatus(ctx, id, status)
+			}
+			if cooldownDuration > 0 {
+				_ = p.store.UpdateCooldown(ctx, id, cooldownUntil, cooldownReason)
+			}
+		}()
+	}
 
 	mode := p.config.GetRotationMode()
 	if mode == shared.RotationFailover {
-		if strings.TrimSpace(p.config.ActiveAccountID) == id {
+		if p.activeAccountID == id {
 			if next := p.findNextAvailable(id); next != nil {
+				p.activeAccountID = next.AccountID
 				p.config.ActiveAccountID = next.AccountID
-				p.config.ActiveRefreshToken = next.RefreshToken
 				_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 			}
 		}
@@ -146,15 +184,20 @@ func (p *CodexAccountPool) UpdateUsageSnapshot(accountId string, snapshot *share
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.config == nil {
-		return
-	}
-	for i := range p.config.Accounts {
-		if p.config.Accounts[i].AccountID == accountId {
-			p.config.Accounts[i].CodexUsage = snapshot
-			_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
-			return
+
+	for i := range p.accounts {
+		if p.accounts[i].AccountID == accountId {
+			p.accounts[i].CodexUsage = snapshot
+			break
 		}
+	}
+
+	if p.store != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = p.store.UpdateUsageSnapshot(ctx, accountId, snapshot)
+		}()
 	}
 }
 
@@ -165,15 +208,19 @@ func (p *CodexAccountPool) Reload() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if strings.TrimSpace(p.configPath) == "" {
-		return
+	if strings.TrimSpace(p.configPath) != "" {
+		if cfg, err := shared.LoadCodexMultiConfig(p.configPath); err == nil && cfg != nil {
+			p.config = cfg
+			p.activeAccountID = cfg.ActiveAccountID
+		}
 	}
 
-	cfg, err := shared.LoadCodexMultiConfig(p.configPath)
-	if err != nil || cfg == nil {
-		return
+	if p.store != nil {
+		if accounts, err := p.store.ListAccounts(context.Background()); err == nil {
+			p.accounts = accounts
+		}
 	}
-	p.config = cfg
+
 	p.failed = make(map[string]shared.CodexAccountStatus)
 	p.resetWRR()
 }
@@ -211,23 +258,32 @@ func (p *CodexAccountPool) ProxyURL() string {
 	return p.config.ProxyUrl
 }
 
+func (p *CodexAccountPool) ActiveAccountID() string {
+	if p == nil {
+		return ""
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.activeAccountID
+}
+
 // --- Internal selection strategies ---
 
 func (p *CodexAccountPool) resolveActiveAccount() *shared.CodexAccount {
-	activeID := strings.TrimSpace(p.config.ActiveAccountID)
+	activeID := strings.TrimSpace(p.activeAccountID)
 	if activeID != "" {
-		if active := p.config.FindAccountByAccountID(activeID); active != nil {
-			return active
+		for i := range p.accounts {
+			if strings.TrimSpace(p.accounts[i].AccountID) == activeID {
+				return &p.accounts[i]
+			}
 		}
 	}
-	// If no active account or not found, try to find first available
 	next := p.findNextAvailable("")
 	if next == nil {
 		return nil
 	}
-	// Update active account to first available
+	p.activeAccountID = next.AccountID
 	p.config.ActiveAccountID = next.AccountID
-	p.config.ActiveRefreshToken = next.RefreshToken
 	_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 	return next
 }
@@ -265,8 +321,8 @@ func (p *CodexAccountPool) selectFailover() *shared.CodexAccount {
 	}
 	next := p.findNextAvailable(currentID)
 	if next != nil && (active == nil || next.AccountID != active.AccountID) {
+		p.activeAccountID = next.AccountID
 		p.config.ActiveAccountID = next.AccountID
-		p.config.ActiveRefreshToken = next.RefreshToken
 		_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 	}
 	return cloneAccount(next)
@@ -278,7 +334,6 @@ func (p *CodexAccountPool) selectLoadBalance() *shared.CodexAccount {
 		return nil
 	}
 
-	// Skip accounts with primary usage >= 95% when alternatives exist
 	if len(avail) > 1 {
 		var filtered []*shared.CodexAccount
 		for _, a := range avail {
@@ -317,9 +372,8 @@ func (p *CodexAccountPool) selectLoadBalance() *shared.CodexAccount {
 
 func (p *CodexAccountPool) availableAccounts() []*shared.CodexAccount {
 	var result []*shared.CodexAccount
-	for i := range p.config.Accounts {
-		a := &p.config.Accounts[i]
-		// Skip accounts without AccountID (should not happen after migration)
+	for i := range p.accounts {
+		a := &p.accounts[i]
 		if strings.TrimSpace(a.AccountID) == "" {
 			continue
 		}

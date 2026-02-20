@@ -76,6 +76,16 @@ export function codexAccountEditModalTemplate() {
                         <label>${t('codex.refreshTokenLabel')}</label>
                         <input type="text" id="editCodexRefreshToken" readonly style="opacity:.7;">
                     </div>
+                    <div class="form-group">
+                        <label>${t('codex.passwordLabel')}</label>
+                        <input type="text" id="editCodexPassword" placeholder="${t('codex.passwordPlaceholder')}">
+                        <small>${t('codex.passwordHelp2')}</small>
+                    </div>
+                    <div class="form-group">
+                        <label>${t('codex.mfaCodeLabel')}</label>
+                        <input type="text" id="editCodexMFACode" placeholder="${t('codex.mfaCodePlaceholder')}">
+                        <small>${t('codex.mfaCodeHelp2')}</small>
+                    </div>
                     <hr style="margin: 12px 0; border: none; border-top: 1px solid var(--border);">
                     <div class="form-group">
                         <label>${t('codex.proxyUrlLabel')}</label>
