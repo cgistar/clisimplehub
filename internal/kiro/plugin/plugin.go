@@ -104,7 +104,7 @@ func (p *KiroPlugin) TransformerForwarderSpecs() []string {
 
 // --- executor.TransformerForwarder ---
 
-func (p *KiroPlugin) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter) *executor.ForwardResult {
+func (p *KiroPlugin) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
 	p.mu.RLock()
 	svc := p.service
 	p.mu.RUnlock()
@@ -114,7 +114,7 @@ func (p *KiroPlugin) Forward(ctx context.Context, body []byte, model string, isS
 			Error:      fmt.Errorf("kiro plugin not initialized"),
 		}
 	}
-	return svc.Forward(ctx, body, model, isStreaming, w)
+	return svc.Forward(ctx, body, model, isStreaming, w, requestPath)
 }
 
 // --- TokenEstimator ---

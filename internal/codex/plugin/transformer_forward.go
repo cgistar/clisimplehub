@@ -20,9 +20,23 @@ import (
 // Forward implements the TransformerForwarder interface for Codex plugin.
 // It handles the complete request lifecycle including account selection, authentication,
 // HTTP forwarding, and response streaming.
-func (s *CodexService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter) *executor.ForwardResult {
+func (s *CodexService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
 	result := &executor.ForwardResult{}
 	debugLogger := executor.DebugLoggerFromContext(ctx)
+
+	// For transformer forward path, we don't have direct access to User-Agent
+	// Keep it empty; request-body rewriting is skipped when User-Agent is unknown.
+	userAgent := ""
+
+	// Process request body: handle store field and non-CLI adaptation (aligned with claude-relay-service)
+	processedBody, err := processRequestBody(body, requestPath, userAgent)
+	if err != nil {
+		if debugLogger != nil {
+			debugLogger.Log("请求体处理失败: %v", err)
+		}
+		// Continue with original body if processing fails
+		processedBody = body
+	}
 
 	pool := codex.GetPool()
 	if pool == nil {
@@ -89,7 +103,7 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 		}
 
 		// Forward to upstream with this account
-		fwdResult, retryable := s.forwardWithAccount(ctx, account, body, isStreaming, w, pool, config)
+		fwdResult, retryable := s.forwardWithAccount(ctx, account, processedBody, isStreaming, w, pool, config, requestPath)
 		if fwdResult == nil {
 			// Should not happen - forwardWithAccount always returns a result now
 			if debugLogger != nil {
@@ -140,7 +154,7 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 
 // forwardWithAccount forwards a single request using the specified account.
 // Returns (result, retryable) where retryable indicates if another account should be tried.
-func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, config *codexShared.CodexMultiConfig) (*executor.ForwardResult, bool) {
+func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, config *codexShared.CodexMultiConfig, requestPath string) (*executor.ForwardResult, bool) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 	configPath := pool.ConfigPath()
 
@@ -187,7 +201,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 0)
 
 	// Build upstream request
-	upstreamURL := getCodexUpstreamURL(config)
+	upstreamURL := getCodexUpstreamURL(config, requestPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		if debugLogger != nil {

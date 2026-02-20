@@ -29,7 +29,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 	// Delegate to registered TransformerForwarder if available.
 	if fwd := c.getTransformerForwarder(endpoint.Transformer); fwd != nil {
 		upstreamModel := ResolveUpstreamModel(extractModelFromBody(req.Body), endpoint)
-		return fwd.Forward(ctx, req.Body, upstreamModel, req.IsStreaming, w)
+		return fwd.Forward(ctx, req.Body, upstreamModel, req.IsStreaming, w, req.Path)
 	}
 
 	tr, err := transformer.Get(interfaceType, endpoint.Transformer)

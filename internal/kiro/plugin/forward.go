@@ -20,7 +20,8 @@ import (
 )
 
 // Forward implements executor.TransformerForwarder for the Kiro plugin.
-func (s *KiroService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter) *executor.ForwardResult {
+func (s *KiroService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
+	_ = requestPath // Kiro always uses /generateAssistantResponse, ignore client path
 	result := &executor.ForwardResult{}
 
 	tr := s.Transformer()

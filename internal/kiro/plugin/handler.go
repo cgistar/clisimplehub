@@ -29,7 +29,7 @@ func (s *KiroService) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(bodyBytes, &streamReq)
 
-	result := s.Forward(r.Context(), bodyBytes, model, streamReq.Stream, w)
+	result := s.Forward(r.Context(), bodyBytes, model, streamReq.Stream, w, r.URL.Path)
 	if result == nil {
 		http.Error(w, "Request failed", http.StatusBadGateway)
 		return

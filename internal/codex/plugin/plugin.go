@@ -86,7 +86,9 @@ func (p *CodexPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	if svc == nil {
 		return
 	}
+	// Register both standard and compact endpoints (aligned with claude-relay-service)
 	r.HandleFunc("/codex/v1/responses", r.RequireAuth(svc.HandleResponses))
+	r.HandleFunc("/codex/v1/responses/compact", r.RequireAuth(svc.HandleResponses))
 	r.HandleFunc("/v0/management/codex-auth-url", r.RequireAuth(p.handleAuthURL))
 	r.HandleFunc("/v0/management/oauth-callback", r.RequireAuth(p.handleOAuthCallback))
 }
@@ -107,7 +109,7 @@ func (p *CodexPlugin) TransformerForwarderSpecs() []string {
 
 // --- executor.TransformerForwarder ---
 
-func (p *CodexPlugin) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter) *executor.ForwardResult {
+func (p *CodexPlugin) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
 	p.mu.RLock()
 	svc := p.service
 	p.mu.RUnlock()
@@ -117,7 +119,7 @@ func (p *CodexPlugin) Forward(ctx context.Context, body []byte, model string, is
 			Error:      fmt.Errorf("codex plugin not initialized"),
 		}
 	}
-	return svc.Forward(ctx, body, model, isStreaming, w)
+	return svc.Forward(ctx, body, model, isStreaming, w, requestPath)
 }
 
 // AddAccount wraps desktopFacade.AddAccount to ensure endpoint creation.

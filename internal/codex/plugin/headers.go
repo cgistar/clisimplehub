@@ -23,11 +23,28 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 		originator = config.GetOriginator()
 	}
 
-	// Use EnsureHeader pattern: preserve client headers if present, fallback to defaults
-	// Priority: already set > client provided > default value
-	ensureHeader(req.Header, clientHeaders, "Version", clientVersion)
-	ensureHeader(req.Header, clientHeaders, "Session_id", uuid.NewString())
-	ensureHeader(req.Header, clientHeaders, "User-Agent", userAgent)
+	// Apply whitelist filtering to client headers (aligned with claude-relay-service L315-322)
+	// Only allow: version, openai-beta, session_id
+	filtered := filterClientHeaders(clientHeaders)
+
+	// Set headers with priority: filtered client headers > defaults
+	if val := filtered.Get("Version"); val != "" {
+		req.Header.Set("Version", val)
+	} else {
+		req.Header.Set("Version", clientVersion)
+	}
+
+	if val := filtered.Get("Session_id"); val != "" {
+		req.Header.Set("Session_id", val)
+	} else {
+		req.Header.Set("Session_id", uuid.NewString())
+	}
+
+	if val := filtered.Get("Openai-Beta"); val != "" {
+		req.Header.Set("Openai-Beta", val)
+	}
+
+	req.Header.Set("User-Agent", userAgent)
 
 	if isStreaming {
 		req.Header.Set("Accept", "text/event-stream")
@@ -48,31 +65,30 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 	}
 }
 
-// ensureHeader sets header with priority: clientHeaders > targetHeaders > defaultValue
-func ensureHeader(targetHeaders http.Header, clientHeaders http.Header, key, defaultValue string) {
-	// Try to copy from client headers first (highest priority)
-	if clientHeaders != nil {
-		if clientValue := strings.TrimSpace(clientHeaders.Get(key)); clientValue != "" {
-			targetHeaders.Set(key, clientValue)
-			return
-		}
-	}
-	// If already set in target, keep it (second priority)
-	if existingValue := strings.TrimSpace(targetHeaders.Get(key)); existingValue != "" {
-		return
-	}
-	// Use default value (lowest priority)
-	if trimmedDefault := strings.TrimSpace(defaultValue); trimmedDefault != "" {
-		targetHeaders.Set(key, trimmedDefault)
-	}
+// isCompactResponsesPath checks if the request path is for the compact endpoint
+func isCompactResponsesPath(requestPath string) bool {
+	normalizedPath := strings.TrimRight(strings.TrimSpace(requestPath), "/")
+	return strings.HasSuffix(normalizedPath, "/responses/compact")
 }
 
-func getCodexUpstreamURL(config *codexShared.CodexMultiConfig) string {
+// getCodexUpstreamURL constructs the upstream URL based on config and request path.
+// Aligned with claude-relay-service L362-364: dynamically selects /responses or /responses/compact.
+func getCodexUpstreamURL(config *codexShared.CodexMultiConfig, requestPath string) string {
 	baseURL := "https://chatgpt.com/backend-api/codex"
 	if config != nil {
-		baseURL = config.GetBaseURL()
+		if cfgBaseURL := strings.TrimSpace(config.GetBaseURL()); cfgBaseURL != "" {
+			baseURL = cfgBaseURL
+		}
 	}
-	// Normalize: remove trailing /responses if present to avoid duplication
-	baseURL = strings.TrimSuffix(strings.TrimSuffix(baseURL, "/"), "/responses")
+
+	// Normalize: remove trailing /responses or /responses/compact if present
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	baseURL = strings.TrimSuffix(baseURL, "/responses/compact")
+	baseURL = strings.TrimSuffix(baseURL, "/responses")
+
+	// Determine endpoint based on request path
+	if isCompactResponsesPath(requestPath) {
+		return baseURL + "/responses/compact"
+	}
 	return baseURL + "/responses"
 }

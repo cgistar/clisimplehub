@@ -40,7 +40,7 @@ func (s *KiroService) tryFailoverRetry(ctx context.Context, tr *kiro_claude.Tran
 	}
 	nextCtx := context.WithValue(ctx, kiroAttemptKey{}, attempt+1)
 	fmt.Fprintf(os.Stderr, "Info: kiro failover attempt %d/%d, switching account\n", attempt+1, maxAttempts)
-	return s.Forward(nextCtx, body, model, isStreaming, w)
+	return s.Forward(nextCtx, body, model, isStreaming, w, "")
 }
 
 // handleKiroErrorStatus checks and updates Kiro account status on HTTP errors.

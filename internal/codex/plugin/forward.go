@@ -81,6 +81,16 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.Body.Close()
 
+	// Extract User-Agent for request body processing
+	userAgent := r.Header.Get("User-Agent")
+
+	// Process request body: handle store field and non-CLI adaptation (aligned with claude-relay-service)
+	processedBody, err := processRequestBody(body, r.URL.Path, userAgent)
+	if err != nil {
+		// Continue with original body if processing fails
+		processedBody = body
+	}
+
 	isStreaming := strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 	clientHeaders := r.Header.Clone() // Preserve client headers for forwarding
 
@@ -103,7 +113,7 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		debugLogger.SetMetadata("Method", r.Method)
 		debugLogger.SetMetadata("Streaming", fmt.Sprintf("%v", isStreaming))
 		debugLogger.Log("Codex 请求开始")
-		debugLogger.SetSection("OriginalRequest", string(body))
+		debugLogger.SetSection("OriginalRequest", string(processedBody))
 		defer func() {
 			if debugLogger != nil {
 				_ = debugLogger.Flush()
@@ -182,7 +192,7 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 			debugLogger.Log("尝试账号 %s (attempt %d)", maskToken(account.RefreshToken), attempt+1)
 		}
 
-		result, retryable := s.forwardToUpstream(ctx, account, body, isStreaming, w, pool, clientHeaders)
+		result, retryable := s.forwardToUpstream(ctx, account, processedBody, isStreaming, w, pool, clientHeaders, r.URL.Path)
 		if result == nil {
 			// 流式响应已写入
 			finalStatusCode = http.StatusOK
@@ -252,7 +262,7 @@ type forwardResult struct {
 	errMsg     string
 }
 
-func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, clientHeaders http.Header) (result *forwardResult, retryable bool) {
+func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, clientHeaders http.Header, requestPath string) (result *forwardResult, retryable bool) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 	configPath := pool.ConfigPath()
 
@@ -308,7 +318,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 0)
 
-	upstreamURL := getCodexUpstreamURL(config)
+	upstreamURL := getCodexUpstreamURL(config, requestPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		if debugLogger != nil {

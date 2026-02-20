@@ -61,7 +61,7 @@ type ModelMapping = storage.ModelMapping
 // TransformerForwarder handles the full request lifecycle for a specific transformer spec.
 // Plugins implement this to own the entire forwarding flow (auth, HTTP, streaming, failover).
 type TransformerForwarder interface {
-	Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter) *ForwardResult
+	Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *ForwardResult
 }
 
 // Executor 定义执行器接口
