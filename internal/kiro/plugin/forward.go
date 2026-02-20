@@ -24,6 +24,13 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 	_ = requestPath // Kiro always uses /generateAssistantResponse, ignore client path
 	result := &executor.ForwardResult{}
 
+	// Get debug logger from context
+	debugLogger := executor.DebugLoggerFromContext(ctx)
+	if debugLogger != nil {
+		debugLogger.Log("Kiro 请求开始")
+		debugLogger.SetSection("OriginalRequest", string(body))
+	}
+
 	tr := s.Transformer()
 	if tr == nil {
 		result.StatusCode = http.StatusInternalServerError
@@ -96,6 +103,10 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 		return result
 	}
 
+	if debugLogger != nil {
+		debugLogger.SetSection("TransformedRequest", string(transformedBody))
+	}
+
 	baseURL := strings.TrimSpace(tr.GetAPIURL())
 	if baseURL == "" {
 		baseURL = kiroapi.KiroGenerateURL(tr.GetRegion())
@@ -128,6 +139,27 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 		return result
 	}
 
+	if debugLogger != nil {
+		debugLogger.SetMetadata("UpstreamURL", targetURL)
+		debugLogger.Log("发送上游请求")
+		// 记录请求头（脱敏）
+		var headerLines []string
+		for k, vals := range proxyReq.Header {
+			if k == "Authorization" {
+				if len(vals) > 0 && len(vals[0]) > 8 {
+					headerLines = append(headerLines, fmt.Sprintf("%s: Bear****%s", k, vals[0][len(vals[0])-4:]))
+				} else {
+					headerLines = append(headerLines, fmt.Sprintf("%s: ****", k))
+				}
+			} else {
+				for _, v := range vals {
+					headerLines = append(headerLines, fmt.Sprintf("%s: %s", k, v))
+				}
+			}
+		}
+		debugLogger.SetSection("UpstreamRequestHeaders", strings.Join(headerLines, "\n"))
+	}
+
 	client := executor.NewHTTPClientForcedProxyURL(tr.KiroProxyURL(), 0)
 	resp, err := client.Do(proxyReq)
 	if err != nil && isRetryableEOF(err) {
@@ -137,6 +169,9 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 		}
 	}
 	if err != nil {
+		if debugLogger != nil {
+			debugLogger.Log("上游请求失败: %v", err)
+		}
 		result.Error = fmt.Errorf("request failed: %w", err)
 		return result
 	}
@@ -145,6 +180,12 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		authErrBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+
+		if debugLogger != nil {
+			debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", resp.StatusCode))
+			debugLogger.Log("收到 %d 响应，尝试刷新 token", resp.StatusCode)
+			debugLogger.SetSection("UpstreamResponseBody", string(authErrBody))
+		}
 
 		refreshOK := false
 		if refreshErr := tr.ForceRefreshKiroToken(); refreshErr == nil {
@@ -178,6 +219,20 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 	result.StatusCode = resp.StatusCode
 	result.Headers = resp.Header.Clone()
 
+	if debugLogger != nil {
+		debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", resp.StatusCode))
+		debugLogger.Log("收到上游响应: %d", resp.StatusCode)
+		// 记录响应头
+		var respHeaderLines []string
+		respHeaderLines = append(respHeaderLines, fmt.Sprintf("Status: %d %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
+		for k, vals := range resp.Header {
+			for _, v := range vals {
+				respHeaderLines = append(respHeaderLines, fmt.Sprintf("%s: %s", k, v))
+			}
+		}
+		debugLogger.SetSection("UpstreamResponseHeaders", strings.Join(respHeaderLines, "\n"))
+	}
+
 	// Non-200: pass through raw body; check account status
 	if resp.StatusCode != http.StatusOK {
 		reader := responseReader(resp)
@@ -192,6 +247,11 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 		if readErr != nil {
 			result.Error = fmt.Errorf("failed to read response: %w", readErr)
 			return result
+		}
+		if debugLogger != nil {
+			debugLogger.Log("非 200 响应，Body 长度: %d bytes", len(errBody))
+			debugLogger.SetSection("UpstreamResponseBody", string(errBody))
+			debugLogger.SetRawSection("UpstreamResponseRaw", errBody)
 		}
 		_, canFailover := handleKiroErrorStatus(resp.StatusCode, errBody, tr)
 		if canFailover {
@@ -212,6 +272,8 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 
 // handleKiroNonStreamingResponse handles Kiro non-streaming 200 responses.
 func handleKiroNonStreamingResponse(ctx context.Context, resp *http.Response, result *executor.ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *executor.ForwardResult {
+	debugLogger := executor.DebugLoggerFromContext(ctx)
+
 	reader := responseReader(resp)
 	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
 		defer closer.Close()
@@ -223,15 +285,32 @@ func handleKiroNonStreamingResponse(ctx context.Context, resp *http.Response, re
 
 	body, err := io.ReadAll(reader)
 	if err != nil {
+		if debugLogger != nil {
+			debugLogger.Log("读取响应体失败: %v", err)
+		}
 		result.Error = fmt.Errorf("failed to read response: %w", err)
 		return result
 	}
 
+	if debugLogger != nil {
+		debugLogger.Log("读取响应体成功，长度: %d bytes", len(body))
+		debugLogger.SetSection("UpstreamResponseBody", string(body))
+		debugLogger.SetRawSection("UpstreamResponseRaw", body)
+	}
+
 	converted, err := tr.TransformResponseNonStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, body, nil)
 	if err != nil {
+		if debugLogger != nil {
+			debugLogger.Log("转换响应失败: %v", err)
+		}
 		result.Error = err
 		result.Body = body
 		return result
+	}
+
+	if debugLogger != nil {
+		debugLogger.Log("响应转换成功，长度: %d bytes", len(converted))
+		debugLogger.SetSection("TransformedResponse", string(converted))
 	}
 
 	result.Body = converted

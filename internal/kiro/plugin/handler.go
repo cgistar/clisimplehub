@@ -2,8 +2,13 @@ package kiroplugin
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"time"
+
+	"clisimplehub/internal/executor"
+	"clisimplehub/internal/logger"
 )
 
 // HandleMessages handles direct /kiro/v1/messages requests.
@@ -29,7 +34,31 @@ func (s *KiroService) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(bodyBytes, &streamReq)
 
-	result := s.Forward(r.Context(), bodyBytes, model, streamReq.Stream, w, r.URL.Path)
+	// 创建请求级别的调试日志记录器（每次检查配置，支持热更新）
+	var debugLogger *logger.RequestDebugLogger
+	requestID := executor.RequestIDFromContext(r.Context())
+	if requestID == "" {
+		requestID = fmt.Sprintf("kiro-%d", time.Now().UnixNano())
+	}
+	if logger.IsDebugFileModeEnabled() {
+		debugLogger = logger.NewRequestDebugLogger(requestID)
+		debugLogger.SetMetadata("Plugin", "Kiro")
+		debugLogger.SetMetadata("Path", r.URL.Path)
+		debugLogger.SetMetadata("Method", r.Method)
+		debugLogger.SetMetadata("Streaming", fmt.Sprintf("%v", streamReq.Stream))
+		defer func() {
+			if debugLogger != nil {
+				_ = debugLogger.Flush()
+			}
+		}()
+	}
+
+	ctx := r.Context()
+	if debugLogger != nil {
+		ctx = executor.WithDebugLogger(ctx, debugLogger)
+	}
+
+	result := s.Forward(ctx, bodyBytes, model, streamReq.Stream, w, r.URL.Path)
 	if result == nil {
 		http.Error(w, "Request failed", http.StatusBadGateway)
 		return

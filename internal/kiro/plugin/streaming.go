@@ -16,6 +16,10 @@ import (
 // handleKiroStreamingResponse handles Kiro streaming (EventStream) responses.
 // Extracted from executor/transformer_forward.go.
 func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *executor.ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *executor.ForwardResult {
+	debugLogger := executor.DebugLoggerFromContext(ctx)
+	if debugLogger != nil {
+		debugLogger.Log("开始流式响应处理")
+	}
 	for key, values := range resp.Header {
 		switch strings.ToLower(key) {
 		case "content-length", "content-encoding", "content-type":
@@ -41,6 +45,7 @@ func handleKiroStreamingResponse(ctx context.Context, w http.ResponseWriter, res
 
 	var state any
 	var capture strings.Builder
+	var rawCapture []byte // 捕获原始上游数据
 
 	const (
 		readTimeout            = 30 * time.Second
@@ -124,6 +129,7 @@ readLoop:
 
 			if n > 0 {
 				chunk := res.data
+				rawCapture = append(rawCapture, chunk...) // 捕获原始数据
 				if err := ctx.Err(); err != nil {
 					result.Error = err
 					break readLoop
@@ -191,6 +197,14 @@ readLoop:
 			}
 			capture.WriteString(out)
 			flusher.Flush()
+		}
+	}
+
+	if debugLogger != nil {
+		debugLogger.Log("流式响应完成，捕获长度: %d bytes", len(capture.String()))
+		debugLogger.SetSection("TransformedResponse", capture.String())
+		if len(rawCapture) > 0 {
+			debugLogger.SetRawSection("UpstreamResponseRaw", rawCapture)
 		}
 	}
 
