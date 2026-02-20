@@ -7,7 +7,7 @@ export function xrayConfigModalTemplate() {
             <div class="modal-content">
                 <div class="modal-header">
                     <h2>${t('xray.configTitle')}</h2>
-                    <button class="close-btn" onclick="closeXRayConfigModal()">&times;</button>
+                    <button class="modal-close" onclick="closeXRayConfigModal()">&times;</button>
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
@@ -48,7 +48,7 @@ export function xrayConfigModalTemplate() {
             <div class="modal-content">
                 <div class="modal-header">
                     <h2>${t('xray.addSub')}</h2>
-                    <button class="close-btn" onclick="closeXRayAddSubscriptionModal()">&times;</button>
+                    <button class="modal-close" onclick="closeXRayAddSubscriptionModal()">&times;</button>
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
@@ -71,7 +71,7 @@ export function xrayConfigModalTemplate() {
             <div class="modal-content">
                 <div class="modal-header">
                     <h2>${createIcon('edit', { size: 16 })} ${t('xray.editSub')}</h2>
-                    <button class="close-btn" onclick="closeEditSubscriptionDialog()">&times;</button>
+                    <button class="modal-close" onclick="closeEditSubscriptionDialog()">&times;</button>
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
@@ -105,7 +105,7 @@ export function xrayConfigModalTemplate() {
                             ${createIcon('zap', { size: 14 })} ${t('xray.testAll')}
                         </button>
                     </div>
-                    <button class="close-btn" onclick="closeSubscriptionNodesDialog()">&times;</button>
+                    <button class="modal-close" onclick="closeSubscriptionNodesDialog()">&times;</button>
                 </div>
                 <div class="modal-body" style="padding: 20px;">
                     <div id="xrayNodesGrid" class="xray-nodes-grid"></div>
@@ -121,7 +121,7 @@ export function xrayConfigModalTemplate() {
             <div class="modal-content">
                 <div class="modal-header">
                     <h2>${createIcon('plus', { size: 16 })} ${t('xray.addNodeTitle')}</h2>
-                    <button class="close-btn" onclick="closeAddNodeDialog()">&times;</button>
+                    <button class="modal-close" onclick="closeAddNodeDialog()">&times;</button>
                 </div>
                 <div class="modal-body">
                     <div class="form-group">

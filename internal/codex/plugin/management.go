@@ -268,13 +268,21 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 		mc.ActiveRefreshToken = account.RefreshToken
 	}
 
-	if err := codexShared.SaveCodexMultiConfig(codexJsonPath, mc); err != nil {
-		return fmt.Errorf("save config: %w", err)
+	// Use SaveConfigAndEnsureEndpoint to save config and create endpoint if needed
+	if svc := p.GetService(); svc != nil {
+		if err := svc.SaveConfigAndEnsureEndpoint(codexJsonPath, mc); err != nil {
+			return fmt.Errorf("save config: %w", err)
+		}
+	} else {
+		// Fallback if service is not available
+		if err := codexShared.SaveCodexMultiConfig(codexJsonPath, mc); err != nil {
+			return fmt.Errorf("save config: %w", err)
+		}
+		if pool := codex.GetPool(); pool != nil {
+			pool.Reload()
+		}
 	}
 
-	if pool := codex.GetPool(); pool != nil {
-		pool.Reload()
-	}
 	return nil
 }
 

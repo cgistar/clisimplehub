@@ -127,6 +127,74 @@ import {
     saveCodexGlobalConfig
 } from './modules/codex.js';
 
+function isVisibleModal(modal) {
+    if (!(modal instanceof HTMLElement)) return false;
+    const style = window.getComputedStyle(modal);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+}
+
+function getTopVisibleModal() {
+    const modals = Array.from(document.querySelectorAll('.modal')).filter(isVisibleModal);
+    let topModal = null;
+    let topZIndex = Number.NEGATIVE_INFINITY;
+
+    modals.forEach((modal) => {
+        const zIndex = Number.parseInt(window.getComputedStyle(modal).zIndex, 10);
+        const normalizedZIndex = Number.isNaN(zIndex) ? 0 : zIndex;
+        if (!topModal || normalizedZIndex > topZIndex || normalizedZIndex === topZIndex) {
+            topModal = modal;
+            topZIndex = normalizedZIndex;
+        }
+    });
+
+    return topModal;
+}
+
+function closeModalByEsc(modal) {
+    if (!modal) return;
+
+    const closeBtn = modal.querySelector(
+        '.modal-header .modal-close, .modal-header .close-btn, .modal-header .btn-icon[onclick*="close"], .modal-header button[aria-label="close"], [data-role="close"], .confirm-cancel-btn'
+    );
+    if (closeBtn instanceof HTMLElement) {
+        closeBtn.click();
+        return;
+    }
+
+    // Let modal-specific handlers (if any) process Escape first.
+    modal.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        code: 'Escape',
+        bubbles: false,
+        cancelable: true
+    }));
+
+    if (!isVisibleModal(modal)) return;
+
+    if (modal.classList.contains('active')) {
+        modal.classList.remove('active');
+        return;
+    }
+
+    if (modal.style.display && modal.style.display !== 'none') {
+        modal.style.display = 'none';
+    }
+}
+
+function initGlobalModalEscClose() {
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+
+        const topModal = getTopVisibleModal();
+        if (!topModal) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        closeModalByEsc(topModal);
+    }, true);
+}
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', async () => {
     // Wait for Wails runtime to be ready
@@ -137,6 +205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Initialize UI
     initUI();
+    initGlobalModalEscClose();
     await Promise.all([initXRayTabVisibility(), initKiroTabVisibility(), initCodexTabVisibility()]);
 
     // Load initial data
