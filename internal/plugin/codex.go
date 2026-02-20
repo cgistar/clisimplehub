@@ -20,6 +20,7 @@ type CodexDesktopProvider interface {
 	StartLoginWithURL(ctx context.Context, proxyURL string) (authURL string, err error)
 	WaitForLoginCallback(ctx context.Context) (json.RawMessage, error)
 	TestAccount(configPath, refreshToken string) (json.RawMessage, error)
+	GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
 }
 
 func GetCodexDesktopProvider() CodexDesktopProvider {

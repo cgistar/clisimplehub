@@ -229,6 +229,10 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 	saveAccountMu.Lock()
 	defer saveAccountMu.Unlock()
 
+	if strings.TrimSpace(result.AccountID) == "" {
+		return fmt.Errorf("accountId is required from OAuth login")
+	}
+
 	p.mu.RLock()
 	codexJsonPath := p.codexJsonPath
 	p.mu.RUnlock()
@@ -241,40 +245,51 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 		mc = &codexShared.CodexMultiConfig{}
 	}
 
-	if mc.FindAccountByRefreshToken(result.RefreshToken) != nil {
-		return nil
-	}
-
-	now := time.Now()
-	account := codexShared.CodexAccount{
-		RefreshToken: result.RefreshToken,
-		AccessToken:  result.AccessToken,
-		IDToken:      result.IDToken,
-		AccountID:    result.AccountID,
-		Email:        result.Email,
-		PlanType:     result.PlanType,
-		Status:       codexShared.CodexStatusValid,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if result.ExpiresAt != "" {
-		if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
-			account.ExpiresAt = t
+	existingAccount := mc.FindAccountByAccountID(result.AccountID)
+	if existingAccount != nil {
+		existingAccount.RefreshToken = result.RefreshToken
+		existingAccount.AccessToken = result.AccessToken
+		existingAccount.IDToken = result.IDToken
+		existingAccount.Email = result.Email
+		existingAccount.PlanType = result.PlanType
+		existingAccount.Status = codexShared.CodexStatusValid
+		existingAccount.UpdatedAt = time.Now()
+		if result.ExpiresAt != "" {
+			if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
+				existingAccount.ExpiresAt = t
+			}
 		}
+	} else {
+		now := time.Now()
+		account := codexShared.CodexAccount{
+			RefreshToken: result.RefreshToken,
+			AccessToken:  result.AccessToken,
+			IDToken:      result.IDToken,
+			AccountID:    result.AccountID,
+			Email:        result.Email,
+			PlanType:     result.PlanType,
+			Status:       codexShared.CodexStatusValid,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if result.ExpiresAt != "" {
+			if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
+				account.ExpiresAt = t
+			}
+		}
+		mc.Accounts = append(mc.Accounts, account)
 	}
 
-	mc.Accounts = append(mc.Accounts, account)
-	if mc.ActiveRefreshToken == "" {
-		mc.ActiveRefreshToken = account.RefreshToken
+	if mc.ActiveAccountID == "" {
+		mc.ActiveAccountID = result.AccountID
+		mc.ActiveRefreshToken = result.RefreshToken
 	}
 
-	// Use SaveConfigAndEnsureEndpoint to save config and create endpoint if needed
 	if svc := p.GetService(); svc != nil {
 		if err := svc.SaveConfigAndEnsureEndpoint(codexJsonPath, mc); err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}
 	} else {
-		// Fallback if service is not available
 		if err := codexShared.SaveCodexMultiConfig(codexJsonPath, mc); err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}

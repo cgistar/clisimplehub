@@ -1,6 +1,6 @@
 /**
  * Codex 多账号管理模块
- * refreshToken 作为账号主键
+ * accountId 作为账号主键
  */
 import { showError, showSuccess } from './utils.js'
 import { t } from '../i18n/index.js'
@@ -8,7 +8,7 @@ import { createIcon } from './icons.js'
 import { confirm as confirmDialog } from './confirm.js'
 
 let codexAccounts = []
-let activeRefreshToken = null
+let activeAccountId = null
 
 function escapeHTML(value) {
   return String(value ?? '').replace(/[&<>"']/g, (ch) => {
@@ -44,7 +44,10 @@ export function getCodexAccounts() {
   return codexAccounts
 }
 export function getActiveCodexRefreshToken() {
-  return activeRefreshToken
+  return activeAccountId
+}
+export function getActiveCodexAccountId() {
+  return activeAccountId
 }
 
 export async function loadCodexAccounts() {
@@ -55,8 +58,12 @@ export async function loadCodexAccounts() {
     }
     const result = await window.go.main.App.GetCodexAccounts()
     codexAccounts = result?.accounts || []
-    activeRefreshToken = result?.activeRefreshToken || null
-    return { accounts: codexAccounts, activeRefreshToken }
+    activeAccountId = result?.activeAccountId || null
+    if (!activeAccountId && result?.activeRefreshToken) {
+      const activeByToken = codexAccounts.find((a) => a.refreshToken === result.activeRefreshToken)
+      activeAccountId = activeByToken?.accountId || null
+    }
+    return { accounts: codexAccounts, activeAccountId, activeRefreshToken: result?.activeRefreshToken || null }
   } catch (error) {
     console.error('Failed to load codex accounts:', error)
     showError(t('codex.loadAccountsFailed') + (error?.message || error))
@@ -64,11 +71,11 @@ export async function loadCodexAccounts() {
   }
 }
 
-export async function setActiveCodexAccount(refreshToken) {
+export async function setActiveCodexAccount(accountId) {
   try {
     if (!window.go?.main?.App?.SetActiveCodexAccount) throw new Error('SetActiveCodexAccount API not available')
-    await window.go.main.App.SetActiveCodexAccount(refreshToken)
-    activeRefreshToken = refreshToken
+    await window.go.main.App.SetActiveCodexAccount(accountId)
+    activeAccountId = accountId
     showSuccess(t('codex.accountSwitched'))
     await loadCodexAccounts()
     renderCodexAccountCards()
@@ -92,7 +99,29 @@ export async function addCodexAccount(accountData) {
     return result
   } catch (error) {
     console.error('Failed to add codex account:', error)
-    showError(t('codex.addAccountFailed') + (error?.message || error))
+    const errorMsg = error?.message || String(error)
+
+    // Check if it's a duplicate account error - try to update instead
+    if (errorMsg.includes('already exists') || errorMsg.includes('duplicate')) {
+      console.log('Account already exists, attempting to update with latest info:', accountData.email || accountData.accountId)
+
+      try {
+        // Update the existing account with latest OAuth data
+        if (!window.go?.main?.App?.UpdateCodexAccount) throw new Error('UpdateCodexAccount API not available')
+        await window.go.main.App.UpdateCodexAccount(accountData)
+        showSuccess(t('codex.accountUpdatedWithLatest'))
+        await loadCodexAccounts()
+        renderCodexAccountCards()
+        return null
+      } catch (updateError) {
+        console.error('Failed to update existing account:', updateError)
+        showError(t('codex.updateAccountFailed') + (updateError?.message || updateError))
+        return null
+      }
+    }
+
+    // Show error for other failures
+    showError(t('codex.addAccountFailed') + errorMsg)
     try {
       await loadCodexAccounts()
       renderCodexAccountCards()
@@ -118,10 +147,10 @@ export async function updateCodexAccount(accountData) {
   }
 }
 
-export async function deleteCodexAccount(refreshToken) {
+export async function deleteCodexAccount(accountId) {
   try {
     if (!window.go?.main?.App?.DeleteCodexAccount) throw new Error('DeleteCodexAccount API not available')
-    await window.go.main.App.DeleteCodexAccount(refreshToken)
+    await window.go.main.App.DeleteCodexAccount(accountId)
     showSuccess(t('codex.accountDeleted'))
     await loadCodexAccounts()
     renderCodexAccountCards()
@@ -135,10 +164,10 @@ export async function deleteCodexAccount(refreshToken) {
   }
 }
 
-export async function testCodexAccount(refreshToken) {
+export async function testCodexAccount(accountId) {
   try {
     if (!window.go?.main?.App?.TestCodexAccount) throw new Error('TestCodexAccount API not available')
-    const result = await window.go.main.App.TestCodexAccount(refreshToken)
+    const result = await window.go.main.App.TestCodexAccount(accountId)
     showSuccess(t('codex.testSuccess'))
     await loadCodexAccounts()
     renderCodexAccountCards()
@@ -276,24 +305,28 @@ function renderUsageBars(codexUsage) {
 }
 
 function renderAccountCard(account) {
-  const isActive = account.refreshToken === activeRefreshToken
+  const hasAccountId = Boolean(account.accountId)
+  const isActive = account.isActive || (hasAccountId && account.accountId === activeAccountId)
   const isCoolingDown = account.cooldownRemaining > 0
-  const encodedToken = btoa(account.refreshToken)
+  const encodedAccountId = btoa(account.accountId || '')
+  const hasRefreshToken = Boolean(account.refreshToken)
 
   const powerIcon = createIcon('power', { size: 14 })
   const copyIcon = createIcon('copy', { size: 14 })
   const editIcon = createIcon('edit', { size: 14 })
   const trashIcon = createIcon('trash', { size: 14 })
   const refreshIcon = createIcon('refreshCw', { size: 14 })
+  const batteryIcon = createIcon('battery', { size: 14 })
 
   const statusBadgeClass = isCoolingDown ? 'status-exhausted' : getStatusBadgeClass(account.status)
   const statusText = getStatusText(account)
   const expireInfo = getTokenExpireInfo(account.expiresAt)
-  const canActivate = !isActive && account.status !== 'banned' && account.status !== 'reused'
+  const canActivate = hasAccountId && !isActive && account.status !== 'banned' && account.status !== 'reused'
+  const canOperate = hasAccountId
   const planLabel = getPlanTypeLabel(account.planType)
 
   return `
-    <div class="kiro-account-card ${isActive ? 'active' : ''} ${account.status === 'banned' ? 'banned' : ''} ${isCoolingDown ? 'banned' : ''}" data-refresh-token="${encodedToken}">
+    <div class="kiro-account-card ${isActive ? 'active' : ''} ${account.status === 'banned' ? 'banned' : ''} ${isCoolingDown ? 'banned' : ''}" data-account-id="${encodedAccountId}">
       <div class="kiro-card-header" style="align-items: center;">
         <span class="kiro-account-email" style="flex: 1; min-width: 0; font-weight: 600; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 10px;" title="${escapeHTML(account.email || account.accountId || truncateToken(account.refreshToken))}">${escapeHTML(account.email || account.accountId || truncateToken(account.refreshToken))}</span>
         <span class="kiro-status-badge ${statusBadgeClass}" style="margin-left: auto; flex-shrink: 0;">${statusText}</span>
@@ -302,6 +335,7 @@ function renderAccountCard(account) {
         ${planLabel ? `<span class="kiro-tag kiro-tag-plan">${escapeHTML(planLabel)}</span>` : ''}
         <span class="kiro-tag kiro-tag-auth">OpenAI</span>
         ${account.weight > 0 ? `<span class="kiro-tag" style="background: var(--bg-tertiary);">W:${account.weight}</span>` : ''}
+        ${!hasRefreshToken ? `<span class="kiro-tag" style="background: var(--warning-bg); color: var(--warning-text);" title="${t('codex.noRefreshToken')}">${t('codex.tempToken')}</span>` : ''}
         ${isActive ? `<span class="kiro-badge-active" style="margin-left: auto;">${t('codex.active')}</span>` : ''}
       </div>
       <div class="kiro-card-body">
@@ -315,11 +349,13 @@ function renderAccountCard(account) {
           ${expireInfo.text ? `Token ${expireInfo.text}` : ''}
         </div>
         <div class="kiro-card-actions">
-          ${canActivate ? `<button class="kiro-icon-btn primary" onclick="setActiveCodexAccountFromCard('${encodedToken}')" title="${t('codex.activate')}">${powerIcon}</button>` : ''}
-          <button class="kiro-icon-btn" onclick="testCodexAccountFromCard('${encodedToken}')" title="${t('codex.test')}">${refreshIcon}</button>
-          <button class="kiro-icon-btn" onclick="copyCodexAccountFromCard('${encodedToken}')" title="${t('codex.copy')}">${copyIcon}</button>
-          <button class="kiro-icon-btn" onclick="editCodexAccountFromCard('${encodedToken}')" title="${t('codex.edit')}">${editIcon}</button>
-          <button class="kiro-icon-btn kiro-icon-btn-danger" onclick="deleteCodexAccountFromCard('${encodedToken}')" title="${t('common.delete')}">${trashIcon}</button>
+          ${canActivate ? `<button class="kiro-icon-btn primary" onclick="setActiveCodexAccountFromCard('${encodedAccountId}')" title="${t('codex.activate')}">${powerIcon}</button>` : ''}
+          ${canOperate && hasRefreshToken ? `<button class="kiro-icon-btn" onclick="testCodexAccountFromCard('${encodedAccountId}')" title="${t('codex.refreshToken')}">${refreshIcon}</button>` : ''}
+          ${canOperate && !hasRefreshToken ? `<button class="kiro-icon-btn" disabled style="opacity: 0.3; cursor: not-allowed;" title="${t('codex.noRefreshTokenHint')}">${refreshIcon}</button>` : ''}
+          ${canOperate ? `<button class="kiro-icon-btn" onclick="fetchCodexAccountUsageFromCard('${encodedAccountId}')" title="${t('codex.usage')}">${batteryIcon}</button>` : ''}
+          ${canOperate ? `<button class="kiro-icon-btn" onclick="copyCodexAccountFromCard('${encodedAccountId}')" title="${t('codex.copy')}">${copyIcon}</button>` : ''}
+          ${canOperate ? `<button class="kiro-icon-btn" onclick="editCodexAccountFromCard('${encodedAccountId}')" title="${t('codex.edit')}">${editIcon}</button>` : ''}
+          ${canOperate ? `<button class="kiro-icon-btn kiro-icon-btn-danger" onclick="deleteCodexAccountFromCard('${encodedAccountId}')" title="${t('common.delete')}">${trashIcon}</button>` : ''}
         </div>
       </div>
     </div>`
@@ -337,7 +373,7 @@ export function renderCodexAccountCards() {
   container.innerHTML = codexAccounts.map(renderAccountCard).join('')
 }
 
-function decodeRefreshToken(encoded) {
+function decodeAccountId(encoded) {
   try {
     return atob(encoded)
   } catch (e) {
@@ -355,7 +391,7 @@ function getButtonElement(target) {
   return btn
 }
 
-async function withButtonLoading(encodedToken, fn) {
+async function withButtonLoading(encodedAccountId, fn) {
   const btn = getButtonElement(event?.target)
   if (btn?.disabled) return
   const originalHTML = btn?.innerHTML
@@ -364,8 +400,12 @@ async function withButtonLoading(encodedToken, fn) {
     btn.classList.add('loading')
   }
   try {
-    const refreshToken = decodeRefreshToken(encodedToken)
-    await fn(refreshToken)
+    const accountId = decodeAccountId(encodedAccountId)
+    if (!accountId) {
+      showError(t('codex.accountNotFound'))
+      return
+    }
+    await fn(accountId)
   } finally {
     if (btn) {
       btn.disabled = false
@@ -378,6 +418,69 @@ async function withButtonLoading(encodedToken, fn) {
 window.setActiveCodexAccountFromCard = (t) => withButtonLoading(t, setActiveCodexAccount)
 window.testCodexAccountFromCard = (t) => withButtonLoading(t, testCodexAccount)
 
+export async function fetchCodexAccountUsage(accountId) {
+  try {
+    const account = codexAccounts.find((acc) => acc.accountId === accountId)
+    if (!account) {
+      throw new Error(t('codex.accountNotFound'))
+    }
+
+    if (account.expiresAt) {
+      const expiresAt = new Date(account.expiresAt)
+      const now = new Date()
+      if (!isNaN(expiresAt.getTime()) && expiresAt < now) {
+        showError(t('codex.tokenExpiredClickTest'))
+        await loadCodexAccounts()
+        renderCodexAccountCards()
+        return null
+      }
+    }
+
+    if (!window.go?.main?.App?.GetCodexAccountUsage) {
+      throw new Error('GetCodexAccountUsage API not available')
+    }
+    const result = await window.go.main.App.GetCodexAccountUsage(accountId)
+
+    await loadCodexAccounts()
+    renderCodexAccountCards()
+    return result
+  } catch (error) {
+    console.error('Failed to fetch account usage:', error)
+    showError(t('codex.usageFailedPrefix') + (error?.message || error))
+
+    try {
+      await loadCodexAccounts()
+      renderCodexAccountCards()
+    } catch (refreshError) {
+      console.error('Failed to refresh account list after error:', refreshError)
+    }
+    return null
+  }
+}
+
+window.fetchCodexAccountUsageFromCard = async function (encodedAccountId) {
+  const btn = getButtonElement(event?.target)
+  if (btn?.disabled) return
+
+  const originalHTML = btn?.innerHTML
+  if (btn) {
+    btn.disabled = true
+    btn.classList.add('loading')
+  }
+  try {
+    const accountId = decodeAccountId(encodedAccountId)
+    await fetchCodexAccountUsage(accountId)
+  } finally {
+    if (btn) {
+      btn.disabled = false
+      btn.classList.remove('loading')
+      if (originalHTML) {
+        btn.innerHTML = originalHTML
+      }
+    }
+  }
+}
+
 window.deleteCodexAccountFromCard = async function (encodedToken) {
   const btn = getButtonElement(event?.target)
   if (btn?.disabled) return
@@ -389,7 +492,12 @@ window.deleteCodexAccountFromCard = async function (encodedToken) {
     btn.classList.add('loading')
   }
   try {
-    await deleteCodexAccount(decodeRefreshToken(encodedToken))
+    const accountId = decodeAccountId(encodedToken)
+    if (!accountId) {
+      showError(t('codex.accountNotFound'))
+      return
+    }
+    await deleteCodexAccount(accountId)
   } finally {
     if (btn) {
       btn.disabled = false
@@ -408,8 +516,8 @@ window.copyCodexAccountFromCard = async function (encodedToken) {
     btn.classList.add('loading')
   }
   try {
-    const refreshToken = decodeRefreshToken(encodedToken)
-    const account = codexAccounts.find((a) => a.refreshToken === refreshToken)
+    const accountId = decodeAccountId(encodedToken)
+    const account = codexAccounts.find((a) => a.accountId === accountId)
     if (!account) {
       showError(t('codex.accountNotFound'))
       return
@@ -432,18 +540,18 @@ window.copyCodexAccountFromCard = async function (encodedToken) {
 }
 
 // Edit modal
-let editingRefreshToken = ''
+let editingAccountId = ''
 let editingAccount = null
 
 window.editCodexAccountFromCard = function (encodedToken) {
-  const refreshToken = decodeRefreshToken(encodedToken)
-  const account = codexAccounts.find((a) => a.refreshToken === refreshToken)
+  const accountId = decodeAccountId(encodedToken)
+  const account = codexAccounts.find((a) => a.accountId === accountId)
   if (!account) {
     showError(t('codex.accountNotFound'))
     return
   }
 
-  editingRefreshToken = refreshToken
+  editingAccountId = accountId
   editingAccount = account
 
   const set = (id, v) => {
@@ -461,16 +569,16 @@ window.editCodexAccountFromCard = function (encodedToken) {
 window.closeCodexAccountEditModal = function () {
   const modal = document.getElementById('codexAccountEditModal')
   if (modal) modal.classList.remove('active')
-  editingRefreshToken = ''
+  editingAccountId = ''
   editingAccount = null
 }
 
 window.saveCodexAccountEdit = async function () {
-  if (!editingRefreshToken || !editingAccount) return
+  if (!editingAccountId || !editingAccount) return
   const val = (id) => (document.getElementById(id)?.value || '').trim()
   const dto = {
     ...editingAccount,
-    refreshToken: editingRefreshToken,
+    accountId: editingAccountId,
     proxyUrl: val('editCodexProxyUrl'),
     weight: parseInt(val('editCodexWeight'), 10) || 0,
   }
@@ -522,15 +630,19 @@ window.startCodexOAuthLogin = async function () {
 
     const result = await Promise.race([waitPromise, abortPromise])
 
-    if (!result?.refreshToken) throw new Error('No refresh token received')
+    if (!result?.accountId) throw new Error('No account ID received')
+    if (!result?.refreshToken && !result?.accessToken) throw new Error('No token payload received')
 
     // Close dialog
     closeCodexOAuthLoginModal()
 
     await addCodexAccount({
-      refreshToken: result.refreshToken,
+      refreshToken: result.refreshToken || '',
+      accessToken: result.accessToken || '',
+      idToken: result.idToken || '',
+      expiresAt: result.expiresAt || '',
       email: result.email || '',
-      accountId: result.accountId || '',
+      accountId: result.accountId,
       planType: result.planType || '',
       status: 'valid',
     })
@@ -647,21 +759,31 @@ function buildCodexImportDTOs(jsonText) {
   const seen = new Set()
 
   items.forEach((item, index) => {
+    const accountId = getStringField(item, ['accountId', 'account_id', 'AccountId'])
+    if (!accountId) {
+      errors.push(`#${index + 1}: missing accountId`)
+      return
+    }
+    if (seen.has(accountId)) {
+      errors.push(`#${index + 1}: duplicate accountId`)
+      return
+    }
+    seen.add(accountId)
+
     const refreshToken = getStringField(item, ['refreshToken', 'refresh_token', 'RefreshToken'])
-    if (!refreshToken) {
-      errors.push(`#${index + 1}: missing refreshToken`)
+    const accessToken = getStringField(item, ['accessToken', 'access_token', 'AccessToken'])
+    if (!refreshToken && !accessToken) {
+      errors.push(`#${index + 1}: missing refreshToken/accessToken`)
       return
     }
-    if (seen.has(refreshToken)) {
-      errors.push(`#${index + 1}: duplicate refreshToken`)
-      return
-    }
-    seen.add(refreshToken)
 
     const dto = {
+      accountId,
       refreshToken,
+      accessToken,
+      idToken: getStringField(item, ['idToken', 'id_token', 'IdToken']),
+      expiresAt: getStringField(item, ['expiresAt', 'expires_at', 'ExpiresAt']),
       email: getStringField(item, ['email', 'Email']),
-      accountId: getStringField(item, ['accountId', 'account_id', 'AccountId']),
       planType: getStringField(item, ['planType', 'plan_type', 'PlanType']),
       proxyUrl: getStringField(item, ['proxyUrl', 'proxy_url', 'ProxyUrl']),
     }
@@ -692,9 +814,19 @@ window.showCodexJsonImportDialog = function () {
         <button class="btn-icon" onclick="closeCodexJsonImportDialog()">${createIcon('close', { size: 20 })}</button>
       </div>
       <div class="modal-body" style="padding: 20px; flex: 1;">
+        <div style="margin-bottom: 15px;">
+          <label class="btn btn-secondary" for="codexJsonFileInput" style="cursor: pointer; display: inline-block;">
+            ${createIcon('upload', { size: 16 })} ${t('codex.selectJsonFiles')}
+          </label>
+          <input type="file" id="codexJsonFileInput" accept=".json" multiple style="display: none;" onchange="handleCodexJsonFileSelect(event)">
+          <span id="codexFileCount" style="margin-left: 10px; color: var(--text-secondary); font-size: 13px;"></span>
+        </div>
+        <div style="margin-bottom: 10px; color: var(--text-secondary); font-size: 12px;">
+          ${t('codex.orPasteJson')}
+        </div>
         <textarea id="codexJsonImportTextarea"
           placeholder='${t('codex.jsonImportPlaceholderText')}'
-          style="width: 100%; height: 300px; font-family: monospace; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; resize: vertical; background: var(--bg-primary); color: var(--text-primary);"></textarea>
+          style="width: 100%; height: 250px; font-family: monospace; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; resize: vertical; background: var(--bg-primary); color: var(--text-primary);"></textarea>
       </div>
       <div class="modal-footer">
         <button class="btn" onclick="closeCodexJsonImportDialog()">${t('common.cancel')}</button>
@@ -703,6 +835,76 @@ window.showCodexJsonImportDialog = function () {
     </div>`
   document.body.appendChild(modal)
   setTimeout(() => document.getElementById('codexJsonImportTextarea')?.focus(), 100)
+}
+
+window.handleCodexJsonFileSelect = async function (event) {
+  const files = event.target.files
+  if (!files || files.length === 0) return
+
+  const fileCountSpan = document.getElementById('codexFileCount')
+  if (fileCountSpan) {
+    fileCountSpan.textContent = `${t('codex.selectedFiles')}: ${files.length}`
+  }
+
+  const allAccounts = []
+  let errorCount = 0
+
+  for (const file of files) {
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+
+      // Parse the file format (codex-xxx.json)
+      const account = parseCodexJsonFile(data)
+      if (account) {
+        allAccounts.push(account)
+      } else {
+        errorCount++
+      }
+    } catch (e) {
+      console.error(`Failed to parse file ${file.name}:`, e)
+      errorCount++
+    }
+  }
+
+  // Update textarea with parsed accounts
+  const textarea = document.getElementById('codexJsonImportTextarea')
+  if (textarea && allAccounts.length > 0) {
+    textarea.value = JSON.stringify(allAccounts, null, 2)
+  }
+
+  if (errorCount > 0) {
+    showError(`${t('codex.fileParseErrors')}: ${errorCount}/${files.length}`)
+  }
+}
+
+function parseCodexJsonFile(data) {
+  try {
+    const account = {
+      accessToken: data.access_token || data.accessToken || '',
+      idToken: data.id_token || data.idToken || '',
+      accountId: data.account_id || data.accountId || '',
+      email: data.email || '',
+      planType: data['https://api.openai.com/auth']?.chatgpt_plan_type || data.planType || 'free',
+      expiresAt: data.expired || data.expiresAt || ''
+    }
+
+    // Only include refreshToken if it exists
+    if (data.refresh_token || data.refreshToken) {
+      account.refreshToken = data.refresh_token || data.refreshToken
+    }
+
+    // Validate required fields
+    if (!account.accessToken || !account.accountId) {
+      console.warn('Invalid account data: missing accessToken or accountId')
+      return null
+    }
+
+    return account
+  } catch (e) {
+    console.error('Failed to parse account data:', e)
+    return null
+  }
 }
 
 window.closeCodexJsonImportDialog = function () {
@@ -742,18 +944,40 @@ async function processCodexJsonImport(jsonText) {
       if (!ok) return
     }
     let successCount = 0,
-      failedCount = 0
+      failedCount = 0,
+      skippedCount = 0
+    const failedReasons = []
     for (const dto of dtos) {
       try {
         await window.go.main.App.AddCodexAccount(dto)
         successCount++
       } catch (e) {
-        failedCount++
+        const reason = e?.message || String(e)
+        // Check if it's a duplicate account error (skip silently)
+        if (reason.includes('already exists') || reason.includes('duplicate')) {
+          skippedCount++
+          console.log('Skipped duplicate account:', dto.email || dto.accountId)
+        } else {
+          failedCount++
+          failedReasons.push(`${dto.email || dto.accountId}: ${reason}`)
+          console.error('Failed to add account:', dto.accountId, reason)
+        }
       }
     }
     await loadCodexAccounts()
     renderCodexAccountCards()
-    showSuccess(t('codex.importSuccess').replace('{success}', successCount).replace('{failed}', failedCount))
+
+    if (failedCount > 0) {
+      const message = t('codex.importSuccess').replace('{success}', successCount).replace('{failed}', failedCount)
+      const details = failedReasons.slice(0, 3).join('\n')
+      showError(`${message}\n\n${t('codex.failedDetails')}:\n${details}${failedReasons.length > 3 ? '\n...' : ''}`)
+    } else {
+      let message = t('codex.importSuccess').replace('{success}', successCount).replace('{failed}', failedCount)
+      if (skippedCount > 0) {
+        message += ` (${t('codex.skippedDuplicate')}: ${skippedCount})`
+      }
+      showSuccess(message)
+    }
   } catch (error) {
     showError(t('codex.importFailed') + ': ' + (error?.message || error))
   } finally {
@@ -763,7 +987,8 @@ async function processCodexJsonImport(jsonText) {
 
 // Bulk delete
 window.showCodexBulkDeleteDialog = function () {
-  if (!codexAccounts || codexAccounts.length === 0) {
+  const manageableAccounts = (codexAccounts || []).filter((acc) => Boolean(acc.accountId))
+  if (manageableAccounts.length === 0) {
     showError(t('codex.noAccountsAvailable'))
     return
   }
@@ -771,17 +996,17 @@ window.showCodexBulkDeleteDialog = function () {
   modal.className = 'modal active'
   modal.id = 'codexBulkDeleteModal'
 
-  const listHtml = codexAccounts
+  const listHtml = manageableAccounts
     .map((acc) => {
       const isBanned = acc.status === 'banned' || acc.status === 'reused'
       const label = acc.email || truncateToken(acc.refreshToken)
       const statusText = getStatusText(acc)
       const statusClass = acc.cooldownRemaining > 0 ? 'status-exhausted' : getStatusBadgeClass(acc.status)
-      const encodedToken = btoa(acc.refreshToken)
+      const encodedAccountId = btoa(acc.accountId)
       return `
       <div class="kiro-bulk-item" style="display: flex; align-items: center; padding: 10px; border-bottom: 1px solid var(--border-light);">
-        <input type="checkbox" class="codex-bulk-checkbox" value="${encodedToken}" data-banned="${isBanned}" id="codex-chk-${encodedToken}" style="margin-right: 12px; transform: scale(1.2);">
-        <label for="codex-chk-${encodedToken}" style="flex: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+        <input type="checkbox" class="codex-bulk-checkbox" value="${encodedAccountId}" data-banned="${isBanned}" id="codex-chk-${encodedAccountId}" style="margin-right: 12px; transform: scale(1.2);">
+        <label for="codex-chk-${encodedAccountId}" style="flex: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
           <span style="font-weight: 500; font-size: 13px;">${label}</span>
           <span class="kiro-status-badge ${statusClass}">${statusText}</span>
         </label>
@@ -845,7 +1070,7 @@ window.executeCodexBulkDelete = async function () {
     for (const cb of checkboxes) {
       try {
         if (window.go?.main?.App?.DeleteCodexAccount) {
-          await window.go.main.App.DeleteCodexAccount(atob(cb.value))
+          await window.go.main.App.DeleteCodexAccount(decodeAccountId(cb.value))
           successCount++
         }
       } catch (e) {

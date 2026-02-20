@@ -29,7 +29,14 @@ func LoadCodexMultiConfig(path string) (*CodexMultiConfig, error) {
 
 	for i := range config.Accounts {
 		normalizeAccountTimes(&config.Accounts[i])
+		config.Accounts[i].AccountID = strings.TrimSpace(config.Accounts[i].AccountID)
+		config.Accounts[i].RefreshToken = strings.TrimSpace(config.Accounts[i].RefreshToken)
 	}
+
+	// Normalize active account fields
+	config.ActiveAccountID = strings.TrimSpace(config.ActiveAccountID)
+	config.ActiveRefreshToken = strings.TrimSpace(config.ActiveRefreshToken)
+
 	return &config, nil
 }
 

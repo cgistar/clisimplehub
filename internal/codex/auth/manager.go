@@ -88,8 +88,14 @@ func (m *CodexAuthManager) resolveProxyURL() string {
 }
 
 func (m *CodexAuthManager) refreshTokenLocked() error {
+	// If refreshToken is empty, this is a temporary account with only accessToken
+	// Skip refresh and use existing accessToken
 	if m.refreshToken == "" {
-		return fmt.Errorf("refresh token is not set")
+		if m.accessToken == "" {
+			return fmt.Errorf("neither refresh token nor access token is set")
+		}
+		// Temporary account: cannot refresh, just use existing token
+		return nil
 	}
 
 	proxyURL := m.resolveProxyURL()

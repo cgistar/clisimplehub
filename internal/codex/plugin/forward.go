@@ -298,7 +298,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 		debugLogger.SetMetadata("ProxyURL", proxyURL)
 	}
 
-	authMgr := s.GetOrCreateAuthManager(account.RefreshToken, configPath, proxyURL)
+	authMgr := s.GetOrCreateAuthManager(account.AccountID, configPath, proxyURL)
 	accessToken, accountID, err := authMgr.GetAccessToken()
 	if err != nil {
 		if debugLogger != nil {
@@ -306,12 +306,12 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 		}
 		errStr := err.Error()
 		if strings.Contains(errStr, "refresh_token_reused") {
-			pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusReused, 0, "refresh_token_reused")
+			pool.MarkFailed(account.AccountID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
 		} else if strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
-			pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusBanned, 0, "auth_failed")
+			pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 0, "auth_failed")
 		} else {
 			// Transient failure: short cooldown, not permanent ban
-			pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusValid, 2*time.Minute, "auth_transient")
+			pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, 2*time.Minute, "auth_transient")
 		}
 		return &forwardResult{errMsg: fmt.Sprintf("auth failed: %v", err)}, true
 	}
@@ -351,7 +351,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 			debugLogger.Log("上游请求失败: %v", err)
 		}
 		// Transport error: short cooldown to avoid reselecting same broken account
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusValid, 30*time.Second, "transport_error")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, 30*time.Second, "transport_error")
 		return &forwardResult{errMsg: fmt.Sprintf("upstream error: %v", err)}, true
 	}
 	defer resp.Body.Close()
@@ -399,7 +399,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 				}
 			}
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
 		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "unauthorized"}, true
 	}
 
@@ -409,7 +409,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 			debugLogger.Log("403 禁止访问")
 			debugLogger.SetSection("UpstreamResponseBody", string(respBody))
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
 		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "forbidden"}, true
 	}
 
@@ -419,7 +419,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 			debugLogger.Log("402 配额耗尽")
 			debugLogger.SetSection("UpstreamResponseBody", string(respBody))
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
 		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "payment required"}, false
 	}
 
@@ -434,13 +434,13 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 			debugLogger.SetSection("UpstreamResponseBody", string(respBody))
 		}
 		if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
-			pool.UpdateUsageSnapshot(account.RefreshToken, snapshot)
+			pool.UpdateUsageSnapshot(account.AccountID, snapshot)
 			if debugLogger != nil {
 				debugLogger.Log("提取使用率快照: primary=%.1f%%, secondary=%.1f%%",
 					snapshot.PrimaryUsedPercent, snapshot.SecondaryUsedPercent)
 			}
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusValid, cooldown, "rate_limit")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, cooldown, "rate_limit")
 		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "rate limited"}, true
 	}
 
@@ -453,7 +453,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 		return &forwardResult{statusCode: resp.StatusCode, headers: resp.Header.Clone(), body: respBody}, false
 	}
 
-	pool.ReportSuccess(account.RefreshToken)
+	pool.ReportSuccess(account.AccountID)
 	if debugLogger != nil {
 		debugLogger.Log("请求成功")
 	}
@@ -464,7 +464,7 @@ func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, i
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
 	if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
-		pool.UpdateUsageSnapshot(account.RefreshToken, snapshot)
+		pool.UpdateUsageSnapshot(account.AccountID, snapshot)
 		if debugLogger != nil {
 			debugLogger.Log("提取使用率快照: primary=%.1f%%, secondary=%.1f%%",
 				snapshot.PrimaryUsedPercent, snapshot.SecondaryUsedPercent)

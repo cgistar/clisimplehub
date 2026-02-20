@@ -64,7 +64,8 @@ type CodexAccount struct {
 }
 
 type CodexMultiConfig struct {
-	ActiveRefreshToken string         `json:"activeRefreshToken"`
+	ActiveRefreshToken string         `json:"activeRefreshToken"` // Deprecated: use ActiveAccountID
+	ActiveAccountID    string         `json:"activeAccountId,omitempty"`
 	RotationMode       string         `json:"rotationMode,omitempty"`
 	ProxyUrl           string         `json:"proxyUrl,omitempty"`
 	Accounts           []CodexAccount `json:"accounts"`
@@ -109,23 +110,43 @@ func (c *CodexMultiConfig) GetActiveAccount() *CodexAccount {
 	if c == nil || len(c.Accounts) == 0 {
 		return nil
 	}
-	for i := range c.Accounts {
-		if c.Accounts[i].RefreshToken == c.ActiveRefreshToken {
-			return &c.Accounts[i]
+	// Use ActiveAccountID only
+	if c.ActiveAccountID != "" {
+		for i := range c.Accounts {
+			if c.Accounts[i].AccountID == c.ActiveAccountID {
+				return &c.Accounts[i]
+			}
 		}
 	}
-	if len(c.Accounts) > 0 {
-		return &c.Accounts[0]
+	// Compatibility fallback: return first account with a usable AccountID
+	for i := range c.Accounts {
+		if strings.TrimSpace(c.Accounts[i].AccountID) != "" {
+			return &c.Accounts[i]
+		}
 	}
 	return nil
 }
 
 func (c *CodexMultiConfig) FindAccountByRefreshToken(refreshToken string) *CodexAccount {
-	if c == nil {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if c == nil || refreshToken == "" {
 		return nil
 	}
 	for i := range c.Accounts {
-		if c.Accounts[i].RefreshToken == refreshToken {
+		if strings.TrimSpace(c.Accounts[i].RefreshToken) == refreshToken {
+			return &c.Accounts[i]
+		}
+	}
+	return nil
+}
+
+func (c *CodexMultiConfig) FindAccountByAccountID(accountId string) *CodexAccount {
+	accountId = strings.TrimSpace(accountId)
+	if c == nil || accountId == "" {
+		return nil
+	}
+	for i := range c.Accounts {
+		if strings.TrimSpace(c.Accounts[i].AccountID) == accountId {
 			return &c.Accounts[i]
 		}
 	}
@@ -136,8 +157,13 @@ func (c *CodexMultiConfig) UpdateAccount(account *CodexAccount) bool {
 	if c == nil || account == nil {
 		return false
 	}
+	accountID := strings.TrimSpace(account.AccountID)
+	if accountID == "" {
+		return false
+	}
+	// Use AccountID only
 	for i := range c.Accounts {
-		if c.Accounts[i].RefreshToken == account.RefreshToken {
+		if strings.TrimSpace(c.Accounts[i].AccountID) == accountID {
 			c.Accounts[i] = *account
 			return true
 		}
@@ -146,16 +172,24 @@ func (c *CodexMultiConfig) UpdateAccount(account *CodexAccount) bool {
 }
 
 func (c *CodexMultiConfig) DeleteAccount(refreshToken string) bool {
-	if c == nil {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if c == nil || refreshToken == "" {
 		return false
 	}
 	for i := range c.Accounts {
-		if c.Accounts[i].RefreshToken == refreshToken {
+		if strings.TrimSpace(c.Accounts[i].RefreshToken) == refreshToken {
+			deletedAccountID := strings.TrimSpace(c.Accounts[i].AccountID)
 			c.Accounts = append(c.Accounts[:i], c.Accounts[i+1:]...)
-			if c.ActiveRefreshToken == refreshToken && len(c.Accounts) > 0 {
-				c.ActiveRefreshToken = c.Accounts[0].RefreshToken
-			} else if len(c.Accounts) == 0 {
-				c.ActiveRefreshToken = ""
+			// Update active account if deleted
+			if strings.TrimSpace(c.ActiveRefreshToken) == refreshToken ||
+				(deletedAccountID != "" && strings.TrimSpace(c.ActiveAccountID) == deletedAccountID) {
+				if len(c.Accounts) > 0 {
+					c.ActiveRefreshToken = c.Accounts[0].RefreshToken
+					c.ActiveAccountID = c.Accounts[0].AccountID
+				} else {
+					c.ActiveRefreshToken = ""
+					c.ActiveAccountID = ""
+				}
 			}
 			return true
 		}
@@ -378,15 +412,28 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 }
 
 func MarshalAccountsResponse(config *CodexMultiConfig) (json.RawMessage, error) {
+	if config == nil {
+		return json.Marshal(map[string]interface{}{
+			"activeRefreshToken": "",
+			"activeAccountId":    "",
+			"accounts":           []map[string]interface{}{},
+		})
+	}
+
+	activeAccountID := strings.TrimSpace(config.ActiveAccountID)
+
 	resp := map[string]interface{}{
 		"activeRefreshToken": config.ActiveRefreshToken,
+		"activeAccountId":    activeAccountID,
 	}
+
 	accounts := make([]map[string]interface{}, 0, len(config.Accounts))
 	for i := range config.Accounts {
 		a := &config.Accounts[i]
-		isActive := a.RefreshToken == config.ActiveRefreshToken
+		isActive := activeAccountID != "" && strings.TrimSpace(a.AccountID) == activeAccountID
 		accounts = append(accounts, MarshalAccountForFrontend(a, isActive))
 	}
+
 	resp["accounts"] = accounts
 	return json.Marshal(resp)
 }

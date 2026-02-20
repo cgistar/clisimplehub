@@ -176,7 +176,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 	}
 
 	// Get access token
-	authMgr := s.GetOrCreateAuthManager(account.RefreshToken, configPath, proxyURL)
+	authMgr := s.GetOrCreateAuthManager(account.AccountID, configPath, proxyURL)
 	accessToken, accountID, err := authMgr.GetAccessToken()
 	if err != nil {
 		if debugLogger != nil {
@@ -185,11 +185,11 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 		// Handle auth error
 		errStr := err.Error()
 		if strings.Contains(errStr, "refresh_token_reused") {
-			pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusReused, 0, "refresh_token_reused")
+			pool.MarkFailed(account.AccountID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
 		} else if strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
-			pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusBanned, 0, "auth_failed")
+			pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 0, "auth_failed")
 		} else {
-			pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusValid, 2*time.Minute, "auth_transient")
+			pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, 2*time.Minute, "auth_transient")
 		}
 		return &executor.ForwardResult{
 			StatusCode: http.StatusUnauthorized,
@@ -224,7 +224,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 		if debugLogger != nil {
 			debugLogger.Log("上游请求失败: %v", err)
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusValid, 30*time.Second, "transport_error")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, 30*time.Second, "transport_error")
 		return &executor.ForwardResult{
 			StatusCode: http.StatusBadGateway,
 			Error:      fmt.Errorf("upstream error: %v", err),
@@ -269,7 +269,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 				}
 			}
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
 		return &executor.ForwardResult{
 			StatusCode: resp.StatusCode,
 			Body:       respBody,
@@ -282,7 +282,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 		if debugLogger != nil {
 			debugLogger.Log("403 禁止访问")
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
 		return &executor.ForwardResult{
 			StatusCode: resp.StatusCode,
 			Body:       respBody,
@@ -295,7 +295,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 		if debugLogger != nil {
 			debugLogger.Log("402 配额耗尽")
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
 		return &executor.ForwardResult{
 			StatusCode: resp.StatusCode,
 			Body:       respBody,
@@ -313,13 +313,13 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 			debugLogger.Log("429 速率限制，冷却时间: %v", cooldown)
 		}
 		if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
-			pool.UpdateUsageSnapshot(account.RefreshToken, snapshot)
+			pool.UpdateUsageSnapshot(account.AccountID, snapshot)
 			if debugLogger != nil {
 				debugLogger.Log("提取使用率快照: primary=%.1f%%, secondary=%.1f%%",
 					snapshot.PrimaryUsedPercent, snapshot.SecondaryUsedPercent)
 			}
 		}
-		pool.MarkFailed(account.RefreshToken, codexShared.CodexStatusValid, cooldown, "rate_limit")
+		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, cooldown, "rate_limit")
 		return &executor.ForwardResult{
 			StatusCode: resp.StatusCode,
 			Body:       respBody,
@@ -341,7 +341,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 	}
 
 	// Success
-	pool.ReportSuccess(account.RefreshToken)
+	pool.ReportSuccess(account.AccountID)
 	if debugLogger != nil {
 		debugLogger.Log("请求成功")
 	}
@@ -355,7 +355,7 @@ func (s *CodexService) handleSuccessResponse(ctx context.Context, resp *http.Res
 
 	// Update usage snapshot if available
 	if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
-		pool.UpdateUsageSnapshot(account.RefreshToken, snapshot)
+		pool.UpdateUsageSnapshot(account.AccountID, snapshot)
 		if debugLogger != nil {
 			debugLogger.Log("提取使用率快照: primary=%.1f%%, secondary=%.1f%%",
 				snapshot.PrimaryUsedPercent, snapshot.SecondaryUsedPercent)

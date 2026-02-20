@@ -55,6 +55,8 @@ export default {
     import: '导入',
     noAccounts: '暂无账号，点击"添加账号"开始',
     accountAdded: '账号添加成功',
+    accountAlreadyExists: '账号已存在，已跳过',
+    accountUpdatedWithLatest: '账号已更新为最新信息',
     accountUpdated: '账号更新成功',
     accountDeleted: '账号删除成功',
     accountSwitched: '账号已切换',
@@ -112,6 +114,7 @@ export default {
     // 按钮和操作
     activate: '激活',
     test: '测试',
+    refreshToken: '刷新token',
     copy: '复制',
     active: '当前使用',
     proxy: '代理',
@@ -134,6 +137,7 @@ export default {
     importFailed: '导入失败',
     selectAtLeastOne: '请至少选择一个账号',
     noAccountsAvailable: '暂无账号',
+    skippedDuplicate: '已跳过重复',
     // 配置对话框
     configModalTitle: 'Codex 配置',
     rotationModeLabel: '轮循模式',
@@ -169,6 +173,20 @@ export default {
     jsonImportMenu: 'JSON 导入',
     usage5h: '5h',
     usageWeek: '周',
+    // 用量相关
+    usage: '用量',
+    usageFailedPrefix: '获取用量失败：',
+    tokenExpiredClickTest: 'Token 已过期，请点击测试按钮刷新',
+    // JSON文件导入
+    selectJsonFiles: '选择JSON文件',
+    selectedFiles: '已选择',
+    orPasteJson: '或直接粘贴JSON内容：',
+    fileParseErrors: '文件解析失败',
+    failedDetails: '失败详情',
+    // 临时Token标记
+    tempToken: '临时',
+    noRefreshToken: '此账号没有refresh token，无法自动刷新',
+    noRefreshTokenHint: '无refresh token，无法刷新',
   },
   kiro: {
     title: 'Kiro 配置',

@@ -139,8 +139,23 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	if err := json.Unmarshal(dtoJSON, &dto); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(dto.RefreshToken) == "" {
-		return nil, fmt.Errorf("refreshToken is required")
+
+	// Trim all string fields
+	dto.RefreshToken = strings.TrimSpace(dto.RefreshToken)
+	dto.AccessToken = strings.TrimSpace(dto.AccessToken)
+	dto.IDToken = strings.TrimSpace(dto.IDToken)
+	dto.AccountID = strings.TrimSpace(dto.AccountID)
+	dto.Email = strings.TrimSpace(dto.Email)
+	dto.PlanType = strings.TrimSpace(dto.PlanType)
+	dto.ProxyUrl = strings.TrimSpace(dto.ProxyUrl)
+
+	// Allow temporary accounts with only accessToken (no refreshToken)
+	if dto.RefreshToken == "" && dto.AccessToken == "" {
+		return nil, fmt.Errorf("either refreshToken or accessToken is required")
+	}
+	// AccountID is now required for new accounts
+	if dto.AccountID == "" {
+		return nil, fmt.Errorf("accountId is required")
 	}
 
 	mc, err := codexShared.LoadCodexMultiConfig(configPath)
@@ -151,9 +166,12 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		mc = &codexShared.CodexMultiConfig{}
 	}
 
-	// Check duplicate
-	if mc.FindAccountByRefreshToken(dto.RefreshToken) != nil {
-		return nil, fmt.Errorf("account already exists")
+	// Check duplicate by AccountID or RefreshToken
+	if mc.FindAccountByAccountID(dto.AccountID) != nil {
+		return nil, fmt.Errorf("account with this accountId already exists")
+	}
+	if dto.RefreshToken != "" && mc.FindAccountByRefreshToken(dto.RefreshToken) != nil {
+		return nil, fmt.Errorf("account with this refreshToken already exists")
 	}
 
 	now := time.Now()
@@ -177,7 +195,8 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	}
 
 	mc.Accounts = append(mc.Accounts, account)
-	if mc.ActiveRefreshToken == "" {
+	if mc.ActiveAccountID == "" {
+		mc.ActiveAccountID = account.AccountID
 		mc.ActiveRefreshToken = account.RefreshToken
 	}
 
@@ -197,7 +216,7 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		}
 	}
 
-	isActive := account.RefreshToken == mc.ActiveRefreshToken
+	isActive := account.AccountID == mc.ActiveAccountID
 	return json.Marshal(codexShared.MarshalAccountForFrontend(&account, isActive))
 }
 

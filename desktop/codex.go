@@ -34,25 +34,28 @@ func (a *App) getCodexMultiConfigPath() string {
 
 // CodexAccountDTO represents a Codex account for frontend
 type CodexAccountDTO struct {
-	RefreshToken      string                 `json:"refreshToken"`
-	Email             string                 `json:"email,omitempty"`
-	PlanType          string                 `json:"planType,omitempty"`
-	AccountID         string                 `json:"accountId,omitempty"`
-	Status            string                 `json:"status"`
-	Weight            int                    `json:"weight,omitempty"`
-	ProxyUrl          string                 `json:"proxyUrl,omitempty"`
-	ExpiresAt         string                 `json:"expiresAt,omitempty"`
-	CooldownUntil     string                 `json:"cooldownUntil,omitempty"`
-	CooldownReason    string                 `json:"cooldownReason,omitempty"`
-	CooldownRemaining int                    `json:"cooldownRemaining,omitempty"`
+	RefreshToken      string         `json:"refreshToken"`
+	Email             string         `json:"email,omitempty"`
+	PlanType          string         `json:"planType,omitempty"`
+	AccessToken       string         `json:"accessToken,omitempty"`
+	IDToken           string         `json:"idToken,omitempty"`
+	AccountID         string         `json:"accountId,omitempty"`
+	Status            string         `json:"status"`
+	Weight            int            `json:"weight,omitempty"`
+	ProxyUrl          string         `json:"proxyUrl,omitempty"`
+	ExpiresAt         string         `json:"expiresAt,omitempty"`
+	CooldownUntil     string         `json:"cooldownUntil,omitempty"`
+	CooldownReason    string         `json:"cooldownReason,omitempty"`
+	CooldownRemaining int            `json:"cooldownRemaining,omitempty"`
 	CodexUsage        map[string]any `json:"codexUsage,omitempty"`
-	CreatedAt         string                 `json:"createdAt,omitempty"`
-	UpdatedAt         string                 `json:"updatedAt,omitempty"`
-	IsActive          bool                   `json:"isActive"`
+	CreatedAt         string         `json:"createdAt,omitempty"`
+	UpdatedAt         string         `json:"updatedAt,omitempty"`
+	IsActive          bool           `json:"isActive"`
 }
 
 type CodexAccountsResponse struct {
 	ActiveRefreshToken string            `json:"activeRefreshToken"`
+	ActiveAccountID    string            `json:"activeAccountId"`
 	Accounts           []CodexAccountDTO `json:"accounts"`
 }
 
@@ -118,12 +121,12 @@ func (a *App) GetActiveCodexAccount() (*CodexAccountDTO, error) {
 	return &dto, nil
 }
 
-func (a *App) SetActiveCodexAccount(refreshToken string) error {
+func (a *App) SetActiveCodexAccount(accountId string) error {
 	cp := codexProvider()
 	if cp == nil {
 		return fmt.Errorf("codex plugin not available")
 	}
-	return cp.SetActiveAccount(a.getCodexMultiConfigPath(), refreshToken)
+	return cp.SetActiveAccount(a.getCodexMultiConfigPath(), accountId)
 }
 
 func (a *App) AddCodexAccount(dto *CodexAccountDTO) (*CodexAccountDTO, error) {
@@ -164,12 +167,12 @@ func (a *App) UpdateCodexAccount(dto *CodexAccountDTO) error {
 	return cp.UpdateAccount(a.getCodexMultiConfigPath(), dtoJSON)
 }
 
-func (a *App) DeleteCodexAccount(refreshToken string) error {
+func (a *App) DeleteCodexAccount(accountId string) error {
 	cp := codexProvider()
 	if cp == nil {
 		return fmt.Errorf("codex plugin not available")
 	}
-	return cp.DeleteAccount(a.getCodexMultiConfigPath(), refreshToken)
+	return cp.DeleteAccount(a.getCodexMultiConfigPath(), accountId)
 }
 
 func (a *App) StartCodexLogin() (*CodexLoginResultDTO, error) {
@@ -226,12 +229,12 @@ func (a *App) WaitForCodexLoginCallback() (*CodexLoginResultDTO, error) {
 	return &result, nil
 }
 
-func (a *App) TestCodexAccount(refreshToken string) (*CodexTestResult, error) {
+func (a *App) TestCodexAccount(accountId string) (*CodexTestResult, error) {
 	cp := codexProvider()
 	if cp == nil {
 		return nil, fmt.Errorf("codex plugin not available")
 	}
-	raw, err := cp.TestAccount(a.getCodexMultiConfigPath(), refreshToken)
+	raw, err := cp.TestAccount(a.getCodexMultiConfigPath(), accountId)
 	if err != nil {
 		return nil, err
 	}
@@ -271,4 +274,34 @@ func (a *App) SaveCodexGlobalConfig(dto *CodexGlobalConfigDTO) error {
 		return err
 	}
 	return cp.SaveCodexGlobalConfig(a.getCodexMultiConfigPath(), dtoJSON)
+}
+
+type CodexUsageResult struct {
+	Primary   *CodexUsageWindow `json:"primary,omitempty"`
+	Secondary *CodexUsageWindow `json:"secondary,omitempty"`
+}
+
+type CodexUsageWindow struct {
+	UsedPercent      float64 `json:"usedPercent"`
+	RemainingSeconds int     `json:"remainingSeconds"`
+}
+
+func (a *App) GetCodexAccountUsage(accountId string) (*CodexUsageResult, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := cp.GetAccountUsage(ctx, a.getCodexMultiConfigPath(), accountId)
+	if err != nil {
+		return nil, err
+	}
+	var result CodexUsageResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

@@ -33,10 +33,10 @@ func (s *CodexService) SetStorageAccessor(sa StorageAccessor) {
 	s.storageAccessor = sa
 }
 
-func (s *CodexService) GetOrCreateAuthManager(refreshToken, configPath, proxyURL string) *codexAuth.CodexAuthManager {
+func (s *CodexService) GetOrCreateAuthManager(accountId, configPath, proxyURL string) *codexAuth.CodexAuthManager {
 	// Fast path: check if manager exists with read lock
 	s.mu.RLock()
-	if m, ok := s.authManagers[refreshToken]; ok {
+	if m, ok := s.authManagers[accountId]; ok {
 		s.mu.RUnlock()
 		m.SetProxyURL(proxyURL)
 		return m
@@ -48,23 +48,44 @@ func (s *CodexService) GetOrCreateAuthManager(refreshToken, configPath, proxyURL
 	defer s.mu.Unlock()
 
 	// Double-check after acquiring write lock
-	if m, ok := s.authManagers[refreshToken]; ok {
+	if m, ok := s.authManagers[accountId]; ok {
 		m.SetProxyURL(proxyURL)
 		return m
 	}
 
-	m := codexAuth.NewCodexAuthManager(&codexShared.CodexAccount{
-		RefreshToken: refreshToken,
-		ProxyUrl:     proxyURL,
-	}, configPath)
-	s.authManagers[refreshToken] = m
+	// Load account from config to get full details
+	cfg, err := codexShared.LoadCodexMultiConfig(configPath)
+	if err != nil {
+		// Fallback: create minimal manager
+		m := codexAuth.NewCodexAuthManager(&codexShared.CodexAccount{
+			AccountID: accountId,
+			ProxyUrl:  proxyURL,
+		}, configPath)
+		s.authManagers[accountId] = m
+		return m
+	}
+
+	account := cfg.FindAccountByAccountID(accountId)
+	if account == nil {
+		// Fallback: create minimal manager
+		m := codexAuth.NewCodexAuthManager(&codexShared.CodexAccount{
+			AccountID: accountId,
+			ProxyUrl:  proxyURL,
+		}, configPath)
+		s.authManagers[accountId] = m
+		return m
+	}
+
+	m := codexAuth.NewCodexAuthManager(account, configPath)
+	m.SetProxyURL(proxyURL)
+	s.authManagers[accountId] = m
 	return m
 }
 
-func (s *CodexService) RemoveAuthManager(refreshToken string) {
+func (s *CodexService) RemoveAuthManager(accountId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.authManagers, refreshToken)
+	delete(s.authManagers, accountId)
 }
 
 // SaveConfigAndEnsureEndpoint saves the config and ensures endpoint exists.

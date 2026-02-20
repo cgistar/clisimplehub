@@ -75,12 +75,12 @@ func (p *CodexAccountPool) Select() *shared.CodexAccount {
 	}
 }
 
-func (p *CodexAccountPool) MarkFailed(refreshToken string, status shared.CodexAccountStatus, cooldownDuration time.Duration, cooldownReason string) error {
+func (p *CodexAccountPool) MarkFailed(accountId string, status shared.CodexAccountStatus, cooldownDuration time.Duration, cooldownReason string) error {
 	if p == nil {
 		return fmt.Errorf("pool is nil")
 	}
-	rt := strings.TrimSpace(refreshToken)
-	if rt == "" {
+	id := strings.TrimSpace(accountId)
+	if id == "" {
 		return nil
 	}
 
@@ -97,11 +97,11 @@ func (p *CodexAccountPool) MarkFailed(refreshToken string, status shared.CodexAc
 	// Add to failed map for permanent failures.
 	// Rate-limited accounts use cooldown only and auto-recover.
 	if status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused {
-		p.failed[rt] = status
+		p.failed[id] = status
 	}
 
 	for i := range p.config.Accounts {
-		if strings.TrimSpace(p.config.Accounts[i].RefreshToken) == rt {
+		if strings.TrimSpace(p.config.Accounts[i].AccountID) == id {
 			if status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused {
 				p.config.Accounts[i].Status = status
 			}
@@ -117,8 +117,9 @@ func (p *CodexAccountPool) MarkFailed(refreshToken string, status shared.CodexAc
 
 	mode := p.config.GetRotationMode()
 	if mode == shared.RotationFailover {
-		if strings.TrimSpace(p.config.ActiveRefreshToken) == rt {
-			if next := p.findNextAvailable(rt); next != nil {
+		if strings.TrimSpace(p.config.ActiveAccountID) == id {
+			if next := p.findNextAvailable(id); next != nil {
+				p.config.ActiveAccountID = next.AccountID
 				p.config.ActiveRefreshToken = next.RefreshToken
 				_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 			}
@@ -130,16 +131,16 @@ func (p *CodexAccountPool) MarkFailed(refreshToken string, status shared.CodexAc
 	return nil
 }
 
-func (p *CodexAccountPool) ReportSuccess(refreshToken string) {
+func (p *CodexAccountPool) ReportSuccess(accountId string) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.failed, refreshToken)
+	delete(p.failed, accountId)
 }
 
-func (p *CodexAccountPool) UpdateUsageSnapshot(refreshToken string, snapshot *shared.CodexUsageSnapshot) {
+func (p *CodexAccountPool) UpdateUsageSnapshot(accountId string, snapshot *shared.CodexUsageSnapshot) {
 	if p == nil || snapshot == nil {
 		return
 	}
@@ -149,7 +150,7 @@ func (p *CodexAccountPool) UpdateUsageSnapshot(refreshToken string, snapshot *sh
 		return
 	}
 	for i := range p.config.Accounts {
-		if p.config.Accounts[i].RefreshToken == refreshToken {
+		if p.config.Accounts[i].AccountID == accountId {
 			p.config.Accounts[i].CodexUsage = snapshot
 			_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 			return
@@ -212,33 +213,59 @@ func (p *CodexAccountPool) ProxyURL() string {
 
 // --- Internal selection strategies ---
 
+func (p *CodexAccountPool) resolveActiveAccount() *shared.CodexAccount {
+	activeID := strings.TrimSpace(p.config.ActiveAccountID)
+	if activeID != "" {
+		if active := p.config.FindAccountByAccountID(activeID); active != nil {
+			return active
+		}
+	}
+	// If no active account or not found, try to find first available
+	next := p.findNextAvailable("")
+	if next == nil {
+		return nil
+	}
+	// Update active account to first available
+	p.config.ActiveAccountID = next.AccountID
+	p.config.ActiveRefreshToken = next.RefreshToken
+	_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
+	return next
+}
+
 func (p *CodexAccountPool) selectFixed() *shared.CodexAccount {
-	active := p.config.FindAccountByRefreshToken(p.config.ActiveRefreshToken)
+	active := p.resolveActiveAccount()
 	if active == nil {
 		return nil
 	}
+
 	active.ClearCooldownIfExpired()
 	if active.IsCoolingDown() {
 		return nil
 	}
-	if _, isFailed := p.failed[active.RefreshToken]; isFailed {
+	if _, isFailed := p.failed[active.AccountID]; isFailed {
 		return nil
 	}
 	return cloneAccount(active)
 }
 
 func (p *CodexAccountPool) selectFailover() *shared.CodexAccount {
-	active := p.config.FindAccountByRefreshToken(p.config.ActiveRefreshToken)
+	active := p.resolveActiveAccount()
 	if active != nil {
 		active.ClearCooldownIfExpired()
 		if !active.IsCoolingDown() {
-			if _, isFailed := p.failed[active.RefreshToken]; !isFailed {
+			if _, isFailed := p.failed[active.AccountID]; !isFailed {
 				return cloneAccount(active)
 			}
 		}
 	}
-	next := p.findNextAvailable(p.config.ActiveRefreshToken)
-	if next != nil {
+
+	currentID := ""
+	if active != nil {
+		currentID = active.AccountID
+	}
+	next := p.findNextAvailable(currentID)
+	if next != nil && (active == nil || next.AccountID != active.AccountID) {
+		p.config.ActiveAccountID = next.AccountID
 		p.config.ActiveRefreshToken = next.RefreshToken
 		_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 	}
@@ -292,10 +319,11 @@ func (p *CodexAccountPool) availableAccounts() []*shared.CodexAccount {
 	var result []*shared.CodexAccount
 	for i := range p.config.Accounts {
 		a := &p.config.Accounts[i]
-		if strings.TrimSpace(a.RefreshToken) == "" {
+		// Skip accounts without AccountID (should not happen after migration)
+		if strings.TrimSpace(a.AccountID) == "" {
 			continue
 		}
-		if _, isFailed := p.failed[a.RefreshToken]; isFailed {
+		if _, isFailed := p.failed[a.AccountID]; isFailed {
 			continue
 		}
 		if a.Status == shared.CodexStatusBanned || a.Status == shared.CodexStatusExhausted || a.Status == shared.CodexStatusReused {
@@ -310,14 +338,14 @@ func (p *CodexAccountPool) availableAccounts() []*shared.CodexAccount {
 	return result
 }
 
-func (p *CodexAccountPool) findNextAvailable(currentRT string) *shared.CodexAccount {
+func (p *CodexAccountPool) findNextAvailable(currentAccountID string) *shared.CodexAccount {
 	accounts := p.availableAccounts()
 	if len(accounts) == 0 {
 		return nil
 	}
 	startIdx := 0
 	for i, a := range accounts {
-		if a.RefreshToken == currentRT {
+		if a.AccountID == currentAccountID {
 			startIdx = i + 1
 			break
 		}

@@ -55,6 +55,8 @@ export default {
     import: 'Import',
     noAccounts: 'No Codex accounts. Click "Add Account" to get started.',
     accountAdded: 'Codex account added',
+    accountAlreadyExists: 'Account already exists, skipped',
+    accountUpdatedWithLatest: 'Account updated with latest info',
     accountUpdated: 'Codex account updated',
     accountDeleted: 'Codex account deleted',
     accountSwitched: 'Codex account switched',
@@ -112,6 +114,7 @@ export default {
     // Buttons and actions
     activate: 'Activate',
     test: 'Test',
+    refreshToken: 'Refresh Token',
     copy: 'Copy',
     active: 'Active',
     proxy: 'Proxy',
@@ -134,6 +137,7 @@ export default {
     importFailed: 'Import failed',
     selectAtLeastOne: 'Select at least one account',
     noAccountsAvailable: 'No accounts',
+    skippedDuplicate: 'Skipped duplicates',
     // Config dialog
     configModalTitle: 'Codex Config',
     rotationModeLabel: 'Rotation Mode',
@@ -169,6 +173,20 @@ export default {
     jsonImportMenu: 'JSON Import',
     usage5h: '5h',
     usageWeek: 'Wk',
+    // Usage related
+    usage: 'Usage',
+    usageFailedPrefix: 'Failed to fetch usage: ',
+    tokenExpiredClickTest: 'Token expired, please click test button to refresh',
+    // JSON file import
+    selectJsonFiles: 'Select JSON Files',
+    selectedFiles: 'Selected',
+    orPasteJson: 'Or paste JSON content:',
+    fileParseErrors: 'File parse errors',
+    failedDetails: 'Failed details',
+    // Temporary token tag
+    tempToken: 'Temp',
+    noRefreshToken: 'This account has no refresh token and cannot auto-refresh',
+    noRefreshTokenHint: 'No refresh token, cannot refresh',
   },
   kiro: {
     title: 'Kiro Config',
