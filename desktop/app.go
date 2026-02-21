@@ -73,6 +73,7 @@ type App struct {
 	sseHub       *proxy.SSEHub
 	configLoader *config.ConfigLoader
 	usageStats   *statsdb.SQLiteUsageStatsStore
+	logBridge    *goLogBridge
 
 	kiroSignServer  *http.Server
 	kiroSignMu      sync.Mutex
@@ -85,13 +86,25 @@ type App struct {
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		logBridge: newGoLogBridge(goLogEventName),
+	}
 }
 
 // startup is called when the app starts. The context is saved
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if a.logBridge != nil {
+		a.logBridge.SetContext(ctx)
+	}
+}
+
+func (a *App) GoLogWriter() io.Writer {
+	if a == nil || a.logBridge == nil {
+		return io.Discard
+	}
+	return a.logBridge
 }
 
 // SetStorage sets the storage instance for the app
@@ -701,7 +714,7 @@ func (a *App) GetRecentLogs() ([]*RequestLogInfo, error) {
 			Path:          log.Path,
 			RunTime:       log.RunTime,
 			Status:        log.Status,
-			Timestamp:     log.Timestamp.Format("2006-01-02 15:04:05"),
+			Timestamp:     log.Timestamp.Format(time.RFC3339),
 		}
 		result = append(result, info)
 	}
@@ -751,7 +764,7 @@ func (a *App) GetLogDetail(logID string) (*RequestLogDetailInfo, error) {
 				Path:           log.Path,
 				RunTime:        log.RunTime,
 				Status:         log.Status,
-				Timestamp:      log.Timestamp.Format("15:04:05"),
+				Timestamp:      log.Timestamp.Format(time.RFC3339),
 				Method:         log.Method,
 				StatusCode:     log.StatusCode,
 				TargetURL:      log.TargetURL,
@@ -3455,9 +3468,9 @@ func (a *App) SyncConfigToServer(index int) error {
 
 	// 同步 vendors + endpoints + plugin configs；避免泄露本地 app settings 和 credentials。
 	type syncPayload struct {
-		Vendors            []config.VendorConfig   `json:"vendors"`
-		Endpoints          []config.EndpointConfig `json:"endpoints"`
-		KiroConfigEncoded  string                  `json:"kiroConfigEncoded,omitempty"`
+		Vendors           []config.VendorConfig   `json:"vendors"`
+		Endpoints         []config.EndpointConfig `json:"endpoints"`
+		KiroConfigEncoded string                  `json:"kiroConfigEncoded,omitempty"`
 		XRayConfigEncoded string                  `json:"xrayConfigEncoded,omitempty"`
 	}
 	payload := syncPayload{

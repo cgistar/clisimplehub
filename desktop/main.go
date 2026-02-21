@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"embed"
+	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/proxy"
+	"clisimplehub/internal/sqlitequeue"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
 
@@ -44,8 +47,12 @@ const (
 )
 
 func main() {
+	// Create the app instance early so startup logs can be buffered and replayed to frontend.
+	app := NewApp()
+
 	log.SetPrefix("[clisimplehub] ")
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	log.SetOutput(io.MultiWriter(os.Stderr, app.GoLogWriter()))
 
 	log.Println("Starting Cli Simple Hub in GUI mode...")
 
@@ -169,9 +176,6 @@ func main() {
 		proxyServer.SetFallbackEnabled(true)
 	}
 
-	// Create the app instance
-	app := NewApp()
-
 	// Wire up all components
 	// Requirements: All - Final integration
 	app.SetStorage(store)
@@ -218,6 +222,9 @@ func main() {
 				if err := usageStatsStore.Close(); err != nil {
 					log.Printf("Error closing usage stats db: %v", err)
 				}
+			}
+			if err := sqlitequeue.CloseAll(); err != nil {
+				log.Printf("Error closing sqlite backends: %v", err)
 			}
 			log.Println("Shutdown complete")
 		},

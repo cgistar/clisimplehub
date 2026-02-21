@@ -1,0 +1,79 @@
+import type { main } from '../../../wailsjs/go/models'
+
+export type CodexAccountStatus =
+  | 'valid'
+  | 'banned'
+  | 'exhausted'
+  | 'reused'
+  | 'rate_limited'
+  | string
+
+export interface CodexUsageWindow {
+  usedPercent: number
+  remainingSeconds: number
+}
+
+export interface CodexUsage {
+  primary?: CodexUsageWindow
+  secondary?: CodexUsageWindow
+}
+
+export type CodexAccount = Omit<main.CodexAccountDTO, 'status' | 'codexUsage'> & {
+  status: CodexAccountStatus
+  codexUsage?: CodexUsage
+}
+
+export interface CodexAccountInput {
+  refreshToken?: string
+  email?: string
+  planType?: string
+  accessToken?: string
+  idToken?: string
+  accountId?: string
+  status?: CodexAccountStatus
+  weight?: number
+  proxyUrl?: string
+  password?: string
+  mfaCode?: string
+  expiresAt?: string
+  cooldownUntil?: string
+  cooldownReason?: string
+  cooldownRemaining?: number
+  createdAt?: string
+  updatedAt?: string
+  todayRequests?: number
+  todayTotalTokens?: number
+  isActive?: boolean
+}
+
+export interface CodexGlobalConfig {
+  rotationMode: 'fixed' | 'failover' | 'loadbalance' | string
+  proxyUrl: string
+  baseURL: string
+  clientVersion: string
+  userAgent: string
+  originator: string
+}
+
+export interface CodexAccountsPage {
+  activeRefreshToken: string
+  activeAccountId: string
+  accounts: CodexAccount[]
+  offset: number
+  limit: number
+  nextOffset: number
+  total: number
+  hasMore: boolean
+}
+
+export interface CodexPagination {
+  offset: number
+  limit: number
+  nextOffset: number
+  total: number
+  hasMore: boolean
+}
+
+export type CodexLoginResult = main.CodexLoginResultDTO
+export type CodexTestResult = main.CodexTestResult
+export type CodexUsageResult = main.CodexUsageResult

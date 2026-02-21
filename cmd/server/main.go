@@ -16,6 +16,7 @@ import (
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/proxy"
+	"clisimplehub/internal/sqlitequeue"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
 )
@@ -225,6 +226,9 @@ shutdown:
 	sseHub.Stop()
 	if err := proxyServer.Stop(); err != nil {
 		log.Printf("Error during shutdown: %v", err)
+	}
+	if err := sqlitequeue.CloseAll(); err != nil {
+		log.Printf("Error closing sqlite backends: %v", err)
 	}
 
 	log.Println("Cli Simple Hub stopped.")

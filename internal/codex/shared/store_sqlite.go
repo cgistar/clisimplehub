@@ -1,54 +1,43 @@
 package shared
 
 import (
+	"clisimplehub/internal/sqlitequeue"
 	"context"
 	"database/sql"
 	_ "embed"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 //go:embed codex_schema.sql
 var codexSchemaSQL string
 
 type SQLiteCodexAccountStore struct {
-	db *sql.DB
+	db    *sql.DB
+	queue *sqlitequeue.Manager
 }
 
 func OpenCodexAccountStore(dbPath string) (*SQLiteCodexAccountStore, error) {
-	if strings.TrimSpace(dbPath) == "" {
-		return nil, errors.New("empty db path")
-	}
-	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, fmt.Errorf("create db dir: %w", err)
-		}
-	}
-
-	db, err := sql.Open("sqlite", dbPath)
+	queue, err := sqlitequeue.Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
 
-	s := &SQLiteCodexAccountStore{db: db}
+	s := &SQLiteCodexAccountStore{
+		db:    queue.DB(),
+		queue: queue,
+	}
 	if err := s.initSchema(context.Background()); err != nil {
-		_ = db.Close()
+		_ = queue.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
 func (s *SQLiteCodexAccountStore) initSchema(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, codexSchemaSQL)
+	_, err := s.queue.ExecWrite(ctx, codexSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("apply codex schema: %w", err)
 	}
@@ -56,10 +45,10 @@ func (s *SQLiteCodexAccountStore) initSchema(ctx context.Context) error {
 }
 
 func (s *SQLiteCodexAccountStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil || s.queue == nil {
 		return nil
 	}
-	return s.db.Close()
+	return s.queue.Close()
 }
 
 // --- Account CRUD ---
@@ -187,7 +176,7 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 		}
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.queue.ExecWrite(ctx, `
 		INSERT INTO codex_accounts (
 			account_id, refresh_token, access_token, id_token, email, plan_type,
 			password, mfa_code, expires_at, status, weight, proxy_url,
@@ -231,7 +220,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 		}
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET
 			refresh_token = ?, access_token = ?, id_token = ?, email = ?, plan_type = ?,
 			password = ?, mfa_code = ?,
@@ -256,25 +245,21 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 }
 
 func (s *SQLiteCodexAccountStore) Delete(ctx context.Context, accountID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM codex_account_stats WHERE account_id = ?`, accountID); err != nil {
-		return fmt.Errorf("delete stats: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM codex_accounts WHERE account_id = ?`, accountID); err != nil {
-		return fmt.Errorf("delete account: %w", err)
-	}
-	return tx.Commit()
+	return s.queue.WithTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_account_stats WHERE account_id = ?`, accountID); err != nil {
+			return fmt.Errorf("delete stats: %w", err)
+		}
+		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_accounts WHERE account_id = ?`, accountID); err != nil {
+			return fmt.Errorf("delete account: %w", err)
+		}
+		return nil
+	})
 }
 
 // --- Hot-path partial updates ---
 
 func (s *SQLiteCodexAccountStore) UpdateTokens(ctx context.Context, accountID, accessToken, idToken, refreshToken string, expiresAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET
 			access_token = ?, id_token = ?, refresh_token = ?, expires_at = ?, updated_at = ?
 		WHERE account_id = ?`,
@@ -283,14 +268,14 @@ func (s *SQLiteCodexAccountStore) UpdateTokens(ctx context.Context, accountID, a
 }
 
 func (s *SQLiteCodexAccountStore) UpdateStatus(ctx context.Context, accountID string, status CodexAccountStatus) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET status = ?, updated_at = ? WHERE account_id = ?`,
 		string(status), time.Now(), accountID)
 	return err
 }
 
 func (s *SQLiteCodexAccountStore) UpdateCooldown(ctx context.Context, accountID string, until time.Time, reason string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET cooldown_until = ?, cooldown_reason = ?, updated_at = ? WHERE account_id = ?`,
 		nullTime(until), reason, time.Now(), accountID)
 	return err
@@ -300,7 +285,7 @@ func (s *SQLiteCodexAccountStore) UpdateUsageSnapshot(ctx context.Context, accou
 	if snapshot == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET
 			usage_primary_used_pct = ?, usage_primary_reset_secs = ?, usage_primary_window_mins = ?,
 			usage_secondary_used_pct = ?, usage_secondary_reset_secs = ?, usage_secondary_window_mins = ?,
@@ -327,7 +312,7 @@ func (s *SQLiteCodexAccountStore) InsertStat(ctx context.Context, stat *CodexAcc
 	if stat.Hour < 0 {
 		stat.Hour = now.Hour()
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.queue.ExecWrite(ctx, `
 		INSERT INTO codex_account_stats (
 			account_id, account_email, model, date, hour,
 			input_tokens, output_tokens, total_tokens,
@@ -477,7 +462,7 @@ func (s *SQLiteCodexAccountStore) GetAllStatsSummary(ctx context.Context, timeRa
 }
 
 func (s *SQLiteCodexAccountStore) DeleteStats(ctx context.Context, accountID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM codex_account_stats WHERE account_id = ?`, accountID)
+	_, err := s.queue.ExecWrite(ctx, `DELETE FROM codex_account_stats WHERE account_id = ?`, accountID)
 	return err
 }
 

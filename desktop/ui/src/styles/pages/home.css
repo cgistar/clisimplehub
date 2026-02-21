@@ -1,0 +1,258 @@
+@layer components {
+  #homeView {
+    flex: 1;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  #homeView .left-panel {
+    width: min(560px, 42%);
+    min-width: 360px;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #homeView .right-panel {
+    flex: 1;
+    min-width: 420px;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #homeView .left-panel > *,
+  #homeView .right-panel > * {
+    flex: 1;
+    min-height: 0;
+  }
+
+  #homeView .tabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-secondary);
+    padding: 10px;
+  }
+
+  #homeView .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-light);
+    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  }
+
+  #homeView .card-header h2,
+  #homeView .card-header h3 {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.2;
+    font-weight: 700;
+  }
+
+  #homeView .card-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  #homeView .active-selector {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-primary);
+  }
+
+  #homeView .active-selector label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  #homeView .endpoint-list {
+    flex: 1;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #homeView .endpoint-list:hover {
+    scrollbar-color: #c3d0de transparent;
+  }
+
+  #homeView .endpoint-list::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  #homeView .endpoint-list::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  #homeView .endpoint-list:hover::-webkit-scrollbar-thumb {
+    background: #c3d0de;
+  }
+
+  #homeView .endpoint-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  #homeView .endpoint-item {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+  }
+
+  #homeView .endpoint-item:hover {
+    border-color: color-mix(in srgb, var(--accent) 30%, white);
+    transform: translateY(-1px);
+  }
+
+  #homeView .endpoint-item.active {
+    border-color: color-mix(in srgb, var(--accent) 45%, white);
+    background: color-mix(in srgb, var(--accent) 7%, white);
+  }
+
+  #homeView .endpoint-item.disabled {
+    opacity: 0.66;
+  }
+
+  #homeView .endpoint-header,
+  #homeView .endpoint-title,
+  #homeView .endpoint-controls-top,
+  #homeView .endpoint-info,
+  #homeView .endpoint-daily-stats,
+  #homeView .endpoint-token-stats {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #homeView .endpoint-header {
+    justify-content: space-between;
+  }
+
+  #homeView .endpoint-title {
+    min-width: 0;
+  }
+
+  #homeView .endpoint-name {
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  #homeView .endpoint-info {
+    margin-top: 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    font-size: 12px;
+  }
+
+  #homeView .endpoint-url {
+    color: var(--accent);
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #homeView .endpoint-daily-stats,
+  #homeView .endpoint-token-stats {
+    color: var(--text-secondary);
+    flex-wrap: wrap;
+  }
+
+  #homeView .endpoint-token-stats {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+  }
+
+  #homeView .endpoint-token-stats .stat-item {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  #homeView .endpoint-token-stats .endpoint-apply-btn {
+    justify-self: end;
+  }
+
+  #homeView .stat-error {
+    color: var(--danger);
+  }
+
+  #homeView .badge-active {
+    background: color-mix(in srgb, var(--success) 16%, white);
+    color: color-mix(in srgb, var(--success) 70%, black);
+  }
+
+  #homeView .btn-switch {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+
+  #homeView .btn-switch:hover {
+    background: var(--bg-secondary);
+  }
+
+  #homeView .btn-switch:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+@media (max-width: 1200px) {
+  #homeView .left-panel {
+    width: 46%;
+    min-width: 320px;
+  }
+}
+
+@media (max-width: 900px) {
+  #homeView .left-panel,
+  #homeView .right-panel {
+    width: 100%;
+    min-width: 0;
+  }
+
+  #homeView .active-selector {
+    grid-template-columns: 1fr;
+  }
+}

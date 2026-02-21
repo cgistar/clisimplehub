@@ -128,10 +128,15 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 		return "", nil, nil, fmt.Errorf("start callback server: %w", err)
 	}
 
+	waitCtx, waitCancel := context.WithCancel(ctx)
+	var cleanupOnce sync.Once
 	cleanupFn := func() {
-		shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutCtx)
+		cleanupOnce.Do(func() {
+			waitCancel()
+			shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = server.Shutdown(shutCtx)
+		})
 	}
 
 	authURL = BuildAuthURL(state, pkce)
@@ -142,8 +147,8 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 		case oauthResult = <-resultCh:
 		case <-time.After(5 * time.Minute):
 			return nil, fmt.Errorf("login timeout")
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-waitCtx.Done():
+			return nil, waitCtx.Err()
 		}
 
 		if oauthResult.Error != "" {

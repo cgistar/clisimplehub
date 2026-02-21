@@ -1,19 +1,16 @@
 package statsdb
 
 import (
+	"clisimplehub/internal/sqlitequeue"
 	"context"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql
@@ -49,41 +46,33 @@ type UsageStatsStore interface {
 
 // SQLiteUsageStatsStore SQLite 实现
 type SQLiteUsageStatsStore struct {
-	db *sql.DB
+	db    *sql.DB
+	queue *sqlitequeue.Manager
 }
 
 // OpenSQLiteUsageStatsStore 打开 SQLite 统计存储
 func OpenSQLiteUsageStatsStore(path string) (*SQLiteUsageStatsStore, error) {
-	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("empty sqlite path")
-	}
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, fmt.Errorf("create sqlite dir: %w", err)
-		}
-	}
-
-	db, err := sql.Open("sqlite", path)
+	queue, err := sqlitequeue.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
 
-	store := &SQLiteUsageStatsStore{db: db}
+	store := &SQLiteUsageStatsStore{
+		db:    queue.DB(),
+		queue: queue,
+	}
 	if err := store.initSchema(context.Background()); err != nil {
-		_ = db.Close()
+		_ = queue.Close()
 		return nil, err
 	}
 	return store, nil
 }
 
 func (s *SQLiteUsageStatsStore) initSchema(ctx context.Context) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.db == nil || s.queue == nil {
 		return errors.New("nil sqlite store")
 	}
-	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
+	if _, err := s.queue.ExecWrite(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
 	if err := s.ensureUsageStatsColumns(ctx); err != nil {
@@ -93,7 +82,7 @@ func (s *SQLiteUsageStatsStore) initSchema(ctx context.Context) error {
 }
 
 func (s *SQLiteUsageStatsStore) ensureUsageStatsColumns(ctx context.Context) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.db == nil || s.queue == nil {
 		return errors.New("nil sqlite store")
 	}
 	hasColumn := func(table, column string) (bool, error) {
@@ -124,7 +113,7 @@ func (s *SQLiteUsageStatsStore) ensureUsageStatsColumns(ctx context.Context) err
 		return fmt.Errorf("check usage_stats columns: %w", err)
 	}
 	if !ok {
-		if _, err := s.db.ExecContext(ctx, "ALTER TABLE usage_stats ADD COLUMN request_body TEXT"); err != nil {
+		if _, err := s.queue.ExecWrite(ctx, "ALTER TABLE usage_stats ADD COLUMN request_body TEXT"); err != nil {
 			return fmt.Errorf("add usage_stats.request_body: %w", err)
 		}
 	}
@@ -134,7 +123,7 @@ func (s *SQLiteUsageStatsStore) ensureUsageStatsColumns(ctx context.Context) err
 		return fmt.Errorf("check usage_stats columns: %w", err)
 	}
 	if !ok {
-		if _, err := s.db.ExecContext(ctx, "ALTER TABLE usage_stats ADD COLUMN response_body TEXT"); err != nil {
+		if _, err := s.queue.ExecWrite(ctx, "ALTER TABLE usage_stats ADD COLUMN response_body TEXT"); err != nil {
 			return fmt.Errorf("add usage_stats.response_body: %w", err)
 		}
 	}
@@ -142,20 +131,20 @@ func (s *SQLiteUsageStatsStore) ensureUsageStatsColumns(ctx context.Context) err
 }
 
 func (s *SQLiteUsageStatsStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil || s.queue == nil {
 		return nil
 	}
-	return s.db.Close()
+	return s.queue.Close()
 }
 
 // InsertUsageStat 插入使用统计记录
 func (s *SQLiteUsageStatsStore) InsertUsageStat(ctx context.Context, stat UsageStat) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.queue == nil {
 		return nil
 	}
 
 	normalized := normalizeUsageStat(stat)
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.queue.ExecWrite(ctx, `
 INSERT INTO usage_stats(
   endpoint_id, endpoint_name, provider_name,
   path, date, interface_type, target_headers,
@@ -189,14 +178,14 @@ INSERT INTO usage_stats(
 
 // DeleteStatsByEndpointID 删除指定端点的统计记录
 func (s *SQLiteUsageStatsStore) DeleteStatsByEndpointID(ctx context.Context, endpointID int64) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.queue == nil {
 		return errors.New("nil sqlite store")
 	}
 	if endpointID <= 0 {
 		return nil
 	}
 
-	_, err := s.db.ExecContext(ctx, `DELETE FROM usage_stats WHERE endpoint_id = ?`, strconv.FormatInt(endpointID, 10))
+	_, err := s.queue.ExecWrite(ctx, `DELETE FROM usage_stats WHERE endpoint_id = ?`, strconv.FormatInt(endpointID, 10))
 	if err != nil {
 		return fmt.Errorf("delete usage_stats by endpoint_id=%d: %w", endpointID, err)
 	}
@@ -396,7 +385,7 @@ func (s *SQLiteUsageStatsStore) GetStatsByTimeRange(ctx context.Context, timeRan
 
 // ClearStats 清除统计数据
 func (s *SQLiteUsageStatsStore) ClearStats(ctx context.Context, timeRange TimeRange) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.queue == nil {
 		return errors.New("nil sqlite store")
 	}
 
@@ -409,7 +398,7 @@ func (s *SQLiteUsageStatsStore) ClearStats(ctx context.Context, timeRange TimeRa
 	}
 
 	fmt.Printf("[ClearStats] Executing query: %s\n", query)
-	result, err := s.db.ExecContext(ctx, query)
+	result, err := s.queue.ExecWrite(ctx, query)
 	if err != nil {
 		return fmt.Errorf("clear stats: %w", err)
 	}

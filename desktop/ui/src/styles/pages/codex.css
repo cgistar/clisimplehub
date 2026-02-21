@@ -1,0 +1,31 @@
+@layer components {
+  .codex-accounts-page {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .codex-accounts-card {
+    background: var(--bg-primary);
+    border-radius: var(--radius-lg, 8px);
+    box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.1));
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .codex-accounts-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-tertiary, #f3f4f6);
+  }
+}

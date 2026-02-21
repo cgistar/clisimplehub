@@ -1,0 +1,274 @@
+@layer components {
+  .settings-view {
+    padding-top: 12px;
+  }
+
+  .settings-page {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .settings-page .settings-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding-right: 2px;
+  }
+
+  .settings-page .settings-card {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    background: var(--bg-primary);
+    padding: 14px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .settings-page .settings-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .settings-page .settings-card-header h2 {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .settings-page .settings-card-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .settings-page .settings-loading {
+    color: var(--text-tertiary);
+    padding: 10px 0;
+  }
+
+  .settings-page .kv-grid {
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px 14px;
+  }
+
+  .settings-page .kv-grid label {
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .settings-page .field-with-action {
+    display: flex;
+    gap: 8px;
+  }
+
+  .settings-page .field-with-action input {
+    flex: 1;
+  }
+
+  .settings-page .settings-card-actions {
+    margin-top: 12px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .settings-page .backup-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .settings-page .backup-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    padding: 10px;
+    background: var(--bg-secondary);
+  }
+
+  .settings-page .backup-meta {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .settings-page .backup-name {
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settings-page .backup-time {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+
+  .settings-page .backup-actions,
+  .settings-page .server-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .settings-page .server-toolbar .form-control {
+    min-width: 280px;
+    flex: 1;
+  }
+
+  .settings-page .server-form {
+    margin-top: 12px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    padding: 12px;
+  }
+
+  .settings-page input[type='text'],
+  .settings-page input[type='number'],
+  .settings-page input[type='password'] {
+    width: 100%;
+    min-height: 36px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 8px 10px;
+    font: inherit;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  }
+
+  .settings-page input[type='text']::placeholder,
+  .settings-page input[type='number']::placeholder,
+  .settings-page input[type='password']::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .settings-page input[type='text']:focus,
+  .settings-page input[type='number']:focus,
+  .settings-page input[type='password']:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, white);
+  }
+
+  .settings-page input[type='text']:disabled,
+  .settings-page input[type='number']:disabled,
+  .settings-page input[type='password']:disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
+  }
+
+  .settings-page small {
+    display: block;
+    margin-top: 6px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .settings-page .btn {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    min-height: 36px;
+    padding: 8px 14px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .settings-page .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .settings-page .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .settings-page .btn-sm {
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .settings-page .btn-primary {
+    border-color: color-mix(in srgb, var(--accent) 35%, white);
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .settings-page .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: color-mix(in srgb, var(--accent-hover) 40%, white);
+  }
+
+  .settings-page .btn-secondary {
+    background: var(--bg-secondary);
+  }
+
+  .settings-page .btn-secondary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--bg-secondary) 70%, white);
+  }
+
+  .settings-page .btn-danger {
+    border-color: color-mix(in srgb, var(--danger) 25%, white);
+    background: var(--danger);
+    color: #fff;
+  }
+
+  .settings-page .btn-danger:hover:not(:disabled) {
+    background: var(--danger-hover);
+    border-color: color-mix(in srgb, var(--danger-hover) 35%, white);
+  }
+
+  .settings-server-modal-grid {
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px 14px;
+  }
+
+  .settings-server-modal-grid label {
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .settings-server-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .settings-page .kv-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-server-modal-grid {
+    grid-template-columns: 1fr;
+  }
+}

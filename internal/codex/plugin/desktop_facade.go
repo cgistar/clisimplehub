@@ -409,21 +409,46 @@ func (d *desktopFacade) StartLogin(ctx context.Context, proxyURL string) (json.R
 }
 
 func (d *desktopFacade) StartLoginWithURL(ctx context.Context, proxyURL string) (string, error) {
+	svc := getService()
+	if svc == nil {
+		return "", fmt.Errorf("codex service not available")
+	}
+
+	// Defensive cleanup: if this process still owns an unfinished OAuth callback server,
+	// close it before starting a new login session on the fixed redirect port.
+	svc.cancelLoginSession()
+	cancelWebUILoginSession()
+
 	authURL, waitFn, cleanupFn, err := codexAuth.StartCodexLoginWithURL(ctx, proxyURL)
+	if err != nil {
+		// Retry once after cleanup to avoid startup race where 1455 is being released.
+		if strings.Contains(err.Error(), fmt.Sprintf("port %d in use", codexAuth.OAuthPort)) {
+			time.Sleep(150 * time.Millisecond)
+			authURL, waitFn, cleanupFn, err = codexAuth.StartCodexLoginWithURL(ctx, proxyURL)
+		}
+	}
 	if err != nil {
 		return "", err
 	}
 
-	getService().storeLoginSession(waitFn, cleanupFn)
+	svc.storeLoginSession(waitFn, cleanupFn)
 	return authURL, nil
 }
 
 func (d *desktopFacade) WaitForLoginCallback(ctx context.Context) (json.RawMessage, error) {
-	waitFn, cleanupFn := getService().popLoginSession()
+	svc := getService()
+	if svc == nil {
+		return nil, fmt.Errorf("codex service not available")
+	}
+
+	waitFn, cleanupFn, sessionID := svc.popLoginSession()
 	if waitFn == nil {
 		return nil, fmt.Errorf("no login session")
 	}
-	defer cleanupFn()
+	defer func() {
+		cleanupFn()
+		svc.clearLoginSession(sessionID)
+	}()
 
 	result, err := waitFn()
 	if err != nil {
@@ -438,6 +463,15 @@ func (d *desktopFacade) WaitForLoginCallback(ctx context.Context) (json.RawMessa
 		"planType":     result.PlanType,
 		"expiresAt":    result.ExpiresAt,
 	})
+}
+
+func (d *desktopFacade) CancelLogin() error {
+	svc := getService()
+	if svc == nil {
+		return fmt.Errorf("codex service not available")
+	}
+	svc.cancelLoginSession()
+	return nil
 }
 
 func (d *desktopFacade) GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error) {
@@ -523,6 +557,7 @@ func (d *desktopFacade) GetCodexAccountStats(ctx context.Context, timeRange stri
 // --- Login session management ---
 
 var (
+	loginSessionID uint64
 	loginWaitFn    func() (*codexAuth.CodexLoginResult, error)
 	loginCleanupFn func()
 )
@@ -538,20 +573,70 @@ func getService() *CodexService {
 	return nil
 }
 
-func (s *CodexService) storeLoginSession(waitFn func() (*codexAuth.CodexLoginResult, error), cleanupFn func()) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	loginWaitFn = waitFn
-	loginCleanupFn = cleanupFn
+func cancelWebUILoginSession() {
+	webUILoginMu.Lock()
+	cancel := webUILoginCancel
+	cleanup := webUILoginCleanup
+	webUILoginCancel = nil
+	webUILoginCleanup = nil
+	webUILoginGen++
+	webUILoginMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if cleanup != nil {
+		cleanup()
+	}
 }
 
-func (s *CodexService) popLoginSession() (func() (*codexAuth.CodexLoginResult, error), func()) {
+func (s *CodexService) storeLoginSession(waitFn func() (*codexAuth.CodexLoginResult, error), cleanupFn func()) {
+	s.mu.Lock()
+	oldCleanup := loginCleanupFn
+	loginSessionID++
+	loginWaitFn = waitFn
+	loginCleanupFn = cleanupFn
+	s.mu.Unlock()
+
+	if oldCleanup != nil {
+		oldCleanup()
+	}
+}
+
+func (s *CodexService) popLoginSession() (func() (*codexAuth.CodexLoginResult, error), func(), uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if loginWaitFn == nil {
+		return nil, nil, 0
+	}
+
 	w, c := loginWaitFn, loginCleanupFn
+	sessionID := loginSessionID
+	loginWaitFn = nil
+	return w, c, sessionID
+}
+
+func (s *CodexService) clearLoginSession(sessionID uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if loginSessionID != sessionID {
+		return
+	}
+	loginCleanupFn = nil
+}
+
+func (s *CodexService) cancelLoginSession() {
+	s.mu.Lock()
+	cleanup := loginCleanupFn
+	loginSessionID++
 	loginWaitFn = nil
 	loginCleanupFn = nil
-	return w, c
+	s.mu.Unlock()
+
+	if cleanup != nil {
+		cleanup()
+	}
 }
 
 func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL string) (*codexShared.CodexUsageSnapshot, error) {

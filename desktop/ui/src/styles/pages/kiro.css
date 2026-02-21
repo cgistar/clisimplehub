@@ -1,0 +1,31 @@
+@layer components {
+  .kiro-accounts-page {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .kiro-accounts-card {
+    background: var(--bg-primary);
+    border-radius: var(--radius-lg, 12px);
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .kiro-accounts-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 16px;
+    background: var(--bg-tertiary);
+    display: flex;
+    flex-direction: column;
+  }
+}

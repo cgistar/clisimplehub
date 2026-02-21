@@ -1,0 +1,181 @@
+<template>
+  <div class="codex-account-list">
+    <div v-if="filteredAccounts.length === 0 && !loading" class="no-accounts">
+      <p>{{ t('codex.noAccounts') }}</p>
+    </div>
+
+    <div v-else ref="scrollRef" class="account-grid" @scroll="handleScroll">
+      <CodexAccountCard
+        v-for="item in filteredAccounts"
+        :key="item.accountId"
+        :account="item"
+        :is-active="item.accountId === activeAccountId"
+        @activate="handleActivate"
+        @test="handleTest"
+        @fetch-usage="handleFetchUsage"
+        @copy="handleCopy"
+        @edit="handleEdit"
+        @delete="handleDelete"
+      />
+    </div>
+
+    <div v-if="loading && hasMore" class="loading-indicator">
+      <n-spin size="small" />
+      <span>{{ t('codex.loadingMore') }}</span>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { NSpin, useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
+import { storeToRefs } from 'pinia'
+import { useCodexAccountsStore } from '../../stores/codexAccountsStore'
+import type { CodexAccount } from '@/types/codex'
+import CodexAccountCard from './CodexAccountCard.vue'
+
+const { t } = useI18n()
+const message = useMessage()
+const codexStore = useCodexAccountsStore()
+
+const {
+  filteredAccounts,
+  activeAccountId,
+  loading,
+  pagination
+} = storeToRefs(codexStore)
+
+const scrollRef = ref<HTMLElement | null>(null)
+
+const emit = defineEmits<{
+  edit: [account: CodexAccount]
+}>()
+
+const hasMore = computed(() => pagination.value.hasMore)
+const total = computed(() => pagination.value.total)
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+function handleScroll(event: Event): void {
+  const target = event.target as HTMLElement | null
+  if (!target) return
+
+  const { scrollTop, scrollHeight, clientHeight } = target
+  if (scrollHeight - scrollTop - clientHeight < 200) {
+    codexStore.loadMore()
+  }
+}
+
+async function handleActivate(accountId: string): Promise<void> {
+  try {
+    await codexStore.setActiveAccount(accountId)
+    message.success(t('codex.accountSwitched'))
+  } catch (error) {
+    message.error(t('codex.switchAccountFailed') + ': ' + toErrorMessage(error))
+  }
+}
+
+async function handleTest(accountId: string): Promise<void> {
+  try {
+    await codexStore.testAccount(accountId)
+    message.success(t('codex.testSuccess'))
+  } catch (error) {
+    message.error(t('codex.testFailed') + ': ' + toErrorMessage(error))
+  }
+}
+
+async function handleFetchUsage(accountId: string): Promise<void> {
+  try {
+    await codexStore.fetchUsage(accountId)
+    message.success(t('codex.usageSuccess'))
+  } catch (error) {
+    message.error(t('codex.usageFailedPrefix') + ': ' + toErrorMessage(error))
+  }
+}
+
+async function handleCopy(account: CodexAccount): Promise<void> {
+  try {
+    const copyData: Record<string, string | number> = {}
+    if (account.refreshToken) copyData.refreshToken = account.refreshToken
+    if (account.email) copyData.email = account.email
+    if (account.accountId) copyData.accountId = account.accountId
+    if (account.planType) copyData.planType = account.planType
+    if (account.proxyUrl) copyData.proxyUrl = account.proxyUrl
+    if (typeof account.weight === 'number') copyData.weight = account.weight
+
+    await navigator.clipboard.writeText(JSON.stringify(copyData, null, 2))
+    message.success(t('codex.copySuccess'))
+  } catch (error) {
+    message.error(t('codex.copyFailed') + ': ' + toErrorMessage(error))
+  }
+}
+
+function handleEdit(account: CodexAccount): void {
+  emit('edit', account)
+}
+
+async function handleDelete(accountId: string): Promise<void> {
+  try {
+    await codexStore.deleteAccount(accountId)
+    message.success(t('codex.accountDeleted'))
+  } catch (error) {
+    message.error(t('codex.deleteAccountFailed') + ': ' + toErrorMessage(error))
+  }
+}
+</script>
+
+<style scoped>
+.codex-account-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 350px);
+  gap: 20px;
+  padding: 8px 0;
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+  justify-content: start;
+}
+
+.no-accounts {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 400px;
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.load-done {
+  text-align: center;
+  padding: 16px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

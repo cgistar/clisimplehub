@@ -20,6 +20,7 @@ type CodexDesktopProvider interface {
 	StartLogin(ctx context.Context, proxyURL string) (json.RawMessage, error)
 	StartLoginWithURL(ctx context.Context, proxyURL string) (authURL string, err error)
 	WaitForLoginCallback(ctx context.Context) (json.RawMessage, error)
+	CancelLogin() error
 	TestAccount(configPath, refreshToken string) (json.RawMessage, error)
 	GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
 	GetCodexAccountStats(ctx context.Context, timeRange string) (json.RawMessage, error)

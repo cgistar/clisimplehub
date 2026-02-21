@@ -260,6 +260,14 @@ func (a *App) WaitForCodexLoginCallback() (*CodexLoginResultDTO, error) {
 	return &result, nil
 }
 
+func (a *App) CancelCodexLogin() error {
+	cp := codexProvider()
+	if cp == nil {
+		return fmt.Errorf("codex plugin not available")
+	}
+	return cp.CancelLogin()
+}
+
 func (a *App) TestCodexAccount(accountId string) (*CodexTestResult, error) {
 	cp := codexProvider()
 	if cp == nil {
