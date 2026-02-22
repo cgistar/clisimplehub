@@ -77,3 +77,10 @@ export interface CodexPagination {
 export type CodexLoginResult = main.CodexLoginResultDTO
 export type CodexTestResult = main.CodexTestResult
 export type CodexUsageResult = main.CodexUsageResult
+
+export interface HeadlessLoginState {
+  state: number
+  needOTP?: boolean
+  result?: CodexLoginResult
+  error?: string
+}

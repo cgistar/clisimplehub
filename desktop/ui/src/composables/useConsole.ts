@@ -12,7 +12,6 @@ export type ConsoleLogLevel = (typeof CONSOLE_LOG_LEVELS)[keyof typeof CONSOLE_L
 type ConsoleLogEntry = {
   level: ConsoleLogLevel
   message: string
-  timestamp: Date
 }
 
 type ConsoleMethodName = 'debug' | 'log' | 'info' | 'warn' | 'error'
@@ -27,20 +26,6 @@ const MAX_LOG_COUNT = 50
 const BRIDGE_STATE_KEY = '__clisimplehub_console_bridge__'
 const WAILS_GO_LOG_EVENT = 'app-log'
 const LOG_DEDUP_WINDOW_MS = 1200
-
-const LOG_ICONS: Record<ConsoleLogLevel, string> = {
-  [CONSOLE_LOG_LEVELS.DEBUG]: '🔍',
-  [CONSOLE_LOG_LEVELS.INFO]: 'ℹ️',
-  [CONSOLE_LOG_LEVELS.WARN]: '⚠️',
-  [CONSOLE_LOG_LEVELS.ERROR]: '❌'
-}
-
-const LOG_NAMES: Record<ConsoleLogLevel, string> = {
-  [CONSOLE_LOG_LEVELS.DEBUG]: 'DEBUG',
-  [CONSOLE_LOG_LEVELS.INFO]: 'INFO',
-  [CONSOLE_LOG_LEVELS.WARN]: 'WARN',
-  [CONSOLE_LOG_LEVELS.ERROR]: 'ERROR'
-}
 
 const panelVisible = ref(false)
 const currentLogLevel = ref<ConsoleLogLevel>(CONSOLE_LOG_LEVELS.INFO)
@@ -118,24 +103,8 @@ function normalizeIncomingLogLevel(value: unknown): number {
   return parsed
 }
 
-function formatTimestamp(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hours = String(date.getHours()).padStart(2, '0')
-  const minutes = String(date.getMinutes()).padStart(2, '0')
-  const seconds = String(date.getSeconds()).padStart(2, '0')
-  return `${year}${month}${day} ${hours}:${minutes}:${seconds}`
-}
-
-function formatLogEntry(log: ConsoleLogEntry): string {
-  const icon = LOG_ICONS[log.level] ?? LOG_ICONS[CONSOLE_LOG_LEVELS.INFO]
-  const levelName = LOG_NAMES[log.level] ?? LOG_NAMES[CONSOLE_LOG_LEVELS.INFO]
-  return `${formatTimestamp(log.timestamp)} ${icon} ${levelName.padEnd(5, ' ')} ${log.message}`
-}
-
 const filteredLogs = computed(() => allLogs.value.filter((log) => log.level >= currentLogLevel.value))
-const renderedLogs = computed(() => filteredLogs.value.map(formatLogEntry).join('\n'))
+const renderedLogs = computed(() => filteredLogs.value.map((log) => log.message).join('\n'))
 
 function appendLog(level: number, message: string): void {
   const normalizedLevel = normalizeLogLevel(Number(level))
@@ -145,8 +114,7 @@ function appendLog(level: number, message: string): void {
 
   const next = {
     level: normalizedLevel,
-    message: normalizedMessage,
-    timestamp: new Date()
+    message: normalizedMessage
   }
 
   allLogs.value.push(next)
@@ -218,13 +186,13 @@ function installWailsGoLogBridge(): void {
 
   eventsOn(WAILS_GO_LOG_EVENT, (payload: unknown) => {
     const raw = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {}
-    const message = typeof raw.message === 'string'
-      ? raw.message.trim()
-      : stringifyConsoleArg(payload).trim()
-    if (!message) return
+    const rawMessage = typeof raw.message === 'string'
+      ? raw.message
+      : stringifyConsoleArg(payload)
+    if (!rawMessage) return
 
     const level = normalizeIncomingLogLevel(raw.level)
-    appendLog(level, `[Go] ${message}`)
+    appendLog(level, rawMessage)
   })
 
   state.wailsEventInstalled = true

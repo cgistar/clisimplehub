@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -87,8 +86,8 @@ func (b *goLogBridge) Write(p []byte) (int, error) {
 		line := string(data[:idx])
 		b.buf.Next(idx + 1)
 
-		message := strings.TrimSpace(strings.TrimRight(line, "\r"))
-		if message == "" {
+		message := strings.TrimRight(line, "\r")
+		if strings.TrimSpace(message) == "" {
 			continue
 		}
 
@@ -96,7 +95,7 @@ func (b *goLogBridge) Write(p []byte) (int, error) {
 			Level:     inferGoLogLevel(message),
 			Message:   message,
 			Source:    "go",
-			Timestamp: time.Now().Format(time.RFC3339),
+			Timestamp: "",
 		}
 
 		if b.ctx == nil {

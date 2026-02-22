@@ -97,6 +97,15 @@
         <button
           type="button"
           class="codex-action-btn"
+          :title="t('codex.getToken')"
+          :aria-label="t('codex.getToken')"
+          @click="emit('get-token', account)"
+        >
+          <KeyRound class="codex-action-icon" />
+        </button>
+        <button
+          type="button"
+          class="codex-action-btn"
           :title="t('codex.edit')"
           :aria-label="t('codex.edit')"
           @click="emit('edit', account)"
@@ -120,7 +129,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NTag, useDialog } from 'naive-ui'
-import { Power, RefreshCw, Activity, Copy, Edit, Trash } from 'lucide-vue-next'
+import { Power, RefreshCw, Activity, Copy, KeyRound, Edit, Trash } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import type { CodexAccount } from '@/types/codex'
 import CodexUsageBar from './CodexUsageBar.vue'
@@ -140,6 +149,7 @@ const emit = defineEmits<{
   test: [accountId: string]
   'fetch-usage': [accountId: string]
   copy: [account: CodexAccount]
+  'get-token': [account: CodexAccount]
   edit: [account: CodexAccount]
   delete: [accountId: string]
 }>()

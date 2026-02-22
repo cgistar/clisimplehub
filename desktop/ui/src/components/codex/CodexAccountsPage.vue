@@ -11,6 +11,7 @@
       <div class="codex-accounts-body">
         <CodexAccountList
           @edit="handleEditAccount"
+          @get-token="handleGetToken"
         />
       </div>
     </div>
@@ -39,6 +40,13 @@
     <CodexGlobalConfigModal
       v-model:show="showGlobalConfigModal"
     />
+
+    <CodexGetTokenModal
+      v-model:show="showGetTokenModal"
+      :account="getTokenAccount"
+      @success="handleGetTokenSuccess"
+      @status-update="handleGetTokenStatusUpdate"
+    />
   </div>
 </template>
 
@@ -56,6 +64,7 @@ import CodexAccountEditModal from './CodexAccountEditModal.vue'
 import CodexJsonImportModal from './CodexJsonImportModal.vue'
 import CodexBulkDeleteModal from './CodexBulkDeleteModal.vue'
 import CodexGlobalConfigModal from './CodexGlobalConfigModal.vue'
+import CodexGetTokenModal from './CodexGetTokenModal.vue'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -66,7 +75,9 @@ const showEditModal = ref(false)
 const showJsonImportModal = ref(false)
 const showBulkDeleteModal = ref(false)
 const showGlobalConfigModal = ref(false)
+const showGetTokenModal = ref(false)
 const editingAccount = ref<CodexAccount | null>(null)
+const getTokenAccount = ref<CodexAccount | null>(null)
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -113,5 +124,28 @@ async function handleJsonImportSuccess() {
 async function handleBulkDeleteSuccess() {
   message.success(t('codex.bulkDeleteSuccess'))
   await codexStore.loadAccounts(true)
+}
+
+function handleGetToken(account: CodexAccount): void {
+  getTokenAccount.value = account
+  showGetTokenModal.value = true
+}
+
+async function handleGetTokenSuccess(payload: CodexAccountInput) {
+  try {
+    await codexStore.updateAccount(payload)
+    message.success(t('codex.getTokenSuccess'))
+  } catch (error) {
+    message.error(t('codex.updateAccountFailed') + ': ' + toErrorMessage(error))
+  }
+}
+
+async function handleGetTokenStatusUpdate(payload: CodexAccountInput) {
+  try {
+    await codexStore.updateAccount(payload)
+    message.warning(t('codex.accountUpdated'))
+  } catch (error) {
+    message.error(t('codex.updateAccountFailed') + ': ' + toErrorMessage(error))
+  }
 }
 </script>

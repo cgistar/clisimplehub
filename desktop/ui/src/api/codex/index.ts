@@ -9,7 +9,8 @@ import type {
   CodexTestResult,
   CodexUsage,
   CodexUsageResult,
-  CodexUsageWindow
+  CodexUsageWindow,
+  HeadlessLoginState
 } from '@/types/codex'
 
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
@@ -141,5 +142,19 @@ export const codexApi = {
 
   async openURLInIncognito(url: string): Promise<void> {
     await App.OpenURLInIncognito(url)
+  },
+
+  async startHeadlessLogin(email: string, password: string, clientId: string): Promise<HeadlessLoginState> {
+    return App.StartCodexHeadlessLogin(email, password, clientId)
+  },
+
+  async submitHeadlessOTP(code: string): Promise<HeadlessLoginState> {
+    return App.SubmitCodexHeadlessOTP(code)
+  },
+
+  async cancelHeadlessLogin(): Promise<void> {
+    if (window.go?.main?.App?.CancelCodexHeadlessLogin) {
+      await window.go.main.App.CancelCodexHeadlessLogin()
+    }
   }
 }

@@ -24,6 +24,9 @@ type CodexDesktopProvider interface {
 	TestAccount(configPath, refreshToken string) (json.RawMessage, error)
 	GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
 	GetCodexAccountStats(ctx context.Context, timeRange string) (json.RawMessage, error)
+	StartHeadlessLogin(ctx context.Context, email, password, clientID, proxyURL string, onStep func(string)) (json.RawMessage, error)
+	SubmitHeadlessOTP(ctx context.Context, code string) (json.RawMessage, error)
+	CancelHeadlessLogin() error
 }
 
 func GetCodexDesktopProvider() CodexDesktopProvider {

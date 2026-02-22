@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	codex "clisimplehub/internal/codex"
@@ -554,13 +555,108 @@ func (d *desktopFacade) GetCodexAccountStats(ctx context.Context, timeRange stri
 	return json.Marshal(summaries)
 }
 
+func (d *desktopFacade) StartHeadlessLogin(ctx context.Context, email, password, clientID, proxyURL string, onStep func(string)) (json.RawMessage, error) {
+	// Create cancellable context
+	ctx, cancel := context.WithCancel(ctx)
+
+	// Store cancel function first
+	headlessHolder.mu.Lock()
+	headlessHolder.session = nil
+	headlessHolder.cancelFunc = cancel
+	headlessHolder.mu.Unlock()
+
+	// Execute network operation WITHOUT holding lock
+	session, err := codexAuth.StartHeadlessLogin(ctx, &codexAuth.HeadlessLoginRequest{
+		Email:    email,
+		Password: password,
+		ClientID: clientID,
+		ProxyURL: proxyURL,
+		OnStep:   onStep,
+	})
+
+	if err != nil {
+		headlessHolder.mu.Lock()
+		headlessHolder.cancelFunc = nil
+		headlessHolder.mu.Unlock()
+		return nil, err
+	}
+
+	// Store session
+	headlessHolder.mu.Lock()
+	headlessHolder.session = session
+	headlessHolder.mu.Unlock()
+
+	return marshalHeadlessState(session), nil
+}
+
+func (d *desktopFacade) SubmitHeadlessOTP(ctx context.Context, code string) (json.RawMessage, error) {
+	headlessHolder.mu.Lock()
+	session := headlessHolder.session
+	headlessHolder.mu.Unlock()
+
+	if session == nil {
+		return nil, fmt.Errorf("no headless login session")
+	}
+
+	err := session.SubmitOTP(ctx, code)
+	if err != nil {
+		return marshalHeadlessState(session), err
+	}
+	return marshalHeadlessState(session), nil
+}
+
+func (d *desktopFacade) CancelHeadlessLogin() error {
+	headlessHolder.mu.Lock()
+	cancel := headlessHolder.cancelFunc
+	headlessHolder.session = nil
+	headlessHolder.cancelFunc = nil
+	headlessHolder.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	return nil
+}
+
+func marshalHeadlessState(session *codexAuth.HeadlessLoginSession) json.RawMessage {
+	state := map[string]any{
+		"state":   int(session.State()),
+		"needOTP": session.State() == codexAuth.StateNeedOTP,
+	}
+	if session.Error() != nil {
+		state["error"] = session.Error().Error()
+	}
+	if session.Result() != nil {
+		r := session.Result()
+		state["result"] = map[string]string{
+			"refreshToken": r.RefreshToken,
+			"accessToken":  r.AccessToken,
+			"idToken":      r.IDToken,
+			"accountId":    r.AccountID,
+			"email":        r.Email,
+			"planType":     r.PlanType,
+			"expiresAt":    r.ExpiresAt,
+		}
+	}
+	raw, _ := json.Marshal(state)
+	return raw
+}
+
 // --- Login session management ---
 
 var (
 	loginSessionID uint64
 	loginWaitFn    func() (*codexAuth.CodexLoginResult, error)
 	loginCleanupFn func()
+
+	headlessHolder headlessSessionHolder
 )
+
+type headlessSessionHolder struct {
+	mu         sync.Mutex
+	session    *codexAuth.HeadlessLoginSession
+	cancelFunc context.CancelFunc
+}
 
 func getService() *CodexService {
 	p := plugin.ByName("codex-accounts")

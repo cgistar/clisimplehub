@@ -14,6 +14,7 @@
         @test="handleTest"
         @fetch-usage="handleFetchUsage"
         @copy="handleCopy"
+        @get-token="(account: CodexAccount) => emit('get-token', account)"
         @edit="handleEdit"
         @delete="handleDelete"
       />
@@ -50,6 +51,7 @@ const scrollRef = ref<HTMLElement | null>(null)
 
 const emit = defineEmits<{
   edit: [account: CodexAccount]
+  'get-token': [account: CodexAccount]
 }>()
 
 const hasMore = computed(() => pagination.value.hasMore)
