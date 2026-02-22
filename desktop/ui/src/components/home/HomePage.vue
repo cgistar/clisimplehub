@@ -141,6 +141,6 @@ function openVendorManage(): void {
     <HomeLogsPanel />
   </div>
 
-  <EndpointFormModal ref="endpointFormRef" />
+  <EndpointFormModal ref="endpointFormRef" @manage-vendors="openVendorManage" />
   <VendorManageModal v-model:show="vendorManageVisible" />
 </template>

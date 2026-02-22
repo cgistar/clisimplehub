@@ -376,7 +376,7 @@ func (s *KiroService) ensureKiroEndpoint() {
 
 	newEndpoint := &storage.Endpoint{
 		Name:          "kiro",
-		APIURL:        "https://q.us-east-1.amazonaws.com",
+		APIURL:        "http://127.0.0.1:5600/kiro",
 		APIKey:        "-",
 		Active:        false,
 		Enabled:       true,

@@ -5,9 +5,9 @@ export default {
     port: '端口',
     language: '语言',
     home: '主页',
-    kiro: 'Kiro',
-    codex: 'Codex',
-    xray: 'xray',
+    kiro: 'Kiro2API',
+    codex: 'Codex2API',
+    xray: '科学上网',
     settings: '设置',
   },
   webdav: {

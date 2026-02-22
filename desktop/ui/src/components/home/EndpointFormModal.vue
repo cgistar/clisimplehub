@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { storeToRefs } from 'pinia'
+import { Pencil } from 'lucide-vue-next'
 import {
   NAutoComplete,
   NButton,
@@ -22,6 +24,7 @@ import type {
   TestEndpointResult
 } from '@/types/endpoint'
 import { useHomeEndpointsStore } from '@/stores/homeEndpointsStore'
+import { useVendorsStore } from '@/stores/vendorsStore'
 import { useFeedback } from '@/composables/useFeedback'
 
 interface EndpointFormState {
@@ -56,8 +59,13 @@ const interfaceOptions: Array<{ label: string; value: InterfaceType }> = [
 ]
 
 const { t } = useI18n()
+const emit = defineEmits<{
+  'manage-vendors': []
+}>()
 const endpointStore = useHomeEndpointsStore()
+const vendorsStore = useVendorsStore()
 const feedback = useFeedback()
+const { vendors, loading: vendorsLoading } = storeToRefs(vendorsStore)
 
 const visible = ref(false)
 const saving = ref(false)
@@ -76,6 +84,12 @@ const canTest = computed(() => {
 })
 const showQuickMapping = computed(() => form.value.interfaceType === 'claude')
 const availableTransformers = computed(() => transformerMap.value[form.value.interfaceType] || [])
+const vendorOptions = computed<Array<{ label: string; value: string }>>(() =>
+  vendors.value.map((item) => ({
+    label: item.name,
+    value: item.name
+  }))
+)
 const transformerOptions = computed<Array<{ label: string; value: string }>>(() => [
   { label: t('manage.transformerNone'), value: '' },
   ...availableTransformers.value.map((item) => ({ label: item, value: item }))
@@ -153,6 +167,11 @@ async function ensureTransformersLoaded(force = false): Promise<void> {
   transformerMap.value = await endpointApi.getTransformers()
 }
 
+async function ensureVendorsLoaded(force = false): Promise<void> {
+  if (!force && vendors.value.length > 0) return
+  await vendorsStore.loadVendors()
+}
+
 async function refreshEndpointPanels(): Promise<void> {
   await endpointStore.refreshCurrent()
 }
@@ -160,6 +179,21 @@ async function refreshEndpointPanels(): Promise<void> {
 function onEndpointInterfaceTypeChange(): void {
   form.value.transformer = ''
   fetchedModels.value = []
+}
+
+function onVendorChange(value: string | number | null): void {
+  const vendorName = typeof value === 'string' ? value : ''
+  form.value.providerName = vendorName
+  if (!vendorName) return
+
+  const selected = vendors.value.find((item) => item.name === vendorName)
+  if (selected?.apiUrl) {
+    form.value.apiUrl = selected.apiUrl
+  }
+}
+
+function openVendorManage(): void {
+  emit('manage-vendors')
 }
 
 function toggleApiKeyVisibility(): void {
@@ -369,7 +403,10 @@ function close(): void {
 
 async function open(endpoint: Endpoint | null = null): Promise<void> {
   try {
-    await ensureTransformersLoaded(true)
+    await Promise.all([
+      ensureTransformersLoaded(true),
+      ensureVendorsLoaded(true)
+    ])
     form.value = createDefaultForm()
 
     if (endpoint && endpoint.id > 0) {
@@ -469,6 +506,31 @@ defineExpose({
         class="endpoint-form"
       >
       <div class="endpoint-form-grid">
+        <n-form-item :label="t('manage.vendor')">
+          <div class="vendor-field-wrap">
+            <div class="vendor-field">
+              <n-select
+                :value="form.providerName || null"
+                class="vendor-select"
+                :options="vendorOptions"
+                :placeholder="t('manage.selectVendor')"
+                :loading="vendorsLoading"
+                clearable
+                @update:value="onVendorChange"
+              />
+              <n-button
+                quaternary
+                circle
+                :title="t('manage.editVendor')"
+                @click="openVendorManage"
+              >
+                <Pencil :size="14" :stroke-width="2" />
+              </n-button>
+            </div>
+            <span class="help-text">{{ t('manage.vendorHelp') }}</span>
+          </div>
+        </n-form-item>
+
         <n-form-item :label="`${t('manage.endpointName')} *`">
           <n-input
             v-model:value="form.name"
@@ -683,6 +745,24 @@ defineExpose({
   margin-top: 6px;
   font-size: 12px;
   color: #64748b;
+}
+
+.vendor-field-wrap {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.vendor-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.vendor-select {
+  flex: 1;
+  min-width: 0;
 }
 
 .model-editor {

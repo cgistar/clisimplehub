@@ -119,13 +119,13 @@ func (s *CodexService) ensureCodexEndpoint() {
 
 	newEndpoint := &storage.Endpoint{
 		Name:          "Codex Provider",
-		APIURL:        "https://chatgpt.com/backend-api/codex",
+		APIURL:        "http://127.0.0.1:5600/codex/v1",
 		APIKey:        "-",
 		Active:        false,
 		Enabled:       true,
 		InterfaceType: "codex",
 		Transformer:   "openai/codex",
-		Priority:      9,
+		Priority:      8,
 	}
 
 	sameTypeCount := 0

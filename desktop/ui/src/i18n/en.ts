@@ -5,9 +5,9 @@ export default {
     port: 'Port',
     language: 'Language',
     home: 'Home',
-    kiro: 'Kiro',
-    codex: 'Codex',
-    xray: 'xray',
+    kiro: 'Kiro2API',
+    codex: 'Codex2API',
+    xray: 'Xray',
     settings: 'Settings',
   },
   webdav: {
