@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -574,16 +575,18 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const maxSyncConfigBytes = 10 << 20 // 10 MiB
+	const maxSyncConfigBytes = 128 << 20 // 128 MiB (supports large multi-account sync payloads)
 	r.Body = http.MaxBytesReader(w, r.Body, maxSyncConfigBytes)
 
 	// 扩展 payload：vendors + endpoints + plugin configs (via json.RawMessage)
 	type syncConfigRequest struct {
 		config.AppConfig
-		KiroConfigEncoded string          `json:"kiroConfigEncoded,omitempty"`
-		KiroConfig        json.RawMessage `json:"kiroConfig,omitempty"`
-		XRayConfigEncoded string          `json:"xrayConfigEncoded,omitempty"`
-		XRayConfig        json.RawMessage `json:"xrayConfig,omitempty"`
+		KiroConfigEncoded  string          `json:"kiroConfigEncoded,omitempty"`
+		KiroConfig         json.RawMessage `json:"kiroConfig,omitempty"`
+		XRayConfigEncoded  string          `json:"xrayConfigEncoded,omitempty"`
+		XRayConfig         json.RawMessage `json:"xrayConfig,omitempty"`
+		CodexConfigEncoded string          `json:"codexConfigEncoded,omitempty"`
+		CodexConfig        json.RawMessage `json:"codexConfig,omitempty"`
 	}
 
 	var req syncConfigRequest
@@ -634,24 +637,34 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := fileStore.ReplaceFullConfig(&incoming); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
-			"error": "failed to replace config: " + err.Error(),
-		})
-		return
-	}
-
-	// Sync plugin configs via name-based dispatch
+	// Sync plugin configs via name-based dispatch.
 	type pluginPayload struct {
 		encoded string
 		plain   json.RawMessage
 	}
-	pluginData := map[string]pluginPayload{
-		"kiro": {req.KiroConfigEncoded, req.KiroConfig},
-		"xray": {req.XRayConfigEncoded, req.XRayConfig},
+	type pluginImportPlan struct {
+		name     string
+		importer plugin.ConfigSyncImporter
+		data     json.RawMessage
+		snapshot json.RawMessage
 	}
 
-	configPath := p.getConfigPath()
+	pluginData := map[string]pluginPayload{
+		"kiro":           {req.KiroConfigEncoded, req.KiroConfig},
+		"xray":           {req.XRayConfigEncoded, req.XRayConfig},
+		"codex-accounts": {req.CodexConfigEncoded, req.CodexConfig},
+	}
+
+	configPath := strings.TrimSpace(p.getConfigPath())
+	if configPath == "" {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "config path not configured",
+		})
+		return
+	}
+
+	// Preflight plugin payload decode + plugin state snapshot for rollback.
+	pluginPlans := make([]pluginImportPlan, 0, len(pluginData))
 	pluginResults := map[string]interface{}{}
 	for _, pl := range plugin.All() {
 		importer, ok := pl.(plugin.ConfigSyncImporter)
@@ -662,30 +675,112 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		if !exists {
 			continue
 		}
-		var data json.RawMessage
-		if pd.encoded != "" {
-			if decoder, ok := pl.(plugin.ConfigSyncDecoder); ok {
-				decoded, err := decoder.SyncDecode(pd.encoded)
-				if err != nil {
-					pluginResults[pl.Name()] = map[string]interface{}{"synced": false, "warning": "decode failed: " + err.Error()}
-					continue
-				}
-				data = decoded
-			}
-		} else if len(pd.plain) > 0 {
-			data = pd.plain
+
+		data, hasData, err := decodeSyncPluginPayload(pl, pd.encoded, pd.plain)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"error": fmt.Sprintf("invalid %s sync payload: %v", pl.Name(), err),
+			})
+			return
 		}
-		if len(data) == 0 {
+		if !hasData {
 			continue
 		}
-		if err := importer.SyncImport(configPath, data); err != nil {
-			pluginResults[pl.Name()] = map[string]interface{}{"synced": false, "warning": err.Error()}
-		} else {
-			pluginResults[pl.Name()] = map[string]interface{}{"synced": true}
+
+		exporter, ok := pl.(plugin.ConfigSyncExporter)
+		if !ok {
+			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"error": fmt.Sprintf("plugin %s does not support sync rollback snapshot", pl.Name()),
+			})
+			return
 		}
+		_, snapshot, err := exporter.SyncExport(configPath)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"error": fmt.Sprintf("failed to snapshot plugin %s before sync: %v", pl.Name(), err),
+			})
+			return
+		}
+
+		pluginPlans = append(pluginPlans, pluginImportPlan{
+			name:     pl.Name(),
+			importer: importer,
+			data:     data,
+			snapshot: snapshot,
+		})
 	}
 
-	// Trigger hot reload
+	oldInfo, err := os.Stat(configPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "failed to stat current config before sync: " + err.Error(),
+		})
+		return
+	}
+	oldMode := oldInfo.Mode().Perm()
+	oldConfigRaw, err := os.ReadFile(configPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error": "failed to backup current config before sync: " + err.Error(),
+		})
+		return
+	}
+
+	rollback := func(syncErr error) {
+		rollbackErrs := make([]string, 0, len(pluginPlans)+1)
+
+		if writeErr := os.WriteFile(configPath, oldConfigRaw, oldMode); writeErr != nil {
+			rollbackErrs = append(rollbackErrs, "restore config.json failed: "+writeErr.Error())
+		}
+
+		for i := len(pluginPlans) - 1; i >= 0; i-- {
+			plan := pluginPlans[i]
+			if len(plan.snapshot) == 0 {
+				continue
+			}
+			if err := plan.importer.SyncImport(configPath, plan.snapshot); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Sprintf("restore plugin %s failed: %v", plan.name, err))
+			}
+		}
+
+		p.mu.RLock()
+		reloadFunc := p.reloadFunc
+		p.mu.RUnlock()
+		if reloadFunc != nil {
+			reloadFunc()
+		}
+
+		resp := map[string]interface{}{
+			"error":   "sync failed and rollback attempted: " + syncErr.Error(),
+			"plugins": pluginResults,
+		}
+		if kr, ok := pluginResults["kiro"]; ok {
+			resp["kiro"] = kr
+		}
+		if cr, ok := pluginResults["codex-accounts"]; ok {
+			resp["codex"] = cr
+		}
+		if len(rollbackErrs) > 0 {
+			resp["rollbackWarnings"] = rollbackErrs
+		}
+		writeJSON(w, http.StatusInternalServerError, resp)
+	}
+
+	if err := fileStore.ReplaceFullConfig(&incoming); err != nil {
+		rollback(fmt.Errorf("failed to replace config: %w", err))
+		return
+	}
+
+	for _, plan := range pluginPlans {
+		if err := plan.importer.SyncImport(configPath, plan.data); err != nil {
+			pluginResults[plan.name] = map[string]interface{}{"synced": false, "warning": err.Error()}
+			rollback(fmt.Errorf("failed to import plugin %s: %w", plan.name, err))
+			return
+		}
+		pluginResults[plan.name] = map[string]interface{}{"synced": true}
+	}
+
+	// Trigger hot reload after successful full sync.
 	p.mu.RLock()
 	reloadFunc := p.reloadFunc
 	p.mu.RUnlock()
@@ -701,8 +796,32 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 	if kr, ok := pluginResults["kiro"]; ok {
 		resp["kiro"] = kr
 	}
+	if cr, ok := pluginResults["codex-accounts"]; ok {
+		resp["codex"] = cr
+	}
 	if len(pluginResults) > 0 {
 		resp["plugins"] = pluginResults
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func decodeSyncPluginPayload(pl plugin.Plugin, encoded string, plain json.RawMessage) (json.RawMessage, bool, error) {
+	if strings.TrimSpace(encoded) != "" {
+		decoder, ok := pl.(plugin.ConfigSyncDecoder)
+		if !ok {
+			return nil, false, fmt.Errorf("encoded payload provided but decoder is unavailable")
+		}
+		decoded, err := decoder.SyncDecode(encoded)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(decoded) == 0 {
+			return nil, false, nil
+		}
+		return decoded, true, nil
+	}
+	if len(plain) > 0 {
+		return plain, true, nil
+	}
+	return nil, false, nil
 }

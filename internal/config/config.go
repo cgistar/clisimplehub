@@ -342,7 +342,8 @@ type BackupData struct {
 	Endpoints       []EndpointConfig       `json:"endpoints"`
 	KiroAuthToken   map[string]interface{} `json:"kiroAuthToken,omitempty"`
 	KiroMultiConfig interface{}            `json:"kiroMultiConfig,omitempty"`
-	XRayConfig     interface{}            `json:"xrayConfig,omitempty"`
+	XRayConfig      interface{}            `json:"xrayConfig,omitempty"`
+	CodexConfig     interface{}            `json:"codexConfig,omitempty"`
 }
 
 // BackupMergeMode 表示备份恢复模式

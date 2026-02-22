@@ -2599,7 +2599,7 @@ type BackupDataResponse struct {
 }
 
 // CreateBackupData 创建完整的备份数据
-// 包含 config.json, kiro.json 的所有内容
+// 包含 config.json、kiro.json、codex.json 和 codex sqlite 账号内容（不含统计）
 func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("storage not initialized")
@@ -2679,7 +2679,7 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 
 	// 6. 组装备份数据
 	backupData := &config.BackupData{
-		SchemaVersion:   2,
+		SchemaVersion:   3,
 		CreatedAt:       time.Now().Format(time.RFC3339),
 		AppConfig:       appConfig,
 		Vendors:         vendorConfigs,
@@ -2692,7 +2692,14 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 		backupData.XRayConfig = json.RawMessage(raw)
 	}
 
-	// 8. 生成备份文件名
+	// 8. 尝试获取 codex 同步数据（全局配置 + sqlite 账号，不包含统计数据）
+	if raw, err := a.codexSyncExportRaw(); err != nil {
+		return nil, fmt.Errorf("failed to export codex sync payload: %w", err)
+	} else if len(raw) > 0 {
+		backupData.CodexConfig = json.RawMessage(raw)
+	}
+
+	// 9. 生成备份文件名
 	computerName, _ := a.GetComputerName()
 	timestamp := time.Now().Format("2006-01-02T15-04-05")
 	filename := fmt.Sprintf("%s-%s.json", computerName, timestamp)
@@ -2768,6 +2775,13 @@ func (a *App) RestoreBackupData(backupData *config.BackupData, mode string) erro
 	// 恢复 xray 配置
 	if backupData.XRayConfig != nil {
 		a.restoreXRayConfig(backupData.XRayConfig)
+	}
+
+	// 恢复 codex 配置与账号
+	if backupData.CodexConfig != nil {
+		if err := a.saveCodexSyncConfigInternal(backupData.CodexConfig, replaceMode); err != nil {
+			fmt.Printf("warning: failed to restore codex config/accounts: %v\n", err)
+		}
 	}
 
 	return nil
@@ -3468,10 +3482,11 @@ func (a *App) SyncConfigToServer(index int) error {
 
 	// 同步 vendors + endpoints + plugin configs；避免泄露本地 app settings 和 credentials。
 	type syncPayload struct {
-		Vendors           []config.VendorConfig   `json:"vendors"`
-		Endpoints         []config.EndpointConfig `json:"endpoints"`
-		KiroConfigEncoded string                  `json:"kiroConfigEncoded,omitempty"`
-		XRayConfigEncoded string                  `json:"xrayConfigEncoded,omitempty"`
+		Vendors            []config.VendorConfig   `json:"vendors"`
+		Endpoints          []config.EndpointConfig `json:"endpoints"`
+		KiroConfigEncoded  string                  `json:"kiroConfigEncoded,omitempty"`
+		XRayConfigEncoded  string                  `json:"xrayConfigEncoded,omitempty"`
+		CodexConfigEncoded string                  `json:"codexConfigEncoded,omitempty"`
 	}
 	payload := syncPayload{
 		Vendors:   cfg.Vendors,
@@ -3496,12 +3511,23 @@ func (a *App) SyncConfigToServer(index int) error {
 		payload.XRayConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
+	// 附加 codex 全局配置与账号：gzip+base64 编码（账号存储于 sqlite）
+	if raw, err := a.codexSyncExportRaw(); err != nil {
+		return fmt.Errorf("failed to export codex sync payload: %w", err)
+	} else if len(raw) > 0 {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write(raw)
+		_ = gz.Close()
+		payload.CodexConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to serialize config: %w", err)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	req, err := http.NewRequest(http.MethodPost, syncURL.String(), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
@@ -3521,5 +3547,34 @@ func (a *App) SyncConfigToServer(index int) error {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
 		return fmt.Errorf("sync failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
+
+	if payload.CodexConfigEncoded != "" {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		var syncResp struct {
+			Codex struct {
+				Synced  bool   `json:"synced"`
+				Warning string `json:"warning,omitempty"`
+			} `json:"codex"`
+			Plugins map[string]struct {
+				Synced  bool   `json:"synced"`
+				Warning string `json:"warning,omitempty"`
+			} `json:"plugins"`
+		}
+		if err := json.Unmarshal(respBody, &syncResp); err != nil {
+			return fmt.Errorf("sync succeeded but failed to verify codex sync result: %w", err)
+		}
+
+		codexResult := syncResp.Codex
+		if pluginResult, ok := syncResp.Plugins["codex-accounts"]; ok {
+			codexResult = pluginResult
+		}
+		if !codexResult.Synced {
+			if strings.TrimSpace(codexResult.Warning) != "" {
+				return fmt.Errorf("remote codex sync failed: %s", codexResult.Warning)
+			}
+			return fmt.Errorf("remote codex sync failed")
+		}
+	}
+
 	return nil
 }

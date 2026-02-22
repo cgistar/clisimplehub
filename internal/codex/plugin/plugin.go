@@ -1,9 +1,13 @@
 package codexplugin
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -133,6 +137,145 @@ func (p *CodexPlugin) Forward(ctx context.Context, body []byte, model string, is
 		}
 	}
 	return svc.Forward(ctx, body, model, isStreaming, w, requestPath)
+}
+
+type codexSyncPayload struct {
+	MultiConfig codexShared.CodexMultiConfig `json:"multiConfig"`
+	Accounts    []codexShared.CodexAccount   `json:"accounts"`
+}
+
+// --- ConfigSyncExporter / ConfigSyncImporter / ConfigSyncDecoder ---
+
+func (p *CodexPlugin) SyncExport(configPath string) (string, json.RawMessage, error) {
+	store := p.GetAccountStore()
+	if store == nil {
+		return "", nil, fmt.Errorf("account store not initialized")
+	}
+
+	accounts, err := store.ListAccounts(context.Background())
+	if err != nil {
+		return "", nil, fmt.Errorf("list codex accounts: %w", err)
+	}
+
+	mc, err := codexShared.LoadCodexMultiConfig(codexJsonPathFromConfig(configPath))
+	if err != nil || mc == nil {
+		mc = &codexShared.CodexMultiConfig{}
+	}
+
+	data, err := json.Marshal(codexSyncPayload{
+		MultiConfig: *mc,
+		Accounts:    accounts,
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return "codexConfig", data, nil
+}
+
+func (p *CodexPlugin) SyncImport(configPath string, data json.RawMessage) error {
+	var payload codexSyncPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+
+	now := time.Now()
+	seenAccountIDs := make(map[string]struct{}, len(payload.Accounts))
+	seenRefreshTokens := make(map[string]struct{}, len(payload.Accounts))
+
+	for i := range payload.Accounts {
+		account := &payload.Accounts[i]
+		account.AccountID = strings.TrimSpace(account.AccountID)
+		account.RefreshToken = strings.TrimSpace(account.RefreshToken)
+		account.AccessToken = strings.TrimSpace(account.AccessToken)
+		account.IDToken = strings.TrimSpace(account.IDToken)
+		account.Email = strings.TrimSpace(account.Email)
+		account.PlanType = strings.TrimSpace(account.PlanType)
+		account.ProxyUrl = strings.TrimSpace(account.ProxyUrl)
+		account.CooldownReason = strings.TrimSpace(account.CooldownReason)
+		if account.Weight <= 0 {
+			account.Weight = 1
+		}
+		switch account.Status {
+		case codexShared.CodexStatusValid, codexShared.CodexStatusBanned, codexShared.CodexStatusExhausted, codexShared.CodexStatusReused, codexShared.CodexStatusUnknown:
+		default:
+			account.Status = codexShared.CodexStatusValid
+		}
+		if account.CreatedAt.IsZero() {
+			account.CreatedAt = now
+		}
+		if account.UpdatedAt.IsZero() {
+			account.UpdatedAt = account.CreatedAt
+		}
+
+		if account.AccountID == "" {
+			return fmt.Errorf("codex account[%d] missing accountId", i)
+		}
+		if _, exists := seenAccountIDs[account.AccountID]; exists {
+			return fmt.Errorf("duplicate codex accountId: %s", account.AccountID)
+		}
+		seenAccountIDs[account.AccountID] = struct{}{}
+
+		if account.RefreshToken != "" {
+			if _, exists := seenRefreshTokens[account.RefreshToken]; exists {
+				return fmt.Errorf("duplicate codex refreshToken for accountId: %s", account.AccountID)
+			}
+			seenRefreshTokens[account.RefreshToken] = struct{}{}
+		}
+	}
+
+	store := p.GetAccountStore()
+	if store == nil {
+		return fmt.Errorf("account store not initialized")
+	}
+
+	type replaceAllAccountsStore interface {
+		ReplaceAllAccounts(ctx context.Context, accounts []codexShared.CodexAccount) error
+	}
+
+	ctx := context.Background()
+	replacer, ok := store.(replaceAllAccountsStore)
+	if !ok {
+		return fmt.Errorf("account store does not support full-replace sync without touching usage history")
+	}
+	if err := replacer.ReplaceAllAccounts(ctx, payload.Accounts); err != nil {
+		return fmt.Errorf("replace codex accounts: %w", err)
+	}
+
+	payload.MultiConfig.ActiveAccountID = strings.TrimSpace(payload.MultiConfig.ActiveAccountID)
+	if len(payload.Accounts) == 0 {
+		payload.MultiConfig.ActiveAccountID = ""
+	} else if _, ok := seenAccountIDs[payload.MultiConfig.ActiveAccountID]; !ok {
+		payload.MultiConfig.ActiveAccountID = payload.Accounts[0].AccountID
+	}
+
+	if err := codexShared.SaveCodexMultiConfig(codexJsonPathFromConfig(configPath), &payload.MultiConfig); err != nil {
+		return fmt.Errorf("save codex global config: %w", err)
+	}
+
+	if svc := p.GetService(); svc != nil && len(payload.Accounts) > 0 {
+		svc.ensureCodexEndpoint()
+	}
+	if pool := codex.GetPool(); pool != nil {
+		pool.Reload()
+	}
+	return nil
+}
+
+func (p *CodexPlugin) SyncDecode(encoded string) (json.RawMessage, error) {
+	compressed, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, fmt.Errorf("gzip reader: %w", err)
+	}
+	defer gz.Close()
+	raw, err := io.ReadAll(gz)
+	if err != nil {
+		return nil, fmt.Errorf("gzip decompress: %w", err)
+	}
+	return json.RawMessage(raw), nil
 }
 
 // AddAccount wraps desktopFacade.AddAccount to ensure endpoint creation.

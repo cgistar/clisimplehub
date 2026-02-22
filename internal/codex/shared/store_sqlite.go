@@ -256,6 +256,80 @@ func (s *SQLiteCodexAccountStore) Delete(ctx context.Context, accountID string) 
 	})
 }
 
+// ReplaceAllAccounts replaces all codex accounts in one transaction.
+// It keeps usage history for current accounts and removes orphaned stats via relational delete.
+func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accounts []CodexAccount) error {
+	return s.queue.WithTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_accounts`); err != nil {
+			return fmt.Errorf("clear accounts: %w", err)
+		}
+
+		now := time.Now()
+		for i := range accounts {
+			a := accounts[i]
+			a.AccountID = strings.TrimSpace(a.AccountID)
+			if a.AccountID == "" {
+				return fmt.Errorf("account[%d] account_id is required", i)
+			}
+			if a.CreatedAt.IsZero() {
+				a.CreatedAt = now
+			}
+			if a.UpdatedAt.IsZero() {
+				a.UpdatedAt = a.CreatedAt
+			}
+
+			var usagePrimPct, usageSecPct, usagePriOverSec float64
+			var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+			var usageUpdatedAt sql.NullTime
+			if a.CodexUsage != nil {
+				usagePrimPct = a.CodexUsage.PrimaryUsedPercent
+				usagePrimReset = a.CodexUsage.PrimaryResetAfterSeconds
+				usagePrimWin = a.CodexUsage.PrimaryWindowMinutes
+				usageSecPct = a.CodexUsage.SecondaryUsedPercent
+				usageSecReset = a.CodexUsage.SecondaryResetAfterSeconds
+				usageSecWin = a.CodexUsage.SecondaryWindowMinutes
+				usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
+				if !a.CodexUsage.UpdatedAt.IsZero() {
+					usageUpdatedAt = sql.NullTime{Time: a.CodexUsage.UpdatedAt, Valid: true}
+				}
+			}
+
+			if _, err := tx.ExecContext(txCtx, `
+				INSERT INTO codex_accounts (
+					account_id, refresh_token, access_token, id_token, email, plan_type,
+					password, mfa_code, expires_at, status, weight, proxy_url,
+					cooldown_until, cooldown_reason,
+					usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
+					usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
+					usage_primary_over_secondary_pct, usage_updated_at,
+					created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
+				a.Password, a.MFACode,
+				nullTime(a.ExpiresAt), string(a.Status), a.EffectiveWeight(), a.ProxyUrl,
+				nullTime(a.CooldownUntil), a.CooldownReason,
+				usagePrimPct, usagePrimReset, usagePrimWin,
+				usageSecPct, usageSecReset, usageSecWin,
+				usagePriOverSec, usageUpdatedAt,
+				a.CreatedAt, a.UpdatedAt,
+			); err != nil {
+				return fmt.Errorf("insert account %q: %w", a.AccountID, err)
+			}
+		}
+
+		// Clear usage stats whose account no longer exists after full account replace.
+		if _, err := tx.ExecContext(txCtx, `
+			DELETE FROM codex_account_stats
+			WHERE NOT EXISTS (
+				SELECT 1 FROM codex_accounts WHERE codex_accounts.account_id = codex_account_stats.account_id
+			)`); err != nil {
+			return fmt.Errorf("clear orphan stats: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // --- Hot-path partial updates ---
 
 func (s *SQLiteCodexAccountStore) UpdateTokens(ctx context.Context, accountID, accessToken, idToken, refreshToken string, expiresAt time.Time) error {
