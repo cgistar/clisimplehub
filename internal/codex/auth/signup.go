@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,19 @@ import (
 
 	"clisimplehub/internal/codex/auth/mailprovider"
 )
+
+// FingerprintBlockedError 表示浏览器指纹被阻止，需要重试
+type FingerprintBlockedError struct {
+	StatusCode  int
+	ContentType string
+	FinalURL    string
+	BodyPreview string
+}
+
+func (e *FingerprintBlockedError) Error() string {
+	return fmt.Sprintf("fingerprint blocked (HTTP %d): Content-Type: %s, final URL: %s, body preview: %s",
+		e.StatusCode, e.ContentType, e.FinalURL, e.BodyPreview)
+}
 
 type SignupState int
 
@@ -74,8 +88,12 @@ type SignupSession struct {
 	provider       mailprovider.EmailProvider
 	providerParams map[string]string
 	callbackURL    string
+	skipProfile    bool // 已存在账号，跳过 profile 创建
 	err            error
 	result         *SignupResult
+
+	// 用于重试时保存原始请求信息
+	originalReq    *SignupRequest
 }
 
 func (s *SignupSession) State() SignupState     { return s.state }
@@ -145,6 +163,7 @@ func StartSignup(ctx context.Context, req *SignupRequest) (*SignupSession, error
 		proxyURL:       req.ProxyURL,
 		onStep:         req.OnStep,
 		providerParams: req.ProviderParams,
+		originalReq:    req, // 保存原始请求用于重试
 	}
 
 	// Resolve email provider
@@ -181,9 +200,44 @@ func StartSignup(ctx context.Context, req *SignupRequest) (*SignupSession, error
 	s.password = pwd
 
 	// Run the registration flow
-	if err := s.runRegister(ctx); err != nil {
+	const maxRetries = 3
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			log.Printf("[Signup] Retry attempt %d/%d with new fingerprint", attempt, maxRetries)
+			s.emitStep(fmt.Sprintf("Retrying with new browser fingerprint (attempt %d/%d)...", attempt, maxRetries))
+
+			// 重新生成浏览器指纹
+			if err := s.refreshFingerprint(ctx); err != nil {
+				lastErr = fmt.Errorf("refresh fingerprint: %w", err)
+				continue
+			}
+			randomDelay()
+		}
+
+		if err := s.runRegister(ctx); err != nil {
+			// 检查是否是指纹被阻止的错误
+			var fpErr *FingerprintBlockedError
+			if errors.As(err, &fpErr) {
+				log.Printf("[Signup] Fingerprint blocked (403), will retry with new fingerprint")
+				lastErr = err
+				continue
+			}
+			// 其他错误直接返回
+			s.state = SignupError
+			s.err = err
+			return s, nil
+		}
+
+		// 成功，跳出重试循环
+		break
+	}
+
+	// 如果所有重试都失败了
+	if lastErr != nil {
 		s.state = SignupError
-		s.err = err
+		s.err = fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 		return s, nil
 	}
 
@@ -199,6 +253,56 @@ func StartSignup(ctx context.Context, req *SignupRequest) (*SignupSession, error
 	}
 
 	return s, nil
+}
+
+// refreshFingerprint 重新生成浏览器指纹和 HTTP 客户端
+func (s *SignupSession) refreshFingerprint(_ context.Context) error {
+	// 生成新的浏览器指纹
+	chromeProfile, chromeVer, userAgent := randomChromeVersion()
+	log.Printf("[Signup] Refreshing fingerprint: Chrome %s (TLS profile: v%d)", chromeVer, chromeProfile.Major)
+
+	// 随机选择新的 Accept-Language
+	acceptLanguages := []string{
+		"en-US,en;q=0.9",
+		"en-US,en;q=0.9,zh-CN;q=0.8",
+		"en,en-US;q=0.9",
+		"en-US,en;q=0.8",
+	}
+	acceptLanguage := acceptLanguages[rand.Intn(len(acceptLanguages))]
+
+	// 创建新的 cookie jar
+	sharedJar := tls_client.NewCookieJar()
+
+	// 创建新的 HTTP 客户端
+	followClient, err := newTLSClientWithJar(s.proxyURL, true, chromeProfile.TLSProfile, sharedJar)
+	if err != nil {
+		return fmt.Errorf("create TLS client: %w", err)
+	}
+	noRedirClient, err := newTLSClientWithJar(s.proxyURL, false, chromeProfile.TLSProfile, sharedJar)
+	if err != nil {
+		return fmt.Errorf("create no-redirect TLS client: %w", err)
+	}
+
+	// 生成新的 device ID
+	deviceID := uuid.New().String()
+
+	// 设置 oai-did cookie
+	chatgptURL, _ := url.Parse(chatgptBase)
+	didCookie := []*fhttp.Cookie{{Name: "oai-did", Value: deviceID, Domain: "chatgpt.com"}}
+	followClient.SetCookies(chatgptURL, didCookie)
+	noRedirClient.SetCookies(chatgptURL, didCookie)
+
+	// 更新 session 的指纹信息
+	s.client = followClient
+	s.noRedirClient = noRedirClient
+	s.deviceID = deviceID
+	s.authLoggingID = uuid.New().String()
+	s.userAgent = userAgent
+	s.secChUA = chromeProfile.SecChUA
+	s.chromeVer = chromeVer
+	s.acceptLanguage = acceptLanguage
+
+	return nil
 }
 
 func (s *SignupSession) SubmitOTP(ctx context.Context, code string) error {
@@ -301,7 +405,11 @@ func (s *SignupSession) runRegister(ctx context.Context) error {
 		if err := s.createProfile(ctx); err != nil {
 			return err
 		}
-		return s.followCallback(ctx)
+		s.emitStep("9/10 Following callback...")
+		if err := s.followCallback(ctx); err != nil {
+			return err
+		}
+		return nil
 
 	case strings.Contains(finalPath, "callback") || strings.Contains(finalURL, "chatgpt.com"):
 		log.Printf("[Signup] Account already registered")
@@ -390,9 +498,30 @@ func (s *SignupSession) visitHomepage(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("visit homepage: %w", err)
 	}
-	io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	log.Printf("[Signup] Homepage -> %d", resp.StatusCode)
+
+	finalURL := resp.Request.URL.String()
+	log.Printf("[Signup] Homepage -> %d (final URL: %s)", resp.StatusCode, truncate(finalURL, 100))
+
+	if resp.StatusCode == 403 {
+		// 403 错误，需要换指纹重试
+		contentType := resp.Header.Get("Content-Type")
+		bodyPreview := truncate(string(body), 300)
+		return &FingerprintBlockedError{
+			StatusCode:  resp.StatusCode,
+			ContentType: contentType,
+			FinalURL:    finalURL,
+			BodyPreview: bodyPreview,
+		}
+	}
+
+	if resp.StatusCode >= 400 {
+		contentType := resp.Header.Get("Content-Type")
+		bodyPreview := truncate(string(body), 300)
+		return fmt.Errorf("homepage returned %d (Content-Type: %s, final URL: %s, body preview: %s)",
+			resp.StatusCode, contentType, truncate(finalURL, 100), bodyPreview)
+	}
 	return nil
 }
 
@@ -405,14 +534,25 @@ func (s *SignupSession) getCSRF(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("get CSRF: %w", err)
 	}
 	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode >= 400 {
+		contentType := resp.Header.Get("Content-Type")
+		finalURL := resp.Request.URL.String()
+		bodyPreview := truncate(string(body), 300)
+		return "", fmt.Errorf("CSRF API returned %d (Content-Type: %s, final URL: %s, body preview: %s)",
+			resp.StatusCode, contentType, truncate(finalURL, 100), bodyPreview)
+	}
+
 	var data struct {
 		CSRFToken string `json:"csrfToken"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return "", fmt.Errorf("parse CSRF: %w", err)
+	if err := json.Unmarshal(body, &data); err != nil {
+		return "", fmt.Errorf("parse CSRF: %w (body: %s)", err, truncate(string(body), 200))
 	}
 	if data.CSRFToken == "" {
-		return "", fmt.Errorf("empty CSRF token")
+		return "", fmt.Errorf("empty CSRF token (body: %s)", truncate(string(body), 200))
 	}
 	return data.CSRFToken, nil
 }
@@ -480,7 +620,7 @@ func (s *SignupSession) register(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
-	log.Printf("[Signup] Register -> %d body=%s", resp.StatusCode, truncate(string(respBody), 300))
+	log.Printf("[Signup] Register %s[%s]-> %d body=%s", s.email, s.password, resp.StatusCode, string(respBody))
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("register failed (HTTP %d): %s", resp.StatusCode, truncate(string(respBody), 200))
 	}
@@ -533,12 +673,28 @@ func (s *SignupSession) handleOTP(ctx context.Context) error {
 }
 
 func (s *SignupSession) afterOTPSuccess(ctx context.Context) error {
+	// 如果账号已存在，直接跳过 profile 创建和 callback
+	if s.skipProfile {
+		log.Printf("[Signup] Skipping profile creation for existing account")
+		s.emitStep("8/10 Account already exists, skipping profile creation...")
+		if s.callbackURL != "" {
+			s.emitStep("9/10 Following callback...")
+			if err := s.followCallback(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	s.emitStep("8/10 Creating profile...")
 	if err := s.createProfile(ctx); err != nil {
 		return err
 	}
 	s.emitStep("9/10 Following callback...")
-	return s.followCallback(ctx)
+	if err := s.followCallback(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *SignupSession) validateOTP(ctx context.Context, code string) error {
@@ -551,10 +707,24 @@ func (s *SignupSession) validateOTP(ctx context.Context, code string) error {
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
-	log.Printf("[Signup] validateOTP -> %d body=%s", resp.StatusCode, truncate(string(respBody), 300))
+	log.Printf("[Signup] validateOTP -> %d body=%s", resp.StatusCode, string(respBody))
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("OTP validation failed (HTTP %d): %s", resp.StatusCode, truncate(string(respBody), 200))
+		return fmt.Errorf("OTP validation failed (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
+
+	// 解析响应，判断是否需要跳过 profile 创建
+	var data struct {
+		ContinueURL string `json:"continue_url"`
+	}
+	if json.Unmarshal(respBody, &data) == nil && data.ContinueURL != "" {
+		// 如果 continue_url 包含 /api/auth/callback/openai，说明账号已存在，可以直接跳过 profile 创建
+		if strings.Contains(data.ContinueURL, "/api/auth/callback/openai") {
+			log.Printf("[Signup] Account already exists, skipping profile creation")
+			s.skipProfile = true
+			s.callbackURL = data.ContinueURL
+		}
+	}
+
 	return nil
 }
 
@@ -617,6 +787,13 @@ func (s *SignupSession) doOAuthLogin(ctx context.Context) error {
 		OnStep: func(msg string) {
 			s.emitStep("[OAuth] " + msg)
 		},
+		// Reuse signup session's HTTP clients and browser fingerprint
+		ReuseNoRedirectClient: s.noRedirClient,
+		ReuseFollowClient:     s.client,
+		ReuseDeviceID:         s.deviceID,
+		ReuseUserAgent:        s.userAgent,
+		ReuseSecChUA:          s.secChUA,
+		ReuseChromeVer:        s.chromeVer,
 	}
 
 	session, err := StartHeadlessLogin(ctx, loginReq)
@@ -629,7 +806,23 @@ func (s *SignupSession) doOAuthLogin(ctx context.Context) error {
 	}
 
 	if session.State() == StateNeedOTP {
-		return fmt.Errorf("OAuth login requires OTP (unexpected for new account)")
+		// Try auto-fetch OTP if provider is available
+		if s.provider != nil {
+			s.emitStep("[OAuth] Waiting for verification code from email provider...")
+			code, err := s.provider.FetchVerificationCode(ctx, s.providerParams, s.email, 120)
+			if err == nil && code != "" {
+				log.Printf("[Signup] OAuth auto-fetched OTP: %s", code)
+				s.emitStep("[OAuth] Validating OTP...")
+				if err := session.SubmitOTP(ctx, code); err != nil {
+					return fmt.Errorf("OAuth OTP validation failed: %w", err)
+				}
+				// OTP validated, continue to get result
+			} else {
+				return fmt.Errorf("OAuth login requires OTP but auto-fetch failed: %w", err)
+			}
+		} else {
+			return fmt.Errorf("OAuth login requires OTP but no email provider configured")
+		}
 	}
 
 	if session.Result() == nil {

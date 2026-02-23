@@ -2,11 +2,14 @@ package mailprovider
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,10 +18,12 @@ import (
 )
 
 type OutlookProvider struct {
-	email        string
-	mode         string
-	clientID     string
-	refreshToken string
+	email             string
+	mode              string
+	clientID          string
+	refreshToken      string
+	graphDelete       bool
+	graphDeleteStrict bool
 }
 
 func (o *OutlookProvider) Name() string { return "outlook" }
@@ -28,6 +33,8 @@ func (o *OutlookProvider) CreateEmail(params map[string]string) (string, string,
 	o.mode = params["outlook_mode"]
 	o.clientID = params["outlook_client_id"]
 	o.refreshToken = params["outlook_refresh_token"]
+	o.graphDelete = parseBoolDefault(params["outlook_graph_delete"], true)
+	o.graphDeleteStrict = parseBoolDefault(params["outlook_graph_delete_strict"], false)
 
 	if o.email == "" || o.clientID == "" || o.refreshToken == "" {
 		return "", "", fmt.Errorf("outlook_email, outlook_client_id, outlook_refresh_token are required")
@@ -134,7 +141,10 @@ func (o *OutlookProvider) fetchViaIMAP(ctx context.Context, timeoutSec int) (str
 	}
 
 	options := &imapclient.Options{
-		TLSConfig: nil,
+		TLSConfig: &tls.Config{
+			ServerName: imapServer,
+			MinVersion: tls.VersionTLS12,
+		},
 	}
 	c, err := imapclient.DialTLS(imapServer+":993", options)
 	if err != nil {
@@ -159,8 +169,7 @@ func (o *OutlookProvider) fetchViaIMAP(ctx context.Context, timeoutSec int) (str
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
-	fallbackTried := false
-	start := time.Now()
+	triedUIDs := make(map[imap.UID]struct{})
 
 	for {
 		select {
@@ -175,28 +184,49 @@ func (o *OutlookProvider) fetchViaIMAP(ctx context.Context, timeoutSec int) (str
 			if err != nil {
 				continue
 			}
-
-			newIDs := difference(allIDs, knownIDs)
-			if len(newIDs) > 0 {
-				for _, id := range newIDs {
-					otp, err := o.extractOTPFromMail(c, id)
-					if err == nil && otp != "" {
-						return otp, nil
-					}
-				}
+			if len(allIDs) == 0 {
+				continue
 			}
 
-			if !fallbackTried && time.Since(start) > 15*time.Second {
-				fallbackTried = true
-				for _, id := range lastN(knownIDs, 3) {
-					otp, err := o.extractOTPFromMail(c, id)
-					if err == nil && otp != "" {
-						return otp, nil
-					}
+			newIDs := difference(allIDs, knownIDs)
+			candidateID := allIDs[len(allIDs)-1]
+			if len(newIDs) > 0 {
+				candidateID = newIDs[len(newIDs)-1]
+				knownIDs = dedupeAndSortUIDs(append(knownIDs, newIDs...))
+			}
+
+			if _, exists := triedUIDs[candidateID]; exists {
+				continue
+			}
+			triedUIDs[candidateID] = struct{}{}
+
+			otp, err := o.extractOTPFromMail(c, candidateID)
+			if err == nil && otp != "" {
+				if err := o.deleteMailByUID(c, candidateID); err != nil {
+					return "", fmt.Errorf("delete OTP mail (uid=%d): %w", candidateID, err)
 				}
+				return otp, nil
 			}
 		}
 	}
+}
+
+func (o *OutlookProvider) deleteMailByUID(c *imapclient.Client, uid imap.UID) error {
+	storeCmd := c.Store(imap.UIDSetNum(uid), &imap.StoreFlags{
+		Op:     imap.StoreFlagsAdd,
+		Silent: true,
+		Flags:  []imap.Flag{imap.FlagDeleted},
+	}, nil)
+	if err := storeCmd.Close(); err != nil {
+		return fmt.Errorf("mark deleted: %w", err)
+	}
+
+	expungeCmd := c.UIDExpunge(imap.UIDSetNum(uid))
+	if err := expungeCmd.Close(); err != nil {
+		return fmt.Errorf("uid expunge: %w", err)
+	}
+
+	return nil
 }
 
 func (o *OutlookProvider) getKnownMailIDs(c *imapclient.Client) ([]imap.UID, error) {
@@ -209,107 +239,59 @@ func (o *OutlookProvider) getKnownMailIDs(c *imapclient.Client) ([]imap.UID, err
 		return []imap.UID{}, nil
 	}
 
-	// Outlook IMAP SEARCH doesn't work reliably, so we FETCH messages
-	// and filter on the client side. To optimize, only fetch the last 5 messages
-	// (most recent emails are more likely to contain the OTP we need)
-	seqSet := imap.SeqSet{}
-
-	// Calculate range: fetch last 5 messages (or all if less than 5)
-	startSeq := uint32(1)
-	if selectData.NumMessages > 5 {
-		startSeq = selectData.NumMessages - 4 // Last 5 messages
-	}
-	seqSet.AddRange(startSeq, selectData.NumMessages)
-
-	fetchCmd := c.Fetch(seqSet, &imap.FetchOptions{
-		UID:      true,
-		Envelope: true,
-	})
-
-	var openaiUIDs []imap.UID
-	for {
-		msg := fetchCmd.Next()
-		if msg == nil {
-			break
-		}
-
-		var msgUID imap.UID
-		var envelope *imap.Envelope
-
-		for {
-			item := msg.Next()
-			if item == nil {
-				break
-			}
-
-			switch data := item.(type) {
-			case *imapclient.FetchItemDataUID:
-				msgUID = data.UID
-			case imapclient.FetchItemDataUID:
-				msgUID = data.UID
-			case *imapclient.FetchItemDataEnvelope:
-				envelope = data.Envelope
-			case imapclient.FetchItemDataEnvelope:
-				envelope = data.Envelope
-			}
-		}
-
-		// Filter for OpenAI emails
-		if msgUID > 0 && envelope != nil && len(envelope.From) > 0 {
-			fromAddr := strings.ToLower(envelope.From[0].Addr())
-			if strings.Contains(fromAddr, "openai.com") {
-				openaiUIDs = append(openaiUIDs, msgUID)
-			}
-		}
-	}
-
-	if err := fetchCmd.Close(); err != nil {
-		return nil, err
-	}
-
-	return openaiUIDs, nil
+	return o.searchOpenAIMailUIDs(c)
 }
 
-func (o *OutlookProvider) fetchEnvelope(c *imapclient.Client, uid imap.UID) (*imap.Envelope, error) {
-	fetchCmd := c.Fetch(imap.UIDSetNum(uid), &imap.FetchOptions{
-		Envelope: true,
-	})
+func (o *OutlookProvider) searchOpenAIMailUIDs(c *imapclient.Client) ([]imap.UID, error) {
+	fromValues := []string{"noreply@tm.openai.com", "openai.com"}
+	var errs []string
+	success := false
 
-	var envelope *imap.Envelope
-	for {
-		msg := fetchCmd.Next()
-		if msg == nil {
-			break
+	for _, fromValue := range fromValues {
+		criteria := &imap.SearchCriteria{
+			Header: []imap.SearchCriteriaHeaderField{
+				{Key: "From", Value: fromValue},
+			},
 		}
 
-		for {
-			item := msg.Next()
-			if item == nil {
-				break
-			}
+		data, err := c.UIDSearch(criteria, nil).Wait()
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("From=%q: %v", fromValue, err))
+			continue
+		}
 
-			// Try both pointer and value types
-			switch data := item.(type) {
-			case *imapclient.FetchItemDataEnvelope:
-				envelope = data.Envelope
-			case imapclient.FetchItemDataEnvelope:
-				envelope = data.Envelope
+		success = true
+		if data != nil {
+			uids := dedupeAndSortUIDs(data.AllUIDs())
+			if len(uids) > 0 {
+				// Prefer exact sender first; stop early when matched.
+				return uids, nil
 			}
 		}
 	}
 
-	if err := fetchCmd.Close(); err != nil {
-		return nil, err
+	if !success {
+		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
-
-	return envelope, nil
+	return []imap.UID{}, nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+func dedupeAndSortUIDs(uids []imap.UID) []imap.UID {
+	if len(uids) == 0 {
+		return []imap.UID{}
 	}
-	return b
+
+	uidSet := make(map[imap.UID]struct{}, len(uids))
+	deduped := make([]imap.UID, 0, len(uids))
+	for _, uid := range uids {
+		if _, exists := uidSet[uid]; exists {
+			continue
+		}
+		uidSet[uid] = struct{}{}
+		deduped = append(deduped, uid)
+	}
+	sort.Slice(deduped, func(i, j int) bool { return deduped[i] < deduped[j] })
+	return deduped
 }
 
 func (o *OutlookProvider) getOpenAIMailIDs(c *imapclient.Client) ([]imap.UID, error) {
@@ -383,19 +365,27 @@ func (o *OutlookProvider) extractOTPFromMail(c *imapclient.Client, uid imap.UID)
 		return "", err
 	}
 
-	if code := extractVerificationCode(subject); code != "" {
+	if code := extractNumericVerificationCode(subject); code != "" {
 		return code, nil
 	}
-	return extractVerificationCode(body), nil
+	return extractNumericVerificationCode(body), nil
 }
 
 type graphMessage struct {
-	ID               string    `json:"id"`
-	Subject          string    `json:"subject"`
-	ReceivedDateTime time.Time `json:"receivedDateTime"`
-	Body             struct {
-		Content string `json:"content"`
-	} `json:"body"`
+	ID               string          `json:"id"`
+	Subject          string          `json:"subject"`
+	ReceivedDateTime time.Time       `json:"receivedDateTime"`
+	BodyPreview      string          `json:"bodyPreview"`
+	From             *graphRecipient `json:"from"`
+}
+
+type graphRecipient struct {
+	EmailAddress graphEmailAddress `json:"emailAddress"`
+}
+
+type graphEmailAddress struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
 }
 
 type graphResponse struct {
@@ -408,17 +398,35 @@ func (o *OutlookProvider) fetchViaGraph(ctx context.Context, timeoutSec int) (st
 		return "", fmt.Errorf("get Graph token: %w", err)
 	}
 
-	knownIDs, err := o.getKnownGraphMessages(accessToken)
-	if err != nil {
-		return "", fmt.Errorf("get known messages: %w", err)
-	}
-
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
-	fallbackTried := false
-	start := time.Now()
+	triedMessageIDs := make(map[string]struct{})
+	maxAge := 10 * time.Minute
+
+	tryOnce := func() (string, error) {
+		messages, err := o.queryGraphMessages(accessToken)
+		if err != nil {
+			return "", nil
+		}
+
+		openAIMessages := filterGraphMessagesForOpenAI(messages)
+		otp, messageID := findOTPFromGraphMessages(openAIMessages, time.Now(), maxAge, triedMessageIDs)
+		if otp == "" {
+			return "", nil
+		}
+		if err := o.deleteGraphMessageMaybe(accessToken, messageID); err != nil {
+			return "", err
+		}
+		return otp, nil
+	}
+
+	if otp, err := tryOnce(); err != nil {
+		return "", err
+	} else if otp != "" {
+		return otp, nil
+	}
 
 	for {
 		select {
@@ -429,52 +437,23 @@ func (o *OutlookProvider) fetchViaGraph(ctx context.Context, timeoutSec int) (st
 				return "", fmt.Errorf("timeout")
 			}
 
-			messages, err := o.queryGraphMessages(accessToken)
+			otp, err := tryOnce()
 			if err != nil {
-				continue
+				return "", err
 			}
-
-			allIDs := extractGraphIDs(messages)
-			newIDs := difference(allIDs, knownIDs)
-
-			if len(newIDs) > 0 {
-				for _, msg := range messages {
-					if contains(newIDs, msg.ID) {
-						if otp := extractOTPFromGraphMessage(msg); otp != "" {
-							return otp, nil
-						}
-					}
-				}
-			}
-
-			if !fallbackTried && time.Since(start) > 15*time.Second {
-				fallbackTried = true
-				knownMessages := filterKnownMessages(messages, knownIDs)
-				for _, msg := range lastNMessages(knownMessages, 3) {
-					if otp := extractOTPFromGraphMessage(msg); otp != "" {
-						return otp, nil
-					}
-				}
+			if otp != "" {
+				return otp, nil
 			}
 		}
 	}
 }
 
-func (o *OutlookProvider) getKnownGraphMessages(token string) ([]string, error) {
-	messages, err := o.queryGraphMessages(token)
-	if err != nil {
-		return nil, err
-	}
-	return extractGraphIDs(messages), nil
-}
-
 func (o *OutlookProvider) queryGraphMessages(token string) ([]graphMessage, error) {
 	baseURL := "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
 	params := url.Values{
-		"$filter":  {"contains(from/emailAddress/address, 'openai.com')"},
-		"$select":  {"id,subject,body,from,receivedDateTime"},
+		"$select":  {"id,subject,bodyPreview,from,receivedDateTime"},
 		"$orderby": {"receivedDateTime desc"},
-		"$top":     {"10"},
+		"$top":     {"25"},
 	}
 
 	req, err := http.NewRequest("GET", baseURL+"?"+params.Encode(), nil)
@@ -504,36 +483,109 @@ func (o *OutlookProvider) queryGraphMessages(token string) ([]graphMessage, erro
 	return result.Value, nil
 }
 
+func (o *OutlookProvider) deleteGraphMessageMaybe(token, messageID string) error {
+	if !o.graphDelete || messageID == "" {
+		return nil
+	}
+	if err := o.deleteGraphMessage(token, messageID); err != nil {
+		if o.graphDeleteStrict {
+			return fmt.Errorf("delete OTP message (id=%s): %w", messageID, err)
+		}
+		return nil
+	}
+	return nil
+}
+
+func (o *OutlookProvider) deleteGraphMessage(token, messageID string) error {
+	escapedID := url.PathEscape(messageID)
+	endpoint := "https://graph.microsoft.com/v1.0/me/messages/" + escapedID
+
+	req, err := http.NewRequest("DELETE", endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("Graph API error: %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 func extractOTPFromGraphMessage(msg graphMessage) string {
-	if code := extractVerificationCode(msg.Subject); code != "" {
+	if code := extractNumericVerificationCode(msg.Subject); code != "" {
 		return code
 	}
-	return extractVerificationCode(msg.Body.Content)
+	return extractNumericVerificationCode(msg.BodyPreview)
 }
 
-func extractGraphIDs(messages []graphMessage) []string {
-	ids := make([]string, len(messages))
-	for i, msg := range messages {
-		ids[i] = msg.ID
-	}
-	return ids
-}
-
-func filterKnownMessages(messages []graphMessage, knownIDs []string) []graphMessage {
-	var result []graphMessage
+func findOTPFromGraphMessages(messages []graphMessage, now time.Time, maxAge time.Duration, triedMessageIDs map[string]struct{}) (otp string, messageID string) {
+	cutoff := now.Add(-maxAge)
 	for _, msg := range messages {
-		if contains(knownIDs, msg.ID) {
+		if msg.ID == "" {
+			continue
+		}
+		if msg.ReceivedDateTime.IsZero() || msg.ReceivedDateTime.Before(cutoff) {
+			continue
+		}
+		if _, ok := triedMessageIDs[msg.ID]; ok {
+			continue
+		}
+		triedMessageIDs[msg.ID] = struct{}{}
+
+		if code := extractOTPFromGraphMessage(msg); code != "" {
+			return code, msg.ID
+		}
+	}
+	return "", ""
+}
+
+var numericCodePattern = regexp.MustCompile(`\b(\d{6})\b`)
+
+func extractNumericVerificationCode(text string) string {
+	if text == "" {
+		return ""
+	}
+	if m := numericCodePattern.FindStringSubmatch(text); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func filterGraphMessagesForOpenAI(messages []graphMessage) []graphMessage {
+	result := make([]graphMessage, 0, len(messages))
+	for _, msg := range messages {
+		if isOpenAIGraphMessage(msg) {
 			result = append(result, msg)
 		}
 	}
 	return result
 }
 
-func lastNMessages(messages []graphMessage, n int) []graphMessage {
-	if len(messages) <= n {
-		return messages
+func isOpenAIGraphMessage(msg graphMessage) bool {
+	if msg.From != nil {
+		address := strings.ToLower(strings.TrimSpace(msg.From.EmailAddress.Address))
+		if strings.Contains(address, "openai.com") {
+			return true
+		}
 	}
-	return messages[len(messages)-n:]
+	subject := strings.ToLower(msg.Subject)
+	return strings.Contains(subject, "openai")
 }
 
 func difference[T comparable](a, b []T) []T {
@@ -550,18 +602,16 @@ func difference[T comparable](a, b []T) []T {
 	return result
 }
 
-func lastN[T any](slice []T, n int) []T {
-	if len(slice) <= n {
-		return slice
+func parseBoolDefault(v string, defaultValue bool) bool {
+	if v == "" {
+		return defaultValue
 	}
-	return slice[len(slice)-n:]
-}
-
-func contains[T comparable](slice []T, item T) bool {
-	for _, v := range slice {
-		if v == item {
-			return true
-		}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return defaultValue
 	}
-	return false
 }

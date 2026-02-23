@@ -3,7 +3,10 @@ package auth
 import (
 	"context"
 	"os"
+	"regexp"
+	"strconv"
 	"testing"
+	"time"
 
 	"clisimplehub/internal/codex/auth/mailprovider"
 )
@@ -414,6 +417,10 @@ func TestCloudflareProvider(t *testing.T) {
 //
 //	TEST_OUTLOOK_EMAIL=your@outlook.com TEST_OUTLOOK_CLIENT_ID=xxx TEST_OUTLOOK_REFRESH_TOKEN=xxx TEST_OUTLOOK_MODE=graph \
 //	  go test ./internal/codex/auth/ -run TestOutlookProvider -v -count=1
+//
+// Optional:
+//
+//	TEST_OUTLOOK_FETCH_TIMEOUT=180 (seconds, default: 120)
 func TestOutlookProvider(t *testing.T) {
 	email := os.Getenv("TEST_OUTLOOK_EMAIL")
 	clientID := os.Getenv("TEST_OUTLOOK_CLIENT_ID")
@@ -449,8 +456,33 @@ func TestOutlookProvider(t *testing.T) {
 		t.Errorf("Expected email %s, got %s", email, createdEmail)
 	}
 
+	timeoutSec := 120
+	if timeoutStr := os.Getenv("TEST_OUTLOOK_FETCH_TIMEOUT"); timeoutStr != "" {
+		parsedTimeout, parseErr := strconv.Atoi(timeoutStr)
+		if parseErr != nil || parsedTimeout <= 0 {
+			t.Fatalf("invalid TEST_OUTLOOK_FETCH_TIMEOUT=%q", timeoutStr)
+		}
+		timeoutSec = parsedTimeout
+	}
+
 	t.Logf("Created email: %s (mode: %s)", createdEmail, mode)
-	t.Log("Outlook provider works. Skipping FetchVerificationCode (no OTP to fetch).")
+	t.Logf("Fetching verification code with timeout=%ds", timeoutSec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec+10)*time.Second)
+	defer cancel()
+
+	code, err := p.FetchVerificationCode(ctx, params, createdEmail, timeoutSec)
+	if err != nil {
+		t.Fatalf("FetchVerificationCode failed: %v", err)
+	}
+	if code == "" {
+		t.Fatal("FetchVerificationCode returned empty code")
+	}
+	if !regexp.MustCompile(`^\d{6}$`).MatchString(code) {
+		t.Fatalf("FetchVerificationCode returned non-numeric code: %q", code)
+	}
+
+	t.Logf("Fetched verification code: %s", code)
 }
 
 func TestGeneratePassword(t *testing.T) {

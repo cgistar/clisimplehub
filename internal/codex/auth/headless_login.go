@@ -66,7 +66,7 @@ var chromeProfiles = []ChromeProfile{
 		Build:      6943,
 		PatchMin:   33,
 		PatchMax:   153,
-		SecChUA:    `"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"`,
+		SecChUA:    `"Google Chrome";v="133", "Chromium";v="133", "Not_A Brand";v="99"`,
 		TLSProfile: profiles.Chrome_133,
 	},
 	{
@@ -104,6 +104,14 @@ type HeadlessLoginRequest struct {
 	EmailProvider  string
 	ProviderParams map[string]string
 	OnStep         func(msg string) // optional progress callback
+
+	// ReuseClients allows reusing existing HTTP clients (for signup flow)
+	ReuseNoRedirectClient tls_client.HttpClient
+	ReuseFollowClient     tls_client.HttpClient
+	ReuseDeviceID         string
+	ReuseUserAgent        string
+	ReuseSecChUA          string
+	ReuseChromeVer        string
 }
 
 type HeadlessLoginSession struct {
@@ -161,19 +169,46 @@ func StartHeadlessLogin(ctx context.Context, req *HeadlessLoginRequest) (*Headle
 		clientID = ClientID
 	}
 
-	deviceID := uuid.New().String()
+	var noRedirectClient, followClient tls_client.HttpClient
+	var deviceID, userAgent, secChUA, chromeVer string
+	var err error
 
-	// Randomize Chrome version for anti-detection
-	chromeProfile, chromeVer, userAgent := randomChromeVersion()
-	log.Printf("[HeadlessLogin] Using Chrome %s (TLS profile: v%d)", chromeVer, chromeProfile.Major)
+	// Reuse existing clients if provided (signup flow)
+	if req.ReuseNoRedirectClient != nil && req.ReuseFollowClient != nil {
+		log.Printf("[HeadlessLogin] Reusing existing HTTP clients from signup session")
+		noRedirectClient = req.ReuseNoRedirectClient
+		followClient = req.ReuseFollowClient
+		deviceID = req.ReuseDeviceID
+		userAgent = req.ReuseUserAgent
+		secChUA = req.ReuseSecChUA
+		chromeVer = req.ReuseChromeVer
+	} else {
+		// Create new clients (standalone login flow)
+		deviceID = uuid.New().String()
 
-	noRedirectClient, err := newTLSClient(req.ProxyURL, false, chromeProfile.TLSProfile)
-	if err != nil {
-		return nil, fmt.Errorf("create TLS client: %w", err)
-	}
-	followClient, err := newTLSClient(req.ProxyURL, true, chromeProfile.TLSProfile)
-	if err != nil {
-		return nil, fmt.Errorf("create follow-redirect TLS client: %w", err)
+		// Randomize Chrome version for anti-detection
+		chromeProfile, cv, ua := randomChromeVersion()
+		chromeVer = cv
+		userAgent = ua
+		secChUA = chromeProfile.SecChUA
+		log.Printf("[HeadlessLogin] Using Chrome %s (TLS profile: v%d)", chromeVer, chromeProfile.Major)
+
+		noRedirectClient, err = newTLSClient(req.ProxyURL, false, chromeProfile.TLSProfile)
+		if err != nil {
+			return nil, fmt.Errorf("create TLS client: %w", err)
+		}
+		followClient, err = newTLSClient(req.ProxyURL, true, chromeProfile.TLSProfile)
+		if err != nil {
+			return nil, fmt.Errorf("create follow-redirect TLS client: %w", err)
+		}
+
+		// Set oai-did cookie on auth domain for both clients
+		cookieURL, _ := url.Parse(oauthIssuer)
+		didCookie := []*fhttp.Cookie{
+			{Name: "oai-did", Value: deviceID, Domain: ".auth.openai.com"},
+		}
+		noRedirectClient.SetCookies(cookieURL, didCookie)
+		followClient.SetCookies(cookieURL, didCookie)
 	}
 
 	// Standard HTTP client for sentinel API calls
@@ -202,7 +237,7 @@ func StartHeadlessLogin(ctx context.Context, req *HeadlessLoginRequest) (*Headle
 		httpClient:     stdClient,
 		deviceID:       deviceID,
 		userAgent:      userAgent,
-		secChUA:        chromeProfile.SecChUA,
+		secChUA:        secChUA,
 		chromeVer:      chromeVer,
 		pkce:           pkce,
 		oauthState:     state,
@@ -222,14 +257,6 @@ func StartHeadlessLogin(ctx context.Context, req *HeadlessLoginRequest) (*Headle
 		}
 		s.provider = p
 	}
-
-	// Set oai-did cookie on auth domain for both clients
-	cookieURL, _ := url.Parse(oauthIssuer)
-	didCookie := []*fhttp.Cookie{
-		{Name: "oai-did", Value: deviceID, Domain: ".auth.openai.com"},
-	}
-	noRedirectClient.SetCookies(cookieURL, didCookie)
-	followClient.SetCookies(cookieURL, didCookie)
 
 	// Step 1-3
 	if err := s.bootstrapOAuthSession(ctx); err != nil {

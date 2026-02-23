@@ -46,8 +46,17 @@
       </template>
 
       <template v-if="formProvider === 'outlook'">
+        <n-form-item label="账号信息">
+          <n-input
+            v-model:value="formParams.outlook_raw_input"
+            type="textarea"
+            :rows="4"
+            placeholder="粘贴完整账号信息（支持多个'-'分隔）&#10;例如: email@outlook.com----password----client-id----refresh-token"
+            @blur="parseOutlookInput"
+          />
+        </n-form-item>
         <n-form-item label="邮箱地址">
-          <n-input v-model:value="formParams.outlook_email" placeholder="user@outlook.com" />
+          <n-input v-model:value="formParams.outlook_email" placeholder="user@outlook.com" @blur="validateEmail('outlook_email')" />
         </n-form-item>
         <n-form-item label="模式">
           <n-radio-group v-model:value="formParams.outlook_mode">
@@ -64,7 +73,7 @@
       </template>
 
       <n-form-item label="邮箱" v-if="formProvider === ''">
-        <n-input v-model:value="formEmail" placeholder="手动模式下必填" />
+        <n-input v-model:value="formEmail" placeholder="手动模式下必填" @blur="validateEmail('formEmail')" />
       </n-form-item>
 
       <n-form-item label="密码">
@@ -123,8 +132,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, nextTick, reactive } from 'vue'
-import { NModal, NForm, NFormItem, NSelect, NInput, NRadio, NRadioGroup, NButton, NSpace, NSpin, NAlert, NResult } from 'naive-ui'
+import { NModal, NForm, NFormItem, NSelect, NInput, NRadio, NRadioGroup, NButton, NSpace, NSpin, NAlert, NResult, useMessage } from 'naive-ui'
 import { codexApi } from '../../api/codex'
+import { useCodexAccountsStore } from '../../stores/codexAccountsStore'
 import type { CodexAccountInput, CodexSignupRequest, SignupState } from '@/types/codex'
 
 type Phase = 'form' | 'signing_up' | 'need_otp' | 'submitting_otp' | 'success' | 'error'
@@ -135,6 +145,8 @@ const emit = defineEmits<{
   'success': [account: CodexAccountInput]
 }>()
 
+const message = useMessage()
+const codexStore = useCodexAccountsStore()
 const visible = ref(false)
 const phase = ref<Phase>('form')
 
@@ -146,6 +158,7 @@ const formParams = reactive<Record<string, string>>({
   cf_worker_domain: '',
   cf_email_domain: '',
   cf_admin_password: '',
+  outlook_raw_input: '',
   outlook_email: '',
   outlook_mode: 'imap',
   outlook_client_id: '',
@@ -170,12 +183,14 @@ const providerOptions = computed(() => [
 
 const canSubmit = computed(() => {
   if (formProvider.value === '' && !formEmail.value) return false
+  if (formProvider.value === '' && formEmail.value && !isValidEmail(formEmail.value)) return false
   // DuckMail: API Base is optional (has default value)
   if (formProvider.value === 'cloudflare') {
     if (!formParams.cf_worker_domain || !formParams.cf_email_domain || !formParams.cf_admin_password) return false
   }
   if (formProvider.value === 'outlook') {
     if (!formParams.outlook_email || !formParams.outlook_client_id || !formParams.outlook_refresh_token) return false
+    if (!isValidEmail(formParams.outlook_email)) return false
   }
   return true
 })
@@ -202,6 +217,19 @@ function stopListening() {
 
 onUnmounted(stopListening)
 
+// --- Email validation ---
+function isValidEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  return emailRegex.test(email)
+}
+
+function validateEmail(field: 'formEmail' | 'outlook_email') {
+  const email = field === 'formEmail' ? formEmail.value : formParams.outlook_email
+  if (email && !isValidEmail(email)) {
+    message.warning('邮箱格式不正确')
+  }
+}
+
 // --- Watchers ---
 watch(() => props.show, (v) => {
   visible.value = v
@@ -221,6 +249,10 @@ function resetToForm() {
 }
 
 function resetState() {
+  // 如果正在注册过程中，取消注册
+  if (phase.value === 'signing_up' || phase.value === 'submitting_otp') {
+    codexApi.cancelSignup().catch(() => {})
+  }
   resetToForm()
   formProvider.value = ''
   formParams.duckmail_api_base = ''
@@ -229,12 +261,73 @@ function resetState() {
   formParams.cf_worker_domain = ''
   formParams.cf_email_domain = ''
   formParams.cf_admin_password = ''
+  formParams.outlook_raw_input = ''
+  formParams.outlook_email = ''
+  formParams.outlook_mode = 'imap'
+  formParams.outlook_client_id = ''
+  formParams.outlook_refresh_token = ''
   formEmail.value = ''
   formPassword.value = ''
   formClientId.value = 'app_EMoamEEZ73f0CkXaXp7hrann'
 }
 
+// Parse Outlook account info from raw input
+// Format: email----password----client-id----refresh-token
+// Supports multiple '-' separators (e.g., ----, --, etc.)
+function parseOutlookInput() {
+  const raw = formParams.outlook_raw_input?.trim()
+  if (!raw) return
+
+  // Split by multiple dashes (2 or more consecutive dashes)
+  const parts = raw.split(/--+/).map(p => p.trim()).filter(p => p.length > 0)
+
+  if (parts.length < 3) {
+    // Not enough parts, skip parsing
+    return
+  }
+
+  // Identify each part by pattern matching
+  let email = ''
+  let clientId = ''
+  let refreshToken = ''
+  const remainingParts: string[] = []
+
+  for (const part of parts) {
+    if (!email && part.includes('@')) {
+      // Email: contains @ symbol
+      email = part
+    } else if (!clientId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(part)) {
+      // Client ID: UUID format
+      clientId = part
+    } else {
+      remainingParts.push(part)
+    }
+  }
+
+  // Refresh token: longest remaining part
+  if (remainingParts.length > 0) {
+    refreshToken = remainingParts.reduce((longest, current) =>
+      current.length > longest.length ? current : longest
+    )
+  }
+
+  // Update form fields
+  if (email) formParams.outlook_email = email
+  if (clientId) formParams.outlook_client_id = clientId
+  if (refreshToken) formParams.outlook_refresh_token = refreshToken
+}
+
 async function handleStart() {
+  // 检查邮箱是否已存在
+  const emailToCheck = formProvider.value === 'outlook' ? formParams.outlook_email : formEmail.value
+  if (emailToCheck) {
+    const existingAccount = codexStore.accounts.find(acc => acc.email === emailToCheck)
+    if (existingAccount) {
+      message.warning(`邮箱 ${emailToCheck} 已存在于账号列表中`)
+      return
+    }
+  }
+
   phase.value = 'signing_up'
   stepLogs.value = []
   startListening()
@@ -280,6 +373,11 @@ function handleSignupState(state: SignupState) {
     errorMsg.value = state.error
     phase.value = 'error'
     stopListening()
+
+    // If registration succeeded but OAuth failed, show email and password for manual login
+    if (state.firstStageComplete && state.result?.email && state.password) {
+      errorMsg.value = `账号注册成功，获取令牌失败。\n\n邮箱: ${state.result.email}\n密码: ${state.password}\n\n${state.error}`
+    }
   } else if (state.needOTP) {
     phase.value = 'need_otp'
   } else if (state.result) {
