@@ -4,12 +4,14 @@
       <CodexAccountToolbar
         @oauth-login="showOAuthModal = true"
         @json-import="showJsonImportModal = true"
+        @signup="showSignupModal = true"
         @bulk-delete="showBulkDeleteModal = true"
         @open-config="showGlobalConfigModal = true"
       />
 
       <div class="codex-accounts-body">
         <CodexAccountList
+          ref="accountListRef"
           @edit="handleEditAccount"
           @get-token="handleGetToken"
         />
@@ -47,6 +49,11 @@
       @success="handleGetTokenSuccess"
       @status-update="handleGetTokenStatusUpdate"
     />
+
+    <CodexSignupModal
+      v-model:show="showSignupModal"
+      @success="handleSignupSuccess"
+    />
   </div>
 </template>
 
@@ -65,6 +72,7 @@ import CodexJsonImportModal from './CodexJsonImportModal.vue'
 import CodexBulkDeleteModal from './CodexBulkDeleteModal.vue'
 import CodexGlobalConfigModal from './CodexGlobalConfigModal.vue'
 import CodexGetTokenModal from './CodexGetTokenModal.vue'
+import CodexSignupModal from './CodexSignupModal.vue'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -76,8 +84,10 @@ const showJsonImportModal = ref(false)
 const showBulkDeleteModal = ref(false)
 const showGlobalConfigModal = ref(false)
 const showGetTokenModal = ref(false)
+const showSignupModal = ref(false)
 const editingAccount = ref<CodexAccount | null>(null)
 const getTokenAccount = ref<CodexAccount | null>(null)
+const accountListRef = ref<InstanceType<typeof CodexAccountList> | null>(null)
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -111,6 +121,10 @@ async function handleEditSuccess(accountData: CodexAccountInput) {
     await codexStore.updateAccount(accountData)
     message.success(t('codex.accountUpdated'))
     showEditModal.value = false
+    // Restore scroll position after update
+    if (accountListRef.value?.restoreScrollPosition) {
+      accountListRef.value.restoreScrollPosition()
+    }
   } catch (error) {
     message.error(t('codex.updateAccountFailed') + ': ' + toErrorMessage(error))
   }
@@ -135,6 +149,10 @@ async function handleGetTokenSuccess(payload: CodexAccountInput) {
   try {
     await codexStore.updateAccount(payload)
     message.success(t('codex.getTokenSuccess'))
+    // Restore scroll position after update
+    if (accountListRef.value?.restoreScrollPosition) {
+      accountListRef.value.restoreScrollPosition()
+    }
   } catch (error) {
     message.error(t('codex.updateAccountFailed') + ': ' + toErrorMessage(error))
   }
@@ -144,8 +162,21 @@ async function handleGetTokenStatusUpdate(payload: CodexAccountInput) {
   try {
     await codexStore.updateAccount(payload)
     message.warning(t('codex.accountUpdated'))
+    // Restore scroll position after update
+    if (accountListRef.value?.restoreScrollPosition) {
+      accountListRef.value.restoreScrollPosition()
+    }
   } catch (error) {
     message.error(t('codex.updateAccountFailed') + ': ' + toErrorMessage(error))
+  }
+}
+
+async function handleSignupSuccess(accountData: CodexAccountInput) {
+  try {
+    await codexStore.addAccount(accountData)
+    message.success(t('codex.accountAdded'))
+  } catch (error) {
+    message.error(t('codex.addAccountFailed') + ': ' + toErrorMessage(error))
   }
 }
 </script>

@@ -70,6 +70,7 @@ const {
 const emit = defineEmits<{
   'oauth-login': []
   'json-import': []
+  'signup': []
   'bulk-delete': []
   'open-config': []
 }>()
@@ -91,6 +92,10 @@ const addAccountOptions = computed(() => [
   {
     label: t('codex.jsonImport'),
     key: 'json'
+  },
+  {
+    label: t('codex.signup'),
+    key: 'signup'
   }
 ])
 
@@ -105,6 +110,9 @@ function handleAddAccountSelect(key: string | number): void {
       break
     case 'json':
       emit('json-import')
+      break
+    case 'signup':
+      emit('signup')
       break
   }
 }

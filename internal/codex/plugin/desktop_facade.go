@@ -10,6 +10,7 @@ import (
 
 	codex "clisimplehub/internal/codex"
 	codexAuth "clisimplehub/internal/codex/auth"
+	"clisimplehub/internal/codex/auth/mailprovider"
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
@@ -556,6 +557,32 @@ func (d *desktopFacade) GetCodexAccountStats(ctx context.Context, timeRange stri
 }
 
 func (d *desktopFacade) StartHeadlessLogin(ctx context.Context, email, password, clientID, proxyURL string, onStep func(string)) (json.RawMessage, error) {
+	// Backward compatibility: call the new method with empty provider params
+	input := map[string]any{
+		"email":          email,
+		"password":       password,
+		"clientId":       clientID,
+		"proxyUrl":       proxyURL,
+		"emailProvider":  "",
+		"providerParams": map[string]string{},
+	}
+	rawReq, _ := json.Marshal(input)
+	return d.StartHeadlessLoginWithProvider(ctx, rawReq, onStep)
+}
+
+func (d *desktopFacade) StartHeadlessLoginWithProvider(ctx context.Context, req json.RawMessage, onStep func(string)) (json.RawMessage, error) {
+	var input struct {
+		Email          string            `json:"email"`
+		Password       string            `json:"password"`
+		ClientID       string            `json:"clientId"`
+		ProxyURL       string            `json:"proxyUrl"`
+		EmailProvider  string            `json:"emailProvider"`
+		ProviderParams map[string]string `json:"providerParams"`
+	}
+	if err := json.Unmarshal(req, &input); err != nil {
+		return nil, fmt.Errorf("unmarshal request: %w", err)
+	}
+
 	// Create cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -567,11 +594,13 @@ func (d *desktopFacade) StartHeadlessLogin(ctx context.Context, email, password,
 
 	// Execute network operation WITHOUT holding lock
 	session, err := codexAuth.StartHeadlessLogin(ctx, &codexAuth.HeadlessLoginRequest{
-		Email:    email,
-		Password: password,
-		ClientID: clientID,
-		ProxyURL: proxyURL,
-		OnStep:   onStep,
+		Email:          input.Email,
+		Password:       input.Password,
+		ClientID:       input.ClientID,
+		ProxyURL:       input.ProxyURL,
+		EmailProvider:  input.EmailProvider,
+		ProviderParams: input.ProviderParams,
+		OnStep:         onStep,
 	})
 
 	if err != nil {
@@ -618,6 +647,110 @@ func (d *desktopFacade) CancelHeadlessLogin() error {
 	return nil
 }
 
+// --- Signup ---
+
+func (d *desktopFacade) StartSignup(ctx context.Context, req json.RawMessage, onStep func(string)) (json.RawMessage, error) {
+	var input struct {
+		EmailProvider  string            `json:"emailProvider"`
+		ProviderParams map[string]string `json:"providerParams"`
+		Email          string            `json:"email"`
+		Password       string            `json:"password"`
+		ClientID       string            `json:"clientId"`
+		ProxyURL       string            `json:"proxyUrl"`
+	}
+	if err := json.Unmarshal(req, &input); err != nil {
+		return nil, fmt.Errorf("parse signup request: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+
+	signupHolder.mu.Lock()
+	signupHolder.session = nil
+	signupHolder.cancelFunc = cancel
+	signupHolder.mu.Unlock()
+
+	session, err := codexAuth.StartSignup(ctx, &codexAuth.SignupRequest{
+		EmailProvider:  input.EmailProvider,
+		ProviderParams: input.ProviderParams,
+		Email:          input.Email,
+		Password:       input.Password,
+		ClientID:       input.ClientID,
+		ProxyURL:       input.ProxyURL,
+		OnStep:         onStep,
+	})
+
+	if err != nil {
+		signupHolder.mu.Lock()
+		signupHolder.cancelFunc = nil
+		signupHolder.mu.Unlock()
+		return nil, err
+	}
+
+	signupHolder.mu.Lock()
+	signupHolder.session = session
+	signupHolder.mu.Unlock()
+
+	return marshalSignupState(session), nil
+}
+
+func (d *desktopFacade) SubmitSignupOTP(ctx context.Context, code string) (json.RawMessage, error) {
+	signupHolder.mu.Lock()
+	session := signupHolder.session
+	signupHolder.mu.Unlock()
+
+	if session == nil {
+		return nil, fmt.Errorf("no signup session")
+	}
+
+	err := session.SubmitOTP(ctx, code)
+	if err != nil {
+		return marshalSignupState(session), err
+	}
+	return marshalSignupState(session), nil
+}
+
+func (d *desktopFacade) CancelSignup() error {
+	signupHolder.mu.Lock()
+	cancel := signupHolder.cancelFunc
+	signupHolder.session = nil
+	signupHolder.cancelFunc = nil
+	signupHolder.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	return nil
+}
+
+func (d *desktopFacade) GetEmailProviders() (json.RawMessage, error) {
+	return json.Marshal(mailprovider.AvailableProviders())
+}
+
+func marshalSignupState(session *codexAuth.SignupSession) json.RawMessage {
+	state := map[string]any{
+		"state":   int(session.State()),
+		"needOTP": session.State() == codexAuth.SignupNeedOTP,
+	}
+	if session.Error() != nil {
+		state["error"] = session.Error().Error()
+	}
+	if session.Result() != nil {
+		r := session.Result()
+		state["password"] = r.Password
+		state["result"] = map[string]string{
+			"refreshToken": r.RefreshToken,
+			"accessToken":  r.AccessToken,
+			"idToken":      r.IDToken,
+			"accountId":    r.AccountID,
+			"email":        r.Email,
+			"planType":     r.PlanType,
+			"expiresAt":    r.ExpiresAt,
+		}
+	}
+	raw, _ := json.Marshal(state)
+	return raw
+}
+
 func marshalHeadlessState(session *codexAuth.HeadlessLoginSession) json.RawMessage {
 	state := map[string]any{
 		"state":   int(session.State()),
@@ -650,11 +783,18 @@ var (
 	loginCleanupFn func()
 
 	headlessHolder headlessSessionHolder
+	signupHolder   signupSessionHolder
 )
 
 type headlessSessionHolder struct {
 	mu         sync.Mutex
 	session    *codexAuth.HeadlessLoginSession
+	cancelFunc context.CancelFunc
+}
+
+type signupSessionHolder struct {
+	mu         sync.Mutex
+	session    *codexAuth.SignupSession
 	cancelFunc context.CancelFunc
 }
 

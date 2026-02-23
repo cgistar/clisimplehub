@@ -85,6 +85,7 @@ export default {
     accountsTitle: 'Codex 账号',
     manageAccounts: '管理账号',
     addAccount: '添加账号',
+    signup: '注册账号',
     bulkDelete: '批量删除',
     selectAll: '全选',
     deselectAll: '全不选',

@@ -153,7 +153,16 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
 
     try {
       await codexApi.updateAccount(accountData)
-      await loadAccounts(true)
+
+      // Update the account in the local store without reloading
+      const accountId = accountData.accountId
+      if (accountId) {
+        const index = accounts.value.findIndex(acc => acc.accountId === accountId)
+        if (index !== -1) {
+          // Use Object.assign to update in place, preserving reactivity without triggering full re-render
+          Object.assign(accounts.value[index], accountData)
+        }
+      }
     } catch (cause) {
       error.value = String(cause)
       throw cause

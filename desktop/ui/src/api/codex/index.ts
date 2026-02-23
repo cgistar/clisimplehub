@@ -10,7 +10,9 @@ import type {
   CodexUsage,
   CodexUsageResult,
   CodexUsageWindow,
-  HeadlessLoginState
+  HeadlessLoginState,
+  CodexSignupRequest,
+  SignupState
 } from '@/types/codex'
 
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
@@ -148,6 +150,16 @@ export const codexApi = {
     return App.StartCodexHeadlessLogin(email, password, clientId)
   },
 
+  async startHeadlessLoginWithProvider(
+    email: string,
+    password: string,
+    clientId: string,
+    emailProvider: string,
+    providerParams: Record<string, string>
+  ): Promise<HeadlessLoginState> {
+    return App.StartCodexHeadlessLoginWithProvider(email, password, clientId, emailProvider, providerParams)
+  },
+
   async submitHeadlessOTP(code: string): Promise<HeadlessLoginState> {
     return App.SubmitCodexHeadlessOTP(code)
   },
@@ -156,5 +168,23 @@ export const codexApi = {
     if (window.go?.main?.App?.CancelCodexHeadlessLogin) {
       await window.go.main.App.CancelCodexHeadlessLogin()
     }
+  },
+
+  async startSignup(req: CodexSignupRequest): Promise<SignupState> {
+    return App.StartCodexSignup(req)
+  },
+
+  async submitSignupOTP(code: string): Promise<SignupState> {
+    return App.SubmitCodexSignupOTP(code)
+  },
+
+  async cancelSignup(): Promise<void> {
+    if (window.go?.main?.App?.CancelCodexSignup) {
+      await window.go.main.App.CancelCodexSignup()
+    }
+  },
+
+  async getEmailProviders(): Promise<string[]> {
+    return App.GetCodexEmailProviders()
   }
 }

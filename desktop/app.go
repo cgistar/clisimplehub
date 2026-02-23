@@ -2222,6 +2222,8 @@ model = "gpt-5.3-codex"
 model_reasoning_effort = "high"
 personality = "pragmatic"
 web_search = "live"
+windows_wsl_setup_acknowledged = true
+model_verbosity = "high"
 
 [features]
 plan_tool = true

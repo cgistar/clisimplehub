@@ -20,6 +20,42 @@
           :placeholder="t('codex.passwordPlaceholder')"
         />
       </n-form-item>
+
+      <n-form-item label="邮箱供应商">
+        <n-select
+          v-model:value="formProvider"
+          :options="providerOptions"
+          placeholder="选择邮箱供应商（可选）"
+        />
+      </n-form-item>
+
+      <template v-if="formProvider === 'duckmail'">
+        <n-form-item label="API Base">
+          <n-input v-model:value="formParams.duckmail_api_base" placeholder="https://api.duckmail.sbs" />
+        </n-form-item>
+      </template>
+
+      <template v-if="formProvider === 'gptmail'">
+        <n-form-item label="API Base">
+          <n-input v-model:value="formParams.gptmail_api_base" placeholder="https://mail.chatgpt.org.uk" />
+        </n-form-item>
+        <n-form-item label="API Key">
+          <n-input v-model:value="formParams.gptmail_api_key" type="password" show-password-on="click" placeholder="gpt-test" />
+        </n-form-item>
+      </template>
+
+      <template v-if="formProvider === 'cloudflare'">
+        <n-form-item label="Worker Domain">
+          <n-input v-model:value="formParams.cf_worker_domain" placeholder="mail.example.com" />
+        </n-form-item>
+        <n-form-item label="Email Domain">
+          <n-input v-model:value="formParams.cf_email_domain" placeholder="example.com" />
+        </n-form-item>
+        <n-form-item label="Admin Password">
+          <n-input v-model:value="formParams.cf_admin_password" type="password" show-password-on="click" placeholder="管理员密码" />
+        </n-form-item>
+      </template>
+
       <n-form-item :label="t('codex.clientIdLabel')">
         <n-input
           v-model:value="formClientId"
@@ -83,8 +119,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
-import { NModal, NForm, NFormItem, NInput, NButton, NAlert, NSpin, NSpace, NResult, useMessage } from 'naive-ui'
+import { ref, watch, onUnmounted, computed, reactive } from 'vue'
+import { NModal, NForm, NFormItem, NInput, NButton, NAlert, NSpin, NSpace, NResult, NSelect, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { codexApi } from '@/api/codex'
 import type { CodexAccount, CodexAccountInput } from '@/types/codex'
@@ -112,9 +148,25 @@ const visible = ref(false)
 const phase = ref<Phase>('form')
 const formPassword = ref('')
 const formClientId = ref('')
+const formProvider = ref('')
+const formParams = reactive<Record<string, string>>({
+  duckmail_api_base: '',
+  gptmail_api_base: '',
+  gptmail_api_key: '',
+  cf_worker_domain: '',
+  cf_email_domain: '',
+  cf_admin_password: ''
+})
 const otpCode = ref('')
 const errorMsg = ref('')
 const stepLogs = ref<string[]>([])
+
+const providerOptions = computed(() => [
+  { label: '无（手动模式）', value: '' },
+  { label: 'DuckMail', value: 'duckmail' },
+  { label: 'GPTMail', value: 'gptmail' },
+  { label: 'Cloudflare临时邮箱', value: 'cloudflare' }
+])
 
 // Listen for step progress events from backend
 let offStepEvent: (() => void) | null = null
@@ -182,6 +234,13 @@ function resetToForm() {
   otpCode.value = ''
   errorMsg.value = ''
   stepLogs.value = []
+  formProvider.value = ''
+  formParams.duckmail_api_base = ''
+  formParams.gptmail_api_base = ''
+  formParams.gptmail_api_key = ''
+  formParams.cf_worker_domain = ''
+  formParams.cf_email_domain = ''
+  formParams.cf_admin_password = ''
 }
 
 async function handleLogin() {
@@ -193,7 +252,30 @@ async function handleLogin() {
   startListening()
 
   try {
-    const state = await codexApi.startHeadlessLogin(email, formPassword.value, formClientId.value)
+    let state
+    if (formProvider.value) {
+      // Prepare provider params with default values
+      const params = { ...formParams }
+      if (formProvider.value === 'duckmail' && !params.duckmail_api_base) {
+        params.duckmail_api_base = 'https://api.duckmail.sbs'
+      }
+
+      // Use provider mode
+      state = await codexApi.startHeadlessLoginWithProvider(
+        email,
+        formPassword.value,
+        formClientId.value || 'app_EMoamEEZ73f0CkXaXp7hrann',
+        formProvider.value,
+        params
+      )
+    } else {
+      // Manual mode
+      state = await codexApi.startHeadlessLogin(
+        email,
+        formPassword.value,
+        formClientId.value || 'app_EMoamEEZ73f0CkXaXp7hrann'
+      )
+    }
 
     if (state.error) {
       emitBannedStatusIfDeactivated(state.error)

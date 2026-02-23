@@ -85,6 +85,7 @@ export default {
     accountsTitle: 'Codex Accounts',
     manageAccounts: 'Manage Accounts',
     addAccount: 'Add Account',
+    signup: 'Sign Up',
     bulkDelete: 'Bulk Delete',
     selectAll: 'Select All',
     deselectAll: 'Deselect All',

@@ -84,3 +84,19 @@ export interface HeadlessLoginState {
   result?: CodexLoginResult
   error?: string
 }
+
+export interface CodexSignupRequest {
+  emailProvider: string
+  providerParams: Record<string, string>
+  email: string
+  password: string
+  clientId: string
+}
+
+export interface SignupState {
+  state: number
+  needOTP?: boolean
+  password?: string
+  result?: CodexLoginResult
+  error?: string
+}

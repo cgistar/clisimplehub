@@ -28,7 +28,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
@@ -48,6 +48,7 @@ const {
 } = storeToRefs(codexStore)
 
 const scrollRef = ref<HTMLElement | null>(null)
+let savedScrollPosition = 0
 
 const emit = defineEmits<{
   edit: [account: CodexAccount]
@@ -62,6 +63,22 @@ function toErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function saveScrollPosition(): void {
+  if (scrollRef.value) {
+    savedScrollPosition = scrollRef.value.scrollTop
+  }
+}
+
+function restoreScrollPosition(): void {
+  if (scrollRef.value && savedScrollPosition > 0) {
+    nextTick(() => {
+      if (scrollRef.value) {
+        scrollRef.value.scrollTop = savedScrollPosition
+      }
+    })
+  }
+}
+
 function handleScroll(event: Event): void {
   const target = event.target as HTMLElement | null
   if (!target) return
@@ -74,8 +91,10 @@ function handleScroll(event: Event): void {
 
 async function handleActivate(accountId: string): Promise<void> {
   try {
+    saveScrollPosition()
     await codexStore.setActiveAccount(accountId)
     message.success(t('codex.accountSwitched'))
+    restoreScrollPosition()
   } catch (error) {
     message.error(t('codex.switchAccountFailed') + ': ' + toErrorMessage(error))
   }
@@ -83,8 +102,10 @@ async function handleActivate(accountId: string): Promise<void> {
 
 async function handleTest(accountId: string): Promise<void> {
   try {
+    saveScrollPosition()
     await codexStore.testAccount(accountId)
     message.success(t('codex.testSuccess'))
+    restoreScrollPosition()
   } catch (error) {
     message.error(t('codex.testFailed') + ': ' + toErrorMessage(error))
   }
@@ -92,8 +113,10 @@ async function handleTest(accountId: string): Promise<void> {
 
 async function handleFetchUsage(accountId: string): Promise<void> {
   try {
+    saveScrollPosition()
     await codexStore.fetchUsage(accountId)
     message.success(t('codex.usageSuccess'))
+    restoreScrollPosition()
   } catch (error) {
     message.error(t('codex.usageFailedPrefix') + ': ' + toErrorMessage(error))
   }
@@ -117,17 +140,25 @@ async function handleCopy(account: CodexAccount): Promise<void> {
 }
 
 function handleEdit(account: CodexAccount): void {
+  saveScrollPosition()
   emit('edit', account)
 }
 
 async function handleDelete(accountId: string): Promise<void> {
   try {
+    saveScrollPosition()
     await codexStore.deleteAccount(accountId)
     message.success(t('codex.accountDeleted'))
+    restoreScrollPosition()
   } catch (error) {
     message.error(t('codex.deleteAccountFailed') + ': ' + toErrorMessage(error))
   }
 }
+
+// Expose restore function for parent component
+defineExpose({
+  restoreScrollPosition
+})
 </script>
 
 <style scoped>

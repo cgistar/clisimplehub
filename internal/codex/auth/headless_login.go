@@ -18,6 +18,8 @@ import (
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
 	"github.com/google/uuid"
+
+	"clisimplehub/internal/codex/auth/mailprovider"
 )
 
 type HeadlessLoginState int
@@ -95,39 +97,47 @@ func randomChromeVersion() (profile ChromeProfile, fullVersion string, userAgent
 }
 
 type HeadlessLoginRequest struct {
-	Email    string
-	Password string
-	ClientID string
-	ProxyURL string
-	OnStep   func(msg string) // optional progress callback
+	Email          string
+	Password       string
+	ClientID       string
+	ProxyURL       string
+	EmailProvider  string
+	ProviderParams map[string]string
+	OnStep         func(msg string) // optional progress callback
 }
 
 type HeadlessLoginSession struct {
-	state        HeadlessLoginState
-	client       tls_client.HttpClient // no-redirect client
-	followClient tls_client.HttpClient // follow-redirect client
-	httpClient   *http.Client          // standard client for sentinel calls
-	deviceID     string
-	userAgent    string
-	secChUA      string
-	chromeVer    string // full Chrome version (e.g., "146.0.7540.87")
-	pkce         *PKCECodes
-	oauthState   string
-	continueURL  string
-	clientID     string
-	email        string
-	password     string
-	proxyURL     string
-	onStep       func(msg string)
-	err          error
-	result       *CodexLoginResult
+	state          HeadlessLoginState
+	client         tls_client.HttpClient // no-redirect client
+	followClient   tls_client.HttpClient // follow-redirect client
+	httpClient     *http.Client          // standard client for sentinel calls
+	deviceID       string
+	userAgent      string
+	secChUA        string
+	chromeVer      string // full Chrome version (e.g., "146.0.7540.87")
+	pkce           *PKCECodes
+	oauthState     string
+	continueURL    string
+	clientID       string
+	email          string
+	password       string
+	proxyURL       string
+	onStep         func(msg string)
+	provider       mailprovider.EmailProvider
+	providerParams map[string]string
+	err            error
+	result         *CodexLoginResult
 }
 
 func newTLSClient(proxyURL string, followRedirects bool, profile profiles.ClientProfile) (tls_client.HttpClient, error) {
+	return newTLSClientWithJar(proxyURL, followRedirects, profile, tls_client.NewCookieJar())
+}
+
+func newTLSClientWithJar(proxyURL string, followRedirects bool, profile profiles.ClientProfile, jar fhttp.CookieJar) (tls_client.HttpClient, error) {
 	options := []tls_client.HttpClientOption{
 		tls_client.WithClientProfile(profile),
 		tls_client.WithTimeoutSeconds(30),
-		tls_client.WithCookieJar(tls_client.NewCookieJar()),
+		tls_client.WithCookieJar(jar),
 	}
 	if !followRedirects {
 		options = append(options, tls_client.WithNotFollowRedirects())
@@ -186,21 +196,31 @@ func StartHeadlessLogin(ctx context.Context, req *HeadlessLoginRequest) (*Headle
 	}
 
 	s := &HeadlessLoginSession{
-		state:        StateIdle,
-		client:       noRedirectClient,
-		followClient: followClient,
-		httpClient:   stdClient,
-		deviceID:     deviceID,
-		userAgent:    userAgent,
-		secChUA:      chromeProfile.SecChUA,
-		chromeVer:    chromeVer,
-		pkce:         pkce,
-		oauthState:   state,
-		clientID:     clientID,
-		email:        req.Email,
-		password:     req.Password,
-		proxyURL:     req.ProxyURL,
-		onStep:       req.OnStep,
+		state:          StateIdle,
+		client:         noRedirectClient,
+		followClient:   followClient,
+		httpClient:     stdClient,
+		deviceID:       deviceID,
+		userAgent:      userAgent,
+		secChUA:        chromeProfile.SecChUA,
+		chromeVer:      chromeVer,
+		pkce:           pkce,
+		oauthState:     state,
+		clientID:       clientID,
+		email:          req.Email,
+		password:       req.Password,
+		proxyURL:       req.ProxyURL,
+		onStep:         req.OnStep,
+		providerParams: req.ProviderParams,
+	}
+
+	// Resolve email provider
+	if req.EmailProvider != "" {
+		p, err := mailprovider.NewProvider(req.EmailProvider)
+		if err != nil {
+			return nil, err
+		}
+		s.provider = p
 	}
 
 	// Set oai-did cookie on auth domain for both clients
@@ -252,7 +272,23 @@ func (s *HeadlessLoginSession) SubmitOTP(ctx context.Context, code string) error
 	s.state = StateValidatingOTP
 	s.emitStep("4/7 Validating OTP code...")
 
-	log.Printf("[HeadlessLogin] SubmitOTP code=%q len=%d", code, len(code))
+	if err := s.validateOTPInline(ctx, code); err != nil {
+		s.state = StateError
+		s.err = err
+		return err
+	}
+
+	if err := s.extractAndExchange(ctx); err != nil {
+		s.state = StateError
+		s.err = err
+		return err
+	}
+	return nil
+}
+
+// validateOTPInline validates OTP without calling extractAndExchange
+func (s *HeadlessLoginSession) validateOTPInline(ctx context.Context, code string) error {
+	log.Printf("[HeadlessLogin] validateOTPInline code=%q len=%d", code, len(code))
 	s.logCookieState("before OTP validate")
 
 	headers := s.oauthJSONHeaders(oauthIssuer + "/email-verification")
@@ -270,9 +306,7 @@ func (s *HeadlessLoginSession) SubmitOTP(ctx context.Context, code string) error
 
 	resp, err := s.doPost(ctx, oauthIssuer+"/api/accounts/email-otp/validate", string(bodyBytes), headers)
 	if err != nil {
-		s.state = StateError
-		s.err = fmt.Errorf("OTP validate: %w", err)
-		return s.err
+		return fmt.Errorf("OTP validate: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -280,7 +314,6 @@ func (s *HeadlessLoginSession) SubmitOTP(ctx context.Context, code string) error
 	log.Printf("[HeadlessLogin] /email-otp/validate -> %d body=%s", resp.StatusCode, truncate(string(respBody), 300))
 
 	if resp.StatusCode != 200 {
-		s.state = StateNeedOTP
 		return fmt.Errorf("OTP validation failed (HTTP %d): %s", resp.StatusCode, truncate(string(respBody), 200))
 	}
 
@@ -291,11 +324,6 @@ func (s *HeadlessLoginSession) SubmitOTP(ctx context.Context, code string) error
 		s.continueURL = data.ContinueURL
 	}
 
-	if err := s.extractAndExchange(ctx); err != nil {
-		s.state = StateError
-		s.err = err
-		return err
-	}
 	return nil
 }
 
@@ -482,6 +510,29 @@ func (s *HeadlessLoginSession) verifyPassword(ctx context.Context) error {
 		log.Printf("[HeadlessLogin] 4/7 OTP required")
 		s.emitStep("4/7 Email OTP verification required")
 		s.state = StateNeedOTP
+
+		// Provider mode: try auto-fetch OTP first
+		if s.provider != nil {
+			s.emitStep("4/7 Waiting for verification code from email provider...")
+			code, err := s.provider.FetchVerificationCode(ctx, s.providerParams, s.email, 120)
+			if err == nil && code != "" {
+				log.Printf("[HeadlessLogin] Auto-fetched OTP: %s", code)
+				// Validate OTP inline without calling SubmitOTP to avoid double execution
+				s.state = StateValidatingOTP
+				s.emitStep("4/7 Validating OTP code...")
+
+				validateErr := s.validateOTPInline(ctx, code)
+				if validateErr == nil {
+					// OTP validated successfully, continue with token exchange
+					log.Printf("[HeadlessLogin] Auto OTP validation succeeded")
+					return nil
+				}
+				log.Printf("[HeadlessLogin] Auto OTP validation failed: %v, falling back to manual", validateErr)
+				s.state = StateNeedOTP
+			} else {
+				log.Printf("[HeadlessLogin] Auto-fetch OTP failed: %v, falling back to manual", err)
+			}
+		}
 	}
 	return nil
 }

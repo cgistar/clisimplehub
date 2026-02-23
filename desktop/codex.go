@@ -110,6 +110,22 @@ type HeadlessLoginStateDTO struct {
 	Error   string                  `json:"error,omitempty"`
 }
 
+type SignupStateDTO struct {
+	State    int                  `json:"state"`
+	NeedOTP  bool                 `json:"needOTP,omitempty"`
+	Password string               `json:"password,omitempty"`
+	Result   *CodexLoginResultDTO `json:"result,omitempty"`
+	Error    string               `json:"error,omitempty"`
+}
+
+type CodexSignupRequestDTO struct {
+	EmailProvider  string            `json:"emailProvider"`
+	ProviderParams map[string]string `json:"providerParams"`
+	Email          string            `json:"email"`
+	Password       string            `json:"password"`
+	ClientID       string            `json:"clientId"`
+}
+
 func (a *App) GetCodexAccounts() (*CodexAccountsResponse, error) {
 	cp := codexProvider()
 	if cp == nil {
@@ -278,6 +294,10 @@ func (a *App) CancelCodexLogin() error {
 }
 
 func (a *App) StartCodexHeadlessLogin(email, password, clientID string) (*HeadlessLoginStateDTO, error) {
+	return a.StartCodexHeadlessLoginWithProvider(email, password, clientID, "", nil)
+}
+
+func (a *App) StartCodexHeadlessLoginWithProvider(email, password, clientID, emailProvider string, providerParams map[string]string) (*HeadlessLoginStateDTO, error) {
 	cp := codexProvider()
 	if cp == nil {
 		return nil, fmt.Errorf("codex plugin not available")
@@ -296,7 +316,18 @@ func (a *App) StartCodexHeadlessLogin(email, password, clientID string) (*Headle
 			runtime.EventsEmit(a.ctx, "codex:headless-step", msg)
 		}
 	}
-	raw, err := cp.StartHeadlessLogin(ctx, email, password, clientID, proxyURL, onStep)
+
+	input := map[string]any{
+		"email":          email,
+		"password":       password,
+		"clientId":       clientID,
+		"proxyUrl":       proxyURL,
+		"emailProvider":  emailProvider,
+		"providerParams": providerParams,
+	}
+	rawReq, _ := json.Marshal(input)
+
+	raw, err := cp.StartHeadlessLoginWithProvider(ctx, rawReq, onStep)
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +429,111 @@ func (a *App) CancelCodexHeadlessLogin() error {
 		return fmt.Errorf("codex plugin not available")
 	}
 	return cp.CancelHeadlessLogin()
+}
+
+// --- Signup ---
+
+func (a *App) StartCodexSignup(req CodexSignupRequestDTO) (*SignupStateDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	proxyURL := ""
+	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
+		proxyURL = gp.GetGlobalProxyURL()
+	}
+	if proxyURL == "" {
+		globalConfigRaw, err := cp.GetCodexGlobalConfig(a.getCodexMultiConfigPath())
+		if err == nil {
+			var gc struct {
+				ProxyUrl string `json:"proxyUrl"`
+			}
+			if json.Unmarshal(globalConfigRaw, &gc) == nil {
+				proxyURL = strings.TrimSpace(gc.ProxyUrl)
+			}
+		}
+	}
+
+	input := map[string]any{
+		"emailProvider":  req.EmailProvider,
+		"providerParams": req.ProviderParams,
+		"email":          req.Email,
+		"password":       req.Password,
+		"clientId":       req.ClientID,
+		"proxyUrl":       proxyURL,
+	}
+	rawReq, _ := json.Marshal(input)
+
+	onStep := func(msg string) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "codex:signup-step", msg)
+		}
+	}
+
+	raw, err := cp.StartSignup(ctx, rawReq, onStep)
+	if err != nil {
+		return nil, err
+	}
+	var result SignupStateDTO
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (a *App) SubmitCodexSignupOTP(code string) (*SignupStateDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := cp.SubmitSignupOTP(ctx, code)
+	if err != nil {
+		if raw != nil {
+			var result SignupStateDTO
+			if jsonErr := json.Unmarshal(raw, &result); jsonErr == nil {
+				return &result, err
+			}
+		}
+		return nil, err
+	}
+	var result SignupStateDTO
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (a *App) CancelCodexSignup() error {
+	cp := codexProvider()
+	if cp == nil {
+		return fmt.Errorf("codex plugin not available")
+	}
+	return cp.CancelSignup()
+}
+
+func (a *App) GetCodexEmailProviders() ([]string, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	raw, err := cp.GetEmailProviders()
+	if err != nil {
+		return nil, err
+	}
+	var providers []string
+	if err := json.Unmarshal(raw, &providers); err != nil {
+		return nil, err
+	}
+	return providers, nil
 }
 
 func (a *App) TestCodexAccount(accountId string) (*CodexTestResult, error) {

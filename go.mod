@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/bogdanfinn/fhttp v0.6.8
 	github.com/bogdanfinn/tls-client v1.14.0
+	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/google/uuid v1.6.0
 	github.com/wailsapp/wails/v2 v2.11.0
 	github.com/xtls/xray-core v1.260206.0
@@ -24,6 +25,8 @@ require (
 	github.com/bogdanfinn/websocket v1.5.5-barnius // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/emersion/go-message v0.18.2 // indirect
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
