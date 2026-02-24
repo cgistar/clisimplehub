@@ -58,6 +58,18 @@ func extractProviderState(p EmailProvider) map[string]string {
 			return nil
 		}
 		return map[string]string{"_email": v.email}
+	case *TempMailProvider:
+		if v.registrationEmail == "" {
+			return nil
+		}
+		state := map[string]string{
+			"_registration_email": v.registrationEmail,
+			"_forward_email":      v.forwardEmail,
+		}
+		if v.epin != "" {
+			state["_epin"] = v.epin
+		}
+		return state
 	default:
 		return nil
 	}
@@ -74,7 +86,7 @@ func HasProviderState(params map[string]string) bool {
 }
 
 func AvailableProviders() []string {
-	return []string{"duckmail", "gptmail", "cloudflare", "outlook"}
+	return []string{"duckmail", "gptmail", "cloudflare", "outlook", "tempmail"}
 }
 
 func NewProvider(name string) (EmailProvider, error) {
@@ -87,6 +99,8 @@ func NewProvider(name string) (EmailProvider, error) {
 		return &CloudflareProvider{}, nil
 	case "outlook":
 		return &OutlookProvider{}, nil
+	case "tempmail":
+		return &TempMailProvider{}, nil
 	default:
 		return nil, fmt.Errorf("unknown email provider: %s", name)
 	}

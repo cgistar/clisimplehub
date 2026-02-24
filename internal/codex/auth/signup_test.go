@@ -526,3 +526,106 @@ func TestGeneratePassword(t *testing.T) {
 
 	t.Logf("Sample password: %s", pwd)
 }
+
+// TestTempMailProvider tests the TempMail email provider in isolation.
+// Tests both random generation and manual email input modes.
+// Optionally tests FetchVerificationCode if TEST_TEMPMAIL_FETCH_CODE=1 is set.
+//
+// Run (basic test - random generation):
+//
+//	go test ./internal/codex/auth/ -run TestTempMailProvider -v -count=1
+//
+// Run (with manual email):
+//
+//	TEST_TEMPMAIL_EMAIL=test@mailto.plus \
+//	  go test ./internal/codex/auth/ -run TestTempMailProvider -v -count=1
+//
+// Run (with PIN code):
+//
+//	TEST_TEMPMAIL_EMAIL=test@mailto.plus TEST_TEMPMAIL_EPIN=1234 \
+//	  go test ./internal/codex/auth/ -run TestTempMailProvider -v -count=1
+//
+// Run (with FetchVerificationCode test):
+//
+//	TEST_TEMPMAIL_EMAIL=test@mailto.plus TEST_TEMPMAIL_FETCH_CODE=1 \
+//	  go test ./internal/codex/auth/ -run TestTempMailProvider -v -count=1
+func TestTempMailProvider(t *testing.T) {
+	p, err := mailprovider.NewProvider("tempmail")
+	if err != nil {
+		t.Fatalf("NewProvider failed: %v", err)
+	}
+
+	params := map[string]string{}
+	testEmail := os.Getenv("TEST_TEMPMAIL_EMAIL")
+	testEpin := os.Getenv("TEST_TEMPMAIL_EPIN")
+
+	if testEmail != "" {
+		params["_email"] = testEmail
+		t.Logf("Using manual email: %s", testEmail)
+	}
+	if testEpin != "" {
+		params["tempmail_epin"] = testEpin
+		t.Logf("Using PIN code: %s", testEpin)
+	}
+
+	// Test CreateEmail
+	email, _, err := p.CreateEmail(params)
+	if err != nil {
+		t.Fatalf("CreateEmail failed: %v", err)
+	}
+	if email == "" {
+		t.Fatal("email is empty")
+	}
+
+	t.Logf("Created/verified email: %s", email)
+
+	// Verify email format
+	if !regexp.MustCompile(`^[a-z0-9]+@[a-z0-9.]+$`).MatchString(email) {
+		t.Errorf("Invalid email format: %s", email)
+	}
+
+	// Verify domain is one of the supported domains
+	supportedDomains := []string{
+		"mailto.plus", "fexpost.com", "fexbox.org", "mailbox.in.ua",
+		"rover.info", "chitthi.in", "fextemp.com", "any.pink", "merepost.com",
+	}
+	domainFound := false
+	for _, domain := range supportedDomains {
+		if regexp.MustCompile(`@` + regexp.QuoteMeta(domain) + `$`).MatchString(email) {
+			domainFound = true
+			break
+		}
+	}
+	if !domainFound {
+		t.Errorf("Email domain not in supported list: %s", email)
+	}
+
+	// Optional: Test FetchVerificationCode
+	timeoutSec := 120
+	if timeoutStr := os.Getenv("TEST_TEMPMAIL_FETCH_TIMEOUT"); timeoutStr != "" {
+		parsedTimeout, parseErr := strconv.Atoi(timeoutStr)
+		if parseErr != nil || parsedTimeout <= 0 {
+			t.Fatalf("invalid TEST_TEMPMAIL_FETCH_TIMEOUT=%q", timeoutStr)
+		}
+		timeoutSec = parsedTimeout
+	}
+
+	t.Logf("Fetching verification code with timeout=%ds", timeoutSec)
+	t.Log("Please trigger an email to this address now...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec+10)*time.Second)
+	defer cancel()
+
+	code, err := p.FetchVerificationCode(ctx, params, email, timeoutSec)
+	if err != nil {
+		t.Fatalf("FetchVerificationCode failed: %v", err)
+	}
+	if code == "" {
+		t.Fatal("FetchVerificationCode returned empty code")
+	}
+	if !regexp.MustCompile(`^\d{4,8}$`).MatchString(code) {
+		t.Fatalf("FetchVerificationCode returned invalid code format: %q (expected 4-8 digits)", code)
+	}
+
+	t.Logf("Fetched verification code: %s", code)
+}

@@ -45,6 +45,23 @@
         </n-form-item>
       </template>
 
+      <template v-if="formProvider === 'tempmail'">
+        <n-form-item label="注册邮箱">
+          <n-input v-model:value="formEmail" placeholder="用于注册 OpenAI 的真实邮箱" @blur="validateEmail('formEmail')" />
+        </n-form-item>
+        <n-form-item label="TempMail 邮箱">
+          <n-input-group>
+            <n-input v-model:value="formParams.tempmail_forward_email" placeholder="接收转发邮件的临时邮箱" />
+            <n-button :loading="generating" @click="handleRandomGenerate">
+              随机生成
+            </n-button>
+          </n-input-group>
+        </n-form-item>
+        <n-form-item label="PIN 码">
+          <n-input v-model:value="formParams.tempmail_epin" placeholder="可选，无则留空" />
+        </n-form-item>
+      </template>
+
       <template v-if="formProvider === 'outlook'">
         <n-form-item label="账号信息">
           <n-input
@@ -72,7 +89,7 @@
         </n-form-item>
       </template>
 
-      <n-form-item label="邮箱" v-if="formProvider !== 'outlook'">
+      <n-form-item label="邮箱" v-if="formProvider !== 'outlook' && formProvider !== 'tempmail'">
         <n-input-group>
           <n-input v-model:value="formEmail" placeholder="手动输入或点击随机生成" @blur="validateEmail('formEmail')" />
           <n-button v-if="canRandomGenerate" :loading="generating" @click="handleRandomGenerate">
@@ -163,6 +180,8 @@ const formParams = reactive<Record<string, string>>({
   cf_worker_domain: '',
   cf_email_domain: '',
   cf_admin_password: '',
+  tempmail_forward_email: '',
+  tempmail_epin: '',
   outlook_raw_input: '',
   outlook_email: '',
   outlook_mode: 'imap',
@@ -189,6 +208,7 @@ const providerOptions = computed(() => [
   { label: 'DuckMail', value: 'duckmail' },
   { label: 'GPTMail', value: 'gptmail' },
   { label: 'Cloudflare临时邮箱', value: 'cloudflare' },
+  { label: 'TempMail', value: 'tempmail' },
   { label: 'Outlook', value: 'outlook' }
 ])
 
@@ -198,7 +218,12 @@ const canSubmit = computed(() => {
     if (!isValidEmail(formParams.outlook_email)) return false
     return true
   }
-  // 所有非 outlook 供应商都需要邮箱
+  if (formProvider.value === 'tempmail') {
+    if (!formEmail.value || !isValidEmail(formEmail.value)) return false
+    if (!formParams.tempmail_forward_email || !isValidEmail(formParams.tempmail_forward_email)) return false
+    return true
+  }
+  // 所有非 outlook/tempmail 供应商都需要邮箱
   if (!formEmail.value || !isValidEmail(formEmail.value)) return false
   if (formProvider.value === 'cloudflare') {
     if (!formParams.cf_worker_domain || !formParams.cf_email_domain || !formParams.cf_admin_password) return false
@@ -273,6 +298,8 @@ function resetState() {
   formParams.cf_worker_domain = ''
   formParams.cf_email_domain = ''
   formParams.cf_admin_password = ''
+  formParams.tempmail_forward_email = ''
+  formParams.tempmail_epin = ''
   formParams.outlook_raw_input = ''
   formParams.outlook_email = ''
   formParams.outlook_mode = 'imap'
@@ -337,10 +364,18 @@ async function handleRandomGenerate() {
       params.duckmail_api_base = 'https://api.duckmail.sbs'
     }
     const result = await codexApi.generateRandomEmail(formProvider.value, params)
-    formEmail.value = result.email
-    formPassword.value = result.password
-    providerState.value = result.providerState || {}
-    message.success('邮箱生成成功')
+
+    // TempMail 特殊处理：生成的是转发邮箱
+    if (formProvider.value === 'tempmail') {
+      formParams.tempmail_forward_email = result.email
+      providerState.value = result.providerState || {}
+      message.success('TempMail 邮箱生成成功')
+    } else {
+      formEmail.value = result.email
+      formPassword.value = result.password
+      providerState.value = result.providerState || {}
+      message.success('邮箱生成成功')
+    }
   } catch (e) {
     message.error('生成失败: ' + (e instanceof Error ? e.message : String(e)))
   } finally {

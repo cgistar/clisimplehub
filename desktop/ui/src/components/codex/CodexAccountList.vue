@@ -178,6 +178,7 @@ defineExpose({
   overflow-y: auto;
   padding-right: 4px;
   justify-content: start;
+  align-content: start;
 }
 
 .no-accounts {

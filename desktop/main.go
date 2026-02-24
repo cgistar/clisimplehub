@@ -149,6 +149,22 @@ func main() {
 	proxyServer.SetUsageStatsStore(usageStatsStore)
 	proxyServer.SetConfigPath(configPath)
 
+	// Wire up app before plugin init so plugins can trigger reload safely.
+	app.SetStorage(store)
+	app.SetProxyServer(proxyServer)
+	app.SetRouter(router)
+	app.SetSSEHub(sseHub)
+	app.SetConfigLoader(configLoader)
+	if sqliteStore, ok := usageStatsStore.(*statsdb.SQLiteUsageStatsStore); ok {
+		app.SetUsageStats(sqliteStore)
+	}
+
+	reloadOnce := func() {
+		if err := app.ReloadConfig(); err != nil {
+			log.Printf("Warning: reload config failed: %v", err)
+		}
+	}
+
 	// Initialize all plugins
 	for _, pl := range plugin.All() {
 		if err := pl.Init(plugin.InitConfig{
@@ -160,7 +176,7 @@ func main() {
 				return store.GetConfig(key)
 			},
 			Storage:       store,
-			TriggerReload: nil,
+			TriggerReload: reloadOnce,
 		}); err != nil {
 			log.Printf("Warning: plugin %s init failed: %v", pl.Name(), err)
 		}
@@ -174,17 +190,6 @@ func main() {
 	// Load fallback setting from config
 	if fallbackStr, err := store.GetConfig(ConfigKeyFallback); err == nil && fallbackStr == "true" {
 		proxyServer.SetFallbackEnabled(true)
-	}
-
-	// Wire up all components
-	// Requirements: All - Final integration
-	app.SetStorage(store)
-	app.SetProxyServer(proxyServer)
-	app.SetRouter(router)
-	app.SetSSEHub(sseHub)
-	app.SetConfigLoader(configLoader)
-	if sqliteStore, ok := usageStatsStore.(*statsdb.SQLiteUsageStatsStore); ok {
-		app.SetUsageStats(sqliteStore)
 	}
 
 	// Start proxy server in background
