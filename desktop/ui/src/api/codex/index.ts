@@ -186,5 +186,11 @@ export const codexApi = {
 
   async getEmailProviders(): Promise<string[]> {
     return App.GetCodexEmailProviders()
+  },
+
+  async generateRandomEmail(provider: string, params: Record<string, string>): Promise<{
+    email: string; password: string; providerState: Record<string, string>
+  }> {
+    return App.GenerateCodexRandomEmail(provider, params)
   }
 }

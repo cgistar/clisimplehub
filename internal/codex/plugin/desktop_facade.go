@@ -726,6 +726,18 @@ func (d *desktopFacade) GetEmailProviders() (json.RawMessage, error) {
 	return json.Marshal(mailprovider.AvailableProviders())
 }
 
+func (d *desktopFacade) GenerateRandomEmail(provider string, paramsRaw json.RawMessage) (json.RawMessage, error) {
+	var params map[string]string
+	if err := json.Unmarshal(paramsRaw, &params); err != nil {
+		return nil, fmt.Errorf("parse params: %w", err)
+	}
+	result, err := mailprovider.GenerateAndProvision(provider, params)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(result)
+}
+
 func marshalSignupState(session *codexAuth.SignupSession) json.RawMessage {
 	state := map[string]any{
 		"state":   int(session.State()),

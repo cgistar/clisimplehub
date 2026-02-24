@@ -72,8 +72,13 @@
         </n-form-item>
       </template>
 
-      <n-form-item label="邮箱" v-if="formProvider === ''">
-        <n-input v-model:value="formEmail" placeholder="手动模式下必填" @blur="validateEmail('formEmail')" />
+      <n-form-item label="邮箱" v-if="formProvider !== 'outlook'">
+        <n-input-group>
+          <n-input v-model:value="formEmail" placeholder="手动输入或点击随机生成" @blur="validateEmail('formEmail')" />
+          <n-button v-if="canRandomGenerate" :loading="generating" @click="handleRandomGenerate">
+            随机生成
+          </n-button>
+        </n-input-group>
       </n-form-item>
 
       <n-form-item label="密码">
@@ -132,7 +137,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, nextTick, reactive } from 'vue'
-import { NModal, NForm, NFormItem, NSelect, NInput, NRadio, NRadioGroup, NButton, NSpace, NSpin, NAlert, NResult, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NSelect, NInput, NInputGroup, NRadio, NRadioGroup, NButton, NSpace, NSpin, NAlert, NResult, useMessage } from 'naive-ui'
 import { codexApi } from '../../api/codex'
 import { useCodexAccountsStore } from '../../stores/codexAccountsStore'
 import type { CodexAccountInput, CodexSignupRequest, SignupState } from '@/types/codex'
@@ -172,6 +177,12 @@ const otpCode = ref('')
 const errorMsg = ref('')
 const stepLogs = ref<string[]>([])
 const signupResult = ref<SignupState | null>(null)
+const providerState = ref<Record<string, string>>({})
+const generating = ref(false)
+
+const canRandomGenerate = computed(() =>
+  ['duckmail', 'cloudflare', 'gptmail'].includes(formProvider.value)
+)
 
 const providerOptions = computed(() => [
   { label: '无（手动模式）', value: '' },
@@ -182,15 +193,15 @@ const providerOptions = computed(() => [
 ])
 
 const canSubmit = computed(() => {
-  if (formProvider.value === '' && !formEmail.value) return false
-  if (formProvider.value === '' && formEmail.value && !isValidEmail(formEmail.value)) return false
-  // DuckMail: API Base is optional (has default value)
-  if (formProvider.value === 'cloudflare') {
-    if (!formParams.cf_worker_domain || !formParams.cf_email_domain || !formParams.cf_admin_password) return false
-  }
   if (formProvider.value === 'outlook') {
     if (!formParams.outlook_email || !formParams.outlook_client_id || !formParams.outlook_refresh_token) return false
     if (!isValidEmail(formParams.outlook_email)) return false
+    return true
+  }
+  // 所有非 outlook 供应商都需要邮箱
+  if (!formEmail.value || !isValidEmail(formEmail.value)) return false
+  if (formProvider.value === 'cloudflare') {
+    if (!formParams.cf_worker_domain || !formParams.cf_email_domain || !formParams.cf_admin_password) return false
   }
   return true
 })
@@ -246,6 +257,7 @@ function resetToForm() {
   errorMsg.value = ''
   stepLogs.value = []
   signupResult.value = null
+  providerState.value = {}
 }
 
 function resetState() {
@@ -317,6 +329,25 @@ function parseOutlookInput() {
   if (refreshToken) formParams.outlook_refresh_token = refreshToken
 }
 
+async function handleRandomGenerate() {
+  generating.value = true
+  try {
+    const params = { ...formParams }
+    if (formProvider.value === 'duckmail' && !params.duckmail_api_base) {
+      params.duckmail_api_base = 'https://api.duckmail.sbs'
+    }
+    const result = await codexApi.generateRandomEmail(formProvider.value, params)
+    formEmail.value = result.email
+    formPassword.value = result.password
+    providerState.value = result.providerState || {}
+    message.success('邮箱生成成功')
+  } catch (e) {
+    message.error('生成失败: ' + (e instanceof Error ? e.message : String(e)))
+  } finally {
+    generating.value = false
+  }
+}
+
 async function handleStart() {
   // 检查邮箱是否已存在
   const emailToCheck = formProvider.value === 'outlook' ? formParams.outlook_email : formEmail.value
@@ -341,8 +372,8 @@ async function handleStart() {
 
     const req: CodexSignupRequest = {
       emailProvider: formProvider.value,
-      providerParams: formProvider.value ? params : {},
-      email: formEmail.value,
+      providerParams: formProvider.value ? { ...params, ...providerState.value } : {},
+      email: formProvider.value === 'outlook' ? formParams.outlook_email : formEmail.value,
       password: formPassword.value,
       clientId: formClientId.value || 'app_EMoamEEZ73f0CkXaXp7hrann'
     }

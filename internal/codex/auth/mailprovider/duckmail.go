@@ -18,19 +18,31 @@ type DuckMailProvider struct {
 
 func (d *DuckMailProvider) Name() string { return "duckmail" }
 
+func (d *DuckMailProvider) RestoreState(params map[string]string) {
+	if t := params["_mail_token"]; t != "" {
+		d.mailToken = t
+	}
+}
+
 func (d *DuckMailProvider) CreateEmail(params map[string]string) (string, string, error) {
 	apiBase := strings.TrimRight(params["duckmail_api_base"], "/")
 	if apiBase == "" {
 		return "", "", fmt.Errorf("duckmail_api_base is required")
 	}
 
-	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	length := rand.Intn(6) + 8
-	prefix := make([]byte, length)
-	for i := range prefix {
-		prefix[i] = chars[rand.Intn(len(chars))]
+	// 若前端指定了邮箱，使用该邮箱；否则随机生成
+	var email string
+	if e := params["_email"]; e != "" {
+		email = e
+	} else {
+		const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+		length := rand.Intn(6) + 8
+		prefix := make([]byte, length)
+		for i := range prefix {
+			prefix[i] = chars[rand.Intn(len(chars))]
+		}
+		email = string(prefix) + "@duckmail.sbs"
 	}
-	email := string(prefix) + "@duckmail.sbs"
 	mailPwd := GeneratePassword(14)
 	client := &http.Client{Timeout: 15 * time.Second}
 

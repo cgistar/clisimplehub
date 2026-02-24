@@ -536,6 +536,32 @@ func (a *App) GetCodexEmailProviders() ([]string, error) {
 	return providers, nil
 }
 
+type GeneratedCredentialsDTO struct {
+	Email         string            `json:"email"`
+	Password      string            `json:"password"`
+	ProviderState map[string]string `json:"providerState"`
+}
+
+func (a *App) GenerateCodexRandomEmail(provider string, params map[string]string) (*GeneratedCredentialsDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := cp.GenerateRandomEmail(provider, paramsJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result GeneratedCredentialsDTO
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (a *App) TestCodexAccount(accountId string) (*CodexTestResult, error) {
 	cp := codexProvider()
 	if cp == nil {

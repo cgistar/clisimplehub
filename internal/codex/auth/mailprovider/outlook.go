@@ -28,6 +28,8 @@ type OutlookProvider struct {
 
 func (o *OutlookProvider) Name() string { return "outlook" }
 
+func (o *OutlookProvider) RestoreState(_ map[string]string) {}
+
 func (o *OutlookProvider) CreateEmail(params map[string]string) (string, string, error) {
 	o.email = params["outlook_email"]
 	o.mode = params["outlook_mode"]

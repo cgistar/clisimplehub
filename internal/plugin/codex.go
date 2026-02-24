@@ -32,6 +32,7 @@ type CodexDesktopProvider interface {
 	SubmitSignupOTP(ctx context.Context, code string) (json.RawMessage, error)
 	CancelSignup() error
 	GetEmailProviders() (json.RawMessage, error)
+	GenerateRandomEmail(provider string, params json.RawMessage) (json.RawMessage, error)
 }
 
 func GetCodexDesktopProvider() CodexDesktopProvider {

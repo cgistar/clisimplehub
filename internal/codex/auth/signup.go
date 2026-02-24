@@ -175,20 +175,36 @@ func StartSignup(ctx context.Context, req *SignupRequest) (*SignupSession, error
 		s.provider = p
 	}
 
-	// Create or use provided email
-	if s.provider != nil && req.Email == "" {
-		s.state = SignupCreatingEmail
-		s.emitStep("1/10 Creating temporary email...")
-		email, _, err := s.provider.CreateEmail(req.ProviderParams)
-		if err != nil {
-			return nil, fmt.Errorf("create email: %w", err)
+	// 处理邮箱：必须由前端提供（手动输入或随机生成后回填）
+	if req.Email == "" {
+		return nil, fmt.Errorf("email is required")
+	}
+
+	if s.provider != nil {
+		if mailprovider.HasProviderState(req.ProviderParams) {
+			// 邮箱已通过"随机生成"开通，验证 providerState 中的邮箱与请求邮箱一致
+			stateEmail := req.ProviderParams["_email"]
+			if stateEmail != "" && stateEmail != req.Email {
+				return nil, fmt.Errorf("email mismatch: request=%s, providerState=%s", req.Email, stateEmail)
+			}
+			s.emitStep("1/10 Restoring email session...")
+			s.provider.RestoreState(req.ProviderParams)
+			s.email = req.Email
+			log.Printf("[Signup] Restored provider state for email: %s", req.Email)
+		} else {
+			// 用户手动输入邮箱，需要调用 CreateEmail 开通
+			s.state = SignupCreatingEmail
+			s.emitStep("1/10 Setting up email mailbox...")
+			req.ProviderParams["_email"] = req.Email
+			createdEmail, _, err := s.provider.CreateEmail(req.ProviderParams)
+			if err != nil {
+				return nil, fmt.Errorf("setup email: %w", err)
+			}
+			// 使用 CreateEmail 返回的邮箱（可能被 provider 重写）
+			s.email = createdEmail
+			log.Printf("[Signup] Created email via provider: %s", createdEmail)
 		}
-		s.email = email
-		log.Printf("[Signup] Created email: %s", email)
 	} else {
-		if req.Email == "" {
-			return nil, fmt.Errorf("email is required in manual mode")
-		}
 		s.email = req.Email
 	}
 

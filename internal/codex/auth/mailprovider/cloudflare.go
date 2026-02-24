@@ -19,6 +19,18 @@ type CloudflareProvider struct {
 
 func (c *CloudflareProvider) Name() string { return "cloudflare" }
 
+func (c *CloudflareProvider) RestoreState(params map[string]string) {
+	if j := params["_jwt"]; j != "" {
+		c.jwt = j
+	}
+	if id := params["_address_id"]; id != "" {
+		fmt.Sscanf(id, "%d", &c.addressID)
+	}
+	if e := params["_email"]; e != "" {
+		c.email = e
+	}
+}
+
 func (c *CloudflareProvider) CreateEmail(params map[string]string) (string, string, error) {
 	workerDomain := params["cf_worker_domain"]
 	if workerDomain == "" {
@@ -33,7 +45,22 @@ func (c *CloudflareProvider) CreateEmail(params map[string]string) (string, stri
 		return "", "", fmt.Errorf("cf_admin_password is required")
 	}
 
-	name := randomEmailName()
+	// 若前端指定了邮箱，提取 local part 并验证域名；否则随机生成
+	var name string
+	if e := params["_email"]; e != "" {
+		if at := strings.Index(e, "@"); at > 0 {
+			name = e[:at]
+			// 验证邮箱域名是否匹配 cf_email_domain
+			inputDomain := e[at+1:]
+			if inputDomain != emailDomain {
+				return "", "", fmt.Errorf("email domain mismatch: input=%s, expected=%s", inputDomain, emailDomain)
+			}
+		} else {
+			name = e
+		}
+	} else {
+		name = randomEmailName()
+	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	body, _ := json.Marshal(map[string]any{
@@ -91,7 +118,7 @@ func (c *CloudflareProvider) FetchVerificationCode(ctx context.Context, params m
 		return "", fmt.Errorf("cloudflare: no jwt token (CreateEmail not called?)")
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	// Record old mail IDs to skip
 	oldIDs := map[int]bool{}

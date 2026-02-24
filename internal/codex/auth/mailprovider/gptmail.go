@@ -16,7 +16,19 @@ type GPTMailProvider struct {
 
 func (g *GPTMailProvider) Name() string { return "gptmail" }
 
+func (g *GPTMailProvider) RestoreState(params map[string]string) {
+	if e := params["_email"]; e != "" {
+		g.email = e
+	}
+}
+
 func (g *GPTMailProvider) CreateEmail(params map[string]string) (string, string, error) {
+	// 若前端指定了邮箱，直接使用，跳过 API 调用
+	if e := params["_email"]; e != "" {
+		g.email = e
+		return e, "", nil
+	}
+
 	apiBase := strings.TrimRight(params["gptmail_api_base"], "/")
 	if apiBase == "" {
 		apiBase = "https://mail.chatgpt.org.uk"
