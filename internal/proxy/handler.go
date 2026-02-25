@@ -254,6 +254,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		RequestHeaders: reqHeaders,
 		RequestStream:  string(bodyBytes),
 		UpstreamAuth:   formatUpstreamAuthForLogConfig(endpoint.InterfaceType, endpoint.APIKey),
+		Model:          extractModelFromBody(bodyBytes),
 	}
 	if target, err := executor.BuildTargetURL(endpoint.APIURL, r.URL.Path, r.URL.RawQuery); err == nil && target != "" {
 		detail.TargetURL = target
@@ -262,7 +263,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// 如果配置了 transformer，提前计算实际转发目标 URL（用于 started 日志/控制台展示）。
 	if strings.TrimSpace(endpoint.Transformer) != "" {
 		if tr, err := transformer.Get(strings.TrimSpace(string(interfaceType)), endpoint.Transformer); err == nil && tr != nil {
-			requestModel := extractModelFromBody(bodyBytes)
+			requestModel := detail.Model
 			upstreamModel := executor.ResolveUpstreamModel(requestModel, endpoint)
 			targetPath := tr.TargetPath(isStreaming, upstreamModel)
 			if strings.TrimSpace(targetPath) != "" {

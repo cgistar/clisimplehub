@@ -671,6 +671,7 @@ type RequestLogInfo struct {
 	ProviderName  string `json:"providerName"`
 	EndpointName  string `json:"endpointName"`
 	Path          string `json:"path"`
+	Model         string `json:"model"`
 	RunTime       int64  `json:"runTime"` // milliseconds
 	Status        string `json:"status"`
 	Timestamp     string `json:"timestamp"`
@@ -712,6 +713,7 @@ func (a *App) GetRecentLogs() ([]*RequestLogInfo, error) {
 			ProviderName:  log.ProviderName,
 			EndpointName:  log.EndpointName,
 			Path:          log.Path,
+			Model:         log.Model,
 			RunTime:       log.RunTime,
 			Status:        log.Status,
 			Timestamp:     log.Timestamp.Format(time.RFC3339),
@@ -729,6 +731,7 @@ type RequestLogDetailInfo struct {
 	ProviderName   string            `json:"providerName"`
 	EndpointName   string            `json:"endpointName"`
 	Path           string            `json:"path"`
+	Model          string            `json:"model"`
 	RunTime        int64             `json:"runTime"`
 	Status         string            `json:"status"`
 	Timestamp      string            `json:"timestamp"`
@@ -762,6 +765,7 @@ func (a *App) GetLogDetail(logID string) (*RequestLogDetailInfo, error) {
 				ProviderName:   log.ProviderName,
 				EndpointName:   log.EndpointName,
 				Path:           log.Path,
+				Model:          log.Model,
 				RunTime:        log.RunTime,
 				Status:         log.Status,
 				Timestamp:      log.Timestamp.Format(time.RFC3339),

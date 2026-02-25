@@ -15,6 +15,7 @@ type RequestDetail struct {
 	RequestStream  string
 	ResponseStream string
 	UpstreamAuth   string
+	Model          string
 }
 
 func (p *ProxyServer) recordRequestWithDetail(id string, interfaceType InterfaceType, endpoint *executor.EndpointConfig, path string, startTime time.Time, status string, runTime int64, detail *RequestDetail) {
@@ -41,6 +42,7 @@ func (p *ProxyServer) recordRequestWithDetail(id string, interfaceType Interface
 		log.RequestStream = detail.RequestStream
 		log.ResponseStream = detail.ResponseStream
 		log.UpstreamAuth = detail.UpstreamAuth
+		log.Model = detail.Model
 	}
 
 	p.stats.RecordRequest(log)

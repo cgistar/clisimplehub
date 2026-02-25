@@ -196,13 +196,26 @@ func (r *RequestDebugLogger) Flush() error {
 		return nil
 	}
 
-	// 生成文件名: 20251230_204100_87cbd7a2.log
+	// 生成文件名: 20251230_204100_87cbd7a2-claude-abc.log
 	timestamp := r.startTime.Format("20060102_150405")
 	shortID := r.requestID
 	if len(shortID) > 8 {
 		shortID = shortID[:8]
 	}
-	filename := filepath.Join(logDir, fmt.Sprintf("%s_%s.log", timestamp, shortID))
+
+	// 获取接口类型和端点名称
+	interfaceType := sanitizeFilename(r.metadata["InterfaceType"])
+	endpoint := sanitizeFilename(r.metadata["Endpoint"])
+
+	// 构建文件名
+	filenameParts := []string{timestamp, shortID}
+	if interfaceType != "" {
+		filenameParts = append(filenameParts, interfaceType)
+	}
+	if endpoint != "" {
+		filenameParts = append(filenameParts, endpoint)
+	}
+	filename := filepath.Join(logDir, strings.Join(filenameParts, "-")+".log")
 
 	// 构建文件内容
 	content := r.buildContent()
@@ -324,4 +337,18 @@ func (r *RequestDebugLogger) writeRawSection(content *strings.Builder, name stri
 func IsDebugFileModeEnabled() bool {
 	logger := GetDebugFileLogger()
 	return logger != nil && logger.IsEnabled()
+}
+
+// sanitizeFilename 清理文件名中的特殊字符，保留字母、数字、下划线和连字符
+func sanitizeFilename(s string) string {
+	if s == "" {
+		return ""
+	}
+	var result strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
 }

@@ -11,6 +11,7 @@ type RequestLog struct {
 	EndpointName  string    `json:"endpointName"`
 	Transformer   string    `json:"transformer,omitempty"`
 	Path          string    `json:"path"`
+	Model         string    `json:"model,omitempty"`
 	RunTime       int64     `json:"runTime"` // milliseconds
 	Status        string    `json:"status"`
 	Timestamp     time.Time `json:"timestamp"`

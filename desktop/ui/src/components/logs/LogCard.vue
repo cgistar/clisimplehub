@@ -77,13 +77,31 @@ const formattedDuration = computed(() => {
 const endpointProviderText = computed(() => {
   const endpointName = (props.log.endpointName || '').trim();
   const providerName = (props.log.providerName || '').trim();
+  const path = (props.log.path || '').trim();
+  const model = (props.log.model || '').trim();
 
+  let result = '';
   if (endpointName && providerName) {
-    return `${endpointName}(${providerName})`;
+    result = `${endpointName}(${providerName})`;
+  } else if (endpointName) {
+    result = endpointName;
+  } else if (providerName) {
+    result = providerName;
+  } else {
+    result = '-';
   }
-  if (endpointName) return endpointName;
-  if (providerName) return providerName;
-  return '-';
+
+  // 添加请求路径
+  if (path) {
+    result += ` (${path})`;
+  }
+
+  // 添加模型名称
+  if (model) {
+    result += ` - ${model}`;
+  }
+
+  return result;
 });
 
 function handleClick(): void {
