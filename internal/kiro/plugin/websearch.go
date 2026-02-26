@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"clisimplehub/internal/executor"
 	kiroapi "clisimplehub/internal/kiro"
 	kiro_claude "clisimplehub/internal/kiro/claude"
-	"clisimplehub/internal/executor"
+	"clisimplehub/internal/kiro/converters"
 )
 
 // tryWebSearchShortCircuit checks if the request is a web_search-only request
@@ -24,20 +25,22 @@ func (s *KiroService) tryWebSearchShortCircuit(
 	originalBody []byte,
 	isStreaming bool,
 ) *executor.ForwardResult {
-	modelFromReq, query, ok := kiro_claude.ParseClaudeWebSearchOnlyRequest(originalBody)
-	if !ok {
+	det := converters.DetectWebSearchRequest(originalBody)
+	if det == nil {
 		return nil
 	}
 
 	result := &executor.ForwardResult{}
 
-	model := strings.TrimSpace(modelFromReq)
+	model := strings.TrimSpace(det.Model)
 	if model == "" {
 		model = strings.TrimSpace(requestModel)
 	}
 	if model == "" {
 		model = "claude-sonnet-4"
 	}
+
+	query := det.Query
 
 	inputTokens := kiro_claude.EstimateClaudeInputTokens(originalBody)
 	if inputTokens < 1 {
@@ -55,7 +58,7 @@ func (s *KiroService) tryWebSearchShortCircuit(
 	mcpURL := kiroapi.KiroMCPURL(region)
 	result.TargetURL = mcpURL
 
-	toolUseID, mcpBody, err := kiro_claude.BuildWebSearchMcpRequest(query)
+	toolUseID, mcpBody, err := converters.BuildWebSearchMcpRequest(query)
 	if err != nil {
 		result.StatusCode = http.StatusBadRequest
 		result.Error = err
@@ -132,9 +135,9 @@ func (s *KiroService) tryWebSearchShortCircuit(
 		}
 	}
 
-	var results *kiro_claude.WebSearchResults
+	var results *converters.WebSearchResults
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		if parsed, err := kiro_claude.ParseKiroMcpWebSearchResults(body); err == nil {
+		if parsed, err := converters.ParseMcpWebSearchResults(body); err == nil {
 			results = parsed
 		}
 	}
@@ -149,7 +152,7 @@ func (s *KiroService) writeWebSearchResponse(
 	model string,
 	query string,
 	toolUseID string,
-	results *kiro_claude.WebSearchResults,
+	results *converters.WebSearchResults,
 	inputTokens int,
 	outputTokens int,
 ) *executor.ForwardResult {
@@ -160,7 +163,7 @@ func (s *KiroService) writeWebSearchResponse(
 	result.StatusCode = http.StatusOK
 
 	if isStreaming {
-		events, outTokens := kiro_claude.BuildWebSearchSSEEvents(model, query, toolUseID, results, inputTokens)
+		events, outTokens := converters.BuildWebSearchSSEEvents(model, query, toolUseID, results, inputTokens)
 		if outTokens > 0 {
 			outputTokens = outTokens
 		}
@@ -190,7 +193,7 @@ func (s *KiroService) writeWebSearchResponse(
 		return result
 	}
 
-	body, outTokens, err := kiro_claude.BuildWebSearchNonStreamMessage(model, query, toolUseID, results, inputTokens)
+	body, outTokens, err := converters.BuildWebSearchNonStreamMessage(model, query, toolUseID, results, inputTokens)
 	if err != nil {
 		result.StatusCode = http.StatusInternalServerError
 		result.Error = err

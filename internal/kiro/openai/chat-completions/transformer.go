@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"clisimplehub/internal/kiro/claude"
+	"clisimplehub/internal/kiro/converters"
 	"clisimplehub/internal/transformer/shared"
 )
 
@@ -90,37 +93,26 @@ func (t *Transformer) TransformRequest(modelName string, rawJSON []byte, stream 
 		return nil, fmt.Errorf("nil transformer")
 	}
 
-	openAIReq, err := shared.DecodeJSONMap(rawJSON)
-	if err != nil {
+	var openAIReq converters.OpenAIRequest
+	if err := json.Unmarshal(rawJSON, &openAIReq); err != nil {
 		return nil, fmt.Errorf("failed to parse openai chat request: %w", err)
 	}
 
-	// Normalize tool_choice to Claude-compatible values for Kiro trigger behavior.
-	// OpenAI: "auto" | "none" | {"type":"function", ...}
-	switch tc := openAIReq["tool_choice"].(type) {
-	case string:
-		switch strings.ToLower(strings.TrimSpace(tc)) {
-		case "auto":
-			openAIReq["tool_choice"] = "any"
-		}
-	case map[string]any:
-		if strings.EqualFold(strings.TrimSpace(shared.StringFromAny(tc["type"])), "function") {
-			// Only used for chatTriggerType; coerce into an "auto-like" value.
-			openAIReq["tool_choice"] = map[string]any{"type": "tool"}
-		}
-	}
+	openAIReq.Model = claude.GetKiroModelID(modelName)
+
+	conversationID := uuid.NewString()
 
 	profileArn := ""
 	if am := t.core.GetAuthManager(); am != nil {
 		profileArn = am.GetProfileArn()
 	}
 
-	kiroReq, err := claude.ClaudeToKiroRequest(openAIReq, modelName, profileArn)
+	kiroPayload, err := converters.OpenAIToKiro(&openAIReq, conversationID, profileArn)
 	if err != nil {
 		return nil, err
 	}
 
-	return shared.MarshalNoEscapeHTML(kiroReq)
+	return shared.MarshalNoEscapeHTML(kiroPayload)
 }
 
 type streamState struct {
