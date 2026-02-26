@@ -21,6 +21,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:ui/dist
@@ -29,6 +30,8 @@ var assets embed.FS
 // Default configuration values
 const (
 	DefaultPort = 5600
+	// Keep one desktop process per user session to avoid duplicate backend services.
+	desktopSingleInstanceID = "clisimplehub.desktop.instance"
 )
 
 // Config keys for config.json appConfig
@@ -207,6 +210,16 @@ func main() {
 		Title:  "Cli Simple Hub",
 		Width:  1200,
 		Height: 800,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: desktopSingleInstanceID,
+			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
+				log.Printf("Second instance blocked (cwd=%s args=%v)", data.WorkingDirectory, data.Args)
+				if app.ctx != nil {
+					wailsRuntime.WindowUnminimise(app.ctx)
+					wailsRuntime.WindowShow(app.ctx)
+				}
+			},
+		},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

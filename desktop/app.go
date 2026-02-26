@@ -886,8 +886,7 @@ func (a *App) GetProxyStatus() map[string]interface{} {
 
 	if a.proxyServer != nil {
 		status["port"] = a.proxyServer.GetPort()
-		// Note: We'd need to track running state in ProxyServer for accurate status
-		status["running"] = true
+		status["running"] = a.proxyServer.IsRunning()
 	}
 
 	return status

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -24,6 +25,7 @@ type ProxyServer struct {
 	listenAddr string
 	router     Router
 	server     *http.Server
+	running    bool
 	stats      *StatsManager
 	sseHub     *SSEHub
 	mu         sync.RWMutex
@@ -126,7 +128,7 @@ func (p *ProxyServer) Start() error {
 		listenAddr = "0.0.0.0"
 	}
 
-	p.server = &http.Server{
+	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", listenAddr, p.port),
 		Handler:      mux,
 		ReadTimeout:  600 * time.Second,
@@ -134,19 +136,66 @@ func (p *ProxyServer) Start() error {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	return p.server.ListenAndServe()
+	p.mu.Lock()
+	if p.running || p.server != nil {
+		p.mu.Unlock()
+		return fmt.Errorf("proxy server already running")
+	}
+	p.server = srv
+	p.mu.Unlock()
+
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		p.mu.Lock()
+		if p.server == srv {
+			p.server = nil
+		}
+		p.mu.Unlock()
+		return err
+	}
+
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+
+	err = srv.Serve(ln)
+
+	p.mu.Lock()
+	if p.server == srv {
+		p.server = nil
+	}
+	p.running = false
+	p.mu.Unlock()
+
+	if err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 // Stop stops the proxy server gracefully
 func (p *ProxyServer) Stop() error {
-	if p.server == nil {
+	p.mu.RLock()
+	srv := p.server
+	p.mu.RUnlock()
+	if srv == nil {
 		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	return p.server.Shutdown(ctx)
+	if err := srv.Shutdown(ctx); err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	// Keep state consistent even if Serve() exits later.
+	if p.server == srv {
+		p.running = false
+	}
+	p.mu.Unlock()
+	return nil
 }
 
 // GetPort returns the configured port
@@ -173,6 +222,13 @@ func (p *ProxyServer) GetListenAddr() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.listenAddr
+}
+
+// IsRunning returns true when the proxy listener is serving requests.
+func (p *ProxyServer) IsRunning() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.running
 }
 
 func (p *ProxyServer) SetAuthKey(key string) {
