@@ -93,12 +93,12 @@ const endpointProviderText = computed(() => {
 
   // 添加请求路径
   if (path) {
-    result += ` (${path})`;
+    result += ` ${path}`;
   }
 
   // 添加模型名称
   if (model) {
-    result += ` - ${model}`;
+    result += ` ${model}`;
   }
 
   return result;
@@ -121,6 +121,8 @@ function handleClick(): void {
     <div class="log-card-header">
       <div class="log-meta">
         <span class="log-time">{{ formattedTime }}</span>
+        <span class="log-separator">•</span>
+        <span class="log-interface-type">{{ log.interfaceType }}</span>
         <n-tag :type="statusType" size="small" round>
           {{ statusText }}
         </n-tag>
@@ -135,8 +137,6 @@ function handleClick(): void {
 
     <div class="log-card-body">
       <div class="log-endpoint">
-        <span class="log-interface-type">{{ log.interfaceType }}</span>
-        <span class="log-separator">•</span>
         <span class="log-provider">{{ endpointProviderText }}</span>
       </div>
     </div>

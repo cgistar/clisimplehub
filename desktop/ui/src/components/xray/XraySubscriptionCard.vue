@@ -10,10 +10,12 @@ const props = withDefaults(
     nodeCount: number
     selectedNodeLabel?: string
     refreshing?: boolean
+    busy?: boolean
   }>(),
   {
     selectedNodeLabel: '--',
-    refreshing: false
+    refreshing: false,
+    busy: false
   }
 )
 
@@ -76,8 +78,9 @@ const cardClass = computed(() => {
       <button
         v-if="!subscription.active"
         type="button"
-        class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+        class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
         :title="t('xray.activate')"
+        :disabled="busy"
         @click="emit('set-active', subscription.id)"
       >
         <CirclePower :size="14" />
@@ -86,8 +89,9 @@ const cardClass = computed(() => {
 
       <button
         type="button"
-        class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+        class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
         :title="t('xray.manageNodes')"
+        :disabled="busy"
         @click="emit('manage-nodes', subscription.id)"
       >
         <Route :size="14" />
@@ -96,8 +100,9 @@ const cardClass = computed(() => {
 
       <button
         type="button"
-        class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+        class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
         :title="t('xray.editSub')"
+        :disabled="busy"
         @click="emit('edit', subscription.id)"
       >
         <Pencil :size="14" />
@@ -108,7 +113,7 @@ const cardClass = computed(() => {
         type="button"
         class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
         :title="t('xray.refreshSub')"
-        :disabled="refreshing"
+        :disabled="busy || refreshing"
         @click="emit('refresh', subscription.id)"
       >
         <RefreshCw :size="14" :class="{ 'animate-spin': refreshing }" />
@@ -117,10 +122,11 @@ const cardClass = computed(() => {
 
       <button
         type="button"
-        class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-slate-100"
+        class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
         :class="subscription.enabled
           ? 'border-amber-300 text-amber-700 hover:bg-amber-50'
           : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'"
+        :disabled="busy"
         @click="emit('toggle', subscription.id)"
       >
         <Wifi v-if="subscription.enabled" :size="14" />
@@ -130,8 +136,9 @@ const cardClass = computed(() => {
 
       <button
         type="button"
-        class="inline-flex items-center gap-1 rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+        class="inline-flex items-center gap-1 rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
         :title="t('common.delete')"
+        :disabled="busy"
         @click="emit('remove', subscription.id)"
       >
         <Trash2 :size="14" />

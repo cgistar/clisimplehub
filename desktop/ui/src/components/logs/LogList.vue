@@ -53,6 +53,7 @@ const realtimeLogs = computed((): UILogItem[] =>
       providerName: req.providerName,
       endpointName: req.endpointName,
       path: req.path,
+      model: req.model || '',
       runTime: req.runTime,
       status: req.status,
       timestamp: req.timestamp,

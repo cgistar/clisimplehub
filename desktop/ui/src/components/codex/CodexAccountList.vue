@@ -10,6 +10,7 @@
         :key="item.accountId"
         :account="item"
         :is-active="item.accountId === activeAccountId"
+        :busy="isAccountPending(item.accountId)"
         @activate="handleActivate"
         @test="handleTest"
         @fetch-usage="handleFetchUsage"
@@ -48,6 +49,7 @@ const {
 } = storeToRefs(codexStore)
 
 const scrollRef = ref<HTMLElement | null>(null)
+const pendingAccountIds = ref<Set<string>>(new Set())
 let savedScrollPosition = 0
 
 const emit = defineEmits<{
@@ -61,6 +63,31 @@ const total = computed(() => pagination.value.total)
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+function isAccountPending(accountId: string): boolean {
+  return pendingAccountIds.value.has(accountId)
+}
+
+function setAccountPending(accountId: string, pending: boolean): void {
+  const next = new Set(pendingAccountIds.value)
+  if (pending) {
+    next.add(accountId)
+  } else {
+    next.delete(accountId)
+  }
+  pendingAccountIds.value = next
+}
+
+async function runWithAccountPending(accountId: string, task: () => Promise<void>): Promise<void> {
+  if (isAccountPending(accountId)) return
+
+  setAccountPending(accountId, true)
+  try {
+    await task()
+  } finally {
+    setAccountPending(accountId, false)
+  }
 }
 
 function saveScrollPosition(): void {
@@ -90,36 +117,42 @@ function handleScroll(event: Event): void {
 }
 
 async function handleActivate(accountId: string): Promise<void> {
-  try {
-    saveScrollPosition()
-    await codexStore.setActiveAccount(accountId)
-    message.success(t('codex.accountSwitched'))
-    restoreScrollPosition()
-  } catch (error) {
-    message.error(t('codex.switchAccountFailed') + ': ' + toErrorMessage(error))
-  }
+  await runWithAccountPending(accountId, async () => {
+    try {
+      saveScrollPosition()
+      await codexStore.setActiveAccount(accountId)
+      message.success(t('codex.accountSwitched'))
+      restoreScrollPosition()
+    } catch (error) {
+      message.error(t('codex.switchAccountFailed') + ': ' + toErrorMessage(error))
+    }
+  })
 }
 
 async function handleTest(accountId: string): Promise<void> {
-  try {
-    saveScrollPosition()
-    await codexStore.testAccount(accountId)
-    message.success(t('codex.testSuccess'))
-    restoreScrollPosition()
-  } catch (error) {
-    message.error(t('codex.testFailed') + ': ' + toErrorMessage(error))
-  }
+  await runWithAccountPending(accountId, async () => {
+    try {
+      saveScrollPosition()
+      await codexStore.testAccount(accountId)
+      message.success(t('codex.testSuccess'))
+      restoreScrollPosition()
+    } catch (error) {
+      message.error(t('codex.testFailed') + ': ' + toErrorMessage(error))
+    }
+  })
 }
 
 async function handleFetchUsage(accountId: string): Promise<void> {
-  try {
-    saveScrollPosition()
-    await codexStore.fetchUsage(accountId)
-    message.success(t('codex.usageSuccess'))
-    restoreScrollPosition()
-  } catch (error) {
-    message.error(t('codex.usageFailedPrefix') + ': ' + toErrorMessage(error))
-  }
+  await runWithAccountPending(accountId, async () => {
+    try {
+      saveScrollPosition()
+      await codexStore.fetchUsage(accountId)
+      message.success(t('codex.usageSuccess'))
+      restoreScrollPosition()
+    } catch (error) {
+      message.error(t('codex.usageFailedPrefix') + ': ' + toErrorMessage(error))
+    }
+  })
 }
 
 async function handleCopy(account: CodexAccount): Promise<void> {
@@ -145,14 +178,16 @@ function handleEdit(account: CodexAccount): void {
 }
 
 async function handleDelete(accountId: string): Promise<void> {
-  try {
-    saveScrollPosition()
-    await codexStore.deleteAccount(accountId)
-    message.success(t('codex.accountDeleted'))
-    restoreScrollPosition()
-  } catch (error) {
-    message.error(t('codex.deleteAccountFailed') + ': ' + toErrorMessage(error))
-  }
+  await runWithAccountPending(accountId, async () => {
+    try {
+      saveScrollPosition()
+      await codexStore.deleteAccount(accountId)
+      message.success(t('codex.accountDeleted'))
+      restoreScrollPosition()
+    } catch (error) {
+      message.error(t('codex.deleteAccountFailed') + ': ' + toErrorMessage(error))
+    }
+  })
 }
 
 // Expose restore function for parent component

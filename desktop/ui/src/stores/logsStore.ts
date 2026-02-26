@@ -19,6 +19,7 @@ function requestToLogInfo(request: RealtimeRequest): RequestLogInfo {
     providerName: request.providerName || '',
     endpointName: request.endpointName || '',
     path: request.path || '',
+    model: request.model || '',
     runTime: Number(request.runTime || 0),
     status,
     timestamp: request.timestamp || new Date().toISOString()
@@ -56,7 +57,8 @@ export const useLogsStore = defineStore('logs', () => {
     clearError()
 
     try {
-      recentLogs.value = (await endpointApi.getRecentLogs()) || []
+      const logs = (await endpointApi.getRecentLogs()) || []
+      recentLogs.value = logs.filter((log) => log.status !== 'in_progress')
     } catch (cause) {
       error.value = String(cause)
       throw cause
@@ -76,6 +78,7 @@ export const useLogsStore = defineStore('logs', () => {
         providerName: realtime.providerName,
         endpointName: realtime.endpointName,
         path: realtime.path,
+        model: realtime.model || '',
         runTime: realtime.runTime,
         status: realtime.status,
         timestamp: realtime.timestamp,
@@ -103,6 +106,7 @@ export const useLogsStore = defineStore('logs', () => {
           providerName: cached.providerName,
           endpointName: cached.endpointName,
           path: cached.path,
+          model: cached.model || '',
           runTime: cached.runTime,
           status: cached.status,
           timestamp: cached.timestamp,

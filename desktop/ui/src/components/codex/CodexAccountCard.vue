@@ -61,6 +61,7 @@
           class="codex-action-btn codex-action-primary"
           :title="t('codex.activate')"
           :aria-label="t('codex.activate')"
+          :disabled="busy"
           @click="emit('activate', account.accountId)"
         >
           <Power class="codex-action-icon" />
@@ -70,7 +71,7 @@
           class="codex-action-btn"
           :title="t('codex.test')"
           :aria-label="t('codex.test')"
-          :disabled="!hasRefreshToken || isCoolingDown"
+          :disabled="busy || !hasRefreshToken || isCoolingDown"
           @click="emit('test', account.accountId)"
         >
           <RefreshCw class="codex-action-icon" />
@@ -80,7 +81,7 @@
           class="codex-action-btn"
           :title="t('codex.fetchUsage')"
           :aria-label="t('codex.fetchUsage')"
-          :disabled="isCoolingDown"
+          :disabled="busy || isCoolingDown"
           @click="emit('fetch-usage', account.accountId)"
         >
           <Activity class="codex-action-icon" />
@@ -90,6 +91,7 @@
           class="codex-action-btn"
           :title="t('codex.copy')"
           :aria-label="t('codex.copy')"
+          :disabled="busy"
           @click="emit('copy', account)"
         >
           <Copy class="codex-action-icon" />
@@ -99,6 +101,7 @@
           class="codex-action-btn"
           :title="t('codex.getToken')"
           :aria-label="t('codex.getToken')"
+          :disabled="busy"
           @click="emit('get-token', account)"
         >
           <KeyRound class="codex-action-icon" />
@@ -108,6 +111,7 @@
           class="codex-action-btn"
           :title="t('codex.edit')"
           :aria-label="t('codex.edit')"
+          :disabled="busy"
           @click="emit('edit', account)"
         >
           <Edit class="codex-action-icon" />
@@ -117,6 +121,7 @@
           class="codex-action-btn codex-action-danger"
           :title="t('common.delete')"
           :aria-label="t('common.delete')"
+          :disabled="busy"
           @click="confirmDelete"
         >
           <Trash class="codex-action-icon" />
@@ -140,8 +145,10 @@ const dialog = useDialog()
 const props = withDefaults(defineProps<{
   account: CodexAccount
   isActive?: boolean
+  busy?: boolean
 }>(), {
-  isActive: false
+  isActive: false,
+  busy: false
 })
 
 const emit = defineEmits<{
@@ -243,6 +250,8 @@ const canActivate = computed(() =>
 )
 
 function confirmDelete() {
+  if (props.busy) return
+
   dialog.warning({
     title: t('common.confirm'),
     content: t('codex.deleteConfirm') || `Delete account ${displayName.value}?`,

@@ -10,8 +10,10 @@ const { t } = useI18n();
 const props = withDefaults(defineProps<{
   account: KiroAccount
   isActive?: boolean
+  busy?: boolean
 }>(), {
-  isActive: false
+  isActive: false,
+  busy: false
 });
 
 const emit = defineEmits<{
@@ -125,6 +127,7 @@ function formatDate(date: Date): string {
           class="kiro-action-btn kiro-action-primary"
           :title="t('kiro.activate')"
           :aria-label="t('kiro.activate')"
+          :disabled="busy"
           @click="emit('activate', account)"
         >
           <Power class="kiro-action-icon" />
@@ -135,6 +138,7 @@ function formatDate(date: Date): string {
           class="kiro-action-btn"
           :title="t('kiro.test')"
           :aria-label="t('kiro.test')"
+          :disabled="busy"
           @click="emit('test', account)"
         >
           <Refresh class="kiro-action-icon" />
@@ -145,6 +149,7 @@ function formatDate(date: Date): string {
           class="kiro-action-btn"
           :title="t('kiro.fetchUsage')"
           :aria-label="t('kiro.fetchUsage')"
+          :disabled="busy"
           @click="emit('usage', account)"
         >
           <Battery class="kiro-action-icon" />
@@ -155,6 +160,7 @@ function formatDate(date: Date): string {
           class="kiro-action-btn"
           :title="t('kiro.copy')"
           :aria-label="t('kiro.copy')"
+          :disabled="busy"
           @click="emit('copy', account)"
         >
           <Copy class="kiro-action-icon" />
@@ -165,6 +171,7 @@ function formatDate(date: Date): string {
           class="kiro-action-btn"
           :title="t('kiro.edit')"
           :aria-label="t('kiro.edit')"
+          :disabled="busy"
           @click="emit('edit', account)"
         >
           <Edit class="kiro-action-icon" />
@@ -175,6 +182,7 @@ function formatDate(date: Date): string {
           class="kiro-action-btn kiro-action-danger"
           :title="t('kiro.delete')"
           :aria-label="t('kiro.delete')"
+          :disabled="busy"
           @click="emit('delete', account)"
         >
           <Trash class="kiro-action-icon" />
@@ -321,9 +329,14 @@ function formatDate(date: Date): string {
   border-right: 0;
 }
 
-.kiro-action-btn:hover {
+.kiro-action-btn:hover:not(:disabled) {
   background: var(--bg-tertiary, #eef3f8);
   color: var(--text-primary, #1f2937);
+}
+
+.kiro-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .kiro-action-btn:focus-visible {
@@ -335,7 +348,7 @@ function formatDate(date: Date): string {
   color: var(--accent, #0284c7);
 }
 
-.kiro-action-primary:hover {
+.kiro-action-primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent, #0284c7) 10%, white);
 }
 
@@ -343,7 +356,7 @@ function formatDate(date: Date): string {
   color: var(--danger, #dc2626);
 }
 
-.kiro-action-danger:hover {
+.kiro-action-danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger, #dc2626) 10%, white);
 }
 

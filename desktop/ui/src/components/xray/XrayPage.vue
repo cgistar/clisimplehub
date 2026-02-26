@@ -32,6 +32,8 @@ const showNodesModal = ref(false)
 const showAddNodesModal = ref(false)
 const subscriptionSaving = ref(false)
 const editingSubscriptionId = ref('')
+const pendingSubscriptionIds = ref<Set<string>>(new Set())
+const startStopPending = ref(false)
 
 const editingSubscription = computed<XraySubscription | null>(() => {
   if (!editingSubscriptionId.value) return null
@@ -65,6 +67,31 @@ function toErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function isSubscriptionPending(id: string): boolean {
+  return pendingSubscriptionIds.value.has(id)
+}
+
+function setSubscriptionPending(id: string, pending: boolean): void {
+  const next = new Set(pendingSubscriptionIds.value)
+  if (pending) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+  pendingSubscriptionIds.value = next
+}
+
+async function runWithSubscriptionPending(id: string, task: () => Promise<void>): Promise<void> {
+  if (!id || isSubscriptionPending(id)) return
+
+  setSubscriptionPending(id, true)
+  try {
+    await task()
+  } finally {
+    setSubscriptionPending(id, false)
+  }
+}
+
 async function loadXrayPage(): Promise<void> {
   try {
     await xrayStore.loadAll()
@@ -87,6 +114,9 @@ watch(
 )
 
 async function handleStartStop(): Promise<void> {
+  if (startStopPending.value) return
+  startStopPending.value = true
+
   try {
     if (xrayStore.status.running) {
       await xrayStore.stop()
@@ -97,6 +127,8 @@ async function handleStartStop(): Promise<void> {
     message.error(
       (xrayStore.status.running ? t('xray.stopFailed') : t('xray.startFailed')) + toErrorMessage(error)
     )
+  } finally {
+    startStopPending.value = false
   }
 }
 
@@ -145,41 +177,49 @@ async function handleSubmitSubscription(payload: { name: string; url: string }):
 }
 
 async function handleSetActiveSubscription(id: string): Promise<void> {
-  try {
-    await xrayStore.setActiveSubscription(id)
-  } catch (error) {
-    message.error(t('xray.setActiveFailed') + toErrorMessage(error))
-  }
+  await runWithSubscriptionPending(id, async () => {
+    try {
+      await xrayStore.setActiveSubscription(id)
+    } catch (error) {
+      message.error(t('xray.setActiveFailed') + toErrorMessage(error))
+    }
+  })
 }
 
 async function handleToggleSubscription(id: string): Promise<void> {
-  try {
-    await xrayStore.toggleSubscription(id)
-  } catch (error) {
-    message.error(t('xray.toggleSubFailed') + toErrorMessage(error))
-  }
+  await runWithSubscriptionPending(id, async () => {
+    try {
+      await xrayStore.toggleSubscription(id)
+    } catch (error) {
+      message.error(t('xray.toggleSubFailed') + toErrorMessage(error))
+    }
+  })
 }
 
 async function handleRefreshSingleSubscription(id: string): Promise<void> {
-  try {
-    const result = await xrayStore.refreshSingleSubscription(id)
-    if (result.errors?.length) {
-      message.warning(result.errors.join('; '))
+  await runWithSubscriptionPending(id, async () => {
+    try {
+      const result = await xrayStore.refreshSingleSubscription(id)
+      if (result.errors?.length) {
+        message.warning(result.errors.join('; '))
+      }
+    } catch (error) {
+      message.error(t('xray.refreshFailed') + toErrorMessage(error))
     }
-  } catch (error) {
-    message.error(t('xray.refreshFailed') + toErrorMessage(error))
-  }
+  })
 }
 
 async function handleRemoveSubscription(id: string): Promise<void> {
-  const confirmed = await feedback.confirm(t('xray.removeSubConfirm'), { danger: true })
-  if (!confirmed) return
+  await runWithSubscriptionPending(id, async () => {
+    const confirmed = await feedback.confirm(t('xray.removeSubConfirm'), { danger: true })
+    if (!confirmed) return
 
-  try {
-    await xrayStore.removeSubscription(id)
-  } catch (error) {
-    message.error(t('xray.removeSubFailed') + toErrorMessage(error))
-  }
+    try {
+      await xrayStore.removeSubscription(id)
+    } catch (error) {
+      message.error(t('xray.removeSubFailed') + toErrorMessage(error))
+    }
+  })
 }
 
 async function handleSaveConfig(payload: XrayConfig): Promise<void> {
@@ -192,12 +232,14 @@ async function handleSaveConfig(payload: XrayConfig): Promise<void> {
 }
 
 async function handleOpenNodes(subscriptionId: string): Promise<void> {
-  try {
-    await xrayStore.openSubscriptionNodesDraft(subscriptionId)
-    showNodesModal.value = true
-  } catch (error) {
-    message.error(t('xray.subscriptionNotFound') + ': ' + toErrorMessage(error))
-  }
+  await runWithSubscriptionPending(subscriptionId, async () => {
+    try {
+      await xrayStore.openSubscriptionNodesDraft(subscriptionId)
+      showNodesModal.value = true
+    } catch (error) {
+      message.error(t('xray.subscriptionNotFound') + ': ' + toErrorMessage(error))
+    }
+  })
 }
 
 async function handleCloseNodesModal(): Promise<void> {
@@ -325,10 +367,11 @@ async function handleAddNodes(content: string): Promise<void> {
         <div class="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            class="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs"
+            class="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
             :class="xrayStore.status.running
               ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100'
               : 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'"
+            :disabled="startStopPending"
             @click="handleStartStop"
           >
             <Square v-if="xrayStore.status.running" :size="14" />
@@ -386,6 +429,7 @@ async function handleAddNodes(content: string): Promise<void> {
             :node-count="xrayStore.getSubscriptionNodeCount(subscription.id)"
             :selected-node-label="subscription.selectedNode || '--'"
             :refreshing="!!xrayStore.refreshingSubscriptions[subscription.id]"
+            :busy="isSubscriptionPending(subscription.id)"
             @set-active="handleSetActiveSubscription"
             @toggle="handleToggleSubscription"
             @refresh="handleRefreshSingleSubscription"

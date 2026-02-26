@@ -147,6 +147,7 @@ function createSSEManager() {
       endpointName: readString(raw.endpointName),
       method: readString(raw.method, 'POST'),
       path: readString(raw.path),
+      model: readString(raw.model || ''),
       status,
       statusCode: readNumber(raw.statusCode),
       runTime: readNumber(raw.runTime),

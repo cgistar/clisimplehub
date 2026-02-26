@@ -12,7 +12,7 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-const speedTestTimeout = 10 * time.Second
+const speedTestTimeout = 6 * time.Second
 
 // testSingleNode tests a single node's latency using a temporary xray instance.
 func testSingleNode(ctx context.Context, svc *XRayService, nodeName string) *SpeedTestResult {

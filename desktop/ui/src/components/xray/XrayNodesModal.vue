@@ -132,7 +132,7 @@ function isNodeTesting(nodeName: string): boolean {
           {{ t('xray.noNodes') }}
         </div>
 
-        <div v-else class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div v-else class="grid grid-cols-1 gap-3 lg:grid-cols-3">
           <article
             v-for="node in nodes"
             :key="node.name"

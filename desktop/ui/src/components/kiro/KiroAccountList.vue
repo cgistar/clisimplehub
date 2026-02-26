@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { NEmpty, NSpin, useMessage, useDialog } from 'naive-ui';
 import { useKiroAccountsStore } from '@/stores/kiroAccountsStore';
@@ -18,6 +18,7 @@ const emit = defineEmits<{
 const accounts = computed(() => kiroStore.filteredAccounts);
 const loading = computed(() => kiroStore.loading);
 const isEmpty = computed(() => accounts.value.length === 0 && !loading.value);
+const pendingAccountTokens = ref<Set<string>>(new Set());
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -28,47 +29,79 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-async function handleActivate(account: KiroAccount): Promise<void> {
-  try {
-    await kiroStore.setActiveAccount(account.refreshToken);
-    message.success(t('kiro.accountSwitched'));
-  } catch (error) {
-    message.error(t('kiro.switchAccountFailed') + ': ' + toErrorMessage(error));
+function isAccountPending(refreshToken: string): boolean {
+  return pendingAccountTokens.value.has(refreshToken);
+}
+
+function setAccountPending(refreshToken: string, pending: boolean): void {
+  const next = new Set(pendingAccountTokens.value);
+  if (pending) {
+    next.add(refreshToken);
+  } else {
+    next.delete(refreshToken);
   }
+  pendingAccountTokens.value = next;
+}
+
+async function runWithAccountPending(account: KiroAccount, task: () => Promise<void>): Promise<void> {
+  const refreshToken = account.refreshToken;
+  if (!refreshToken || isAccountPending(refreshToken)) return;
+
+  setAccountPending(refreshToken, true);
+  try {
+    await task();
+  } finally {
+    setAccountPending(refreshToken, false);
+  }
+}
+
+async function handleActivate(account: KiroAccount): Promise<void> {
+  await runWithAccountPending(account, async () => {
+    try {
+      await kiroStore.setActiveAccount(account.refreshToken);
+      message.success(t('kiro.accountSwitched'));
+    } catch (error) {
+      message.error(t('kiro.switchAccountFailed') + ': ' + toErrorMessage(error));
+    }
+  });
 }
 
 async function handleTest(account: KiroAccount): Promise<void> {
-  try {
-    message.loading(t('kiro.testing'), { duration: 0 });
-    const result = await kiroStore.testAccount(account.refreshToken);
-    const asRecord = isRecord(result) ? result : {};
-    const success = asRecord.success !== false;
-    const resultMessage = typeof asRecord.message === 'string' ? asRecord.message : '';
-    message.destroyAll();
-    if (success) {
-      message.success(t('kiro.testSuccess'));
-    } else {
-      message.error(t('kiro.testFailed') + ': ' + resultMessage);
+  await runWithAccountPending(account, async () => {
+    try {
+      message.loading(t('kiro.testing'), { duration: 0 });
+      const result = await kiroStore.testAccount(account.refreshToken);
+      const asRecord = isRecord(result) ? result : {};
+      const success = asRecord.success !== false;
+      const resultMessage = typeof asRecord.message === 'string' ? asRecord.message : '';
+      message.destroyAll();
+      if (success) {
+        message.success(t('kiro.testSuccess'));
+      } else {
+        message.error(t('kiro.testFailed') + ': ' + resultMessage);
+      }
+    } catch (error) {
+      message.destroyAll();
+      message.error(t('kiro.testFailed') + ': ' + toErrorMessage(error));
     }
-  } catch (error) {
-    message.destroyAll();
-    message.error(t('kiro.testFailed') + ': ' + toErrorMessage(error));
-  }
+  });
 }
 
 async function handleUsage(account: KiroAccount): Promise<void> {
-  try {
-    message.loading(t('kiro.fetchingUsage'), { duration: 0 });
-    const result = await kiroStore.fetchUsage(account.refreshToken);
-    message.destroyAll();
-    if (result) {
-      message.success(t('kiro.usageFetched'));
-      await kiroStore.loadAccounts(); // Refresh to show updated usage
+  await runWithAccountPending(account, async () => {
+    try {
+      message.loading(t('kiro.fetchingUsage'), { duration: 0 });
+      const result = await kiroStore.fetchUsage(account.refreshToken);
+      message.destroyAll();
+      if (result) {
+        message.success(t('kiro.usageFetched'));
+        await kiroStore.loadAccounts(); // Refresh to show updated usage
+      }
+    } catch (error) {
+      message.destroyAll();
+      message.error(t('kiro.fetchUsageFailed') + ': ' + toErrorMessage(error));
     }
-  } catch (error) {
-    message.destroyAll();
-    message.error(t('kiro.fetchUsageFailed') + ': ' + toErrorMessage(error));
-  }
+  });
 }
 
 function handleCopy(account: KiroAccount): void {
@@ -85,18 +118,22 @@ function handleEdit(account: KiroAccount): void {
 }
 
 function handleDelete(account: KiroAccount): void {
+  if (isAccountPending(account.refreshToken)) return;
+
   dialog.warning({
     title: t('kiro.deleteConfirm'),
     content: t('kiro.deleteConfirmMessage', { email: account.email }),
     positiveText: t('common.confirm'),
     negativeText: t('common.cancel'),
     onPositiveClick: async () => {
-      try {
-        await kiroStore.deleteAccount(account.refreshToken);
-        message.success(t('kiro.deleteSuccess'));
-      } catch (error) {
-        message.error(t('kiro.deleteFailed') + ': ' + toErrorMessage(error));
-      }
+      await runWithAccountPending(account, async () => {
+        try {
+          await kiroStore.deleteAccount(account.refreshToken);
+          message.success(t('kiro.deleteSuccess'));
+        } catch (error) {
+          message.error(t('kiro.deleteFailed') + ': ' + toErrorMessage(error));
+        }
+      });
     }
   });
 }
@@ -127,6 +164,7 @@ onMounted(() => {
           :key="item.refreshToken"
           :account="item"
           :is-active="isActive(item)"
+          :busy="isAccountPending(item.refreshToken)"
           @activate="handleActivate"
           @test="handleTest"
           @usage="handleUsage"
