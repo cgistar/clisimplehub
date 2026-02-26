@@ -138,6 +138,7 @@ function parseCodexJsonFile(data: unknown): CodexAccountInput | null {
     idToken: getStringField(data, ['id_token', 'idToken']),
     accountId: getStringField(data, ['account_id', 'accountId']),
     email: getStringField(data, ['email']),
+    password: getStringField(data, ['password', 'Password']),
     planType: getPlanType(data),
     expiresAt: getStringField(data, ['expired', 'expiresAt'])
   }
@@ -290,6 +291,7 @@ function buildCodexImportDTOs(rawJsonText: string): BuildImportResult {
       idToken: getStringField(item, ['idToken', 'id_token', 'IdToken']),
       expiresAt: getStringField(item, ['expiresAt', 'expires_at', 'ExpiresAt']),
       email: getStringField(item, ['email', 'Email']),
+      password: getStringField(item, ['password', 'Password']),
       planType: getStringField(item, ['planType', 'plan_type', 'PlanType']),
       proxyUrl: getStringField(item, ['proxyUrl', 'proxy_url', 'ProxyUrl'])
     }
