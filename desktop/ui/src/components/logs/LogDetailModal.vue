@@ -194,7 +194,7 @@ watch(visible, (newVal) => {
                 </template>
               </n-button>
             </div>
-            <div class="stream-content-wrap">
+            <div class="stream-content-wrap stream-content-wrap--headers">
               <n-input
                 type="textarea"
                 :value="requestHeadersText"
@@ -420,5 +420,11 @@ watch(visible, (newVal) => {
   background: var(--bg-primary);
   overscroll-behavior: contain;
   display: flex;
+}
+
+.stream-content-wrap--headers {
+  min-height: 140px;
+  height: clamp(140px, 19vh, 260px);
+  max-height: 31vh;
 }
 </style>

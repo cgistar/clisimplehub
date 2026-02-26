@@ -1,6 +1,7 @@
 package xrayplugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,6 +59,11 @@ func (p *XRayPlugin) SaveConfig(configPath string, dto json.RawMessage) error {
 	var cfg XRayConfig
 	if err := json.Unmarshal(dto, &cfg); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
+	}
+	existing := svc.config.Get()
+	raw := bytes.TrimSpace(cfg.Template)
+	if len(raw) == 0 || bytes.Equal(raw, jsonNull) {
+		cfg.Template = append(json.RawMessage(nil), existing.Template...)
 	}
 	return svc.config.Update(func(c *XRayConfig) {
 		*c = cfg

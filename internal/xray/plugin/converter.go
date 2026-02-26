@@ -1,40 +1,84 @@
 package xrayplugin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
 )
 
+var jsonNull = []byte("null")
+
 // BuildRuntimeJSON generates xray-core runtime JSON for the given node and config.
 func BuildRuntimeJSON(node *ProxyNode, cfg *XRayConfig) ([]byte, error) {
+	if node == nil {
+		return nil, fmt.Errorf("node is nil")
+	}
+
+	templateJSON := templateJSONFromConfig(cfg)
+	if len(templateJSON) == 0 {
+		var err error
+		templateJSON, err = BuildRuntimeTemplateJSON(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var runtime map[string]interface{}
+	if err := json.Unmarshal(templateJSON, &runtime); err != nil {
+		return nil, fmt.Errorf("parse runtime template: %w", err)
+	}
+	if runtime == nil {
+		runtime = map[string]interface{}{}
+	}
+
 	outbound, err := buildOutbound(node)
 	if err != nil {
 		return nil, fmt.Errorf("build outbound: %w", err)
 	}
 
+	logLevel := defaultConfig.LogLevel
+	if cfg != nil && strings.TrimSpace(cfg.LogLevel) != "" {
+		logLevel = cfg.LogLevel
+	}
+	logCfg := ensureObject(runtime, "log")
+	logCfg["loglevel"] = logLevel
+
+	setProxyOutbound(runtime, outbound)
+	setRuntimeSocksInbound(runtime, cfg)
+
+	return json.MarshalIndent(runtime, "", "  ")
+}
+
+// BuildRuntimeTemplateJSON builds the default runtime template JSON.
+// This template omits socks listen/port so they can be injected at runtime.
+func BuildRuntimeTemplateJSON(cfg *XRayConfig) ([]byte, error) {
+	logLevel := defaultConfig.LogLevel
+	if cfg != nil && strings.TrimSpace(cfg.LogLevel) != "" {
+		logLevel = cfg.LogLevel
+	}
+
 	runtime := map[string]interface{}{
 		"log": map[string]interface{}{
-			"loglevel": cfg.LogLevel,
+			"loglevel": logLevel,
 		},
-		"inbounds": []interface{}{
-			map[string]interface{}{
-				"tag":      "socks-in",
-				"listen":   cfg.SocksListen,
-				"port":     cfg.SocksPort,
-				"protocol": "socks",
-				"settings": map[string]interface{}{
-					"auth": "noauth",
-					"udp":  true,
+		"dns": map[string]interface{}{
+			"queryStrategy": "UseIPv4",
+			"servers": []interface{}{
+				map[string]interface{}{
+					"address":      "https://1.1.1.1/dns-query",
+					"skipFallback": true,
 				},
-				"sniffing": map[string]interface{}{
-					"enabled":      true,
-					"destOverride": []string{"http", "tls"},
+				map[string]interface{}{
+					"address":      "https://8.8.8.8/dns-query",
+					"skipFallback": true,
 				},
 			},
 		},
+		"inbounds": []interface{}{
+			defaultSocksInbound(false, cfg),
+		},
 		"outbounds": []interface{}{
-			outbound,
 			map[string]interface{}{
 				"tag":      "direct",
 				"protocol": "freedom",
@@ -47,6 +91,12 @@ func BuildRuntimeJSON(node *ProxyNode, cfg *XRayConfig) ([]byte, error) {
 		"routing": map[string]interface{}{
 			"domainStrategy": "IPIfNonMatch",
 			"rules": []interface{}{
+				// Route XRay DNS queries through the proxy outbound.
+				map[string]interface{}{
+					"type":        "field",
+					"protocol":    []string{"dns"},
+					"outboundTag": "proxy",
+				},
 				// Private IP ranges (RFC 1918) - direct connection
 				map[string]interface{}{
 					"type":        "field",
@@ -64,6 +114,125 @@ func BuildRuntimeJSON(node *ProxyNode, cfg *XRayConfig) ([]byte, error) {
 	}
 
 	return json.MarshalIndent(runtime, "", "  ")
+}
+
+func templateJSONFromConfig(cfg *XRayConfig) []byte {
+	if cfg == nil {
+		return nil
+	}
+	raw := bytes.TrimSpace(cfg.Template)
+	if len(raw) == 0 || bytes.Equal(raw, jsonNull) {
+		return nil
+	}
+	return append([]byte(nil), raw...)
+}
+
+func ensureObject(root map[string]interface{}, key string) map[string]interface{} {
+	if obj, ok := root[key].(map[string]interface{}); ok {
+		return obj
+	}
+	obj := map[string]interface{}{}
+	root[key] = obj
+	return obj
+}
+
+func setProxyOutbound(runtime map[string]interface{}, outbound map[string]interface{}) {
+	outbounds, ok := runtime["outbounds"].([]interface{})
+	if !ok || len(outbounds) == 0 {
+		runtime["outbounds"] = []interface{}{outbound}
+		return
+	}
+	for i := range outbounds {
+		ob, ok := outbounds[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		tag, _ := ob["tag"].(string)
+		if strings.TrimSpace(tag) == "proxy" {
+			outbounds[i] = outbound
+			runtime["outbounds"] = outbounds
+			return
+		}
+	}
+	runtime["outbounds"] = append([]interface{}{outbound}, outbounds...)
+}
+
+func setRuntimeSocksInbound(runtime map[string]interface{}, cfg *XRayConfig) {
+	inbounds, ok := runtime["inbounds"].([]interface{})
+	if !ok || len(inbounds) == 0 {
+		runtime["inbounds"] = []interface{}{defaultSocksInbound(true, cfg)}
+		return
+	}
+
+	targetIndex := -1
+	for i := range inbounds {
+		ib, ok := inbounds[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		tag, _ := ib["tag"].(string)
+		if strings.TrimSpace(tag) == "socks-in" {
+			targetIndex = i
+			break
+		}
+		protocol, _ := ib["protocol"].(string)
+		if strings.EqualFold(strings.TrimSpace(protocol), "socks") {
+			targetIndex = i
+			break
+		}
+	}
+
+	if targetIndex < 0 {
+		runtime["inbounds"] = append(inbounds, defaultSocksInbound(true, cfg))
+		return
+	}
+
+	target, ok := inbounds[targetIndex].(map[string]interface{})
+	if !ok {
+		inbounds[targetIndex] = defaultSocksInbound(true, cfg)
+		runtime["inbounds"] = inbounds
+		return
+	}
+
+	target["listen"] = socksListen(cfg)
+	target["port"] = socksPort(cfg)
+	if _, ok := target["protocol"]; !ok {
+		target["protocol"] = "socks"
+	}
+}
+
+func defaultSocksInbound(includeListenPort bool, cfg *XRayConfig) map[string]interface{} {
+	inbound := map[string]interface{}{
+		"tag":      "socks-in",
+		"protocol": "socks",
+		"settings": map[string]interface{}{
+			"auth": "noauth",
+			"udp":  true,
+		},
+		"sniffing": map[string]interface{}{
+			"enabled":      true,
+			"destOverride": []string{"http", "tls"},
+		},
+	}
+	if includeListenPort {
+		inbound["listen"] = socksListen(cfg)
+		inbound["port"] = socksPort(cfg)
+	}
+	return inbound
+}
+
+func socksListen(cfg *XRayConfig) string {
+	if cfg == nil || strings.TrimSpace(cfg.SocksListen) == "" {
+		return defaultConfig.SocksListen
+	}
+	return cfg.SocksListen
+}
+
+func socksPort(cfg *XRayConfig) int {
+	if cfg == nil || cfg.SocksPort <= 0 {
+		return defaultConfig.SocksPort
+	}
+	return cfg.SocksPort
 }
 
 func buildOutbound(node *ProxyNode) (map[string]interface{}, error) {

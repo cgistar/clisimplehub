@@ -1,6 +1,7 @@
 package xrayplugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -174,6 +175,11 @@ func (h *handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if err := readJSON(r, &cfg); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		existing := h.svc.config.Get()
+		raw := bytes.TrimSpace(cfg.Template)
+		if len(raw) == 0 || bytes.Equal(raw, jsonNull) {
+			cfg.Template = append(json.RawMessage(nil), existing.Template...)
 		}
 		if err := h.svc.config.Update(func(c *XRayConfig) {
 			*c = cfg

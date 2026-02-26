@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -404,9 +405,7 @@ func (f *desktopFacade) GetKiroGlobalConfig(configPath string) (json.RawMessage,
 		mapping = kiroShared.DefaultKiroModelMapping()
 	}
 	clone := make(map[string]string, len(mapping))
-	for k, v := range mapping {
-		clone[k] = v
-	}
+	maps.Copy(clone, mapping)
 	return marshalJSON(&kiroGlobalConfigJSON{
 		Region:         mc.GetRegion(),
 		ProxyURL:       mc.ProxyURL,
@@ -709,6 +708,9 @@ func (f *desktopFacade) TestAccount(configPath, refreshToken string) (json.RawMe
 	account.UpdatedAt = time.Now()
 	config.UpdateAccount(account)
 	_ = kiroShared.SaveKiroMultiConfig(configPath, config)
+
+	// 重新加载所有 Transformer，确保新 token 立即生效
+	_ = kiroClaude.ReloadAllTransformers()
 
 	return resultJSON, nil
 }

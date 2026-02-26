@@ -18,9 +18,9 @@ var defaultConfig = XRayConfig{
 }
 
 type configStore struct {
-	mu       sync.RWMutex
-	path     string
-	config   *XRayConfig
+	mu     sync.RWMutex
+	path   string
+	config *XRayConfig
 }
 
 func newConfigStore(configPath string) *configStore {
@@ -132,6 +132,7 @@ func copyConfig(c *XRayConfig) *XRayConfig {
 	}
 
 	cp := *c
+	cp.Template = append([]byte(nil), c.Template...)
 	if c.Subscriptions == nil {
 		cp.Subscriptions = []Subscription{}
 		return &cp

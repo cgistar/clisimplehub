@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, watch } from 'vue'
-import { NModal } from 'naive-ui'
+import { NModal, NSelect } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { XrayConfig, XrayLogLevel } from '@/types/xray'
 
@@ -21,6 +21,13 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const logLevelOptions: Array<{ label: string; value: XrayLogLevel }> = [
+  { label: 'Debug', value: 'debug' },
+  { label: 'Info', value: 'info' },
+  { label: 'Warning', value: 'warning' },
+  { label: 'Error', value: 'error' },
+  { label: 'None', value: 'none' }
+]
 
 const form = reactive({
   socksListen: '127.0.0.1',
@@ -95,16 +102,11 @@ function handleSave(): void {
 
         <label class="block text-sm">
           <span class="mb-1 block text-slate-700">{{ t('xray.logLevel') }}</span>
-          <select
-            v-model="form.logLevel"
-            class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
-          >
-            <option value="debug">Debug</option>
-            <option value="info">Info</option>
-            <option value="warning">Warning</option>
-            <option value="error">Error</option>
-            <option value="none">None</option>
-          </select>
+          <n-select
+            v-model:value="form.logLevel"
+            :options="logLevelOptions"
+            class="w-full"
+          />
         </label>
 
         <div class="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">

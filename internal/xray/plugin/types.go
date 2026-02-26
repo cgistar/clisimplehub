@@ -1,5 +1,7 @@
 package xrayplugin
 
+import "encoding/json"
+
 // ProxyNode represents a unified proxy node model parsed from subscriptions.
 type ProxyNode struct {
 	Name     string `json:"name"`
@@ -50,11 +52,12 @@ type Subscription struct {
 
 // XRayConfig represents the plugin configuration stored in xray-config.json.
 type XRayConfig struct {
-	SocksListen   string         `json:"socksListen"`
-	SocksPort     int            `json:"socksPort"`
-	LogLevel      string         `json:"logLevel"`
-	GlobalProxy   bool           `json:"globalProxy"`
-	Subscriptions []Subscription `json:"subscriptions"`
+	SocksListen   string          `json:"socksListen"`
+	SocksPort     int             `json:"socksPort"`
+	LogLevel      string          `json:"logLevel"`
+	GlobalProxy   bool            `json:"globalProxy"`
+	Template      json.RawMessage `json:"template,omitempty"`
+	Subscriptions []Subscription  `json:"subscriptions"`
 }
 
 // StatusResponse represents the xray service status.

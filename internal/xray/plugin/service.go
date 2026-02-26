@@ -1,6 +1,7 @@
 package xrayplugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -450,6 +451,11 @@ func uniqueNodeName(name string, existing []ProxyNode) string {
 }
 
 func (s *XRayService) startWithNode(node *ProxyNode, cfg *XRayConfig) error {
+	cfg, err := s.ensureRuntimeTemplate(cfg)
+	if err != nil {
+		return fmt.Errorf("ensure runtime template: %w", err)
+	}
+
 	runtimeJSON, err := BuildRuntimeJSON(node, cfg)
 	if err != nil {
 		return fmt.Errorf("build runtime config: %w", err)
@@ -468,6 +474,32 @@ func (s *XRayService) startWithNode(node *ProxyNode, cfg *XRayConfig) error {
 	s.running = true
 	log.Printf("[xray] started with node %s (%s:%d)", node.Name, node.Server, node.Port)
 	return nil
+}
+
+func (s *XRayService) ensureRuntimeTemplate(cfg *XRayConfig) (*XRayConfig, error) {
+	if cfg != nil {
+		raw := bytes.TrimSpace(cfg.Template)
+		if len(raw) > 0 && !bytes.Equal(raw, jsonNull) {
+			return cfg, nil
+		}
+	}
+
+	templateJSON, err := BuildRuntimeTemplateJSON(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.config.Update(func(c *XRayConfig) {
+		raw := bytes.TrimSpace(c.Template)
+		if len(raw) > 0 && !bytes.Equal(raw, jsonNull) {
+			return
+		}
+		c.Template = append(json.RawMessage(nil), templateJSON...)
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.config.Get(), nil
 }
 
 func (s *XRayService) findNodeSafe(name string) *ProxyNode {
