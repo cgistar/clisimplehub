@@ -1,7 +1,6 @@
 package claude
 
 import (
-	kiroresponse "clisimplehub/internal/kiro/response"
 	kiroShared "clisimplehub/internal/kiro/shared"
 	"strconv"
 	"strings"
@@ -114,63 +113,6 @@ type ToolResultContent struct {
 	Text string `json:"text"`
 }
 
-// StreamState maintains state during streaming response transformation
-type StreamState struct {
-	Started            bool
-	Finished           bool
-	MessageID          string
-	Model              string
-	Parser             *kiroresponse.EventStreamParser
-	ContentIndex       int
-	RawTextSoFar       string // Track cumulative upstream text for delta calculation
-	TextSoFar          string // Visible text (excluding thinking)
-	ToolUseIndex       int
-	InputTokens        int
-	OutputTokens       int
-	ContextUsagePct    float64
-	ContentBlockOpen   bool
-	ToolUseBlockOpen   bool
-	CurrentToolUseID   string
-	CurrentToolName    string
-	CurrentToolBlock   int
-	ToolBlockOpen      bool
-	ToolBlocksStreamed bool
-	ToolUseArgs        string
-	FinishReason       string
-	CollectedToolUses  []map[string]any
-	ThinkingEnabled    bool
-	ThinkingBuffer     string
-	InThinkingBlock    bool
-	ThinkingExtracted  bool
-	ThinkingBlockOpen  bool
-	ThinkingBlockIndex          int
-	ThinkingSoFar               string
-	StripThinkingLeadingNewline bool
-
-	// 新增：状态管理器（从第三方代码迁移）
-	SSEStateManager     *kiroresponse.SSEStateManager   // SSE 事件序列状态管理
-	StopReasonManager   *kiroresponse.StopReasonManager // stop_reason 判断管理
-	CompletedToolUseIds map[string]bool                 // 已完成的工具调用 ID 集合
-
-	// Token 来源追踪（用于调试和日志）
-	InputTokensSource  string // "context_usage" | "estimate" | "api"
-	OutputTokensSource string // "estimate" | "api"
-
-	// 缓冲流式模式相关字段
-	BufferedStreamingEnabled  bool     // 是否启用缓冲流式模式
-	EstimatedInputTokens      int      // 初始估算的 input_tokens（用于回退）
-	BufferedOutputs           []string // 缓冲的 SSE 事件
-	BufferedMessageStartIndex int      // message_start 在缓冲区的位置（-1 表示未找到）
-}
-
-// TokenUsage returns the best-known input/output token counts for this stream.
-func (s *StreamState) TokenUsage() (inputTokens int, outputTokens int) {
-	if s == nil {
-		return 0, 0
-	}
-	return s.InputTokens, s.OutputTokens
-}
-
 var (
 	cachedModelMapping map[string]string
 	cachedModelMu      sync.RWMutex
@@ -211,7 +153,8 @@ func GetCachedBufferedStream() bool {
 // inferKiroModelID derives a Kiro model ID from an unmapped Claude model name.
 // Rule: claude-{family}-{major}-{minor}[-date] → claude-{family}-{major}.{minor}
 // e.g. "claude-sonnet-4-7" → "claude-sonnet-4.7"
-//      "claude-sonnet-4-7-20260101" → "claude-sonnet-4.7"
+//
+//	"claude-sonnet-4-7-20260101" → "claude-sonnet-4.7"
 func inferKiroModelID(claudeModel string) string {
 	parts := strings.Split(claudeModel, "-")
 	// strip trailing 8-digit date suffix

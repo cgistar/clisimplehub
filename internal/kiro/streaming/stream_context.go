@@ -32,7 +32,6 @@ type StreamContext struct {
 	thinkingBlockIndex          *int
 	textBlockIndex              *int
 	stripThinkingLeadingNewline bool
-
 }
 
 // NewStreamContext 创建流式处理上下文
@@ -170,16 +169,28 @@ func (c *StreamContext) ContextInputTokens() *int { return c.contextInputTokens 
 // InputTokens 返回估算的 input_tokens
 func (c *StreamContext) InputTokens() int { return c.inputTokens }
 
+// OutputTokens 返回估算的 output_tokens
+func (c *StreamContext) OutputTokens() int { return c.outputTokens }
+
+// TokenUsage 返回当前 token 统计（input 优先使用 contextUsage 修正值）
+func (c *StreamContext) TokenUsage() (int, int) {
+	input := c.inputTokens
+	if c.contextInputTokens != nil {
+		input = *c.contextInputTokens
+	}
+	return input, c.outputTokens
+}
+
 // --- 内部方法 ---
 
 func (c *StreamContext) createMessageStartEvent() map[string]any {
 	return map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
-			"id":   c.messageID,
-			"type": "message",
-			"role": "assistant",
-			"content": []any{},
+			"id":            c.messageID,
+			"type":          "message",
+			"role":          "assistant",
+			"content":       []any{},
 			"model":         c.model,
 			"stop_reason":   nil,
 			"stop_sequence": nil,
@@ -522,4 +533,12 @@ func (bc *BufferedStreamContext) FinishAndGetAllEvents() []*SseEvent {
 	result := bc.eventBuffer
 	bc.eventBuffer = nil
 	return result
+}
+
+// TokenUsage 返回当前 token 统计。
+func (bc *BufferedStreamContext) TokenUsage() (int, int) {
+	if bc == nil || bc.inner == nil {
+		return 0, 0
+	}
+	return bc.inner.TokenUsage()
 }

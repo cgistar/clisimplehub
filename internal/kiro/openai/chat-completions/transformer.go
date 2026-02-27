@@ -128,11 +128,13 @@ type streamState struct {
 }
 
 func (s *streamState) TokenUsage() (int, int) {
-	st, _ := s.inner.(*claude.StreamState)
-	if st == nil {
+	if s == nil || s.inner == nil {
 		return 0, 0
 	}
-	return st.TokenUsage()
+	if tok, ok := s.inner.(interface{ TokenUsage() (int, int) }); ok && tok != nil {
+		return tok.TokenUsage()
+	}
+	return 0, 0
 }
 
 func (s *streamState) ensureStarted(modelName string) {
@@ -406,50 +408,17 @@ func (t *Transformer) TransformResponseNonStream(
 	originalRequestRawJSON, requestRawJSON, rawJSON []byte,
 	state *any,
 ) ([]byte, error) {
-	var inner any
-	_, err := t.core.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, rawJSON, &inner)
+	claudeBody, err := t.core.TransformResponseNonStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, rawJSON, state)
 	if err != nil {
 		return nil, err
 	}
 
-	st, _ := inner.(*claude.StreamState)
-	if st == nil {
-		return nil, fmt.Errorf("failed to collect kiro stream: missing stream state")
-	}
-	if !st.Finished {
-		_ = claude.FinishStream(st)
+	claudeResp, err := shared.DecodeJSONMap(claudeBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse claude non-stream response: %w", err)
 	}
 
-	content := strings.TrimSpace(st.TextSoFar)
-	var toolCalls []any
-	for _, tc := range st.CollectedToolUses {
-		if tc == nil {
-			continue
-		}
-		callID := strings.TrimSpace(shared.StringFromAny(tc["id"]))
-		name := strings.TrimSpace(shared.StringFromAny(tc["name"]))
-		args := strings.TrimSpace(shared.StringFromAny(tc["args_raw"]))
-		if args == "" {
-			if b, err := json.Marshal(tc["input"]); err == nil && len(b) > 0 {
-				args = string(b)
-			} else {
-				args = "{}"
-			}
-		}
-		toolCalls = append(toolCalls, map[string]any{
-			"id":   callID,
-			"type": "function",
-			"function": map[string]any{
-				"name":      name,
-				"arguments": args,
-			},
-		})
-	}
-
-	finish := strings.TrimSpace(st.FinishReason)
-	if finish == "" {
-		finish = "end_turn"
-	}
+	content, toolCalls, finish, promptTokens, completionTokens := extractContentAndToolCallsFromClaudeMessage(claudeResp)
 
 	message := map[string]any{
 		"role":    "assistant",
@@ -465,16 +434,67 @@ func (t *Transformer) TransformResponseNonStream(
 		"created": time.Now().Unix(),
 		"model":   strings.TrimSpace(modelName),
 		"choices": []any{map[string]any{
-			"index": 0,
-			"message": message,
+			"index":         0,
+			"message":       message,
 			"finish_reason": mapClaudeStopReasonToOpenAIFinishReason(finish),
 		}},
 		"usage": map[string]any{
-			"prompt_tokens":     st.InputTokens,
-			"completion_tokens": st.OutputTokens,
-			"total_tokens":      st.InputTokens + st.OutputTokens,
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+			"total_tokens":      promptTokens + completionTokens,
 		},
 	}
 
 	return shared.MarshalNoEscapeHTML(out)
+}
+
+func extractContentAndToolCallsFromClaudeMessage(claudeResp map[string]any) (string, []any, string, int, int) {
+	content := ""
+	toolCalls := make([]any, 0)
+	finish := strings.TrimSpace(shared.StringFromAny(claudeResp["stop_reason"]))
+	if finish == "" {
+		finish = "end_turn"
+	}
+
+	promptTokens := 0
+	completionTokens := 0
+	if usage, ok := claudeResp["usage"].(map[string]any); ok {
+		promptTokens = shared.IntFromAny(usage["input_tokens"])
+		completionTokens = shared.IntFromAny(usage["output_tokens"])
+	}
+
+	if blocks, ok := claudeResp["content"].([]any); ok {
+		var textParts []string
+		for _, block := range blocks {
+			blockMap, ok := block.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch strings.TrimSpace(shared.StringFromAny(blockMap["type"])) {
+			case "text":
+				text := shared.StringFromAny(blockMap["text"])
+				if text != "" {
+					textParts = append(textParts, text)
+				}
+			case "tool_use":
+				callID := strings.TrimSpace(shared.StringFromAny(blockMap["id"]))
+				name := strings.TrimSpace(shared.StringFromAny(blockMap["name"]))
+				args := "{}"
+				if raw, err := json.Marshal(blockMap["input"]); err == nil && len(raw) > 0 {
+					args = string(raw)
+				}
+				toolCalls = append(toolCalls, map[string]any{
+					"id":   callID,
+					"type": "function",
+					"function": map[string]any{
+						"name":      name,
+						"arguments": args,
+					},
+				})
+			}
+		}
+		content = strings.Join(textParts, "")
+	}
+
+	return strings.TrimSpace(content), toolCalls, finish, promptTokens, completionTokens
 }

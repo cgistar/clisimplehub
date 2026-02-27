@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	kiro_claude "clisimplehub/internal/kiro/claude"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/transformer"
 )
@@ -182,21 +181,6 @@ readLoop:
 				capture.WriteString(out)
 				flusher.Flush()
 			}
-		}
-	}
-
-	// If upstream ended without explicit end marker, finish the Claude SSE stream
-	if s, ok := state.(*kiro_claude.StreamState); ok && s != nil && !s.Finished {
-		for _, out := range kiro_claude.FinishStream(s) {
-			if out == "" {
-				continue
-			}
-			if _, err := w.Write([]byte(out)); err != nil {
-				result.Error = context.Canceled
-				break
-			}
-			capture.WriteString(out)
-			flusher.Flush()
 		}
 	}
 
