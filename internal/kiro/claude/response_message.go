@@ -7,7 +7,7 @@ import (
 )
 
 // KiroToClaudeMessage converts a complete Kiro response to Claude message format.
-func KiroToClaudeMessage(kiroResp map[string]interface{}, modelName string) map[string]interface{} {
+func KiroToClaudeMessage(kiroResp map[string]interface{}, modelName string, estimatedInputTokens int) map[string]interface{} {
 	content := []interface{}{}
 
 	// Extract content from assistantResponseMessage
@@ -57,6 +57,9 @@ func KiroToClaudeMessage(kiroResp map[string]interface{}, modelName string) map[
 	}
 
 	inputTokens := 0
+	if estimatedInputTokens > 0 {
+		inputTokens = estimatedInputTokens
+	}
 	outputTokens := 0
 	if usage, ok := kiroResp["usage"].(map[string]interface{}); ok {
 		if v := shared.IntFromAny(usage["input_tokens"]); v > 0 {

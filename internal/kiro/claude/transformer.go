@@ -236,7 +236,7 @@ func (t *Transformer) TransformResponseNonStream(
 
 	kiroResp, err := shared.DecodeJSONMap(rawJSON)
 	if err == nil {
-		claudeResp := KiroToClaudeMessage(kiroResp, modelName)
+		claudeResp := KiroToClaudeMessage(kiroResp, modelName, inputTokens)
 		return shared.MarshalNoEscapeHTML(claudeResp)
 	}
 
