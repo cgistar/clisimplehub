@@ -32,13 +32,14 @@ func (s *KiroService) SetStorageAccessor(sa StorageAccessor) {
 
 // KiroConfigRequest 请求结构
 type KiroConfigRequest struct {
-	RefreshToken   string `json:"refreshToken"`
-	Region         string `json:"region"`
-	AuthMethod     string `json:"authMethod"`
-	ClientId       string `json:"clientId"`
-	ClientSecret   string `json:"clientSecret"`
-	ProxyURL       string `json:"proxyUrl"`
-	BufferedStream bool   `json:"bufferedStream"`
+	RefreshToken     string `json:"refreshToken"`
+	Region           string `json:"region"`
+	AuthMethod       string `json:"authMethod"`
+	ClientId         string `json:"clientId"`
+	ClientSecret     string `json:"clientSecret"`
+	ProxyURL         string `json:"proxyUrl"`
+	BufferedStream   bool   `json:"bufferedStream"`
+	UseAmqHTTPClient bool   `json:"useAmqHttpClient"`
 }
 
 // KiroConfigResponse 响应结构
@@ -114,10 +115,12 @@ func (s *KiroService) HandleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	version := ""
 	userAgent := ""
 	oldBufferedStream := false
+	oldUseAmqHTTPClient := false
 	if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
 		version = strings.TrimSpace(mc.Version)
 		userAgent = strings.TrimSpace(mc.UserAgent)
 		oldBufferedStream = mc.BufferedStream
+		oldUseAmqHTTPClient = mc.UseAmqHTTPClient
 	}
 	version = kiroShared.KiroVersionOrDefault(version)
 	userAgent = kiroShared.KiroUserAgentBaseOrDefault(userAgent)
@@ -138,9 +141,10 @@ func (s *KiroService) HandleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	refreshTokenChanged := existingRefreshToken != "" && refreshToken != "" && existingRefreshToken != refreshToken
 	machineID := kiroapi.ComputeMachineID(refreshToken)
 	bufferedStreamChanged := req.BufferedStream != oldBufferedStream
+	useAmqChanged := req.UseAmqHTTPClient != oldUseAmqHTTPClient
 
 	if !refreshTokenChanged && existingAccessToken != "" {
-		if !bufferedStreamChanged {
+		if !bufferedStreamChanged && !useAmqChanged {
 			response := KiroConfigResponse{
 				AccessToken: existingAccessToken,
 				ProfileArn:  existingProfileArn,
@@ -153,6 +157,7 @@ func (s *KiroService) HandleKiroConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
 			mc.BufferedStream = req.BufferedStream
+			mc.UseAmqHTTPClient = req.UseAmqHTTPClient
 			_ = kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc)
 		}
 		response := KiroConfigResponse{
@@ -238,6 +243,7 @@ func (s *KiroService) HandleKiroConfig(w http.ResponseWriter, r *http.Request) {
 
 	if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
 		mc.BufferedStream = req.BufferedStream
+		mc.UseAmqHTTPClient = req.UseAmqHTTPClient
 		_ = kiroShared.SaveKiroMultiConfig(kiroJsonPath, mc)
 	}
 

@@ -108,6 +108,12 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 	}
 
 	baseURL := strings.TrimSpace(tr.GetAPIURL())
+	requestBody := transformedBody
+
+	if out := s.tryForwardViaAMQ(ctx, w, tr, upstreamModel, isStreaming, originalBody, requestBody); out != nil {
+		return out
+	}
+
 	if baseURL == "" {
 		baseURL = kiroapi.KiroGenerateURL(tr.GetRegion())
 	}
@@ -117,8 +123,6 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 		return result
 	}
 	result.TargetURL = targetURL
-
-	requestBody := transformedBody
 
 	buildProxyReq := func() (*http.Request, error) {
 		proxyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(requestBody))

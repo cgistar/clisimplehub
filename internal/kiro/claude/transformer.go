@@ -265,7 +265,7 @@ func (t *Transformer) TransformResponseNonStream(
 	}
 	events = append(events, streamState.Finalize()...)
 
-	claudeResp := buildMessageFromSSEEvents(events, modelName)
+	claudeResp := BuildMessageFromSSEEvents(events, modelName)
 	return shared.MarshalNoEscapeHTML(claudeResp)
 }
 
@@ -277,7 +277,8 @@ type collectedSSEBlock struct {
 	args      strings.Builder
 }
 
-func buildMessageFromSSEEvents(events []*streaming.SseEvent, modelName string) map[string]any {
+// BuildMessageFromSSEEvents converts Claude SSE events into a final Claude message payload.
+func BuildMessageFromSSEEvents(events []*streaming.SseEvent, modelName string) map[string]any {
 	messageID := "msg_kiro_" + shared.RandomSuffix()
 	stopReason := "end_turn"
 	inputTokens := 0
@@ -430,6 +431,7 @@ func (t *Transformer) initialize() error {
 			t.kiroProxyURL = strings.TrimSpace(mc.ProxyURL)
 			t.kiroRegion = strings.TrimSpace(mc.Region)
 			SetCachedBufferedStream(mc.BufferedStream)
+			SetCachedUseAmqHTTPClient(mc.UseAmqHTTPClient)
 			SetCachedModelMapping(mc.ModelMapping)
 		}
 	}
@@ -555,6 +557,11 @@ func (t *Transformer) KiroProxyURL() string {
 	return strings.TrimSpace(globalProxyURL)
 }
 
+// UseAmqHTTPClient indicates whether the AMQ HTTP client path is enabled.
+func (t *Transformer) UseAmqHTTPClient() bool {
+	return GetCachedUseAmqHTTPClient()
+}
+
 // KiroUserAgentBase returns the configured Kiro User-Agent base prefix.
 func (t *Transformer) KiroUserAgentBase() string {
 	_ = t.ensureInitialized()
@@ -670,6 +677,7 @@ func (t *Transformer) Reload() error {
 		kiroJsonPath := filepath.Join(dir, filepath.Base(kiroShared.GetDefaultKiroMultiConfigPath()))
 		if mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath); err == nil {
 			SetCachedBufferedStream(mc.BufferedStream)
+			SetCachedUseAmqHTTPClient(mc.UseAmqHTTPClient)
 			SetCachedModelMapping(mc.ModelMapping)
 		}
 	}

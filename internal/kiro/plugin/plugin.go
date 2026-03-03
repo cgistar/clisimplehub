@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"sync"
 
+	"clisimplehub/internal/executor"
 	kiroapi "clisimplehub/internal/kiro"
 	kiro_claude "clisimplehub/internal/kiro/claude"
 	kiro_chat "clisimplehub/internal/kiro/openai/chat-completions"
 	kiroShared "clisimplehub/internal/kiro/shared"
-	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
@@ -65,8 +65,8 @@ func (p *KiroPlugin) Init(cfg plugin.InitConfig) error {
 	// Inject storage accessor if available
 	if cfg.Storage != nil {
 		p.service.SetStorageAccessor(&pluginStorageAccessor{
-			store:   cfg.Storage,
-			reload:  cfg.TriggerReload,
+			store:  cfg.Storage,
+			reload: cfg.TriggerReload,
 		})
 	}
 
@@ -151,6 +151,7 @@ func (p *KiroPlugin) SyncImport(configPath string, data json.RawMessage) error {
 		return err
 	}
 	kiro_claude.SetCachedBufferedStream(mc.BufferedStream)
+	kiro_claude.SetCachedUseAmqHTTPClient(mc.UseAmqHTTPClient)
 	kiro_claude.SetCachedModelMapping(mc.ModelMapping)
 	_ = kiro_claude.ReloadAllTransformers()
 	return nil

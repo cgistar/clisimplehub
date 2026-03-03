@@ -110,6 +110,7 @@ type KiroMultiConfig struct {
 	UserAgent          string            `json:"userAgent,omitempty"`
 	Version            string            `json:"version,omitempty"`
 	BufferedStream     bool              `json:"bufferedStream,omitempty"`
+	UseAmqHTTPClient   bool              `json:"useAmqHttpClient,omitempty"`
 	ModelMapping       map[string]string `json:"modelMapping,omitempty"`
 	Accounts           []KiroAccount     `json:"accounts"`
 }

@@ -119,6 +119,9 @@ var (
 
 	cachedBufferedStream bool
 	cachedBufferedMu     sync.RWMutex
+
+	cachedUseAmqHTTPClient bool
+	cachedUseAmqMu         sync.RWMutex
 )
 
 // SetCachedModelMapping updates the cached model mapping (called during transformer init/reload).
@@ -148,6 +151,20 @@ func GetCachedBufferedStream() bool {
 	cachedBufferedMu.RLock()
 	defer cachedBufferedMu.RUnlock()
 	return cachedBufferedStream
+}
+
+// SetCachedUseAmqHTTPClient updates the cached AMQ-HTTP-client switch.
+func SetCachedUseAmqHTTPClient(v bool) {
+	cachedUseAmqMu.Lock()
+	defer cachedUseAmqMu.Unlock()
+	cachedUseAmqHTTPClient = v
+}
+
+// GetCachedUseAmqHTTPClient returns the cached AMQ-HTTP-client switch.
+func GetCachedUseAmqHTTPClient() bool {
+	cachedUseAmqMu.RLock()
+	defer cachedUseAmqMu.RUnlock()
+	return cachedUseAmqHTTPClient
 }
 
 // inferKiroModelID derives a Kiro model ID from an unmapped Claude model name.
