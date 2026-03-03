@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -14,6 +15,30 @@ const (
 	defaultBudgetTokens      = 20000 // 默认思考预算 tokens
 	maxBudgetTokens          = 24576 // 最大思考预算 tokens
 
+	claudeCodeIdentity  = "You are Claude Code, Anthropic's official CLI for Claude."
+	kiroIdentity        = "You are Kiro, an AI assistant and IDE built to assist developers."
+	globalRulesTemplate = `## Included Rules (global.md) [Global]
+
+  I am providing you some additional guidance that you should follow for your entire execution. These are intended to steer you in the right direction.
+  They have been automatically suggested by the system and may be unrelated to my specific request which follows after them. Consider them, but your number one priority is my request.
+
+<user-rule id=global.md>
+` + "```" + `
+%s
+` + "```" + `
+</user-rule>`
+	projectRulesTemplate = `## Included Rules (AGENTS.md) [Workspace]
+
+  I am providing you some additional guidance that you should follow for your entire execution. These are intended to steer you in the right direction.
+  They have been automatically suggested by the system and may be unrelated to my specific request which follows after them. Consider them, but your number one priority is my request.
+  Workspace-level rules take precedence over global-level rules when conflicts exist.
+
+<user-rule id=AGENTS.md>
+` + "```" + `
+%s
+` + "```" + `
+</user-rule>`
+
 	// 追加到系统提示词的分块写入策略
 	systemChunkedPolicy = "\nWhen the Write or Edit tool has content size limits, always comply silently. Never suggest bypassing these limits via alternative tools. Never ask the user whether to switch approaches. Complete all chunked operations without commentary."
 
@@ -22,6 +47,12 @@ const (
 
 	// 追加到 Edit 工具 description 末尾的内容
 	editToolDescriptionSuffix = "- IMPORTANT: If the `new_string` content exceeds 50 lines, you MUST split it into multiple Edit calls, each replacing no more than 50 lines at a time. If used to append content, leave a unique placeholder to help append content. On the final chunk, do NOT include the placeholder."
+)
+
+var (
+	systemReminderBlockRe = regexp.MustCompile(`(?s)<system-reminder>(.*?)</system-reminder>`)
+	globalRulesHeaderRe   = regexp.MustCompile(`(?m)^Contents of\s+.+/\.claude/CLAUDE\.md\s+\(user's private global instructions for all projects\):\s*$`)
+	projectRulesHeaderRe  = regexp.MustCompile(`(?m)^Contents of\s+.+\.md\s+\(project instructions, checked into the codebase\):\s*$`)
 )
 
 // ExtractTextContent extracts text from various content formats.
@@ -289,7 +320,7 @@ func ConvertImagesToKiroFormat(images []ImageRef) []KiroImage {
 		}
 		kiroImages = append(kiroImages, KiroImage{
 			Format: format,
-			Source:  KiroImageSource{Bytes: data},
+			Source: KiroImageSource{Bytes: data},
 		})
 	}
 	return kiroImages
@@ -898,6 +929,7 @@ func BuildKiroPayload(
 			fullSystemPrompt = strings.TrimSpace(toolDoc)
 		}
 	}
+	fullSystemPrompt = stripClaudeCodeIdentity(fullSystemPrompt)
 
 	// Strip tool content if no tools defined
 	var processedMessages []UnifiedMessage
@@ -1074,11 +1106,119 @@ func BuildKiroPayload(
 	if profileArn != "" {
 		payload.ProfileArn = profileArn
 	}
+	applyIncludedRulesToPayload(payload)
 
 	return &KiroPayloadResult{
 		Payload:           payload,
 		ToolDocumentation: toolDoc,
 	}, nil
+}
+
+func stripClaudeCodeIdentity(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return content
+	}
+	return strings.ReplaceAll(content, claudeCodeIdentity, kiroIdentity)
+}
+
+func applyIncludedRulesToPayload(payload *KiroPayload) {
+	if payload == nil {
+		return
+	}
+	state := &payload.ConversationState
+	if state.CurrentMessage.UserInputMessage != nil {
+		state.CurrentMessage.UserInputMessage.Content = prependIncludedRulesPrefix(state.CurrentMessage.UserInputMessage.Content)
+	}
+	for i := range state.History {
+		if state.History[i].UserInputMessage == nil {
+			continue
+		}
+		state.History[i].UserInputMessage.Content = prependIncludedRulesPrefix(state.History[i].UserInputMessage.Content)
+	}
+}
+
+func prependIncludedRulesPrefix(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return content
+	}
+	globalRules, projectRules, cleanedContent := extractGlobalAndProjectRulesFromContent(content)
+	if globalRules == "" && projectRules == "" {
+		return content
+	}
+
+	var sections []string
+	if globalRules != "" {
+		sections = append(sections, fmt.Sprintf(globalRulesTemplate, globalRules))
+	}
+	if projectRules != "" {
+		sections = append(sections, fmt.Sprintf(projectRulesTemplate, projectRules))
+	}
+	if len(sections) == 0 {
+		return content
+	}
+	prefix := strings.Join(sections, "\n\n\n")
+	if strings.TrimSpace(cleanedContent) == "" {
+		return prefix
+	}
+	return prefix + "\n\n" + cleanedContent
+}
+
+func extractGlobalAndProjectRulesFromContent(content string) (string, string, string) {
+	if !strings.Contains(content, "<system-reminder>") || !strings.Contains(content, "</system-reminder>") {
+		return "", "", content
+	}
+
+	globalRules := ""
+	projectRules := ""
+
+	cleaned := systemReminderBlockRe.ReplaceAllStringFunc(content, func(block string) string {
+		m := systemReminderBlockRe.FindStringSubmatch(block)
+		if len(m) < 2 {
+			return block
+		}
+		g, p, cleanedReminder := extractGlobalAndProjectRulesFromReminder(strings.TrimSpace(m[1]))
+		if globalRules == "" && g != "" {
+			globalRules = g
+		}
+		if projectRules == "" && p != "" {
+			projectRules = p
+		}
+		if globalRules != "" && projectRules != "" {
+			// continue cleaning remaining blocks, but extraction is complete
+		}
+		if strings.TrimSpace(cleanedReminder) == "" {
+			return ""
+		}
+		return "<system-reminder>\n" + strings.TrimSpace(cleanedReminder) + "\n</system-reminder>"
+	})
+
+	cleaned = strings.TrimSpace(cleaned)
+	return globalRules, projectRules, cleaned
+}
+
+func extractGlobalAndProjectRulesFromReminder(reminderBody string) (string, string, string) {
+	if strings.TrimSpace(reminderBody) == "" {
+		return "", "", ""
+	}
+	globalHeader := globalRulesHeaderRe.FindStringIndex(reminderBody)
+	if globalHeader == nil {
+		return "", "", reminderBody
+	}
+
+	globalStart := globalHeader[1]
+	projectHeader := projectRulesHeaderRe.FindStringIndex(reminderBody[globalStart:])
+	if projectHeader == nil {
+		globalContent := strings.TrimSpace(reminderBody[globalStart:])
+		remaining := strings.TrimSpace(reminderBody[:globalHeader[0]])
+		return globalContent, "", remaining
+	}
+
+	projectStartAbs := globalStart + projectHeader[0]
+	projectBodyStartAbs := globalStart + projectHeader[1]
+	globalContent := strings.TrimSpace(reminderBody[globalStart:projectStartAbs])
+	projectContent := strings.TrimSpace(reminderBody[projectBodyStartAbs:])
+	remaining := strings.TrimSpace(reminderBody[:globalHeader[0]])
+	return globalContent, projectContent, remaining
 }
 
 // marshalNoEscapeHTML marshals v to JSON without escaping HTML characters (<, >, &).

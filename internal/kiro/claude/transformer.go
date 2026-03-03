@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	kiroapi "clisimplehub/internal/kiro"
+	"clisimplehub/internal/kiro/converters"
 	kiroShared "clisimplehub/internal/kiro/shared"
 	"clisimplehub/internal/kiro/streaming"
 	"clisimplehub/internal/plugin"
@@ -111,11 +112,28 @@ func (t *Transformer) TransformRequest(modelName string, rawJSON []byte, stream 
 		return nil, fmt.Errorf("kiro transformer initialization failed: %w", err)
 	}
 
-	// Parse Claude request
+	// Parse raw request map for compatibility helpers (e.g. metadata.user_id session id extraction).
 	claudeReq, err := shared.DecodeJSONMap(rawJSON)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse claude request: %w", err)
 	}
+
+	// Parse strongly-typed request for the new converter pipeline.
+	var anthropicReq converters.AnthropicRequest
+	if err := json.Unmarshal(rawJSON, &anthropicReq); err != nil {
+		return nil, fmt.Errorf("failed to parse anthropic request: %w", err)
+	}
+
+	// Preserve existing model mapping behavior.
+	mappedModelSource := strings.TrimSpace(modelName)
+	if mappedModelSource == "" {
+		mappedModelSource = strings.TrimSpace(anthropicReq.Model)
+	}
+	if mappedModelSource != "" {
+		anthropicReq.Model = GetKiroModelID(mappedModelSource)
+	}
+
+	conversationID := generateConversationID(claudeReq)
 
 	// Get profile ARN from auth manager
 	profileArn := ""
@@ -126,8 +144,8 @@ func (t *Transformer) TransformRequest(modelName string, rawJSON []byte, stream 
 		profileArn = am.GetProfileArn()
 	}
 
-	// Convert to Kiro request
-	kiroReq, err := ClaudeToKiroRequest(claudeReq, modelName, profileArn)
+	// Convert to Kiro request using new shared converter.
+	kiroReq, err := converters.AnthropicToKiro(&anthropicReq, conversationID, profileArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert to kiro request: %w", err)
 	}

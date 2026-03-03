@@ -127,12 +127,12 @@ type KiroPayload struct {
 }
 
 type KiroConversationState struct {
-	AgentContinuationID string                `json:"agentContinuationId,omitempty"`
-	AgentTaskType       string                `json:"agentTaskType,omitempty"`
-	ChatTriggerType     string                `json:"chatTriggerType"`
-	ConversationID      string                `json:"conversationId"`
-	CurrentMessage      KiroCurrentMessage    `json:"currentMessage"`
-	History             []KiroHistoryMessage  `json:"history,omitempty"`
+	AgentContinuationID string               `json:"agentContinuationId,omitempty"`
+	AgentTaskType       string               `json:"agentTaskType,omitempty"`
+	ChatTriggerType     string               `json:"chatTriggerType"`
+	ConversationID      string               `json:"conversationId"`
+	CurrentMessage      KiroCurrentMessage   `json:"currentMessage"`
+	History             []KiroHistoryMessage `json:"history,omitempty"`
 }
 
 type KiroCurrentMessage struct {
@@ -141,7 +141,7 @@ type KiroCurrentMessage struct {
 
 type KiroHistoryMessage struct {
 	UserInputMessage         *KiroUserInputMessage         `json:"userInputMessage,omitempty"`
-	AssistantResponseMessage *KiroAssistantResponseMessage  `json:"assistantResponseMessage,omitempty"`
+	AssistantResponseMessage *KiroAssistantResponseMessage `json:"assistantResponseMessage,omitempty"`
 }
 
 type KiroUserInputMessage struct {
@@ -149,7 +149,7 @@ type KiroUserInputMessage struct {
 	ModelID                 string                       `json:"modelId"`
 	Origin                  string                       `json:"origin"`
 	Images                  []KiroImage                  `json:"images,omitempty"`
-	UserInputMessageContext *KiroUserInputMessageContext  `json:"userInputMessageContext,omitempty"`
+	UserInputMessageContext *KiroUserInputMessageContext `json:"userInputMessageContext,omitempty"`
 }
 
 type KiroUserInputMessageContext struct {
@@ -158,8 +158,8 @@ type KiroUserInputMessageContext struct {
 }
 
 type KiroAssistantResponseMessage struct {
-	Content  string         `json:"content"`
-	ToolUses []KiroToolUse  `json:"toolUses,omitempty"`
+	Content  string        `json:"content"`
+	ToolUses []KiroToolUse `json:"toolUses,omitempty"`
 }
 
 type KiroImage struct {

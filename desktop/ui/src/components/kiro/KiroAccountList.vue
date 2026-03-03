@@ -104,12 +104,58 @@ async function handleUsage(account: KiroAccount): Promise<void> {
   });
 }
 
-function handleCopy(account: KiroAccount): void {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(account.refreshToken);
-    message.success(t('kiro.copiedToClipboard'));
-  } else {
+async function handleCopy(account: KiroAccount): Promise<void> {
+  if (!navigator.clipboard) {
     message.error(t('kiro.copyFailed'));
+    return;
+  }
+
+  try {
+    let copyContent = '';
+
+    if (account.authMethod === 'social') {
+      const socialData = {
+        accessToken: account.accessToken || '',
+        authMethod: 'social',
+        expiresAt: account.expiresAt || '',
+        machineId: account.machineId || '',
+        profileArn: account.profileArn || '',
+        provider: account.provider || '',
+        refreshToken: account.refreshToken || '',
+        region: account.region || ''
+      };
+      copyContent = JSON.stringify(socialData, null, 2);
+    } else if (account.authMethod === 'idc' || account.authMethod === 'IdC') {
+      const clientId = account.clientId || '';
+      const hash = clientId ? await window.go.main.App.ComputeSHA1(clientId) : '';
+
+      const expiresAt =account.expiresAt;
+
+      const kiroAuthToken = {
+        accessToken: account.accessToken || '',
+        refreshToken: account.refreshToken || '',
+        expiresAt: expiresAt,
+        clientIdHash: hash,
+        authMethod: 'IdC',
+        provider: 'BuilderId',
+        region: account.region || 'us-east-1'
+      };
+
+      const clientConfig = {
+        clientId: clientId,
+        clientSecret: account.clientSecret || '',
+        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
+      };
+
+      copyContent = `kiro-auth-token.json:\n${JSON.stringify(kiroAuthToken, null, 2)}\n\n${hash}.json:\n${JSON.stringify(clientConfig, null, 2)}`;
+    } else {
+      copyContent = account.refreshToken;
+    }
+
+    await navigator.clipboard.writeText(copyContent);
+    message.success(t('kiro.copiedToClipboard'));
+  } catch (error) {
+    message.error(t('kiro.copyFailed') + ': ' + toErrorMessage(error));
   }
 }
 

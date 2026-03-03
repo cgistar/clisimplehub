@@ -232,13 +232,14 @@ func convertAnthropicMessages(messages []AnthropicMessage) []UnifiedMessage {
 		var toolResults []ToolResultRef
 		var images []ImageRef
 
-		if msg.Role == "assistant" {
+		switch msg.Role {
+		case "assistant":
 			toolCalls = extractToolUsesFromAnthropicContent(msg.Content)
 			// If only tool_use and no text/thinking, add placeholder
 			if len(toolCalls) > 0 && textContent == "" {
 				textContent = " "
 			}
-		} else if msg.Role == "user" {
+		case "user":
 			toolResults = extractToolResultsFromAnthropicContent(msg.Content)
 			images = ExtractImagesFromContent(msg.Content)
 			toolResultImages := extractImagesFromToolResults(msg.Content)

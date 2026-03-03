@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { Globe, Plus, RefreshCcw, Settings2, Square, TriangleAlert, Play } from 'lucide-vue-next'
+import { Globe, Plus, RefreshCcw, Settings2, Square, TriangleAlert, Play, Copy } from 'lucide-vue-next'
 import { useFeedback } from '@/composables/useFeedback'
 import { useXrayStore } from '@/stores/xrayStore'
 import type { XrayConfig, XraySubscription } from '@/types/xray'
@@ -338,6 +338,18 @@ async function handleAddNodes(content: string): Promise<void> {
     message.error(t('xray.addNodeFailed') + toErrorMessage(error))
   }
 }
+
+async function handleCopyProxyAddress(): Promise<void> {
+  if (!xrayStore.status.socksAddr) return
+
+  try {
+    const proxyUrl = `socks5://${xrayStore.status.socksAddr}`
+    await navigator.clipboard.writeText(proxyUrl)
+    message.success(t('logs.copyToClipboard'))
+  } catch (error) {
+    message.error(t('xray.copyFailed') + toErrorMessage(error))
+  }
+}
 </script>
 
 <template>
@@ -354,8 +366,17 @@ async function handleAddNodes(content: string): Promise<void> {
               <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs" :class="statusClass">
                 {{ statusText }}
               </span>
-              <span v-if="xrayStore.status.running" class="truncate text-xs text-slate-600">
-                SOCKS5: {{ xrayStore.status.socksAddr || '--' }}
+              <span v-if="xrayStore.status.running" class="flex items-center gap-1 truncate text-xs text-slate-600">
+                <span>SOCKS5://{{ xrayStore.status.socksAddr || '--' }}</span>
+                <button
+                  v-if="xrayStore.status.socksAddr"
+                  type="button"
+                  class="inline-flex items-center rounded p-0.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  @click="handleCopyProxyAddress"
+                  title="复制代理地址"
+                >
+                  <Copy :size="12" />
+                </button>
               </span>
               <span class="truncate text-xs text-slate-600">
                 {{ t('xray.node') }}: {{ xrayStore.status.selectedNode || '--' }}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -3586,4 +3587,10 @@ func (a *App) SyncConfigToServer(index int) error {
 	}
 
 	return nil
+}
+
+// ComputeSHA1 计算字符串的 SHA-1 哈希值（40字符十六进制）
+func (a *App) ComputeSHA1(input string) string {
+	hash := sha1.Sum([]byte(input))
+	return fmt.Sprintf("%x", hash)
 }
