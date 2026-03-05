@@ -27,6 +27,69 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
   const searchQuery = ref('')
   const filterStatus = ref<CodexFilterStatus>('all')
 
+  function patchAccountById(accountId: string, patch: Partial<CodexAccount>): boolean {
+    const normalizedId = String(accountId || '').trim()
+    if (!normalizedId) return false
+
+    const index = accounts.value.findIndex((account) => String(account.accountId || '').trim() === normalizedId)
+    if (index === -1) return false
+
+    accounts.value[index] = {
+      ...accounts.value[index],
+      ...patch
+    }
+
+    return true
+  }
+
+  function toSafeNumber(value: unknown): number {
+    const num = Number(value)
+    return Number.isFinite(num) ? num : 0
+  }
+
+  function normalizeUsage(result: CodexUsageResult): CodexAccount['codexUsage'] {
+    const primary = result?.primary
+      ? {
+          usedPercent: toSafeNumber(result.primary.usedPercent),
+          remainingSeconds: toSafeNumber(result.primary.remainingSeconds)
+        }
+      : undefined
+
+    const secondary = result?.secondary
+      ? {
+          usedPercent: toSafeNumber(result.secondary.usedPercent),
+          remainingSeconds: toSafeNumber(result.secondary.remainingSeconds)
+        }
+      : undefined
+
+    if (!primary && !secondary) return undefined
+
+    return {
+      primary,
+      secondary
+    }
+  }
+
+  async function syncVisibleAccountById(accountId: string): Promise<boolean> {
+    const normalizedId = String(accountId || '').trim()
+    if (!normalizedId) return false
+
+    const loadedCount = Math.max(accounts.value.length, pagination.value.nextOffset, pagination.value.limit)
+    if (loadedCount <= 0) return false
+
+    const page = await codexApi.getAccountsPage(0, loadedCount)
+    const latest = (page.accounts || []).find(
+      (account) => String(account.accountId || '').trim() === normalizedId
+    )
+
+    if (page.activeAccountId) {
+      activeAccountId.value = page.activeAccountId
+    }
+
+    if (!latest) return false
+    return patchAccountById(normalizedId, latest)
+  }
+
   const filteredAccounts = computed(() => {
     let result = accounts.value
 
@@ -52,7 +115,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
 
   const accountCount = computed(() => {
     const counts = {
-      total: accounts.value.length,
+      total: pagination.value.total,
       valid: 0,
       banned: 0,
       exhausted: 0,
@@ -154,14 +217,9 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     try {
       await codexApi.updateAccount(accountData)
 
-      // Update the account in the local store without reloading
       const accountId = accountData.accountId
       if (accountId) {
-        const index = accounts.value.findIndex(acc => acc.accountId === accountId)
-        if (index !== -1) {
-          // Use Object.assign to update in place, preserving reactivity without triggering full re-render
-          Object.assign(accounts.value[index], accountData)
-        }
+        patchAccountById(accountId, accountData)
       }
     } catch (cause) {
       error.value = String(cause)
@@ -186,7 +244,41 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
 
     try {
       const result = await codexApi.testAccount(accountId)
-      await loadAccounts(true)
+      const nextAccountId = String(result.accountId || accountId).trim()
+
+      let synced = false
+      try {
+        synced = await syncVisibleAccountById(accountId)
+      } catch {
+        synced = false
+      }
+
+      if (!synced && nextAccountId !== accountId) {
+        try {
+          synced = await syncVisibleAccountById(nextAccountId)
+        } catch {
+          synced = false
+        }
+      }
+
+      if (!synced) {
+        patchAccountById(accountId, {
+          accountId: nextAccountId,
+          accessToken: result.accessToken,
+          email: result.email,
+          planType: result.planType,
+          expiresAt: result.expiresAt,
+          status: 'valid',
+          cooldownUntil: '',
+          cooldownReason: '',
+          cooldownRemaining: 0
+        })
+      }
+
+      if (activeAccountId.value === accountId) {
+        activeAccountId.value = nextAccountId
+      }
+
       return result
     } catch (cause) {
       error.value = String(cause)
@@ -199,7 +291,9 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
 
     try {
       const result = await codexApi.getAccountUsage(accountId)
-      await loadAccounts(true)
+      patchAccountById(accountId, {
+        codexUsage: normalizeUsage(result)
+      })
       return result
     } catch (cause) {
       error.value = String(cause)

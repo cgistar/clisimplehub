@@ -132,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { NTag, useDialog } from 'naive-ui'
 import { Power, RefreshCw, Activity, Copy, KeyRound, Edit, Trash } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -166,6 +166,8 @@ const isCoolingDown = computed(() => (props.account.cooldownRemaining || 0) > 0)
 const isBanned = computed(() =>
   props.account.status === 'banned' || props.account.status === 'reused'
 )
+const nowTick = ref(Date.now())
+let expireTickTimer: ReturnType<typeof setInterval> | null = null
 
 const displayName = computed(() =>
   props.account.email || props.account.accountId || truncateToken(props.account.refreshToken)
@@ -220,9 +222,11 @@ const cooldownText = computed(() => {
 })
 
 const expireInfo = computed(() => {
+  void nowTick.value
+
   if (!props.account.expiresAt) return { text: '', isExpired: false }
   const expiresDate = new Date(props.account.expiresAt)
-  const now = new Date()
+  const now = new Date(nowTick.value)
   if (isNaN(expiresDate.getTime())) return { text: '', isExpired: false }
 
   const diffMs = expiresDate.getTime() - now.getTime()
@@ -248,6 +252,19 @@ const canActivate = computed(() =>
   props.account.status !== 'banned' &&
   props.account.status !== 'reused'
 )
+
+onMounted(() => {
+  expireTickTimer = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 30 * 1000)
+})
+
+onBeforeUnmount(() => {
+  if (expireTickTimer) {
+    clearInterval(expireTickTimer)
+    expireTickTimer = null
+  }
+})
 
 function confirmDelete() {
   if (props.busy) return

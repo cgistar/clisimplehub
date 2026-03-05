@@ -82,11 +82,11 @@ export default {
   },
   codex: {
     title: 'Codex Config',
-    accountsTitle: 'Codex Accounts',
+    accountsTitle: 'Accounts',
     manageAccounts: 'Manage Accounts',
     addAccount: 'Add Account',
     signup: 'Sign Up',
-    bulkDelete: 'Bulk Delete',
+    bulkDelete: 'Delete',
     selectAll: 'Select All',
     deselectAll: 'Deselect All',
     selectBanned: 'Select Banned',
@@ -162,7 +162,7 @@ export default {
     statusRateLimited: 'Rate Limited',
     cooldown: 'Cooldown',
     rateLimit: 'Rate Limit',
-    tokenExpired: 'Token Expired',
+    tokenExpired: 'Expired',
     // Buttons and actions
     activate: 'Activate',
     test: 'Refresh Token',

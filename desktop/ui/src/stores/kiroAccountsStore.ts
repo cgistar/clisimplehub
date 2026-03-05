@@ -118,6 +118,13 @@ export const useKiroAccountsStore = defineStore('kiroAccounts', () => {
     } catch (cause) {
       error.value = String(cause)
       throw cause
+    } finally {
+      // 测试接口会在后端更新账号状态/过期时间，前端需要立即回拉列表同步卡片显示。
+      try {
+        await loadAccounts()
+      } catch {
+        // 保持测试结果语义，不因回拉失败覆盖原始测试结果。
+      }
     }
   }
 

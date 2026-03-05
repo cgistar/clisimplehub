@@ -333,12 +333,28 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 // --- Hot-path partial updates ---
 
 func (s *SQLiteCodexAccountStore) UpdateTokens(ctx context.Context, accountID, accessToken, idToken, refreshToken string, expiresAt time.Time) error {
-	_, err := s.queue.ExecWrite(ctx, `
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return fmt.Errorf("account id is empty")
+	}
+
+	result, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET
 			access_token = ?, id_token = ?, refresh_token = ?, expires_at = ?, updated_at = ?
 		WHERE account_id = ?`,
 		accessToken, idToken, refreshToken, nullTime(expiresAt), time.Now(), accountID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("query rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("account not found for update: %s", accountID)
+	}
+	return nil
 }
 
 func (s *SQLiteCodexAccountStore) UpdateStatus(ctx context.Context, accountID string, status CodexAccountStatus) error {

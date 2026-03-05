@@ -320,15 +320,28 @@ func (d *desktopFacade) TestAccount(configPath, accountId string) (json.RawMessa
 		return nil, err
 	}
 
-	_ = store.UpdateTokens(context.Background(), account.AccountID, accessToken, idToken, account.RefreshToken, expiresAt)
+	if err := store.UpdateTokens(context.Background(), account.AccountID, accessToken, idToken, account.RefreshToken, expiresAt); err != nil {
+		return nil, fmt.Errorf("persist refreshed tokens failed: %w", err)
+	}
+
+	// Keep in-memory account aligned with refreshed token fields to avoid overwriting expires_at in later full updates.
+	account.AccessToken = accessToken
+	account.IDToken = idToken
+	account.ExpiresAt = expiresAt
 	if email != "" || planType != "" {
 		account.Email = email
 		account.PlanType = planType
-		_ = store.Update(context.Background(), account)
+		if err := store.Update(context.Background(), account); err != nil {
+			return nil, fmt.Errorf("persist refreshed profile failed: %w", err)
+		}
 	}
 
-	_ = store.UpdateCooldown(context.Background(), account.AccountID, time.Time{}, "")
-	_ = store.UpdateStatus(context.Background(), account.AccountID, codexShared.CodexStatusValid)
+	if err := store.UpdateCooldown(context.Background(), account.AccountID, time.Time{}, ""); err != nil {
+		return nil, fmt.Errorf("clear cooldown failed: %w", err)
+	}
+	if err := store.UpdateStatus(context.Background(), account.AccountID, codexShared.CodexStatusValid); err != nil {
+		return nil, fmt.Errorf("update account status failed: %w", err)
+	}
 
 	if pool := codex.GetPool(); pool != nil {
 		pool.Reload()

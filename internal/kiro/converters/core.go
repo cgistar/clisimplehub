@@ -876,18 +876,13 @@ func BuildKiroHistory(messages []UnifiedMessage, modelID string) []KiroHistoryMe
 					userInput.Images = kiroImages
 				}
 			}
-			var ctx *KiroUserInputMessageContext
 			if len(msg.ToolResults) > 0 {
 				kiroResults := ConvertToolResultsToKiroFormat(msg.ToolResults)
 				if len(kiroResults) > 0 {
-					if ctx == nil {
-						ctx = &KiroUserInputMessageContext{}
+					userInput.UserInputMessageContext = &KiroUserInputMessageContext{
+						ToolResults: kiroResults,
 					}
-					ctx.ToolResults = kiroResults
 				}
-			}
-			if ctx != nil {
-				userInput.UserInputMessageContext = ctx
 			}
 			history = append(history, KiroHistoryMessage{UserInputMessage: userInput})
 

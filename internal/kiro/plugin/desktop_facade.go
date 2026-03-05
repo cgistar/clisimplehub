@@ -504,7 +504,18 @@ func (f *desktopFacade) SetActiveAccount(configPath, refreshToken string) error 
 		return fmt.Errorf("account not found")
 	}
 	config.ActiveRefreshToken = refreshToken
-	return kiroShared.SaveKiroMultiConfig(configPath, config)
+	if err := kiroShared.SaveKiroMultiConfig(configPath, config); err != nil {
+		return err
+	}
+
+	// 同步刷新运行时池与 Transformer 绑定账号，确保与新激活账号一致。
+	if pool := kiroCore.GetPool(); pool != nil {
+		pool.Reload()
+	}
+	if err := kiroClaude.ReloadAllTransformers(); err != nil {
+		return fmt.Errorf("set active account but failed to reload transformers: %w", err)
+	}
+	return nil
 }
 
 func (f *desktopFacade) AddAccount(configPath string, dto json.RawMessage) (json.RawMessage, error) {
