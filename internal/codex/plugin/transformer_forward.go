@@ -70,11 +70,12 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 	result := &executor.ForwardResult{}
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
-	// For transformer forward path, we don't have direct access to User-Agent
-	// Keep it empty; request-body rewriting is skipped when User-Agent is unknown.
+	// Transformer forward path now receives original request headers via context.
 	userAgent := ""
+	if headers := executor.ForwardRequestHeadersFromContext(ctx); headers != nil {
+		userAgent = headers.Get("User-Agent")
+	}
 
-	// Process request body: handle store field and non-CLI adaptation (aligned with claude-relay-service)
 	processedBody, err := processRequestBody(body, requestPath, userAgent)
 	if err != nil {
 		if debugLogger != nil {
@@ -461,11 +462,11 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(respBody)
 		return &executor.ForwardResult{
-			StatusCode:     resp.StatusCode,
-			Headers:        resp.Header.Clone(),
-			Body:           respBody,
-			Tokens:         extractTokensFromBody(respBody),
-			TargetURL:      upstreamURL,
+			StatusCode: resp.StatusCode,
+			Headers:    resp.Header.Clone(),
+			Body:       respBody,
+			Tokens:     extractTokensFromBody(respBody),
+			TargetURL:  upstreamURL,
 		}
 	}
 

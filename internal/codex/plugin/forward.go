@@ -84,7 +84,6 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	// Extract User-Agent for request body processing
 	userAgent := r.Header.Get("User-Agent")
 
-	// Process request body: handle store field and non-CLI adaptation (aligned with claude-relay-service)
 	processedBody, err := processRequestBody(body, r.URL.Path, userAgent)
 	if err != nil {
 		// Continue with original body if processing fails

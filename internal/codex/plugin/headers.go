@@ -23,7 +23,6 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 		originator = config.GetOriginator()
 	}
 
-	// Apply whitelist filtering to client headers (aligned with claude-relay-service L315-322)
 	// Only allow: version, openai-beta, session_id
 	filtered := filterClientHeaders(clientHeaders)
 
@@ -72,7 +71,6 @@ func isCompactResponsesPath(requestPath string) bool {
 }
 
 // getCodexUpstreamURL constructs the upstream URL based on config and request path.
-// Aligned with claude-relay-service L362-364: dynamically selects /responses or /responses/compact.
 func getCodexUpstreamURL(config *codexShared.CodexMultiConfig, requestPath string) string {
 	baseURL := "https://chatgpt.com/backend-api/codex"
 	if config != nil {
