@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -86,11 +87,18 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 
 	processedBody, err := processRequestBody(body, r.URL.Path, userAgent)
 	if err != nil {
+		if errors.Is(err, errCompactStreamingNotSupported) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(compactStreamingErrorPayload())
+			return
+		}
 		// Continue with original body if processing fails
 		processedBody = body
 	}
 
 	isStreaming := strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+	isStreaming = normalizeStreamingModeForCodexPath(r.URL.Path, isStreaming)
 	clientHeaders := r.Header.Clone() // Preserve client headers for forwarding
 
 	pool := codex.GetPool()

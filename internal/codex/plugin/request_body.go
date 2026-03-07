@@ -2,10 +2,13 @@ package codexplugin
 
 import (
 	"encoding/json"
+	"errors"
 	"regexp"
 )
 
 var codexCliPattern = regexp.MustCompile(`(?i)^(codex_vscode|codex_cli_rs|codex_exec)/[\d.]+`)
+
+var errCompactStreamingNotSupported = errors.New("streaming not supported for compact responses")
 
 const codexCLIInstructions = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.\n\n" +
 	"## General\n\n" +
@@ -134,6 +137,13 @@ func processRequestBody(body []byte, requestPath string, userAgent string) ([]by
 
 	// Handle store field based on route type
 	if isCompactRoute {
+		// Compact route does not support streaming requests.
+		if streamValue, ok := reqBody["stream"]; ok {
+			if streamEnabled, ok := streamValue.(bool); ok && streamEnabled {
+				return nil, errCompactStreamingNotSupported
+			}
+			delete(reqBody, "stream")
+		}
 		// Compact route: remove store field if present
 		delete(reqBody, "store")
 	} else {
@@ -153,4 +163,15 @@ func processRequestBody(body []byte, requestPath string, userAgent string) ([]by
 
 	// Re-marshal
 	return json.Marshal(reqBody)
+}
+
+func normalizeStreamingModeForCodexPath(requestPath string, isStreaming bool) bool {
+	if isCompactResponsesPath(requestPath) {
+		return false
+	}
+	return isStreaming
+}
+
+func compactStreamingErrorPayload() []byte {
+	return []byte(`{"error":{"type":"invalid_request_error","message":"Streaming not supported for compact responses"}}`)
 }

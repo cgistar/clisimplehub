@@ -197,11 +197,15 @@ func (a *App) SaveSettings(settings *Settings) error {
 	if a.storage == nil {
 		return fmt.Errorf("storage not initialized")
 	}
+	if settings == nil {
+		return fmt.Errorf("settings is nil")
+	}
 
 	oldPort := 0
 	if a.proxyServer != nil {
 		oldPort = a.proxyServer.GetPort()
 	}
+	normalizedAPIKey := strings.TrimSpace(settings.APIKey)
 
 	// Validate port
 	if err := config.ValidatePort(settings.Port); err != nil {
@@ -214,7 +218,7 @@ func (a *App) SaveSettings(settings *Settings) error {
 	}
 
 	// Save proxy auth token to storage (empty => no auth)
-	if err := a.storage.SetConfig(ConfigKeyAPIKey, settings.APIKey); err != nil {
+	if err := a.storage.SetConfig(ConfigKeyAPIKey, normalizedAPIKey); err != nil {
 		return fmt.Errorf("failed to save api key: %w", err)
 	}
 
@@ -231,7 +235,7 @@ func (a *App) SaveSettings(settings *Settings) error {
 	// Update proxy server port if available
 	if a.proxyServer != nil {
 		a.proxyServer.SetPort(settings.Port)
-		a.proxyServer.SetAuthKey(settings.APIKey)
+		a.proxyServer.SetAuthKey(normalizedAPIKey)
 		a.proxyServer.SetFallbackEnabled(settings.Fallback)
 		// 热更新调试日志配置
 		a.proxyServer.UpdateDebugFileLogger()

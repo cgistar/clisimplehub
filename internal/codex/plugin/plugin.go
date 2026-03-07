@@ -104,8 +104,8 @@ func (p *CodexPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	if svc == nil {
 		return
 	}
-	r.HandleFunc("/codex/v1/responses", r.RequireAuth(svc.HandleResponses))
-	r.HandleFunc("/codex/v1/responses/compact", r.RequireAuth(svc.HandleResponses))
+	r.HandleFunc("/codex", r.RequireAuth(p.handleCodexRoute))
+	r.HandleFunc("/codex/*", r.RequireAuth(p.handleCodexRoute))
 	r.HandleFunc("/v0/management/codex-auth-url", r.RequireAuth(p.handleAuthURL))
 	r.HandleFunc("/v0/management/oauth-callback", r.RequireAuth(p.handleOAuthCallback))
 }

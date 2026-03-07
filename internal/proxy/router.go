@@ -130,36 +130,7 @@ func (r *DefaultRouter) restoreExpiredLocked(interfaceType InterfaceType) {
 // DetectInterfaceType determines the interface type from the request path
 // Requirements: 3.1, 3.2, 3.3, 3.4
 func (r *DefaultRouter) DetectInterfaceType(path string) InterfaceType {
-	// Normalize path to lowercase for comparison
-	lowerPath := strings.ToLower(path)
-
-	// Requirement 3.1: /v1/messages -> claude
-	if strings.HasPrefix(lowerPath, "/v1/messages") {
-		return InterfaceTypeClaude
-	}
-
-	// 兼容 OpenAI Chat Completions 路径：/v1/chat/completions 或以 /chat/completions 结尾的都走 chat
-	if strings.HasPrefix(lowerPath, "/v1/chat/completions") || strings.HasSuffix(lowerPath, "/chat/completions") {
-		return InterfaceTypeChat
-	}
-
-	// OpenAI Responses 路径：以 /responses 结尾的都走 codex
-	if strings.HasSuffix(lowerPath, "/responses") {
-		return InterfaceTypeCodex
-	}
-
-	// Requirement 3.3: path containing /gemini -> gemini
-	if strings.Contains(lowerPath, "/gemini") {
-		return InterfaceTypeGemini
-	}
-
-	// Requirement 3.4: /chat -> chat
-	if strings.HasPrefix(lowerPath, "/chat") {
-		return InterfaceTypeChat
-	}
-
-	// Default to claude if no match (could also return empty string)
-	return InterfaceTypeClaude
+	return DetectInterfaceTypeByPath(path)
 }
 
 // LoadEndpoints loads endpoints into the router, organizing them by interface type
@@ -531,38 +502,4 @@ func (r *DefaultRouter) GetEndpointByModel(interfaceType InterfaceType, model st
 	})
 
 	return candidates[0]
-}
-
-// IsRetryablePath checks if the given path should have retry and failover enabled.
-// Only /v1/messages (Claude) and /responses (Codex) paths support retry/failover.
-func IsRetryablePath(path string) bool {
-	lowerPath := strings.ToLower(path)
-	// Claude: /v1/messages
-	if strings.HasPrefix(lowerPath, "/v1/messages") {
-		return true
-	}
-	// Codex: paths ending with /responses
-	if strings.HasSuffix(lowerPath, "/responses") {
-		return true
-	}
-	return false
-}
-
-// ShouldRecordUsageStats checks if the request should be recorded to usage_stats.
-// Only Claude/Codex interface types with retryable paths should be recorded.
-func ShouldRecordUsageStats(interfaceType InterfaceType, path string) bool {
-	// Only Claude and Codex interface types
-	if interfaceType == InterfaceTypeClaude || interfaceType == InterfaceTypeCodex {
-		lowerPath := strings.ToLower(path)
-		// Claude: /v1/messages
-		if strings.HasPrefix(lowerPath, "/v1/messages") {
-			return true
-		}
-		// Codex: paths ending with /responses
-		if strings.HasSuffix(lowerPath, "/responses") {
-			return true
-		}
-		return false
-	}
-	return true
 }

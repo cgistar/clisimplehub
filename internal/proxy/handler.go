@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,11 +38,6 @@ func writeAnthropicError(w http.ResponseWriter, statusCode int, errorType, messa
 			Message: message,
 		},
 	})
-}
-
-func isAnthropicClaudeCompatiblePath(path string) bool {
-	lower := strings.ToLower(strings.TrimSpace(path))
-	return strings.HasPrefix(lower, "/v1/messages") || lower == "/v1/models"
 }
 
 // logRequestToConsole 输出请求日志到控制台（无头模式）
@@ -126,6 +122,38 @@ func logDebugToConsole(requestID string, level int, message string) {
 	}
 }
 
+func (p *ProxyServer) detectInterfaceTypeForRequest(r *http.Request) InterfaceType {
+	if r == nil {
+		return InterfaceTypeClaude
+	}
+	if forcedType, ok := gatewayInterfaceOverrideFromContext(r.Context()); ok {
+		return forcedType
+	}
+	return p.router.DetectInterfaceType(r.URL.Path)
+}
+
+func isAnthropicRequest(interfaceType InterfaceType, path string) bool {
+	return interfaceType == InterfaceTypeClaude || IsAnthropicCompatiblePath(path)
+}
+
+func (p *ProxyServer) resolveEndpointForRequest(exec *proxyExecutor, r *http.Request, req *executor.ForwardRequest) (*executor.EndpointConfig, string) {
+	if exec == nil || req == nil {
+		return nil, ""
+	}
+	if forcedType, ok := gatewayInterfaceOverrideFromContext(r.Context()); ok {
+		interfaceType := string(forcedType)
+		var endpoint *executor.EndpointConfig
+		if strings.TrimSpace(req.RequestModel) != "" {
+			endpoint = exec.provider.GetEndpointByModel(interfaceType, req.RequestModel)
+		}
+		if endpoint == nil {
+			endpoint = exec.provider.GetActiveEndpoint(interfaceType)
+		}
+		return endpoint, interfaceType
+	}
+	return exec.ctx.ResolveEndpoint(req.Path, req.RequestModel)
+}
+
 // handleProxy handles the main proxy logic
 // Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -133,26 +161,14 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	requestID := uuid.New().String()
 
 	reqHeaders := sanitizeHeadersForLog(r.Header)
-	interfaceType := p.router.DetectInterfaceType(r.URL.Path)
-	isAnthropic := isAnthropicClaudeCompatiblePath(r.URL.Path)
+	interfaceType := p.detectInterfaceTypeForRequest(r)
+	isAnthropic := isAnthropicRequest(interfaceType, r.URL.Path)
 
 	isRetryable := IsRetryablePath(r.URL.Path)
 	shouldRecordStats := ShouldRecordUsageStats(interfaceType, r.URL.Path)
 	fallbackEnabled := p.IsFallbackEnabled()
 
-	if required := p.getAuthKey(); required != "" && !isAuthorized(r, required) {
-		if isAnthropic {
-			writeAnthropicError(w, http.StatusUnauthorized, "authentication_error", "Invalid API key")
-		} else {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		}
-		detail := &RequestDetail{Method: r.Method, StatusCode: http.StatusUnauthorized, RequestHeaders: reqHeaders}
-		runTime := time.Since(startTime).Milliseconds()
-		p.recordRequestWithDetail(requestID, interfaceType, nil, r.URL.Path, startTime, "error_401", runTime, detail)
-		logRequestToConsole(requestID, r.Method, r.URL.Path, interfaceType, nil, http.StatusUnauthorized, "error_401", runTime)
-		return
-	}
-
+	// Keep model-list compatibility for case-insensitive paths that may bypass explicit gateway routes.
 	if handleUnifiedModelsRequest(w, r) {
 		return
 	}
@@ -168,7 +184,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.Body.Close()
 
-	if strings.EqualFold(strings.TrimSpace(r.URL.Path), "/v1/messages/count_tokens") && strings.EqualFold(r.Method, http.MethodPost) {
+	if IsClaudeCountTokensPath(r.URL.Path) && strings.EqualFold(r.Method, http.MethodPost) {
 		if !json.Valid(bodyBytes) {
 			writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON")
 			return
@@ -188,11 +204,26 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bodyBytes, err = p.applyForwardRequestMiddlewares(r.Context(), r, bodyBytes)
+	if err != nil {
+		if isAnthropic {
+			writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		} else {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	interfaceType = p.detectInterfaceTypeForRequest(r)
+	isAnthropic = isAnthropicRequest(interfaceType, r.URL.Path)
+	isRetryable = IsRetryablePath(r.URL.Path)
+	shouldRecordStats = ShouldRecordUsageStats(interfaceType, r.URL.Path)
+
 	isStreaming := isStreamRequested(r, bodyBytes)
 
 	exec := p.ensureExecutor()
 	forwardReq := executor.ForwardRequestFromHTTP(r, bodyBytes, isStreaming)
-	endpoint, resolvedType := exec.ctx.ResolveEndpoint(forwardReq.Path, forwardReq.RequestModel)
+	endpoint, resolvedType := p.resolveEndpointForRequest(exec, r, forwardReq)
 	if resolvedType != "" {
 		interfaceType = InterfaceType(resolvedType)
 	}

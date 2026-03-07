@@ -117,7 +117,7 @@ func handleUnifiedModelsRequest(w http.ResponseWriter, r *http.Request) bool {
 	if r == nil {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(r.URL.Path), "/v1/models") || !strings.EqualFold(r.Method, http.MethodGet) {
+	if !IsUnifiedModelsPath(r.URL.Path) || !strings.EqualFold(r.Method, http.MethodGet) {
 		return false
 	}
 
@@ -129,6 +129,10 @@ func handleUnifiedModelsRequest(w http.ResponseWriter, r *http.Request) bool {
 
 	writeOpenAIModelsResponse(w)
 	return true
+}
+
+func (p *ProxyServer) handleUnifiedModelsRoute(w http.ResponseWriter, r *http.Request) {
+	_ = handleUnifiedModelsRequest(w, r)
 }
 
 func writeOpenAIModelsResponse(w http.ResponseWriter) {

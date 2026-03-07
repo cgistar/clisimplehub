@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -29,6 +30,21 @@ type RouteRegistrar interface {
 	HandleFunc(pattern string, handler http.HandlerFunc)
 	RequireAuth(handler http.HandlerFunc) http.HandlerFunc
 	RequireAuthStrict(handler http.HandlerFunc) http.HandlerFunc
+}
+
+// ForwardRequestMiddleware mutates outbound proxy request body before forwarding.
+// It can also modify req metadata (e.g. path/header) in-place.
+type ForwardRequestMiddleware func(ctx context.Context, req *http.Request, body []byte) ([]byte, error)
+
+// ForwardMiddlewareRegistrar allows plugins to register forward middlewares.
+type ForwardMiddlewareRegistrar interface {
+	UseForwardRequestMiddleware(name string, middleware ForwardRequestMiddleware)
+}
+
+// ForwardMiddlewareProvider is an optional interface for plugins that contribute
+// request mutation middlewares before upstream forwarding.
+type ForwardMiddlewareProvider interface {
+	RegisterForwardMiddlewares(r ForwardMiddlewareRegistrar)
 }
 
 // TokenEstimator is an optional interface for plugins that provide token estimation.

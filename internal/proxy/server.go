@@ -2,10 +2,12 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +19,9 @@ import (
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
+
+	"github.com/go-chi/chi/v5"
+	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
 // ProxyServer represents the main proxy server implementation
@@ -35,17 +40,29 @@ type ProxyServer struct {
 	configPath string
 	reloadFunc func() // 配置重载回调函数
 
-	fallbackEnabled bool
-	exec            *proxyExecutor
+	fallbackEnabled   bool
+	exec              *proxyExecutor
+	forwardMW         []namedForwardMiddleware
+	pluginRoutes      map[string]map[string]struct{}
+	transformerOwners map[string]string
 }
+
+type namedForwardMiddleware struct {
+	name string
+	run  plugin.ForwardRequestMiddleware
+}
+
+type gatewayInterfaceOverrideContextKey struct{}
 
 // NewProxyServer creates a new ProxyServer instance
 func NewProxyServer(port int, router Router) *ProxyServer {
 	return &ProxyServer{
-		port:       port,
-		listenAddr: "0.0.0.0",
-		router:     router,
-		stats:      NewStatsManager(),
+		port:              port,
+		listenAddr:        "0.0.0.0",
+		router:            router,
+		stats:             NewStatsManager(),
+		pluginRoutes:      make(map[string]map[string]struct{}),
+		transformerOwners: make(map[string]string),
 	}
 }
 
@@ -55,11 +72,13 @@ func NewProxyServerWithSSEHub(port int, router Router, sseHub *SSEHub) *ProxySer
 	stats.SetSSEHub(sseHub)
 
 	return &ProxyServer{
-		port:       port,
-		listenAddr: "0.0.0.0",
-		router:     router,
-		stats:      stats,
-		sseHub:     sseHub,
+		port:              port,
+		listenAddr:        "0.0.0.0",
+		router:            router,
+		stats:             stats,
+		sseHub:            sseHub,
+		pluginRoutes:      make(map[string]map[string]struct{}),
+		transformerOwners: make(map[string]string),
 	}
 }
 
@@ -101,26 +120,7 @@ func (p *ProxyServer) GetSSEHub() *SSEHub {
 func (p *ProxyServer) Start() error {
 	// 初始化文件调试日志
 	p.InitDebugFileLogger()
-
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/", p.handleProxy)
-	mux.HandleFunc("/health", p.handleHealth)
-	mux.HandleFunc("/stats", p.handleStats)
-	mux.HandleFunc("/transformers", p.handleTransformers)
-	mux.HandleFunc("/reload", p.requireAuth(p.handleReload))
-	mux.HandleFunc("/endpoint", p.requireAuth(p.handleEndpoint))
-	mux.HandleFunc("/sync/config", p.requireAuthStrict(p.handleSyncConfig))
-
-	// Register plugin routes
-	registrar := &proxyRouteRegistrar{mux: mux, p: p}
-	for _, pl := range plugin.All() {
-		pl.RegisterRoutes(registrar)
-	}
-
-	if p.sseHub != nil {
-		mux.HandleFunc("/sse", p.sseHub.HandleSSE)
-	}
+	router := p.buildGatewayRouter()
 
 	// Get listen address (default to 0.0.0.0 if not set)
 	listenAddr := p.GetListenAddr()
@@ -130,7 +130,7 @@ func (p *ProxyServer) Start() error {
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", listenAddr, p.port),
-		Handler:      mux,
+		Handler:      router,
 		ReadTimeout:  600 * time.Second,
 		WriteTimeout: 600 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -171,6 +171,49 @@ func (p *ProxyServer) Start() error {
 		return err
 	}
 	return nil
+}
+
+func (p *ProxyServer) buildGatewayRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Use(chiMiddleware.Recoverer)
+
+	p.registerCoreRoutes(r)
+	p.registerPluginForwardMiddlewares()
+	p.registerPluginRoutes(r)
+	p.registerFallbackRoute(r)
+	return r
+}
+
+func (p *ProxyServer) registerCoreRoutes(r chi.Router) {
+	r.HandleFunc("/health", p.handleHealth)
+	r.HandleFunc("/stats", p.handleStats)
+	r.HandleFunc("/transformers", p.handleTransformers)
+	r.HandleFunc("/reload", p.requireAuth(p.handleReload))
+	r.HandleFunc("/endpoint", p.requireAuth(p.handleEndpoint))
+	r.HandleFunc("/sync/config", p.requireAuthStrict(p.handleSyncConfig))
+	r.Get("/v1/models", p.requireAuth(p.handleUnifiedModelsRoute))
+}
+
+func (p *ProxyServer) registerPluginRoutes(r chi.Router) {
+	p.resetPluginRouteRegistry()
+	p.rebuildTransformerOwners()
+
+	for _, pl := range plugin.All() {
+		registrar := &proxyRouteRegistrar{
+			router:     r,
+			p:          p,
+			pluginName: pl.Name(),
+		}
+		pl.RegisterRoutes(registrar)
+	}
+
+	if p.sseHub != nil {
+		r.HandleFunc("/sse", p.sseHub.HandleSSE)
+	}
+}
+
+func (p *ProxyServer) registerFallbackRoute(r chi.Router) {
+	r.NotFound(p.requireAuth(p.handleGatewayFallback))
 }
 
 // Stop stops the proxy server gracefully
@@ -246,9 +289,13 @@ func (p *ProxyServer) getAuthKey() string {
 func (p *ProxyServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if key := p.getAuthKey(); key != "" && !isAuthorized(r, key) {
-			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
-				"error": "Invalid API key",
-			})
+			if IsAnthropicCompatiblePath(r.URL.Path) {
+				writeAnthropicError(w, http.StatusUnauthorized, "authentication_error", "Invalid API key")
+			} else {
+				writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+					"error": "Invalid API key",
+				})
+			}
 			return
 		}
 		next(w, r)
@@ -267,6 +314,268 @@ func (p *ProxyServer) requireAuthStrict(next http.HandlerFunc) http.HandlerFunc 
 		}
 		p.requireAuth(next)(w, r)
 	}
+}
+
+func (p *ProxyServer) UseForwardRequestMiddleware(name string, middleware plugin.ForwardRequestMiddleware) {
+	if middleware == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "anonymous"
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.forwardMW = append(p.forwardMW, namedForwardMiddleware{
+		name: name,
+		run:  middleware,
+	})
+}
+
+func (p *ProxyServer) resetForwardMiddlewares() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.forwardMW = nil
+}
+
+func (p *ProxyServer) registerPluginForwardMiddlewares() {
+	p.resetForwardMiddlewares()
+
+	registrar := &proxyForwardMiddlewareRegistrar{p: p}
+	for _, pl := range plugin.All() {
+		provider, ok := pl.(plugin.ForwardMiddlewareProvider)
+		if !ok {
+			continue
+		}
+		provider.RegisterForwardMiddlewares(registrar)
+	}
+}
+
+func (p *ProxyServer) applyForwardRequestMiddlewares(ctx context.Context, req *http.Request, body []byte) ([]byte, error) {
+	p.mu.RLock()
+	chain := make([]namedForwardMiddleware, len(p.forwardMW))
+	copy(chain, p.forwardMW)
+	p.mu.RUnlock()
+
+	updatedBody := body
+	for _, entry := range chain {
+		nextBody, err := entry.run(ctx, req, updatedBody)
+		if err != nil {
+			return nil, fmt.Errorf("forward middleware %s failed: %w", entry.name, err)
+		}
+		if nextBody == nil {
+			updatedBody = []byte{}
+			continue
+		}
+		updatedBody = nextBody
+	}
+	return updatedBody, nil
+}
+
+func withGatewayInterfaceOverride(r *http.Request, interfaceType InterfaceType) *http.Request {
+	if r == nil || strings.TrimSpace(string(interfaceType)) == "" {
+		return r
+	}
+	ctx := context.WithValue(r.Context(), gatewayInterfaceOverrideContextKey{}, interfaceType)
+	return r.WithContext(ctx)
+}
+
+func gatewayInterfaceOverrideFromContext(ctx context.Context) (InterfaceType, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	value := ctx.Value(gatewayInterfaceOverrideContextKey{})
+	interfaceType, ok := value.(InterfaceType)
+	if !ok || strings.TrimSpace(string(interfaceType)) == "" {
+		return "", false
+	}
+	return interfaceType, true
+}
+
+func detectGatewayInterfaceTypeByUserAgent(userAgent string) (InterfaceType, bool) {
+	ua := strings.ToLower(strings.TrimSpace(userAgent))
+	switch {
+	case strings.Contains(ua, "codex_cli_rs"):
+		return InterfaceTypeCodex, true
+	case strings.Contains(ua, "claude-cli"):
+		return InterfaceTypeClaude, true
+	default:
+		return "", false
+	}
+}
+
+func normalizeRoutePattern(path string) string {
+	path = strings.ToLower(strings.TrimSpace(path))
+	if path == "" {
+		return ""
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if len(path) > 1 {
+		path = strings.TrimRight(path, "/")
+	}
+	return path
+}
+
+func (p *ProxyServer) resetPluginRouteRegistry() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.pluginRoutes = make(map[string]map[string]struct{})
+}
+
+func (p *ProxyServer) registerPluginRoute(pluginName, pattern string) {
+	pluginName = strings.TrimSpace(pluginName)
+	pattern = normalizeRoutePattern(pattern)
+	if pluginName == "" || pattern == "" {
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	routes := p.pluginRoutes[pluginName]
+	if routes == nil {
+		routes = make(map[string]struct{})
+		p.pluginRoutes[pluginName] = routes
+	}
+	routes[pattern] = struct{}{}
+}
+
+func (p *ProxyServer) isPluginRouteMatched(pluginName, path string) bool {
+	pluginName = strings.TrimSpace(pluginName)
+	path = normalizeRoutePattern(path)
+	if pluginName == "" || path == "" {
+		return false
+	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	routes := p.pluginRoutes[pluginName]
+	if len(routes) == 0 {
+		return false
+	}
+	for pattern := range routes {
+		if pattern == path {
+			return true
+		}
+		// Support prefix wildcard route registrations like "/codex/*" and "/kiro/*".
+		if strings.HasSuffix(pattern, "/*") {
+			prefix := strings.TrimSuffix(pattern, "/*")
+			if prefix != "" && (path == prefix || strings.HasPrefix(path, prefix+"/")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *ProxyServer) rebuildTransformerOwners() {
+	owners := make(map[string]string)
+	for _, pl := range plugin.All() {
+		provider, ok := pl.(plugin.TransformerForwarderProvider)
+		if !ok {
+			continue
+		}
+		pluginName := strings.TrimSpace(pl.Name())
+		if pluginName == "" {
+			continue
+		}
+		for _, spec := range provider.TransformerForwarderSpecs() {
+			key := strings.ToLower(strings.TrimSpace(spec))
+			if key == "" {
+				continue
+			}
+			owners[key] = pluginName
+		}
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.transformerOwners = owners
+}
+
+func (p *ProxyServer) pluginNameForEndpoint(ep *Endpoint) string {
+	if ep == nil {
+		return ""
+	}
+	spec := strings.ToLower(strings.TrimSpace(ep.Transformer))
+	if spec == "" {
+		return ""
+	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return strings.TrimSpace(p.transformerOwners[spec])
+}
+
+func (p *ProxyServer) readAndRestoreRequestBody(r *http.Request) []byte {
+	if r == nil || r.Body == nil {
+		return []byte{}
+	}
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("[NoRoute] %s %s body_read_error=%v", r.Method, r.URL.Path, err)
+		data = []byte{}
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	return data
+}
+
+func (p *ProxyServer) handleGatewayFallback(w http.ResponseWriter, r *http.Request) {
+	if r == nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	path := ""
+	if r.URL != nil {
+		path = r.URL.Path
+	}
+	if IsKnownProxyForwardPath(path) {
+		p.handleProxy(w, r)
+		return
+	}
+
+	bodyBytes := p.readAndRestoreRequestBody(r)
+	interfaceType, forcedByUA := detectGatewayInterfaceTypeByUserAgent(r.Header.Get("User-Agent"))
+	if !forcedByUA {
+		log.Printf("[NoRoute] %s %s body=%s", r.Method, path, string(bodyBytes))
+		p.handleProxy(w, r)
+		return
+	}
+
+	r = withGatewayInterfaceOverride(r, interfaceType)
+
+	active := p.router.GetActiveEndpoint(interfaceType)
+	if active == nil {
+		log.Printf("[NoRoute] %s %s ua=%q interface=%s active_endpoint=none body=%s", r.Method, path, r.Header.Get("User-Agent"), interfaceType, string(bodyBytes))
+		p.handleProxy(w, r)
+		return
+	}
+
+	pluginName := p.pluginNameForEndpoint(active)
+	if pluginName != "" && !p.isPluginRouteMatched(pluginName, path) {
+		log.Printf("[NoRouteHold] %s %s ua=%q interface=%s plugin=%s endpoint=%s body=%s", r.Method, path, r.Header.Get("User-Agent"), interfaceType, pluginName, active.Name, string(bodyBytes))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+		return
+	}
+
+	p.handleProxy(w, r)
+}
+
+type proxyForwardMiddlewareRegistrar struct {
+	p *ProxyServer
+}
+
+func (r *proxyForwardMiddlewareRegistrar) UseForwardRequestMiddleware(name string, middleware plugin.ForwardRequestMiddleware) {
+	if r == nil || r.p == nil {
+		return
+	}
+	r.p.UseForwardRequestMiddleware(name, middleware)
 }
 
 // SetFallbackEnabled sets whether fallback is enabled
@@ -337,12 +646,16 @@ func (p *ProxyServer) getConfigPath() string {
 
 // proxyRouteRegistrar adapts ProxyServer into a plugin.RouteRegistrar.
 type proxyRouteRegistrar struct {
-	mux *http.ServeMux
-	p   *ProxyServer
+	router     chi.Router
+	p          *ProxyServer
+	pluginName string
 }
 
 func (r *proxyRouteRegistrar) HandleFunc(pattern string, handler http.HandlerFunc) {
-	r.mux.HandleFunc(pattern, handler)
+	if r != nil && r.p != nil {
+		r.p.registerPluginRoute(r.pluginName, pattern)
+	}
+	r.router.HandleFunc(pattern, handler)
 }
 
 func (r *proxyRouteRegistrar) RequireAuth(handler http.HandlerFunc) http.HandlerFunc {

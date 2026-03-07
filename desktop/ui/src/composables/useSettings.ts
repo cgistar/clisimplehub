@@ -147,6 +147,7 @@ export function useSettings() {
         ...settingsForm.value,
         port
       })
+      await endpointApi.reloadConfig()
 
       await endpointApi.saveCLIConfigDirs({
         claudeConfigDir: cliDirs.value.claudeConfigDir.trim(),

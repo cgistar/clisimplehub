@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"sync"
 
+	"clisimplehub/internal/executor"
 	kiroapi "clisimplehub/internal/kiro"
 	kiro_claude "clisimplehub/internal/kiro/claude"
 	kiro_chat "clisimplehub/internal/kiro/openai/chat-completions"
 	kiroShared "clisimplehub/internal/kiro/shared"
-	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
@@ -65,8 +65,8 @@ func (p *KiroPlugin) Init(cfg plugin.InitConfig) error {
 	// Inject storage accessor if available
 	if cfg.Storage != nil {
 		p.service.SetStorageAccessor(&pluginStorageAccessor{
-			store:   cfg.Storage,
-			reload:  cfg.TriggerReload,
+			store:  cfg.Storage,
+			reload: cfg.TriggerReload,
 		})
 	}
 
@@ -80,10 +80,8 @@ func (p *KiroPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	if svc == nil {
 		return
 	}
-	r.HandleFunc("/kiro/v1/messages", r.RequireAuth(svc.HandleMessages))
-	r.HandleFunc("/kiro/v1/models", r.RequireAuth(svc.HandleModels))
-	r.HandleFunc("/kiro/config", r.RequireAuth(svc.HandleKiroConfig))
-	r.HandleFunc("/kiro/getUsage", r.RequireAuth(svc.HandleKiroGetUsage))
+	r.HandleFunc("/kiro", r.RequireAuth(p.handleKiroRoute))
+	r.HandleFunc("/kiro/*", r.RequireAuth(p.handleKiroRoute))
 }
 
 func (p *KiroPlugin) Reload() error {

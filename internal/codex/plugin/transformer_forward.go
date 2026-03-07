@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,12 +79,21 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 
 	processedBody, err := processRequestBody(body, requestPath, userAgent)
 	if err != nil {
+		if errors.Is(err, errCompactStreamingNotSupported) {
+			return &executor.ForwardResult{
+				StatusCode: http.StatusBadRequest,
+				Error:      errCompactStreamingNotSupported,
+				Body:       compactStreamingErrorPayload(),
+				Headers:    http.Header{"Content-Type": []string{"application/json"}},
+			}
+		}
 		if debugLogger != nil {
 			debugLogger.Log("请求体处理失败: %v", err)
 		}
 		// Continue with original body if processing fails
 		processedBody = body
 	}
+	isStreaming = normalizeStreamingModeForCodexPath(requestPath, isStreaming)
 	if rewrittenBody, rewritten := applyResolvedModelToBody(processedBody, model); rewritten {
 		processedBody = rewrittenBody
 		if debugLogger != nil {

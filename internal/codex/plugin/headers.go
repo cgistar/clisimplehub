@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	codexShared "clisimplehub/internal/codex/shared"
+	"clisimplehub/internal/proxy"
 
 	"github.com/google/uuid"
 )
@@ -66,8 +67,7 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 
 // isCompactResponsesPath checks if the request path is for the compact endpoint
 func isCompactResponsesPath(requestPath string) bool {
-	normalizedPath := strings.TrimRight(strings.TrimSpace(requestPath), "/")
-	return strings.HasSuffix(normalizedPath, "/responses/compact")
+	return proxy.IsCodexCompactResponsesPath(requestPath)
 }
 
 // getCodexUpstreamURL constructs the upstream URL based on config and request path.
