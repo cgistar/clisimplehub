@@ -153,41 +153,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Anthropic compatibility endpoints (Claude Code relies on these).
-	if strings.EqualFold(strings.TrimSpace(r.URL.Path), "/v1/models") && strings.EqualFold(r.Method, http.MethodGet) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"object": "list",
-			"data": []any{
-				map[string]any{
-					"id":           "claude-sonnet-4-6-20260217",
-					"object":       "model",
-					"created":      1770314400,
-					"owned_by":     "anthropic",
-					"display_name": "Claude Sonnet 4.6",
-					"type":         "chat",
-					"max_tokens":   32000,
-				},
-				map[string]any{
-					"id":           "claude-opus-4-6",
-					"object":       "model",
-					"created":      1770314400,
-					"owned_by":     "anthropic",
-					"display_name": "Claude Opus 4.6",
-					"type":         "chat",
-					"max_tokens":   32000,
-				},
-				map[string]any{
-					"id":           "claude-haiku-4-5-20251001",
-					"object":       "model",
-					"created":      1727740800,
-					"owned_by":     "anthropic",
-					"display_name": "Claude Haiku 4.5",
-					"type":         "chat",
-					"max_tokens":   32000,
-				},
-			},
-		})
+	if handleUnifiedModelsRequest(w, r) {
 		return
 	}
 
