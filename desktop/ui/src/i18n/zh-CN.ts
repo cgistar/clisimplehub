@@ -7,7 +7,7 @@ export default {
     home: '主页',
     kiro: 'Kiro',
     codex: 'Codex',
-    xray: '科学上网',
+    clash: '科学上网',
     settings: '设置',
   },
   webdav: {
@@ -495,7 +495,7 @@ export default {
     kiroSignLoginPortInUse: '端口 3128 被占用，请关闭占用程序后重试',
     kiroSignSocialExchangeFailed: '无法将社交登录授权码兑换为令牌',
   },
-  xray: {
+  clash: {
     title: '科学上网',
     running: '运行中',
     stopped: '已停止',
@@ -517,13 +517,13 @@ export default {
     testing: '测速中...',
     testFailedShort: '失败',
     config: '配置',
-    configTitle: 'XRay 配置',
+    configTitle: 'Clash 配置',
     configSaveFailed: '保存配置失败：',
     socksListen: '监听地址',
     socksPort: 'SOCKS5 端口',
     logLevel: '日志级别',
     globalProxy: '全局代理',
-    globalProxyHelp: '开启后，所有端点和 Kiro 插件的出站请求将通过 XRay 代理',
+    globalProxyHelp: '开启后，所有端点和 Kiro 插件的出站请求将通过 Clash 代理',
     subscriptions: '订阅源',
     subName: '订阅名称',
     subUrl: '订阅 URL',

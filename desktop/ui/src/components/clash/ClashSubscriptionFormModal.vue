@@ -64,22 +64,22 @@ function handleSubmit(): void {
 
       <div class="space-y-4">
         <label class="block text-sm">
-          <span class="mb-1 block text-slate-700">{{ t('xray.subName') }}</span>
+          <span class="mb-1 block text-slate-700">{{ t('clash.subName') }}</span>
           <input
             v-model="form.name"
             type="text"
             class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
-            :placeholder="t('xray.subName')"
+            :placeholder="t('clash.subName')"
           />
         </label>
 
         <label class="block text-sm">
-          <span class="mb-1 block text-slate-700">{{ t('xray.subUrl') }}</span>
+          <span class="mb-1 block text-slate-700">{{ t('clash.subUrl') }}</span>
           <input
             v-model="form.url"
             type="text"
             class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
-            :placeholder="t('xray.subUrl')"
+            :placeholder="t('clash.subUrl')"
           />
         </label>
       </div>

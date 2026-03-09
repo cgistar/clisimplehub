@@ -6,9 +6,9 @@ import (
 	"sync"
 )
 
-// XRayDesktopProvider is an optional interface for plugins that provide
-// XRay proxy management for the desktop GUI.
-type XRayDesktopProvider interface {
+// ClashDesktopProvider is an optional interface for plugins that provide
+// Clash proxy management for the desktop GUI.
+type ClashDesktopProvider interface {
 	GetStatus() (json.RawMessage, error)
 	GetNodes() (json.RawMessage, error)
 	SelectNode(nodeName string) error
@@ -19,6 +19,7 @@ type XRayDesktopProvider interface {
 	RemoveSubscription(id string) error
 	TestNode(ctx context.Context, nodeName string) (json.RawMessage, error)
 	TestNodeTCP(ctx context.Context, nodeName string) (json.RawMessage, error)
+	CancelSpeedTests() error
 	Start() error
 	Stop() error
 	ToggleSubscription(id string) error
@@ -35,32 +36,32 @@ type XRayDesktopProvider interface {
 	ReplaceSubscriptionNodes(id string, nodes json.RawMessage, selectedNode string) error
 }
 
-// GetXRayDesktopProvider returns the XRayDesktopProvider from the "xray" plugin, or nil.
-func GetXRayDesktopProvider() XRayDesktopProvider {
-	p := ByName("xray")
+// GetClashDesktopProvider returns the ClashDesktopProvider from the "clash" plugin, or nil.
+func GetClashDesktopProvider() ClashDesktopProvider {
+	p := ByName("clash")
 	if p == nil {
 		return nil
 	}
-	if vp, ok := p.(XRayDesktopProvider); ok {
+	if vp, ok := p.(ClashDesktopProvider); ok {
 		return vp
 	}
 	return nil
 }
 
 var (
-	xrayDesktopProviderOnce sync.Once
-	xrayDesktopProviderInst XRayDesktopProvider
+	clashDesktopProviderOnce sync.Once
+	clashDesktopProviderInst ClashDesktopProvider
 )
 
-// GetXRayDesktopProviderCached returns the cached XRayDesktopProvider (resolved once).
-func GetXRayDesktopProviderCached() XRayDesktopProvider {
-	xrayDesktopProviderOnce.Do(func() {
-		xrayDesktopProviderInst = GetXRayDesktopProvider()
+// GetClashDesktopProviderCached returns the cached ClashDesktopProvider (resolved once).
+func GetClashDesktopProviderCached() ClashDesktopProvider {
+	clashDesktopProviderOnce.Do(func() {
+		clashDesktopProviderInst = GetClashDesktopProvider()
 	})
-	return xrayDesktopProviderInst
+	return clashDesktopProviderInst
 }
 
-// GlobalProxyProvider returns the global proxy URL when XRay global proxy is enabled and running.
+// GlobalProxyProvider returns the global proxy URL when Clash global proxy is enabled and running.
 type GlobalProxyProvider interface {
 	GetGlobalProxyURL() string
 }
@@ -73,7 +74,7 @@ var (
 // GetGlobalProxyProviderCached returns the cached GlobalProxyProvider (resolved once).
 func GetGlobalProxyProviderCached() GlobalProxyProvider {
 	globalProxyProviderOnce.Do(func() {
-		p := ByName("xray")
+		p := ByName("clash")
 		if p == nil {
 			return
 		}

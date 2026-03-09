@@ -487,7 +487,7 @@ func (t *Transformer) bindAccountLocked(account *kiroShared.KiroAccount) {
 }
 
 // resolveProxyURL returns the effective proxy URL.
-// Priority: global proxy (xray) -> per-account proxyUrl -> kiro.json proxyUrl.
+// Priority: global proxy (clash) -> per-account proxyUrl -> kiro.json proxyUrl.
 func (t *Transformer) resolveProxyURL(account *kiroShared.KiroAccount) string {
 	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
 		if gpURL := gp.GetGlobalProxyURL(); gpURL != "" {
@@ -531,7 +531,7 @@ func (t *Transformer) CurrentAccountRefreshToken() string {
 }
 
 // KiroProxyURL returns the effective Kiro proxy URL for the currently bound account.
-// Priority: global proxy (xray) -> per-account proxyUrl -> kiro.json top-level proxyUrl.
+// Priority: global proxy (clash) -> per-account proxyUrl -> kiro.json top-level proxyUrl.
 func (t *Transformer) KiroProxyURL() string {
 	// Global proxy takes highest priority, no need for kiro init.
 	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {

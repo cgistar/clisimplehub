@@ -1,4 +1,4 @@
-package xrayplugin
+package clashplugin
 
 import (
 	"bytes"
@@ -17,22 +17,22 @@ import (
 )
 
 func init() {
-	plugin.Register(&XRayPlugin{})
+	plugin.Register(&ClashPlugin{})
 }
 
-// XRayPlugin implements plugin.Plugin for XRay client proxy.
-type XRayPlugin struct {
+// ClashPlugin implements plugin.Plugin for clash client proxy.
+type ClashPlugin struct {
 	desktopFacade
-	service *XRayService
+	service *ClashService
 	mu      sync.RWMutex
 }
 
-func (p *XRayPlugin) Name() string { return "xray" }
+func (p *ClashPlugin) Name() string { return "clash" }
 
-func (p *XRayPlugin) Init(cfg plugin.InitConfig) error {
+func (p *ClashPlugin) Init(cfg plugin.InitConfig) error {
 	cfgPath := configPathFromAppConfig(cfg.ConfigPath)
 
-	svc, err := NewXRayService(cfgPath)
+	svc, err := NewClashService(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -41,29 +41,21 @@ func (p *XRayPlugin) Init(cfg plugin.InitConfig) error {
 	p.service = svc
 	p.mu.Unlock()
 
-	// Auto-start on app startup when the active (or first enabled) subscription
-	// already has a valid selected node.
-	conf := svc.config.Get()
-	idx := activeSubscriptionIndex(conf)
-	if idx < 0 {
-		idx = firstEnabledSubscriptionIndex(conf)
-	}
-	if idx >= 0 {
-		sub := conf.Subscriptions[idx]
-		selected := strings.TrimSpace(sub.SelectedNode)
-		if selected != "" && hasNodeByName(sub.Nodes, selected) {
-			if err := svc.Start(); err != nil {
-				log.Printf("[xray] auto-start failed: %v", err)
-			} else {
-				log.Printf("[xray] auto-started with subscription %s", sub.Name)
-			}
+	if runtimeYAML, ready, err := buildRuntimeYAMLForConfig(svc.config.Get()); err != nil {
+		log.Printf("[clash] auto-start skipped (invalid chain): %v", err)
+	} else if ready {
+		if err := svc.Start(); err != nil {
+			log.Printf("[clash] auto-start failed: %v", err)
+		} else {
+			log.Printf("[clash] auto-started")
 		}
+		_ = runtimeYAML
 	}
 
 	return nil
 }
 
-func (p *XRayPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
+func (p *ClashPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	p.mu.RLock()
 	svc := p.service
 	p.mu.RUnlock()
@@ -73,7 +65,7 @@ func (p *XRayPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	registerRoutes(r, svc)
 }
 
-func (p *XRayPlugin) Reload() error {
+func (p *ClashPlugin) Reload() error {
 	p.mu.RLock()
 	svc := p.service
 	p.mu.RUnlock()
@@ -83,15 +75,14 @@ func (p *XRayPlugin) Reload() error {
 	return svc.Reload()
 }
 
-func (p *XRayPlugin) getService() *XRayService {
+func (p *ClashPlugin) getService() *ClashService {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.service
 }
 
 // GetGlobalProxyURL implements plugin.GlobalProxyProvider.
-// Returns the SOCKS5 proxy URL when globalProxy is enabled and xray is running; otherwise "".
-func (p *XRayPlugin) GetGlobalProxyURL() string {
+func (p *ClashPlugin) GetGlobalProxyURL() string {
 	svc := p.getService()
 	if svc == nil {
 		return ""
@@ -112,33 +103,31 @@ func (p *XRayPlugin) GetGlobalProxyURL() string {
 	return "socks5://" + net.JoinHostPort(listen, strconv.Itoa(cfg.SocksPort))
 }
 
-// --- ConfigSyncExporter / ConfigSyncImporter / ConfigSyncDecoder ---
-
-func (p *XRayPlugin) SyncExport(_ string) (string, json.RawMessage, error) {
+func (p *ClashPlugin) SyncExport(_ string) (string, json.RawMessage, error) {
 	svc := p.getService()
 	if svc == nil {
-		return "", nil, fmt.Errorf("xray service not initialized")
+		return "", nil, fmt.Errorf("clash service not initialized")
 	}
 	data, err := json.Marshal(svc.ExportSyncData())
 	if err != nil {
 		return "", nil, err
 	}
-	return "xrayConfig", data, nil
+	return "clashConfig", data, nil
 }
 
-func (p *XRayPlugin) SyncImport(_ string, data json.RawMessage) error {
+func (p *ClashPlugin) SyncImport(_ string, data json.RawMessage) error {
 	svc := p.getService()
 	if svc == nil {
-		return fmt.Errorf("xray service not initialized")
+		return fmt.Errorf("clash service not initialized")
 	}
-	var sd XRaySyncData
+	var sd ClashSyncData
 	if err := json.Unmarshal(data, &sd); err != nil {
 		return err
 	}
 	return svc.ImportSyncData(&sd)
 }
 
-func (p *XRayPlugin) SyncDecode(encoded string) (json.RawMessage, error) {
+func (p *ClashPlugin) SyncDecode(encoded string) (json.RawMessage, error) {
 	compressed, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return nil, fmt.Errorf("base64 decode: %w", err)

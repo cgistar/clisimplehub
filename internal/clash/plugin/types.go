@@ -1,4 +1,4 @@
-package xrayplugin
+package clashplugin
 
 import "encoding/json"
 
@@ -24,13 +24,12 @@ type ProxyNode struct {
 	Path    string `json:"path,omitempty"`
 	Host    string `json:"host,omitempty"`
 
-	// TLS
+	// TLS / REALITY
 	Security      string `json:"security,omitempty"` // tls/reality/none
 	SNI           string `json:"sni,omitempty"`
 	AllowInsecure bool   `json:"allowInsecure,omitempty"`
-	// Comma-separated SHA256 cert fingerprints (Xray: pinnedPeerCertSha256 / pcs).
+
 	PinnedPeerCertSha256 string `json:"pinnedPeerCertSha256,omitempty"`
-	// Comma-separated peer names (Xray: verifyPeerCertByName / vcn).
 	VerifyPeerCertByName string `json:"verifyPeerCertByName,omitempty"`
 	Fingerprint          string `json:"fingerprint,omitempty"`
 	PublicKey            string `json:"publicKey,omitempty"`
@@ -45,25 +44,37 @@ type Subscription struct {
 	Name         string      `json:"name"`
 	URL          string      `json:"url"`
 	Enabled      bool        `json:"enabled"`
-	Active       bool        `json:"active"`       // only one subscription can be active
+	Active       bool        `json:"active"`       // one active subscription for quick selection UX
 	SelectedNode string      `json:"selectedNode"` // selected node name for this subscription
-	Nodes        []ProxyNode `json:"nodes"`        // parsed nodes from this subscription
-	Format       string      `json:"format"`       // auto/uri/clash
+	Nodes        []ProxyNode `json:"nodes"`
+	Format       string      `json:"format"` // auto/uri/clash
 	LastUpdated  string      `json:"lastUpdated"`
 }
 
-// XRayConfig represents the plugin configuration stored in xray-config.json.
-type XRayConfig struct {
-	SocksListen   string          `json:"socksListen"`
-	SocksPort     int             `json:"socksPort"`
-	LogLevel      string          `json:"logLevel"`
-	GlobalProxy   bool            `json:"globalProxy"`
-	DialerProxyID string          `json:"dialerProxyId,omitempty"`
-	Template      json.RawMessage `json:"template,omitempty"`
-	Subscriptions []Subscription  `json:"subscriptions"`
+// NodeRef references one node by (subscriptionId, nodeName).
+type NodeRef struct {
+	SubscriptionID string `json:"subscriptionId"`
+	NodeName       string `json:"nodeName"`
 }
 
-// StatusResponse represents the xray service status.
+// ChainConfig models device -> entry -> middle(optional) -> exit -> target.
+type ChainConfig struct {
+	Entry  NodeRef  `json:"entry"`
+	Middle *NodeRef `json:"middle,omitempty"`
+	Exit   NodeRef  `json:"exit"`
+}
+
+// ClashConfig represents plugin configuration stored in clash-config.json.
+type ClashConfig struct {
+	SocksListen   string         `json:"socksListen"`
+	SocksPort     int            `json:"socksPort"`
+	LogLevel      string         `json:"logLevel"`
+	GlobalProxy   bool           `json:"globalProxy"`
+	Chain         ChainConfig    `json:"chain"`
+	Subscriptions []Subscription `json:"subscriptions"`
+}
+
+// StatusResponse represents the clash service status.
 type StatusResponse struct {
 	Running      bool   `json:"running"`
 	SocksAddr    string `json:"socksAddr,omitempty"`
@@ -78,9 +89,9 @@ type SpeedTestResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// XRaySyncData holds the complete XRay state for sync/backup.
-type XRaySyncData struct {
-	Config XRayConfig  `json:"config"`
+// ClashSyncData holds the complete clash state for sync/backup.
+type ClashSyncData struct {
+	Config ClashConfig `json:"config"`
 	Nodes  []ProxyNode `json:"nodes,omitempty"` // legacy flat node payload (backward compatibility)
 }
 
@@ -88,4 +99,10 @@ type XRaySyncData struct {
 type RefreshResult struct {
 	TotalNodes int      `json:"totalNodes"`
 	Errors     []string `json:"errors,omitempty"`
+}
+
+// Legacy payload accepted during config import.
+type legacyChainCompat struct {
+	DialerProxyID string          `json:"dialerProxyId,omitempty"`
+	Template      json.RawMessage `json:"template,omitempty"`
 }

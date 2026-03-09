@@ -3,13 +3,13 @@ import { computed } from 'vue'
 import { NModal } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { Check, ClipboardCopy, Plus, RefreshCw, Save, Trash2, Zap } from 'lucide-vue-next'
-import type { XrayDraftNode } from '@/types/xray'
+import type { ClashDraftNode } from '@/types/clash'
 
 const props = withDefaults(
   defineProps<{
     show: boolean
     subscriptionName?: string
-    nodes: XrayDraftNode[]
+    nodes: ClashDraftNode[]
     selectedNodeName?: string
     dirty?: boolean
     refreshing?: boolean
@@ -51,7 +51,7 @@ const { t } = useI18n()
 
 const title = computed(() => {
   const name = props.subscriptionName || '--'
-  return `${t('xray.manageNodes')} · ${name}`
+  return `${t('clash.manageNodes')} · ${name}`
 })
 
 function close(): void {
@@ -66,7 +66,7 @@ function handleShowUpdate(value: boolean): void {
   close()
 }
 
-function latencyClass(node: XrayDraftNode): string {
+function latencyClass(node: ClashDraftNode): string {
   if (typeof node.latency !== 'number') return 'text-slate-500'
   if (node.latency < 0) return 'text-red-600'
   if (node.latency > 0 && node.latency < 200) return 'text-emerald-600'
@@ -75,9 +75,9 @@ function latencyClass(node: XrayDraftNode): string {
   return 'text-slate-500'
 }
 
-function latencyText(node: XrayDraftNode): string {
+function latencyText(node: ClashDraftNode): string {
   if (typeof node.latency !== 'number' || node.latency === 0) return '--'
-  if (node.latency < 0) return t('xray.testFailedShort')
+  if (node.latency < 0) return t('clash.testFailedShort')
   return `${node.latency}ms`
 }
 
@@ -101,7 +101,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
       <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
         <div>
           <h3 class="text-base font-semibold text-slate-900">{{ title }}</h3>
-          <p v-if="dirty" class="mt-1 text-xs text-amber-700">{{ t('xray.unsavedNode') }}</p>
+          <p v-if="dirty" class="mt-1 text-xs text-amber-700">{{ t('clash.unsavedNode') }}</p>
         </div>
         <button type="button" class="rounded px-2 py-1 text-slate-500 hover:bg-slate-100" @click="close">×</button>
       </div>
@@ -113,7 +113,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
           @click="emit('open-add')"
         >
           <Plus :size="14" />
-          {{ t('xray.addNode') }}
+          {{ t('clash.addNode') }}
         </button>
 
         <button
@@ -123,7 +123,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
           @click="emit('refresh')"
         >
           <RefreshCw :size="14" :class="{ 'animate-spin': refreshing }" />
-          {{ refreshing ? t('xray.refreshing') : t('xray.refreshSub') }}
+          {{ refreshing ? t('clash.refreshing') : t('clash.refreshSub') }}
         </button>
 
         <button
@@ -133,7 +133,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
           @click="emit('test-all')"
         >
           <Zap :size="14" />
-          {{ testingAll ? t('xray.testing') : t('xray.testAll') }}
+          {{ testingAll ? t('clash.testing') : t('clash.testAll') }}
         </button>
 
         <button
@@ -143,13 +143,13 @@ function isNodeTestingTCP(nodeName: string): boolean {
           @click="emit('test-all-tcp')"
         >
           <Zap :size="14" />
-          {{ testingAllTCP ? t('xray.testing') : t('xray.testAllTCP') }}
+          {{ testingAllTCP ? t('clash.testing') : t('clash.testAllTCP') }}
         </button>
       </div>
 
       <div class="flex-1 overflow-y-auto p-5">
         <div v-if="!nodes.length" class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-          {{ t('xray.noNodes') }}
+          {{ t('clash.noNodes') }}
         </div>
 
         <div v-else class="grid grid-cols-3 gap-3 2xl:grid-cols-4">
@@ -167,7 +167,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
                 <h4 class="truncate text-sm font-medium text-slate-900" :title="node.name">{{ node.name }}</h4>
                 <p class="text-xs text-slate-500">
                   {{ node.type }}
-                  <span v-if="node._draftAdded"> · {{ t('xray.unsavedNode') }}</span>
+                  <span v-if="node._draftAdded"> · {{ t('clash.unsavedNode') }}</span>
                 </p>
               </div>
 
@@ -176,7 +176,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
                 class="inline-flex shrink-0 items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-700"
               >
                 <Check :size="13" />
-                {{ t('xray.selected') }}
+                {{ t('clash.selected') }}
               </div>
             </div>
 
@@ -193,7 +193,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
                 <button
                   type="button"
                   class="rounded border border-slate-300 p-1 text-slate-600 hover:bg-slate-100"
-                  :title="t('xray.copyConfig')"
+                  :title="t('clash.copyConfig')"
                   @click.stop="emit('copy-node', node.name)"
                 >
                   <ClipboardCopy :size="14" />
@@ -202,7 +202,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
                 <button
                   type="button"
                   class="rounded border border-red-300 p-1 text-red-700 hover:bg-red-50"
-                  :title="t('xray.deleteNode')"
+                  :title="t('clash.deleteNode')"
                   @click.stop="emit('delete-node', node.name)"
                 >
                   <Trash2 :size="14" />
@@ -212,7 +212,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
                   type="button"
                   class="rounded border border-slate-300 p-1 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                   :disabled="node._draftAdded || isNodeTesting(node.name)"
-                  :title="node._draftAdded ? t('xray.saveBeforeTest') : t('xray.test')"
+                  :title="node._draftAdded ? t('clash.saveBeforeTest') : t('clash.test')"
                   @click.stop="emit('test-node', node.name)"
                 >
                   <Zap :size="14" :class="{ 'animate-pulse': isNodeTesting(node.name) }" />
@@ -222,7 +222,7 @@ function isNodeTestingTCP(nodeName: string): boolean {
                   type="button"
                   class="rounded border border-slate-300 p-1 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                   :disabled="node._draftAdded || isNodeTestingTCP(node.name)"
-                  :title="node._draftAdded ? t('xray.saveBeforeTest') : t('xray.testTCP')"
+                  :title="node._draftAdded ? t('clash.saveBeforeTest') : t('clash.testTCP')"
                   @click.stop="emit('test-node-tcp', node.name)"
                 >
                   <Zap :size="14" :class="{ 'animate-pulse': isNodeTestingTCP(node.name) }" />

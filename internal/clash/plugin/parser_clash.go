@@ -1,4 +1,4 @@
-package xrayplugin
+package clashplugin
 
 import (
 	"encoding/json"

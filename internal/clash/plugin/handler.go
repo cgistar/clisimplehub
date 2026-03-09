@@ -1,7 +1,6 @@
-package xrayplugin
+package clashplugin
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,23 +11,23 @@ import (
 	"clisimplehub/internal/plugin"
 )
 
-func registerRoutes(r plugin.RouteRegistrar, svc *XRayService) {
+func registerRoutes(r plugin.RouteRegistrar, svc *ClashService) {
 	h := &handler{svc: svc}
 
-	r.HandleFunc("/xray/status", r.RequireAuth(h.handleStatus))
-	r.HandleFunc("/xray/nodes", r.RequireAuth(h.handleNodes))
-	r.HandleFunc("/xray/nodes/select", r.RequireAuth(h.handleSelectNode))
-	r.HandleFunc("/xray/nodes/test", r.RequireAuth(h.handleTestNode))
-	r.HandleFunc("/xray/subscriptions/refresh", r.RequireAuth(h.handleRefreshSubscriptions))
-	r.HandleFunc("/xray/subscriptions/add", r.RequireAuth(h.handleAddSubscription))
-	r.HandleFunc("/xray/subscriptions/remove", r.RequireAuth(h.handleRemoveSubscription))
-	r.HandleFunc("/xray/start", r.RequireAuth(h.handleStart))
-	r.HandleFunc("/xray/stop", r.RequireAuth(h.handleStop))
-	r.HandleFunc("/xray/config", r.RequireAuth(h.handleConfig))
+	r.HandleFunc("/clash/status", r.RequireAuth(h.handleStatus))
+	r.HandleFunc("/clash/nodes", r.RequireAuth(h.handleNodes))
+	r.HandleFunc("/clash/nodes/select", r.RequireAuth(h.handleSelectNode))
+	r.HandleFunc("/clash/nodes/test", r.RequireAuth(h.handleTestNode))
+	r.HandleFunc("/clash/subscriptions/refresh", r.RequireAuth(h.handleRefreshSubscriptions))
+	r.HandleFunc("/clash/subscriptions/add", r.RequireAuth(h.handleAddSubscription))
+	r.HandleFunc("/clash/subscriptions/remove", r.RequireAuth(h.handleRemoveSubscription))
+	r.HandleFunc("/clash/start", r.RequireAuth(h.handleStart))
+	r.HandleFunc("/clash/stop", r.RequireAuth(h.handleStop))
+	r.HandleFunc("/clash/config", r.RequireAuth(h.handleConfig))
 }
 
 type handler struct {
-	svc *XRayService
+	svc *ClashService
 }
 
 func (h *handler) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -171,21 +170,23 @@ func (h *handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, h.svc.config.Get())
 	case http.MethodPut:
-		var cfg XRayConfig
+		var cfg ClashConfig
 		if err := readJSON(r, &cfg); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		existing := h.svc.config.Get()
-		raw := bytes.TrimSpace(cfg.Template)
-		if len(raw) == 0 || bytes.Equal(raw, jsonNull) {
-			cfg.Template = append(json.RawMessage(nil), existing.Template...)
-		}
-		if err := h.svc.config.Update(func(c *XRayConfig) {
+		before := h.svc.config.Get()
+		if err := h.svc.config.Update(func(c *ClashConfig) {
 			*c = cfg
 		}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if h.svc.shouldRestartRuntime(before, h.svc.config.Get()) {
+			if err := h.svc.restartRuntime(); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		writeJSON(w, map[string]string{"status": "ok"})
 	default:
@@ -200,11 +201,11 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func readJSON(r *http.Request, v interface{}) error {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MiB max
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
 		return fmt.Errorf("read body: %w", err)
 	}

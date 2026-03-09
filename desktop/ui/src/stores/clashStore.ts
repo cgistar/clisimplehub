@@ -1,54 +1,58 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { xrayApi } from '@/api/xray'
+import { clashApi } from '@/api/clash'
 import type {
-  XrayConfig,
-  XrayDraftNode,
-  XrayNode,
-  XrayRefreshResult,
-  XraySpeedTestResult,
-  XrayStatus
-} from '@/types/xray'
+  ClashConfig,
+  ClashDraftNode,
+  ClashNode,
+  ClashRefreshResult,
+  ClashSpeedTestResult,
+  ClashStatus
+} from '@/types/clash'
 
 const TEST_ALL_CONCURRENCY = 4
 
-function createDefaultStatus(): XrayStatus {
+function createDefaultStatus(): ClashStatus {
   return {
     running: false,
     nodeCount: 0
   }
 }
 
-function createDefaultConfig(): XrayConfig {
+function createDefaultConfig(): ClashConfig {
   return {
     socksListen: '127.0.0.1',
     socksPort: 10808,
     logLevel: 'warning',
     globalProxy: false,
+    chain: {
+      entry: { subscriptionId: '', nodeName: '' },
+      exit: { subscriptionId: '', nodeName: '' }
+    },
     dialerProxyId: '',
     subscriptions: []
   }
 }
 
-function cloneNode(node: XrayNode, draftAdded = false): XrayDraftNode {
+function cloneNode(node: ClashNode, draftAdded = false): ClashDraftNode {
   return {
     ...node,
     _draftAdded: draftAdded ? true : undefined
   }
 }
 
-function stripDraftMeta(node: XrayDraftNode): XrayNode {
+function stripDraftMeta(node: ClashDraftNode): ClashNode {
   const { _draftAdded, ...clean } = node
   return clean
 }
 
-function normalizeNodeForDiff(node: XrayDraftNode): Omit<XrayNode, 'latency'> {
+function normalizeNodeForDiff(node: ClashDraftNode): Omit<ClashNode, 'latency'> {
   const clean = stripDraftMeta(node)
   const { latency, ...stable } = clean
   return stable
 }
 
-function normalizeStatus(raw: XrayStatus): XrayStatus {
+function normalizeStatus(raw: ClashStatus): ClashStatus {
   return {
     running: !!raw?.running,
     socksAddr: raw?.socksAddr || '',
@@ -57,13 +61,19 @@ function normalizeStatus(raw: XrayStatus): XrayStatus {
   }
 }
 
-function normalizeConfig(raw: XrayConfig): XrayConfig {
+function normalizeConfig(raw: ClashConfig): ClashConfig {
+  const chain = raw?.chain || {
+    entry: { subscriptionId: '', nodeName: '' },
+    exit: { subscriptionId: '', nodeName: '' }
+  }
+  const exitSubID = String(chain?.exit?.subscriptionId || '')
   return {
     socksListen: String(raw?.socksListen || '127.0.0.1'),
     socksPort: Number(raw?.socksPort || 10808),
     logLevel: raw?.logLevel || 'warning',
     globalProxy: !!raw?.globalProxy,
-    dialerProxyId: String(raw?.dialerProxyId || ''),
+    chain,
+    dialerProxyId: exitSubID || String(raw?.dialerProxyId || ''),
     subscriptions: Array.isArray(raw?.subscriptions) ? raw.subscriptions : []
   }
 }
@@ -105,6 +115,16 @@ function toErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function isSpeedTestCanceled(result: ClashSpeedTestResult | null | undefined): boolean {
+  const msg = String(result?.error || '').toLowerCase()
+  return msg.includes('canceled') || msg.includes('cancelled')
+}
+
+function isCanceledCause(cause: unknown): boolean {
+  const msg = toErrorMessage(cause).toLowerCase()
+  return msg.includes('canceled') || msg.includes('cancelled')
+}
+
 function setFlagByKey(record: Record<string, boolean>, key: string, value: boolean): Record<string, boolean> {
   if (value) {
     return { ...record, [key]: true }
@@ -115,13 +135,13 @@ function setFlagByKey(record: Record<string, boolean>, key: string, value: boole
   return next
 }
 
-export const useXrayStore = defineStore('xray', () => {
+export const useClashStore = defineStore('clash', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  const status = ref<XrayStatus>(createDefaultStatus())
-  const config = ref<XrayConfig>(createDefaultConfig())
-  const nodes = ref<XrayNode[]>([])
+  const status = ref<ClashStatus>(createDefaultStatus())
+  const config = ref<ClashConfig>(createDefaultConfig())
+  const nodes = ref<ClashNode[]>([])
 
   const refreshingAll = ref(false)
   const refreshingSubscriptions = ref<Record<string, boolean>>({})
@@ -129,13 +149,14 @@ export const useXrayStore = defineStore('xray', () => {
   const testingNodesTCP = ref<Record<string, boolean>>({})
   const testingAllNodes = ref(false)
   const testingAllNodesTCP = ref(false)
+  const speedTestSession = ref(0)
   const savingConfig = ref(false)
 
   const nodesDialogSubscriptionId = ref('')
   const nodesDialogSelectedNodeName = ref('')
   const nodesDialogInitialSelectedNodeName = ref('')
-  const nodesDialogOriginalNodes = ref<XrayDraftNode[]>([])
-  const nodesDialogDraftNodes = ref<XrayDraftNode[]>([])
+  const nodesDialogOriginalNodes = ref<ClashDraftNode[]>([])
+  const nodesDialogDraftNodes = ref<ClashDraftNode[]>([])
   const savingNodesDraft = ref(false)
   const addingNodes = ref(false)
 
@@ -160,15 +181,31 @@ export const useXrayStore = defineStore('xray', () => {
     error.value = null
   }
 
+  async function cancelSpeedTests(): Promise<void> {
+    speedTestSession.value += 1
+    testingNodes.value = {}
+    testingNodesTCP.value = {}
+    testingAllNodes.value = false
+    testingAllNodesTCP.value = false
+
+    try {
+      await clashApi.cancelSpeedTests()
+    } catch (cause) {
+      if (!isCanceledCause(cause)) {
+        // ignore backend cancellation errors; UI state is already reset.
+      }
+    }
+  }
+
   async function loadAll(silent = false): Promise<void> {
     clearError()
     if (!silent) loading.value = true
 
     try {
       const [nextStatus, nextConfig, nextNodes] = await Promise.all([
-        xrayApi.getStatus(),
-        xrayApi.getConfig(),
-        xrayApi.getNodes()
+        clashApi.getStatus(),
+        clashApi.getConfig(),
+        clashApi.getNodes()
       ])
 
       status.value = normalizeStatus(nextStatus)
@@ -185,7 +222,7 @@ export const useXrayStore = defineStore('xray', () => {
   async function start(): Promise<void> {
     clearError()
     try {
-      await xrayApi.start()
+      await clashApi.start()
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -196,7 +233,7 @@ export const useXrayStore = defineStore('xray', () => {
   async function stop(): Promise<void> {
     clearError()
     try {
-      await xrayApi.stop()
+      await clashApi.stop()
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -207,7 +244,7 @@ export const useXrayStore = defineStore('xray', () => {
   async function selectNode(nodeName: string): Promise<void> {
     clearError()
     try {
-      await xrayApi.selectNode(nodeName)
+      await clashApi.selectNode(nodeName)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -215,11 +252,15 @@ export const useXrayStore = defineStore('xray', () => {
     }
   }
 
-  async function testNode(nodeName: string): Promise<XraySpeedTestResult> {
+  async function testNode(nodeName: string): Promise<ClashSpeedTestResult> {
+    const session = speedTestSession.value
     testingNodes.value = setFlagByKey(testingNodes.value, nodeName, true)
 
     try {
-      const result = await xrayApi.testNode(nodeName)
+      const result = await clashApi.testNode(nodeName)
+      if (session !== speedTestSession.value || isSpeedTestCanceled(result)) {
+        return result
+      }
 
       const target = nodes.value.find((node) => node.name === nodeName)
       if (target) {
@@ -232,12 +273,12 @@ export const useXrayStore = defineStore('xray', () => {
     }
   }
 
-  async function refreshSubscriptions(): Promise<XrayRefreshResult> {
+  async function refreshSubscriptions(): Promise<ClashRefreshResult> {
     clearError()
     refreshingAll.value = true
 
     try {
-      const result = await xrayApi.refreshSubscriptions()
+      const result = await clashApi.refreshSubscriptions()
       await loadAll(true)
       return result
     } catch (cause) {
@@ -252,7 +293,7 @@ export const useXrayStore = defineStore('xray', () => {
     clearError()
 
     try {
-      await xrayApi.addSubscription(name, url)
+      await clashApi.addSubscription(name, url)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -264,7 +305,7 @@ export const useXrayStore = defineStore('xray', () => {
     clearError()
 
     try {
-      await xrayApi.updateSubscription(id, name, url)
+      await clashApi.updateSubscription(id, name, url)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -276,7 +317,7 @@ export const useXrayStore = defineStore('xray', () => {
     clearError()
 
     try {
-      await xrayApi.removeSubscription(id)
+      await clashApi.removeSubscription(id)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -288,7 +329,7 @@ export const useXrayStore = defineStore('xray', () => {
     clearError()
 
     try {
-      await xrayApi.toggleSubscription(id)
+      await clashApi.toggleSubscription(id)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -300,7 +341,7 @@ export const useXrayStore = defineStore('xray', () => {
     clearError()
 
     try {
-      await xrayApi.setActiveSubscription(id)
+      await clashApi.setActiveSubscription(id)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -312,7 +353,7 @@ export const useXrayStore = defineStore('xray', () => {
     clearError()
 
     try {
-      await xrayApi.setDialerProxySubscription(id)
+      await clashApi.setDialerProxySubscription(id)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -324,7 +365,7 @@ export const useXrayStore = defineStore('xray', () => {
     clearError()
 
     try {
-      await xrayApi.activateSubscription(id)
+      await clashApi.activateSubscription(id)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -332,12 +373,12 @@ export const useXrayStore = defineStore('xray', () => {
     }
   }
 
-  async function refreshSingleSubscription(id: string): Promise<XrayRefreshResult> {
+  async function refreshSingleSubscription(id: string): Promise<ClashRefreshResult> {
     clearError()
     refreshingSubscriptions.value = setFlagByKey(refreshingSubscriptions.value, id, true)
 
     try {
-      const result = await xrayApi.refreshSingleSubscription(id)
+      const result = await clashApi.refreshSingleSubscription(id)
       await loadAll(true)
       return result
     } catch (cause) {
@@ -348,12 +389,12 @@ export const useXrayStore = defineStore('xray', () => {
     }
   }
 
-  async function saveConfig(input: XrayConfig): Promise<void> {
+  async function saveConfig(input: ClashConfig): Promise<void> {
     clearError()
     savingConfig.value = true
 
     try {
-      await xrayApi.saveConfig(input)
+      await clashApi.saveConfig(input)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -430,11 +471,11 @@ export const useXrayStore = defineStore('xray', () => {
     addingNodes.value = true
 
     try {
-      const parsedNodes = await xrayApi.parseNodesForSubscription(subscriptionId, trimmed)
+      const parsedNodes = await clashApi.parseNodesForSubscription(subscriptionId, trimmed)
       if (!Array.isArray(parsedNodes) || parsedNodes.length === 0) return 0
 
       const existing = nodesDialogDraftNodes.value.map((node) => ({ name: node.name }))
-      const addedNodes: XrayDraftNode[] = []
+      const addedNodes: ClashDraftNode[] = []
 
       for (const raw of parsedNodes) {
         const baseName = (raw.name || 'node').trim() || 'node'
@@ -464,7 +505,7 @@ export const useXrayStore = defineStore('xray', () => {
     }
   }
 
-  async function testDraftNode(nodeName: string): Promise<XraySpeedTestResult> {
+  async function testDraftNode(nodeName: string): Promise<ClashSpeedTestResult> {
     const node = nodesDialogDraftNodes.value.find((item) => item.name === nodeName)
     if (!node) {
       throw new Error('node not found')
@@ -473,10 +514,14 @@ export const useXrayStore = defineStore('xray', () => {
       throw new Error('save before test')
     }
 
+    const session = speedTestSession.value
     testingNodes.value = setFlagByKey(testingNodes.value, nodeName, true)
 
     try {
-      const result = await xrayApi.testNode(nodeName)
+      const result = await clashApi.testNode(nodeName)
+      if (session !== speedTestSession.value || isSpeedTestCanceled(result)) {
+        return result
+      }
       const targetNode = nodesDialogDraftNodes.value.find((item) => item.name === nodeName)
       if (targetNode) {
         targetNode.latency = typeof result?.latency === 'number' ? result.latency : -1
@@ -492,6 +537,7 @@ export const useXrayStore = defineStore('xray', () => {
     const targetNodes = nodesDialogDraftNodes.value.filter((node) => !node._draftAdded)
     if (targetNodes.length === 0) return
 
+    const session = speedTestSession.value
     testingAllNodes.value = true
 
     nodesDialogDraftNodes.value = nodesDialogDraftNodes.value.map((node) => ({
@@ -503,19 +549,25 @@ export const useXrayStore = defineStore('xray', () => {
     const concurrency = Math.min(TEST_ALL_CONCURRENCY, queue.length)
 
     const worker = async () => {
-      while (queue.length > 0) {
+      while (queue.length > 0 && session === speedTestSession.value) {
         const nodeName = queue.shift()
         if (!nodeName) return
 
         testingNodes.value = setFlagByKey(testingNodes.value, nodeName, true)
 
         try {
-          const result = await xrayApi.testNode(nodeName)
+          const result = await clashApi.testNode(nodeName)
+          if (session !== speedTestSession.value || isSpeedTestCanceled(result)) {
+            return
+          }
           const target = nodesDialogDraftNodes.value.find((node) => node.name === nodeName)
           if (target) {
             target.latency = typeof result?.latency === 'number' ? result.latency : -1
           }
-        } catch {
+        } catch (cause) {
+          if (session !== speedTestSession.value || isCanceledCause(cause)) {
+            return
+          }
           const target = nodesDialogDraftNodes.value.find((node) => node.name === nodeName)
           if (target) {
             target.latency = -1
@@ -534,7 +586,7 @@ export const useXrayStore = defineStore('xray', () => {
     }
   }
 
-  async function testDraftNodeTCP(nodeName: string): Promise<XraySpeedTestResult> {
+  async function testDraftNodeTCP(nodeName: string): Promise<ClashSpeedTestResult> {
     const node = nodesDialogDraftNodes.value.find((item) => item.name === nodeName)
     if (!node) {
       throw new Error('node not found')
@@ -543,10 +595,14 @@ export const useXrayStore = defineStore('xray', () => {
       throw new Error('save before test')
     }
 
+    const session = speedTestSession.value
     testingNodesTCP.value = setFlagByKey(testingNodesTCP.value, nodeName, true)
 
     try {
-      const result = await xrayApi.testNodeTCP(nodeName)
+      const result = await clashApi.testNodeTCP(nodeName)
+      if (session !== speedTestSession.value || isSpeedTestCanceled(result)) {
+        return result
+      }
       const targetNode = nodesDialogDraftNodes.value.find((item) => item.name === nodeName)
       if (targetNode) {
         targetNode.latency = typeof result?.latency === 'number' ? result.latency : -1
@@ -562,6 +618,7 @@ export const useXrayStore = defineStore('xray', () => {
     const targetNodes = nodesDialogDraftNodes.value.filter((node) => !node._draftAdded)
     if (targetNodes.length === 0) return
 
+    const session = speedTestSession.value
     testingAllNodesTCP.value = true
 
     nodesDialogDraftNodes.value = nodesDialogDraftNodes.value.map((node) => ({
@@ -573,19 +630,25 @@ export const useXrayStore = defineStore('xray', () => {
     const concurrency = Math.min(TEST_ALL_CONCURRENCY, queue.length)
 
     const worker = async () => {
-      while (queue.length > 0) {
+      while (queue.length > 0 && session === speedTestSession.value) {
         const nodeName = queue.shift()
         if (!nodeName) return
 
         testingNodesTCP.value = setFlagByKey(testingNodesTCP.value, nodeName, true)
 
         try {
-          const result = await xrayApi.testNodeTCP(nodeName)
+          const result = await clashApi.testNodeTCP(nodeName)
+          if (session !== speedTestSession.value || isSpeedTestCanceled(result)) {
+            return
+          }
           const target = nodesDialogDraftNodes.value.find((node) => node.name === nodeName)
           if (target) {
             target.latency = typeof result?.latency === 'number' ? result.latency : -1
           }
-        } catch {
+        } catch (cause) {
+          if (session !== speedTestSession.value || isCanceledCause(cause)) {
+            return
+          }
           const target = nodesDialogDraftNodes.value.find((node) => node.name === nodeName)
           if (target) {
             target.latency = -1
@@ -624,7 +687,7 @@ export const useXrayStore = defineStore('xray', () => {
     savingNodesDraft.value = true
 
     try {
-      await xrayApi.replaceSubscriptionNodes(subscriptionId, cleanNodes, selectedNode || '')
+      await clashApi.replaceSubscriptionNodes(subscriptionId, cleanNodes, selectedNode || '')
       await loadAll(true)
       resetNodesDraftState()
     } catch (cause) {
@@ -635,7 +698,7 @@ export const useXrayStore = defineStore('xray', () => {
     }
   }
 
-  async function refreshNodesDraftSubscription(): Promise<XrayRefreshResult> {
+  async function refreshNodesDraftSubscription(): Promise<ClashRefreshResult> {
     const subscriptionId = nodesDialogSubscriptionId.value
     if (!subscriptionId) {
       throw new Error('subscription not selected')
@@ -644,7 +707,7 @@ export const useXrayStore = defineStore('xray', () => {
     refreshingSubscriptions.value = setFlagByKey(refreshingSubscriptions.value, subscriptionId, true)
 
     try {
-      const result = await xrayApi.refreshSingleSubscription(subscriptionId)
+      const result = await clashApi.refreshSingleSubscription(subscriptionId)
       await loadAll(true)
 
       const subscription = subscriptions.value.find((item) => item.id === subscriptionId)
@@ -664,7 +727,7 @@ export const useXrayStore = defineStore('xray', () => {
 
     const text = node._draftAdded
       ? JSON.stringify(stripDraftMeta(node), null, 2)
-      : await xrayApi.getNodeConfig(nodeName)
+      : await clashApi.getNodeConfig(nodeName)
 
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -705,6 +768,7 @@ export const useXrayStore = defineStore('xray', () => {
     currentNodesDialogSubscription,
     hasUnsavedNodeDraftChanges,
     clearError,
+    cancelSpeedTests,
     loadAll,
     start,
     stop,

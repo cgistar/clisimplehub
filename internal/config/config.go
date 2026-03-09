@@ -342,7 +342,7 @@ type BackupData struct {
 	Endpoints       []EndpointConfig       `json:"endpoints"`
 	KiroAuthToken   map[string]interface{} `json:"kiroAuthToken,omitempty"`
 	KiroMultiConfig interface{}            `json:"kiroMultiConfig,omitempty"`
-	XRayConfig      interface{}            `json:"xrayConfig,omitempty"`
+	ClashConfig     interface{}            `json:"clashConfig,omitempty"`
 	CodexConfig     interface{}            `json:"codexConfig,omitempty"`
 }
 

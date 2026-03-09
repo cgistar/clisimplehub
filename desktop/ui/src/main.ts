@@ -31,12 +31,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Query backend for tab visibility
     try {
         const safeBool = async (fn: () => Promise<boolean>) => { try { return !!(await fn()) } catch { return false } }
-        const [kiro, codex, xray] = await Promise.all([
+        const [kiro, codex, clash] = await Promise.all([
             safeBool(() => window.go.main.App.IsKiroAvailable()),
             safeBool(() => window.go.main.App.IsCodexAccountsAvailable()),
-            safeBool(() => window.go.main.App.IsXRayAvailable()),
+            safeBool(() => window.go.main.App.IsClashAvailable()),
         ])
-        setTabVisibility({ kiro, codex, xray })
+        setTabVisibility({ kiro, codex, clash })
     } catch (e) {
         console.error('Tab visibility check failed:', e)
     }

@@ -11,7 +11,7 @@ import CodexAccountsPage from './components/codex/CodexAccountsPage.vue'
 import HomePage from './components/home/HomePage.vue'
 import KiroAccountsPage from './components/kiro/KiroAccountsPage.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
-import XrayPage from './components/xray/XrayPage.vue'
+import ClashPage from './components/clash/ClashPage.vue'
 import { useConsole } from './composables/useConsole'
 import { useMainTabs, type MainTabName } from './composables/useMainTabs'
 
@@ -19,7 +19,7 @@ const {
   activeTab,
   showKiro,
   showCodex,
-  showXray,
+  showClash,
   switchMainTab
 } = useMainTabs()
 const { initConsole } = useConsole()
@@ -55,7 +55,7 @@ onMounted(() => {
             :active-tab="activeTab"
             :show-kiro="showKiro"
             :show-codex="showCodex"
-            :show-xray="showXray"
+            :show-clash="showClash"
             @tab-change="onTabChange"
           />
 
@@ -86,13 +86,13 @@ onMounted(() => {
             <CodexAccountsPage />
           </div>
 
-          <!-- XRay (Vue) -->
+          <!-- Clash (Vue) -->
           <div
-            v-show="activeTab === 'xray'"
-            class="main-container xray-view"
-            id="xrayView"
+            v-show="activeTab === 'clash'"
+            class="main-container clash-view"
+            id="clashView"
           >
-            <XrayPage :active="activeTab === 'xray'" />
+            <ClashPage :active="activeTab === 'clash'" />
           </div>
 
           <!-- Settings (Vue) -->

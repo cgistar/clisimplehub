@@ -2701,9 +2701,9 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 		KiroMultiConfig: kiroMultiConfig,
 	}
 
-	// 7. 尝试获取 xray 同步数据
-	if raw := a.xraySyncExportRaw(); raw != nil {
-		backupData.XRayConfig = json.RawMessage(raw)
+	// 7. 尝试获取 clash 同步数据
+	if raw := a.clashSyncExportRaw(); raw != nil {
+		backupData.ClashConfig = json.RawMessage(raw)
 	}
 
 	// 8. 尝试获取 codex 同步数据（全局配置 + sqlite 账号，不包含统计数据）
@@ -2786,9 +2786,9 @@ func (a *App) RestoreBackupData(backupData *config.BackupData, mode string) erro
 		}
 	}
 
-	// 恢复 xray 配置
-	if backupData.XRayConfig != nil {
-		a.restoreXRayConfig(backupData.XRayConfig)
+	// 恢复 clash 配置
+	if backupData.ClashConfig != nil {
+		a.restoreClashConfig(backupData.ClashConfig)
 	}
 
 	// 恢复 codex 配置与账号
@@ -3499,7 +3499,7 @@ func (a *App) SyncConfigToServer(index int) error {
 		Vendors            []config.VendorConfig   `json:"vendors"`
 		Endpoints          []config.EndpointConfig `json:"endpoints"`
 		KiroConfigEncoded  string                  `json:"kiroConfigEncoded,omitempty"`
-		XRayConfigEncoded  string                  `json:"xrayConfigEncoded,omitempty"`
+		ClashConfigEncoded string                  `json:"clashConfigEncoded,omitempty"`
 		CodexConfigEncoded string                  `json:"codexConfigEncoded,omitempty"`
 	}
 	payload := syncPayload{
@@ -3516,13 +3516,13 @@ func (a *App) SyncConfigToServer(index int) error {
 		payload.KiroConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
-	// 附加 xray 配置：gzip+base64 编码
-	if raw := a.xraySyncExportRaw(); len(raw) > 0 {
+	// 附加 clash 配置：gzip+base64 编码
+	if raw := a.clashSyncExportRaw(); len(raw) > 0 {
 		var buf bytes.Buffer
 		gz := gzip.NewWriter(&buf)
 		_, _ = gz.Write(raw)
 		_ = gz.Close()
-		payload.XRayConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
+		payload.ClashConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
 	}
 
 	// 附加 codex 全局配置与账号：gzip+base64 编码（账号存储于 sqlite）

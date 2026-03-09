@@ -1,6 +1,6 @@
-export type XrayLogLevel = 'debug' | 'info' | 'warning' | 'error' | 'none'
+export type ClashLogLevel = 'debug' | 'info' | 'warning' | 'error' | 'none'
 
-export interface XrayNode {
+export interface ClashNode {
   name: string
   type: string
   server: string
@@ -26,50 +26,62 @@ export interface XrayNode {
   shortId?: string
 }
 
-export interface XrayDraftNode extends XrayNode {
+export interface ClashDraftNode extends ClashNode {
   _draftAdded?: boolean
 }
 
-export interface XraySubscription {
+export interface ClashSubscription {
   id: string
   name: string
   url: string
   enabled: boolean
   active: boolean
   selectedNode: string
-  nodes: XrayNode[]
+  nodes: ClashNode[]
   format: string
   lastUpdated: string
 }
 
-export interface XrayStatus {
+export interface ClashNodeRef {
+  subscriptionId: string
+  nodeName: string
+}
+
+export interface ClashChainConfig {
+  entry: ClashNodeRef
+  middle?: ClashNodeRef
+  exit: ClashNodeRef
+}
+
+export interface ClashStatus {
   running: boolean
   socksAddr?: string
   selectedNode?: string
   nodeCount: number
 }
 
-export interface XrayConfig {
+export interface ClashConfig {
   socksListen: string
   socksPort: number
-  logLevel: XrayLogLevel | string
+  logLevel: ClashLogLevel | string
   globalProxy: boolean
+  chain?: ClashChainConfig
   dialerProxyId?: string
-  subscriptions: XraySubscription[]
+  subscriptions: ClashSubscription[]
 }
 
-export interface XrayRefreshResult {
+export interface ClashRefreshResult {
   totalNodes: number
   errors?: string[]
 }
 
-export interface XraySpeedTestResult {
+export interface ClashSpeedTestResult {
   nodeName: string
   latency: number
   error?: string
 }
 
-export interface XraySubscriptionInput {
+export interface ClashSubscriptionInput {
   name: string
   url: string
 }

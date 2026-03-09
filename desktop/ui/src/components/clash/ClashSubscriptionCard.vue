@@ -2,11 +2,11 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CirclePower, Pencil, RefreshCw, Route, Trash2, Wifi, WifiOff } from 'lucide-vue-next'
-import type { XraySubscription } from '@/types/xray'
+import type { ClashSubscription } from '@/types/clash'
 
 const props = withDefaults(
   defineProps<{
-    subscription: XraySubscription
+    subscription: ClashSubscription
     nodeCount: number
     selectedNodeLabel?: string
     dialerProxyActive?: boolean
@@ -65,16 +65,16 @@ const cardClass = computed(() => {
           {{ subscription.name || subscription.id }}
         </h3>
         <p class="mt-1 text-xs text-slate-600">
-          {{ nodeCount }} {{ t('xray.nodes') }}
+          {{ nodeCount }} {{ t('clash.nodes') }}
         </p>
       </div>
       <span class="inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs" :class="activeBadgeClass">
-        {{ subscription.active ? t('xray.active') : t('xray.inactive') }}
+        {{ subscription.active ? t('clash.active') : t('clash.inactive') }}
       </span>
     </div>
 
     <p class="mb-3 truncate rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-700" :title="selectedNodeLabel">
-      {{ t('xray.selectedNode') }}: {{ selectedNodeLabel }}
+      {{ t('clash.selectedNode') }}: {{ selectedNodeLabel }}
     </p>
 
     <div class="flex flex-wrap gap-2">
@@ -82,12 +82,12 @@ const cardClass = computed(() => {
         v-if="!subscription.active"
         type="button"
         class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-        :title="t('xray.activate')"
+        :title="t('clash.activate')"
         :disabled="busy"
         @click="emit('set-active', subscription.id)"
       >
         <CirclePower :size="14" />
-        {{ t('xray.activate') }}
+        {{ t('clash.activate') }}
       </button>
 
       <button
@@ -99,40 +99,40 @@ const cardClass = computed(() => {
         :disabled="busy"
         @click="emit('toggle-dialer-proxy', subscription.id)"
       >
-        {{ t('xray.chainProxy') }}
+        {{ t('clash.chainProxy') }}
       </button>
 
       <button
         type="button"
         class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-        :title="t('xray.manageNodes')"
+        :title="t('clash.manageNodes')"
         :disabled="busy"
         @click="emit('manage-nodes', subscription.id)"
       >
         <Route :size="14" />
-        {{ t('xray.manageNodes') }}
+        {{ t('clash.manageNodes') }}
       </button>
 
       <button
         type="button"
         class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-        :title="t('xray.editSub')"
+        :title="t('clash.editSub')"
         :disabled="busy"
         @click="emit('edit', subscription.id)"
       >
         <Pencil :size="14" />
-        {{ t('xray.editSub') }}
+        {{ t('clash.editSub') }}
       </button>
 
       <button
         type="button"
         class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-        :title="t('xray.refreshSub')"
+        :title="t('clash.refreshSub')"
         :disabled="busy || refreshing"
         @click="emit('refresh', subscription.id)"
       >
         <RefreshCw :size="14" :class="{ 'animate-spin': refreshing }" />
-        {{ refreshing ? t('xray.refreshing') : t('xray.refreshSub') }}
+        {{ refreshing ? t('clash.refreshing') : t('clash.refreshSub') }}
       </button>
 
       <button
@@ -146,7 +146,7 @@ const cardClass = computed(() => {
       >
         <Wifi v-if="subscription.enabled" :size="14" />
         <WifiOff v-else :size="14" />
-        {{ subscription.enabled ? t('xray.disable') : t('xray.enable') }}
+        {{ subscription.enabled ? t('clash.disable') : t('clash.enable') }}
       </button>
 
       <button

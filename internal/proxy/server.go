@@ -952,8 +952,8 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		config.AppConfig
 		KiroConfigEncoded  string          `json:"kiroConfigEncoded,omitempty"`
 		KiroConfig         json.RawMessage `json:"kiroConfig,omitempty"`
-		XRayConfigEncoded  string          `json:"xrayConfigEncoded,omitempty"`
-		XRayConfig         json.RawMessage `json:"xrayConfig,omitempty"`
+		ClashConfigEncoded string          `json:"clashConfigEncoded,omitempty"`
+		ClashConfig        json.RawMessage `json:"clashConfig,omitempty"`
 		CodexConfigEncoded string          `json:"codexConfigEncoded,omitempty"`
 		CodexConfig        json.RawMessage `json:"codexConfig,omitempty"`
 	}
@@ -1020,7 +1020,7 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 
 	pluginData := map[string]pluginPayload{
 		"kiro":           {req.KiroConfigEncoded, req.KiroConfig},
-		"xray":           {req.XRayConfigEncoded, req.XRayConfig},
+		"clash":          {req.ClashConfigEncoded, req.ClashConfig},
 		"codex-accounts": {req.CodexConfigEncoded, req.CodexConfig},
 	}
 

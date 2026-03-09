@@ -2,12 +2,12 @@
 import { reactive, watch } from 'vue'
 import { NModal, NSelect } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import type { XrayConfig, XrayLogLevel } from '@/types/xray'
+import type { ClashConfig, ClashLogLevel } from '@/types/clash'
 
 const props = withDefaults(
   defineProps<{
     show: boolean
-    config: XrayConfig
+    config: ClashConfig
     saving?: boolean
   }>(),
   {
@@ -17,11 +17,11 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'update:show': [value: boolean]
-  save: [payload: XrayConfig]
+  save: [payload: ClashConfig]
 }>()
 
 const { t } = useI18n()
-const logLevelOptions: Array<{ label: string; value: XrayLogLevel }> = [
+const logLevelOptions: Array<{ label: string; value: ClashLogLevel }> = [
   { label: 'Debug', value: 'debug' },
   { label: 'Info', value: 'info' },
   { label: 'Warning', value: 'warning' },
@@ -32,14 +32,14 @@ const logLevelOptions: Array<{ label: string; value: XrayLogLevel }> = [
 const form = reactive({
   socksListen: '127.0.0.1',
   socksPort: 10808,
-  logLevel: 'warning' as XrayLogLevel,
+  logLevel: 'warning' as ClashLogLevel,
   globalProxy: false
 })
 
 function syncFromProps(): void {
   form.socksListen = props.config?.socksListen || '127.0.0.1'
   form.socksPort = Number(props.config?.socksPort || 10808)
-  form.logLevel = (props.config?.logLevel || 'warning') as XrayLogLevel
+  form.logLevel = (props.config?.logLevel || 'warning') as ClashLogLevel
   form.globalProxy = !!props.config?.globalProxy
 }
 
@@ -73,13 +73,13 @@ function handleSave(): void {
   <n-modal :show="show" :mask-closable="false" @update:show="emit('update:show', $event)">
     <div class="mx-auto mt-[10vh] w-[92vw] max-w-lg rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
       <div class="mb-4 flex items-center justify-between">
-        <h3 class="text-base font-semibold text-slate-900">{{ t('xray.configTitle') }}</h3>
+        <h3 class="text-base font-semibold text-slate-900">{{ t('clash.configTitle') }}</h3>
         <button type="button" class="rounded px-2 py-1 text-slate-500 hover:bg-slate-100" @click="handleClose">×</button>
       </div>
 
       <div class="space-y-4">
         <label class="block text-sm">
-          <span class="mb-1 block text-slate-700">{{ t('xray.socksListen') }}</span>
+          <span class="mb-1 block text-slate-700">{{ t('clash.socksListen') }}</span>
           <input
             v-model="form.socksListen"
             type="text"
@@ -89,7 +89,7 @@ function handleSave(): void {
         </label>
 
         <label class="block text-sm">
-          <span class="mb-1 block text-slate-700">{{ t('xray.socksPort') }}</span>
+          <span class="mb-1 block text-slate-700">{{ t('clash.socksPort') }}</span>
           <input
             v-model.number="form.socksPort"
             type="number"
@@ -101,7 +101,7 @@ function handleSave(): void {
         </label>
 
         <label class="block text-sm">
-          <span class="mb-1 block text-slate-700">{{ t('xray.logLevel') }}</span>
+          <span class="mb-1 block text-slate-700">{{ t('clash.logLevel') }}</span>
           <n-select
             v-model:value="form.logLevel"
             :options="logLevelOptions"
@@ -111,7 +111,7 @@ function handleSave(): void {
 
         <div class="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
           <label class="flex items-center justify-between gap-3 text-sm">
-            <span class="font-medium text-slate-800">{{ t('xray.globalProxy') }}</span>
+            <span class="font-medium text-slate-800">{{ t('clash.globalProxy') }}</span>
             <span class="relative inline-flex h-6 w-11 shrink-0 items-center">
               <input v-model="form.globalProxy" type="checkbox" class="peer sr-only" />
               <span
@@ -123,7 +123,7 @@ function handleSave(): void {
             </span>
           </label>
           <p class="text-xs leading-5 text-slate-600">
-            {{ t('xray.globalProxyHelp') }}
+            {{ t('clash.globalProxyHelp') }}
           </p>
         </div>
       </div>

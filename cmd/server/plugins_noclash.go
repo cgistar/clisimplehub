@@ -1,4 +1,4 @@
-//go:build noxray
+//go:build noclash
 
 package main
 

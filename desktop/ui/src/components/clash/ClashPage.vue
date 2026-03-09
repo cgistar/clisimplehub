@@ -4,13 +4,13 @@ import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { Globe, Plus, RefreshCcw, Settings2, Square, TriangleAlert, Play, Copy } from 'lucide-vue-next'
 import { useFeedback } from '@/composables/useFeedback'
-import { useXrayStore } from '@/stores/xrayStore'
-import type { XrayConfig, XraySubscription } from '@/types/xray'
-import XrayAddNodesModal from './XrayAddNodesModal.vue'
-import XrayConfigModal from './XrayConfigModal.vue'
-import XrayNodesModal from './XrayNodesModal.vue'
-import XraySubscriptionCard from './XraySubscriptionCard.vue'
-import XraySubscriptionFormModal from './XraySubscriptionFormModal.vue'
+import { useClashStore } from '@/stores/clashStore'
+import type { ClashConfig, ClashSubscription } from '@/types/clash'
+import ClashAddNodesModal from './ClashAddNodesModal.vue'
+import ClashConfigModal from './ClashConfigModal.vue'
+import ClashNodesModal from './ClashNodesModal.vue'
+import ClashSubscriptionCard from './ClashSubscriptionCard.vue'
+import ClashSubscriptionFormModal from './ClashSubscriptionFormModal.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -24,7 +24,7 @@ const props = withDefaults(
 const { t } = useI18n()
 const message = useMessage()
 const feedback = useFeedback()
-const xrayStore = useXrayStore()
+const clashStore = useClashStore()
 
 const showConfigModal = ref(false)
 const showSubscriptionModal = ref(false)
@@ -35,31 +35,31 @@ const editingSubscriptionId = ref('')
 const pendingSubscriptionIds = ref<Set<string>>(new Set())
 const startStopPending = ref(false)
 
-const editingSubscription = computed<XraySubscription | null>(() => {
+const editingSubscription = computed<ClashSubscription | null>(() => {
   if (!editingSubscriptionId.value) return null
-  return xrayStore.subscriptions.find((subscription) => subscription.id === editingSubscriptionId.value) || null
+  return clashStore.subscriptions.find((subscription) => subscription.id === editingSubscriptionId.value) || null
 })
 
 const subscriptionModalTitle = computed(() => {
   if (editingSubscription.value) {
-    return t('xray.editSub')
+    return t('clash.editSub')
   }
-  return t('xray.addSub')
+  return t('clash.addSub')
 })
 
 const statusText = computed(() => {
-  return xrayStore.status.running ? t('xray.running') : t('xray.stopped')
+  return clashStore.status.running ? t('clash.running') : t('clash.stopped')
 })
 
 const statusClass = computed(() => {
-  if (xrayStore.status.running) {
+  if (clashStore.status.running) {
     return 'border-emerald-300 bg-emerald-100 text-emerald-700'
   }
   return 'border-slate-300 bg-slate-100 text-slate-600'
 })
 
 const currentNodesSubscriptionName = computed(() => {
-  return xrayStore.currentNodesDialogSubscription?.name || xrayStore.currentNodesDialogSubscription?.id || ''
+  return clashStore.currentNodesDialogSubscription?.name || clashStore.currentNodesDialogSubscription?.id || ''
 })
 
 function toErrorMessage(error: unknown): string {
@@ -92,9 +92,9 @@ async function runWithSubscriptionPending(id: string, task: () => Promise<void>)
   }
 }
 
-async function loadXrayPage(): Promise<void> {
+async function loadClashPage(): Promise<void> {
   try {
-    await xrayStore.loadAll()
+    await clashStore.loadAll()
   } catch (error) {
     message.error(toErrorMessage(error))
   }
@@ -102,14 +102,14 @@ async function loadXrayPage(): Promise<void> {
 
 onMounted(async () => {
   if (!props.active) return
-  await loadXrayPage()
+  await loadClashPage()
 })
 
 watch(
   () => props.active,
   async (active) => {
     if (!active) return
-    await loadXrayPage()
+    await loadClashPage()
   }
 )
 
@@ -118,14 +118,14 @@ async function handleStartStop(): Promise<void> {
   startStopPending.value = true
 
   try {
-    if (xrayStore.status.running) {
-      await xrayStore.stop()
+    if (clashStore.status.running) {
+      await clashStore.stop()
     } else {
-      await xrayStore.start()
+      await clashStore.start()
     }
   } catch (error) {
     message.error(
-      (xrayStore.status.running ? t('xray.stopFailed') : t('xray.startFailed')) + toErrorMessage(error)
+      (clashStore.status.running ? t('clash.stopFailed') : t('clash.startFailed')) + toErrorMessage(error)
     )
   } finally {
     startStopPending.value = false
@@ -134,12 +134,12 @@ async function handleStartStop(): Promise<void> {
 
 async function handleRefreshSubscriptions(): Promise<void> {
   try {
-    const result = await xrayStore.refreshSubscriptions()
+    const result = await clashStore.refreshSubscriptions()
     if (result.errors?.length) {
       message.warning(result.errors.join('; '))
     }
   } catch (error) {
-    message.error(t('xray.refreshFailed') + toErrorMessage(error))
+    message.error(t('clash.refreshFailed') + toErrorMessage(error))
   }
 }
 
@@ -161,15 +161,15 @@ async function handleSubmitSubscription(payload: { name: string; url: string }):
     const url = payload.url || ''
 
     if (editingSubscription.value) {
-      await xrayStore.updateSubscription(editingSubscription.value.id, name, url)
+      await clashStore.updateSubscription(editingSubscription.value.id, name, url)
     } else {
-      await xrayStore.addSubscription(name, url)
+      await clashStore.addSubscription(name, url)
     }
 
     showSubscriptionModal.value = false
     editingSubscriptionId.value = ''
   } catch (error) {
-    const failedKey = editingSubscription.value ? t('xray.updateSubFailed') : t('xray.addSubFailed')
+    const failedKey = editingSubscription.value ? t('clash.updateSubFailed') : t('clash.addSubFailed')
     message.error(failedKey + toErrorMessage(error))
   } finally {
     subscriptionSaving.value = false
@@ -179,9 +179,9 @@ async function handleSubmitSubscription(payload: { name: string; url: string }):
 async function handleSetActiveSubscription(id: string): Promise<void> {
   await runWithSubscriptionPending(id, async () => {
     try {
-      await xrayStore.setActiveSubscription(id)
+      await clashStore.setActiveSubscription(id)
     } catch (error) {
-      message.error(t('xray.setActiveFailed') + toErrorMessage(error))
+      message.error(t('clash.setActiveFailed') + toErrorMessage(error))
     }
   })
 }
@@ -189,11 +189,11 @@ async function handleSetActiveSubscription(id: string): Promise<void> {
 async function handleToggleDialerProxy(id: string): Promise<void> {
   await runWithSubscriptionPending(id, async () => {
     try {
-      const current = String(xrayStore.config.dialerProxyId || '')
+      const current = String(clashStore.config.dialerProxyId || '')
       const next = current === id ? '' : id
-      await xrayStore.setDialerProxySubscription(next)
+      await clashStore.setDialerProxySubscription(next)
     } catch (error) {
-      message.error(t('xray.setDialerProxyFailed') + toErrorMessage(error))
+      message.error(t('clash.setDialerProxyFailed') + toErrorMessage(error))
     }
   })
 }
@@ -201,9 +201,9 @@ async function handleToggleDialerProxy(id: string): Promise<void> {
 async function handleToggleSubscription(id: string): Promise<void> {
   await runWithSubscriptionPending(id, async () => {
     try {
-      await xrayStore.toggleSubscription(id)
+      await clashStore.toggleSubscription(id)
     } catch (error) {
-      message.error(t('xray.toggleSubFailed') + toErrorMessage(error))
+      message.error(t('clash.toggleSubFailed') + toErrorMessage(error))
     }
   })
 }
@@ -211,181 +211,183 @@ async function handleToggleSubscription(id: string): Promise<void> {
 async function handleRefreshSingleSubscription(id: string): Promise<void> {
   await runWithSubscriptionPending(id, async () => {
     try {
-      const result = await xrayStore.refreshSingleSubscription(id)
+      const result = await clashStore.refreshSingleSubscription(id)
       if (result.errors?.length) {
         message.warning(result.errors.join('; '))
       }
     } catch (error) {
-      message.error(t('xray.refreshFailed') + toErrorMessage(error))
+      message.error(t('clash.refreshFailed') + toErrorMessage(error))
     }
   })
 }
 
 async function handleRemoveSubscription(id: string): Promise<void> {
   await runWithSubscriptionPending(id, async () => {
-    const confirmed = await feedback.confirm(t('xray.removeSubConfirm'), { danger: true })
+    const confirmed = await feedback.confirm(t('clash.removeSubConfirm'), { danger: true })
     if (!confirmed) return
 
     try {
-      await xrayStore.removeSubscription(id)
+      await clashStore.removeSubscription(id)
     } catch (error) {
-      message.error(t('xray.removeSubFailed') + toErrorMessage(error))
+      message.error(t('clash.removeSubFailed') + toErrorMessage(error))
     }
   })
 }
 
-async function handleSaveConfig(payload: XrayConfig): Promise<void> {
+async function handleSaveConfig(payload: ClashConfig): Promise<void> {
   try {
-    await xrayStore.saveConfig(payload)
+    await clashStore.saveConfig(payload)
     showConfigModal.value = false
   } catch (error) {
-    message.error(t('xray.configSaveFailed') + toErrorMessage(error))
+    message.error(t('clash.configSaveFailed') + toErrorMessage(error))
   }
 }
 
 async function handleOpenNodes(subscriptionId: string): Promise<void> {
   await runWithSubscriptionPending(subscriptionId, async () => {
     try {
-      await xrayStore.openSubscriptionNodesDraft(subscriptionId)
+      await clashStore.openSubscriptionNodesDraft(subscriptionId)
       showNodesModal.value = true
     } catch (error) {
-      message.error(t('xray.subscriptionNotFound') + ': ' + toErrorMessage(error))
+      message.error(t('clash.subscriptionNotFound') + ': ' + toErrorMessage(error))
     }
   })
 }
 
 async function handleCloseNodesModal(): Promise<void> {
-  if (xrayStore.hasUnsavedNodeDraftChanges) {
-    const confirmed = await feedback.confirm(t('xray.discardNodeChangesConfirm'), { danger: true })
+  if (clashStore.hasUnsavedNodeDraftChanges) {
+    const confirmed = await feedback.confirm(t('clash.discardNodeChangesConfirm'), { danger: true })
     if (!confirmed) return
   }
 
+  await clashStore.cancelSpeedTests()
   showNodesModal.value = false
   showAddNodesModal.value = false
-  xrayStore.resetNodesDraftState()
+  clashStore.resetNodesDraftState()
 }
 
 async function handleRefreshNodesDraftSubscription(): Promise<void> {
-  if (xrayStore.hasUnsavedNodeDraftChanges) {
-    const confirmed = await feedback.confirm(t('xray.discardNodeChangesConfirm'), { danger: true })
+  if (clashStore.hasUnsavedNodeDraftChanges) {
+    const confirmed = await feedback.confirm(t('clash.discardNodeChangesConfirm'), { danger: true })
     if (!confirmed) return
   }
 
   try {
-    const result = await xrayStore.refreshNodesDraftSubscription()
+    const result = await clashStore.refreshNodesDraftSubscription()
     if (result.errors?.length) {
       message.warning(result.errors.join('; '))
     }
   } catch (error) {
-    message.error(t('xray.refreshFailed') + toErrorMessage(error))
+    message.error(t('clash.refreshFailed') + toErrorMessage(error))
   }
 }
 
 async function handleSaveNodesDraft(): Promise<void> {
-  if (xrayStore.nodesDialogDraftNodes.length > 0 && !xrayStore.nodesDialogSelectedNodeName) {
-    message.error(t('xray.pleaseSelectNode'))
+  if (clashStore.nodesDialogDraftNodes.length > 0 && !clashStore.nodesDialogSelectedNodeName) {
+    message.error(t('clash.pleaseSelectNode'))
     return
   }
 
   try {
-    await xrayStore.saveDraftNodes()
+    await clashStore.cancelSpeedTests()
+    await clashStore.saveDraftNodes()
     showNodesModal.value = false
     showAddNodesModal.value = false
   } catch (error) {
-    message.error(t('xray.saveNodeFailed') + toErrorMessage(error))
+    message.error(t('clash.saveNodeFailed') + toErrorMessage(error))
   }
 }
 
 async function handleDeleteDraftNode(nodeName: string): Promise<void> {
-  const confirmed = await feedback.confirm(t('xray.deleteNodeConfirm'), { danger: true })
+  const confirmed = await feedback.confirm(t('clash.deleteNodeConfirm'), { danger: true })
   if (!confirmed) return
 
   try {
-    xrayStore.deleteDraftNode(nodeName)
+    clashStore.deleteDraftNode(nodeName)
   } catch (error) {
-    message.error(t('xray.deleteNodeFailed') + toErrorMessage(error))
+    message.error(t('clash.deleteNodeFailed') + toErrorMessage(error))
   }
 }
 
 async function handleTestDraftNode(nodeName: string): Promise<void> {
   try {
-    await xrayStore.testDraftNode(nodeName)
+    await clashStore.testDraftNode(nodeName)
   } catch (error) {
     if (String(error).toLowerCase().includes('save before test')) {
-      message.warning(t('xray.saveBeforeTest'))
+      message.warning(t('clash.saveBeforeTest'))
       return
     }
-    message.error(t('xray.testFailedShort') + ': ' + toErrorMessage(error))
+    message.error(t('clash.testFailedShort') + ': ' + toErrorMessage(error))
   }
 }
 
 async function handleTestAllDraftNodes(): Promise<void> {
   try {
-    await xrayStore.testAllDraftNodes()
+    await clashStore.testAllDraftNodes()
   } catch (error) {
-    message.error(t('xray.testFailedShort') + ': ' + toErrorMessage(error))
+    message.error(t('clash.testFailedShort') + ': ' + toErrorMessage(error))
   }
 }
 
 async function handleTestDraftNodeTCP(nodeName: string): Promise<void> {
   try {
-    await xrayStore.testDraftNodeTCP(nodeName)
+    await clashStore.testDraftNodeTCP(nodeName)
   } catch (error) {
     if (String(error).toLowerCase().includes('save before test')) {
-      message.warning(t('xray.saveBeforeTest'))
+      message.warning(t('clash.saveBeforeTest'))
       return
     }
-    message.error(t('xray.testFailedShort') + ': ' + toErrorMessage(error))
+    message.error(t('clash.testFailedShort') + ': ' + toErrorMessage(error))
   }
 }
 
 async function handleTestAllDraftNodesTCP(): Promise<void> {
   try {
-    await xrayStore.testAllDraftNodesTCP()
+    await clashStore.testAllDraftNodesTCP()
   } catch (error) {
-    message.error(t('xray.testFailedShort') + ': ' + toErrorMessage(error))
+    message.error(t('clash.testFailedShort') + ': ' + toErrorMessage(error))
   }
 }
 
 async function handleCopyNodeConfig(nodeName: string): Promise<void> {
   try {
-    await xrayStore.copyNodeConfig(nodeName)
+    await clashStore.copyNodeConfig(nodeName)
     message.success(t('logs.copyToClipboard'))
   } catch (error) {
-    message.error(t('xray.copyFailed') + toErrorMessage(error))
+    message.error(t('clash.copyFailed') + toErrorMessage(error))
   }
 }
 
 async function handleAddNodes(content: string): Promise<void> {
   try {
-    const count = await xrayStore.addNodesToDraft(content)
+    const count = await clashStore.addNodesToDraft(content)
     if (!count) {
-      message.warning(t('xray.noValidNodesParsed'))
+      message.warning(t('clash.noValidNodesParsed'))
       return
     }
 
     showAddNodesModal.value = false
-    message.success(`${count}${t('xray.parsedNodes')}`)
+    message.success(`${count}${t('clash.parsedNodes')}`)
   } catch (error) {
-    message.error(t('xray.addNodeFailed') + toErrorMessage(error))
+    message.error(t('clash.addNodeFailed') + toErrorMessage(error))
   }
 }
 
 async function handleCopyProxyAddress(): Promise<void> {
-  if (!xrayStore.status.socksAddr) return
+  if (!clashStore.status.socksAddr) return
 
   try {
-    const proxyUrl = `socks5://${xrayStore.status.socksAddr}`
+    const proxyUrl = `socks5://${clashStore.status.socksAddr}`
     await navigator.clipboard.writeText(proxyUrl)
     message.success(t('logs.copyToClipboard'))
   } catch (error) {
-    message.error(t('xray.copyFailed') + toErrorMessage(error))
+    message.error(t('clash.copyFailed') + toErrorMessage(error))
   }
 }
 </script>
 
 <template>
-  <div class="xray-page h-full min-h-0 w-full flex-1 p-3">
+  <div class="clash-page h-full min-h-0 w-full flex-1 p-3">
     <section class="flex h-full min-h-0 w-full flex-col rounded-xl border border-slate-200 bg-white shadow-sm">
       <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
         <div class="flex min-w-0 items-center gap-2">
@@ -393,15 +395,15 @@ async function handleCopyProxyAddress(): Promise<void> {
             <Globe :size="16" />
           </span>
           <div>
-            <h2 class="text-sm font-semibold text-slate-900">{{ t('xray.title') }}</h2>
+            <h2 class="text-sm font-semibold text-slate-900">{{ t('clash.title') }}</h2>
             <div class="mt-1 flex items-center gap-2">
               <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs" :class="statusClass">
                 {{ statusText }}
               </span>
-              <span v-if="xrayStore.status.running" class="flex items-center gap-1 truncate text-xs text-slate-600">
-                <span>SOCKS5://{{ xrayStore.status.socksAddr || '--' }}</span>
+              <span v-if="clashStore.status.running" class="flex items-center gap-1 truncate text-xs text-slate-600">
+                <span>SOCKS5://{{ clashStore.status.socksAddr || '--' }}</span>
                 <button
-                  v-if="xrayStore.status.socksAddr"
+                  v-if="clashStore.status.socksAddr"
                   type="button"
                   class="inline-flex items-center rounded p-0.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                   @click="handleCopyProxyAddress"
@@ -411,7 +413,7 @@ async function handleCopyProxyAddress(): Promise<void> {
                 </button>
               </span>
               <span class="truncate text-xs text-slate-600">
-                {{ t('xray.node') }}: {{ xrayStore.status.selectedNode || '--' }}
+                {{ t('clash.node') }}: {{ clashStore.status.selectedNode || '--' }}
               </span>
             </div>
           </div>
@@ -421,15 +423,15 @@ async function handleCopyProxyAddress(): Promise<void> {
           <button
             type="button"
             class="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
-            :class="xrayStore.status.running
+            :class="clashStore.status.running
               ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100'
               : 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'"
             :disabled="startStopPending"
             @click="handleStartStop"
           >
-            <Square v-if="xrayStore.status.running" :size="14" />
+            <Square v-if="clashStore.status.running" :size="14" />
             <Play v-else :size="14" />
-            {{ xrayStore.status.running ? t('xray.stop') : t('xray.start') }}
+            {{ clashStore.status.running ? t('clash.stop') : t('clash.start') }}
           </button>
 
           <button
@@ -438,17 +440,17 @@ async function handleCopyProxyAddress(): Promise<void> {
             @click="showConfigModal = true"
           >
             <Settings2 :size="14" />
-            {{ t('xray.config') }}
+            {{ t('clash.config') }}
           </button>
 
           <button
             type="button"
             class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="xrayStore.refreshingAll"
+            :disabled="clashStore.refreshingAll"
             @click="handleRefreshSubscriptions"
           >
-            <RefreshCcw :size="14" :class="{ 'animate-spin': xrayStore.refreshingAll }" />
-            {{ xrayStore.refreshingAll ? t('xray.refreshing') : t('xray.refreshSubs') }}
+            <RefreshCcw :size="14" :class="{ 'animate-spin': clashStore.refreshingAll }" />
+            {{ clashStore.refreshingAll ? t('clash.refreshing') : t('clash.refreshSubs') }}
           </button>
 
           <button
@@ -457,32 +459,32 @@ async function handleCopyProxyAddress(): Promise<void> {
             @click="openAddSubscription"
           >
             <Plus :size="14" />
-            {{ t('xray.addSub') }}
+            {{ t('clash.addSub') }}
           </button>
         </div>
       </header>
 
       <main class="flex-1 overflow-y-auto p-4">
-        <div v-if="xrayStore.error" class="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <div v-if="clashStore.error" class="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <span class="inline-flex items-center gap-1">
             <TriangleAlert :size="14" />
-            {{ xrayStore.error }}
+            {{ clashStore.error }}
           </span>
         </div>
 
-        <div v-if="!xrayStore.subscriptions.length" class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-          {{ t('xray.noSubscriptions') }}
+        <div v-if="!clashStore.subscriptions.length" class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+          {{ t('clash.noSubscriptions') }}
         </div>
 
         <div v-else class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
-          <XraySubscriptionCard
-            v-for="subscription in xrayStore.subscriptions"
+          <ClashSubscriptionCard
+            v-for="subscription in clashStore.subscriptions"
             :key="subscription.id"
             :subscription="subscription"
-            :node-count="xrayStore.getSubscriptionNodeCount(subscription.id)"
+            :node-count="clashStore.getSubscriptionNodeCount(subscription.id)"
             :selected-node-label="subscription.selectedNode || '--'"
-            :dialer-proxy-active="xrayStore.config.dialerProxyId === subscription.id"
-            :refreshing="!!xrayStore.refreshingSubscriptions[subscription.id]"
+            :dialer-proxy-active="clashStore.config.dialerProxyId === subscription.id"
+            :refreshing="!!clashStore.refreshingSubscriptions[subscription.id]"
             :busy="isSubscriptionPending(subscription.id)"
             @set-active="handleSetActiveSubscription"
             @toggle-dialer-proxy="handleToggleDialerProxy"
@@ -496,37 +498,37 @@ async function handleCopyProxyAddress(): Promise<void> {
       </main>
     </section>
 
-    <XrayConfigModal
+    <ClashConfigModal
       v-model:show="showConfigModal"
-      :config="xrayStore.config"
-      :saving="xrayStore.savingConfig"
+      :config="clashStore.config"
+      :saving="clashStore.savingConfig"
       @save="handleSaveConfig"
     />
 
-    <XraySubscriptionFormModal
+    <ClashSubscriptionFormModal
       v-model:show="showSubscriptionModal"
       :title="subscriptionModalTitle"
-      :submit-text="editingSubscription ? t('common.save') : t('xray.addSub')"
+      :submit-text="editingSubscription ? t('common.save') : t('clash.addSub')"
       :initial-name="editingSubscription?.name || ''"
       :initial-url="editingSubscription?.url || ''"
       :saving="subscriptionSaving"
       @submit="handleSubmitSubscription"
     />
 
-    <XrayNodesModal
+    <ClashNodesModal
       v-model:show="showNodesModal"
       :subscription-name="currentNodesSubscriptionName"
-      :nodes="xrayStore.nodesDialogDraftNodes"
-      :selected-node-name="xrayStore.nodesDialogSelectedNodeName"
-      :dirty="xrayStore.hasUnsavedNodeDraftChanges"
-      :refreshing="!!xrayStore.refreshingSubscriptions[xrayStore.nodesDialogSubscriptionId]"
-      :testing-all="xrayStore.testingAllNodes"
-      :testing-all-tcp="xrayStore.testingAllNodesTCP"
-      :saving="xrayStore.savingNodesDraft"
-      :testing-node-map="xrayStore.testingNodes"
-      :testing-node-tcp-map="xrayStore.testingNodesTCP"
+      :nodes="clashStore.nodesDialogDraftNodes"
+      :selected-node-name="clashStore.nodesDialogSelectedNodeName"
+      :dirty="clashStore.hasUnsavedNodeDraftChanges"
+      :refreshing="!!clashStore.refreshingSubscriptions[clashStore.nodesDialogSubscriptionId]"
+      :testing-all="clashStore.testingAllNodes"
+      :testing-all-tcp="clashStore.testingAllNodesTCP"
+      :saving="clashStore.savingNodesDraft"
+      :testing-node-map="clashStore.testingNodes"
+      :testing-node-tcp-map="clashStore.testingNodesTCP"
       @request-close="handleCloseNodesModal"
-      @select-node="xrayStore.setDraftSelectedNode"
+      @select-node="clashStore.setDraftSelectedNode"
       @refresh="handleRefreshNodesDraftSubscription"
       @test-all="handleTestAllDraftNodes"
       @test-all-tcp="handleTestAllDraftNodesTCP"
@@ -538,9 +540,9 @@ async function handleCopyProxyAddress(): Promise<void> {
       @test-node-tcp="handleTestDraftNodeTCP"
     />
 
-    <XrayAddNodesModal
+    <ClashAddNodesModal
       v-model:show="showAddNodesModal"
-      :saving="xrayStore.addingNodes"
+      :saving="clashStore.addingNodes"
       @submit="handleAddNodes"
     />
   </div>

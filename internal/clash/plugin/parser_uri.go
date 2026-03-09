@@ -1,4 +1,4 @@
-package xrayplugin
+package clashplugin
 
 import (
 	"encoding/base64"
@@ -411,7 +411,7 @@ func getInt(m map[string]interface{}, key string) int {
 	case string:
 		n, err := strconv.Atoi(val)
 		if err != nil {
-			log.Printf("[xray] getInt: key=%s value=%q not a number", key, val)
+			log.Printf("[clash] getInt: key=%s value=%q not a number", key, val)
 			return 0
 		}
 		return n

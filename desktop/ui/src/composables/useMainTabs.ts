@@ -1,12 +1,12 @@
 import { ref } from 'vue'
 import { useConsole } from '@/composables/useConsole'
 
-export type MainTabName = 'home' | 'kiro-accounts' | 'codex-accounts' | 'xray' | 'settings'
+export type MainTabName = 'home' | 'kiro-accounts' | 'codex-accounts' | 'clash' | 'settings'
 
 const activeTab = ref<MainTabName>('home')
 const showKiro = ref(false)
 const showCodex = ref(false)
-const showXray = ref(false)
+const showClash = ref(false)
 const { closeBottomConsole } = useConsole()
 
 function setTab(tabName: MainTabName): void {
@@ -16,15 +16,15 @@ function setTab(tabName: MainTabName): void {
 function setTabVisibility({
   kiro,
   codex,
-  xray
+  clash
 }: {
   kiro?: boolean
   codex?: boolean
-  xray?: boolean
+  clash?: boolean
 }): void {
   if (kiro !== undefined) showKiro.value = !!kiro
   if (codex !== undefined) showCodex.value = !!codex
-  if (xray !== undefined) showXray.value = !!xray
+  if (clash !== undefined) showClash.value = !!clash
 }
 
 async function switchMainTab(tabName: MainTabName): Promise<void> {
@@ -44,7 +44,7 @@ export function useMainTabs() {
     activeTab,
     showKiro,
     showCodex,
-    showXray,
+    showClash,
     setTab,
     setTabVisibility,
     switchMainTab
