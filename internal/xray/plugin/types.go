@@ -35,6 +35,8 @@ type ProxyNode struct {
 	Fingerprint          string `json:"fingerprint,omitempty"`
 	PublicKey            string `json:"publicKey,omitempty"`
 	ShortId              string `json:"shortId,omitempty"`
+	ServerName           string `json:"serverName,omitempty"`
+	SpiderX              string `json:"spiderX,omitempty"`
 }
 
 // Subscription represents a subscription source configuration.

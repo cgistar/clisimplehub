@@ -158,6 +158,8 @@ func parseClashVless(p map[string]interface{}, name string) (*ProxyNode, error) 
 		node.Security = "reality"
 		node.PublicKey = clashStr(realityOpts, "public-key")
 		node.ShortId = clashStr(realityOpts, "short-id")
+		node.ServerName = clashFirstNonEmptyStr(realityOpts, "server-name", "serverName")
+		node.SpiderX = clashFirstNonEmptyStr(realityOpts, "spider-x", "spiderX", "spx")
 	}
 
 	if wsOpts, ok := p["ws-opts"].(map[string]interface{}); ok {

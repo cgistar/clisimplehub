@@ -580,8 +580,9 @@ func buildStreamSettings(node *ProxyNode) map[string]interface{} {
 	case "tls":
 		ss["security"] = "tls"
 		tlsSettings := map[string]interface{}{}
-		if node.SNI != "" {
-			tlsSettings["serverName"] = node.SNI
+		serverName := firstNonEmptyValue(node.ServerName, node.SNI)
+		if serverName != "" {
+			tlsSettings["serverName"] = serverName
 		}
 		pcs := strings.TrimSpace(node.PinnedPeerCertSha256)
 		vcn := strings.TrimSpace(node.VerifyPeerCertByName)
@@ -612,8 +613,12 @@ func buildStreamSettings(node *ProxyNode) map[string]interface{} {
 		if node.Fingerprint != "" {
 			realitySettings["fingerprint"] = node.Fingerprint
 		}
-		if node.SNI != "" {
-			realitySettings["serverName"] = node.SNI
+		serverName := firstNonEmptyValue(node.ServerName, node.SNI)
+		if serverName != "" {
+			realitySettings["serverName"] = serverName
+		}
+		if node.SpiderX != "" {
+			realitySettings["spiderX"] = node.SpiderX
 		}
 		ss["realitySettings"] = realitySettings
 		hasContent = true

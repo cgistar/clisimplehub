@@ -181,6 +181,8 @@ func parseVlessURI(uri string) (*ProxyNode, error) {
 	node.Fingerprint = q.Get("fp")
 	node.PublicKey = q.Get("pbk")
 	node.ShortId = q.Get("sid")
+	node.ServerName = firstNonEmptyQueryValue(q, "servername", "serverName")
+	node.SpiderX = firstNonEmptyQueryValue(q, "spx", "spiderx", "spiderX")
 	node.PinnedPeerCertSha256 = firstNonEmptyQueryValue(q, "pcs", "pinnedPeerCertSha256")
 	node.VerifyPeerCertByName = firstNonEmptyQueryValue(q, "vcn", "verifyPeerCertByName")
 	if queryBool(q, "allowInsecure") {
