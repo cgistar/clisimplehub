@@ -45,6 +45,13 @@ func BuildRuntimeJSON(node *ProxyNode, cfg *XRayConfig) ([]byte, error) {
 	logCfg["loglevel"] = logLevel
 
 	setProxyOutbound(runtime, outbound)
+	dialerApplied, err := applyDialerProxy(runtime, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("apply dialer proxy: %w", err)
+	}
+	if dialerApplied {
+		setDNSRoutingOutbound(runtime, "forward")
+	}
 	setRuntimeSocksInbound(runtime, cfg)
 
 	return json.MarshalIndent(runtime, "", "  ")
@@ -137,6 +144,10 @@ func ensureObject(root map[string]interface{}, key string) map[string]interface{
 }
 
 func setProxyOutbound(runtime map[string]interface{}, outbound map[string]interface{}) {
+	setTaggedOutbound(runtime, "proxy", outbound)
+}
+
+func setTaggedOutbound(runtime map[string]interface{}, tag string, outbound map[string]interface{}) {
 	outbounds, ok := runtime["outbounds"].([]interface{})
 	if !ok || len(outbounds) == 0 {
 		runtime["outbounds"] = []interface{}{outbound}
@@ -147,14 +158,194 @@ func setProxyOutbound(runtime map[string]interface{}, outbound map[string]interf
 		if !ok {
 			continue
 		}
-		tag, _ := ob["tag"].(string)
-		if strings.TrimSpace(tag) == "proxy" {
+		outboundTag, _ := ob["tag"].(string)
+		if strings.TrimSpace(outboundTag) == tag {
 			outbounds[i] = outbound
 			runtime["outbounds"] = outbounds
 			return
 		}
 	}
 	runtime["outbounds"] = append([]interface{}{outbound}, outbounds...)
+}
+
+// setNonPrimaryTaggedOutbound updates or appends outbound by tag, and ensures
+// the outbound is not placed at index 0 (first outbound is xray default route).
+func setNonPrimaryTaggedOutbound(runtime map[string]interface{}, tag string, outbound map[string]interface{}) {
+	outbounds, ok := runtime["outbounds"].([]interface{})
+	if !ok || len(outbounds) == 0 {
+		runtime["outbounds"] = []interface{}{outbound}
+		return
+	}
+
+	targetIndex := -1
+	for i := range outbounds {
+		ob, ok := outbounds[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		outboundTag, _ := ob["tag"].(string)
+		if strings.TrimSpace(outboundTag) == tag {
+			targetIndex = i
+			break
+		}
+	}
+
+	if targetIndex >= 0 {
+		outbounds[targetIndex] = outbound
+	} else {
+		outbounds = append(outbounds, outbound)
+		targetIndex = len(outbounds) - 1
+	}
+
+	if targetIndex == 0 && len(outbounds) > 1 {
+		first := outbounds[0]
+		outbounds = append(outbounds[1:], first)
+	}
+
+	runtime["outbounds"] = outbounds
+}
+
+func findTaggedOutbound(runtime map[string]interface{}, tag string) map[string]interface{} {
+	outbounds, ok := runtime["outbounds"].([]interface{})
+	if !ok || len(outbounds) == 0 {
+		return nil
+	}
+
+	for i := range outbounds {
+		ob, ok := outbounds[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		outboundTag, _ := ob["tag"].(string)
+		if strings.TrimSpace(outboundTag) == tag {
+			return ob
+		}
+	}
+
+	return nil
+}
+
+func applyDialerProxy(runtime map[string]interface{}, cfg *XRayConfig) (bool, error) {
+	if cfg == nil {
+		return false, nil
+	}
+
+	dialerProxyID := strings.TrimSpace(cfg.DialerProxyID)
+	if dialerProxyID == "" {
+		return false, nil
+	}
+
+	activeIdx := activeSubscriptionIndex(cfg)
+	if activeIdx < 0 {
+		return false, nil
+	}
+	activeSub := cfg.Subscriptions[activeIdx]
+	if dialerProxyID == activeSub.ID {
+		return false, nil
+	}
+
+	var dialerSub *Subscription
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].ID == dialerProxyID {
+			dialerSub = &cfg.Subscriptions[i]
+			break
+		}
+	}
+	if dialerSub == nil || !dialerSub.Enabled {
+		return false, nil
+	}
+
+	selected := strings.TrimSpace(dialerSub.SelectedNode)
+	if selected == "" || !hasNodeByName(dialerSub.Nodes, selected) {
+		return false, nil
+	}
+
+	var forwardNode *ProxyNode
+	for i := range dialerSub.Nodes {
+		if dialerSub.Nodes[i].Name == selected {
+			nodeCopy := dialerSub.Nodes[i]
+			forwardNode = &nodeCopy
+			break
+		}
+	}
+	if forwardNode == nil {
+		return false, nil
+	}
+
+	proxyOutbound := findTaggedOutbound(runtime, "proxy")
+	if proxyOutbound == nil {
+		return false, fmt.Errorf("proxy outbound not found")
+	}
+	streamSettings := ensureObject(proxyOutbound, "streamSettings")
+	sockopt := ensureObject(streamSettings, "sockopt")
+	sockopt["dialerProxy"] = "forward"
+
+	forwardOutbound, err := buildOutbound(forwardNode)
+	if err != nil {
+		return false, fmt.Errorf("build forward outbound: %w", err)
+	}
+	forwardOutbound["tag"] = "forward"
+	setNonPrimaryTaggedOutbound(runtime, "forward", forwardOutbound)
+
+	return true, nil
+}
+
+func setDNSRoutingOutbound(runtime map[string]interface{}, outboundTag string) {
+	routing := ensureObject(runtime, "routing")
+	rules, ok := routing["rules"].([]interface{})
+	if !ok || len(rules) == 0 {
+		routing["rules"] = []interface{}{
+			map[string]interface{}{
+				"type":        "field",
+				"protocol":    []string{"dns"},
+				"outboundTag": outboundTag,
+			},
+		}
+		return
+	}
+
+	for i := range rules {
+		rule, ok := rules[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if !containsDNSProtocol(rule["protocol"]) {
+			continue
+		}
+		rule["outboundTag"] = outboundTag
+		routing["rules"] = rules
+		return
+	}
+
+	rules = append([]interface{}{
+		map[string]interface{}{
+			"type":        "field",
+			"protocol":    []string{"dns"},
+			"outboundTag": outboundTag,
+		},
+	}, rules...)
+	routing["rules"] = rules
+}
+
+func containsDNSProtocol(protocol interface{}) bool {
+	switch v := protocol.(type) {
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "dns")
+	case []string:
+		for i := range v {
+			if strings.EqualFold(strings.TrimSpace(v[i]), "dns") {
+				return true
+			}
+		}
+	case []interface{}:
+		for i := range v {
+			s, ok := v[i].(string)
+			if ok && strings.EqualFold(strings.TrimSpace(s), "dns") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func setRuntimeSocksInbound(runtime map[string]interface{}, cfg *XRayConfig) {

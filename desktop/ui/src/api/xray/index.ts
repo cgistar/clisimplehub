@@ -44,6 +44,10 @@ export const xrayApi = {
     return App.TestXRayNode(nodeName)
   },
 
+  async testNodeTCP(nodeName: string): Promise<XraySpeedTestResult> {
+    return App.TestXRayNodeTCP(nodeName)
+  },
+
   async refreshSubscriptions(): Promise<XrayRefreshResult> {
     return App.RefreshXRaySubscriptions()
   },
@@ -70,6 +74,10 @@ export const xrayApi = {
 
   async setActiveSubscription(id: string): Promise<void> {
     await App.SetActiveXRaySubscription(id)
+  },
+
+  async setDialerProxySubscription(id: string): Promise<void> {
+    await App.SetXRayDialerProxySubscription(id)
   },
 
   async updateSubscriptionSelectedNode(id: string, nodeName: string): Promise<void> {

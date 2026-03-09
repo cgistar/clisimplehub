@@ -308,6 +308,8 @@ func (s *XRayService) RemoveSubscription(id string) error {
 		return fmt.Errorf("subscription id is required")
 	}
 
+	beforeCfg := s.config.Get()
+
 	removed := false
 	removedActive := false
 	if err := s.config.Update(func(cfg *XRayConfig) {
@@ -319,12 +321,20 @@ func (s *XRayService) RemoveSubscription(id string) error {
 				break
 			}
 		}
+		if strings.TrimSpace(cfg.DialerProxyID) == id {
+			cfg.DialerProxyID = ""
+		}
 	}); err != nil {
 		return err
 	}
 	if !removed {
 		return fmt.Errorf("subscription not found: %s", id)
 	}
+
+	afterCfg := s.config.Get()
+	runtimeChanged := runtimeChangedBetweenConfigs(beforeCfg, afterCfg)
+
+	wasRunning := false
 
 	// Clean up nodes and stop proxy if needed (atomic operation)
 	s.mu.Lock()
@@ -335,6 +345,7 @@ func (s *XRayService) RemoveSubscription(id string) error {
 		}
 	}
 	s.nodes = newNodes
+	wasRunning = s.running
 
 	// Stop proxy if we removed the active subscription
 	if removedActive && s.running {
@@ -343,6 +354,15 @@ func (s *XRayService) RemoveSubscription(id string) error {
 		}
 	}
 	s.mu.Unlock()
+
+	if !removedActive && wasRunning && runtimeChanged {
+		if err := s.Stop(); err != nil {
+			log.Printf("[xray] remove subscription stop error: %v", err)
+		}
+		if err := s.Start(); err != nil {
+			return fmt.Errorf("restart with updated dialer proxy: %w", err)
+		}
+	}
 
 	log.Printf("[xray] removed subscription: %s (active: %v)", id, removedActive)
 	return nil
@@ -404,6 +424,61 @@ func activeSelectedNode(cfg *XRayConfig) string {
 		return ""
 	}
 	return strings.TrimSpace(cfg.Subscriptions[activeIdx].SelectedNode)
+}
+
+func buildRuntimeJSONForActiveSubscription(cfg *XRayConfig) ([]byte, bool, error) {
+	if cfg == nil {
+		return nil, false, nil
+	}
+
+	activeIdx := activeSubscriptionIndex(cfg)
+	if activeIdx < 0 {
+		return nil, false, nil
+	}
+	activeSub := cfg.Subscriptions[activeIdx]
+
+	selected := strings.TrimSpace(activeSub.SelectedNode)
+	if selected == "" || !hasNodeByName(activeSub.Nodes, selected) {
+		return nil, false, nil
+	}
+
+	for i := range activeSub.Nodes {
+		if activeSub.Nodes[i].Name != selected {
+			continue
+		}
+		node := activeSub.Nodes[i]
+		runtimeJSON, err := BuildRuntimeJSON(&node, cfg)
+		if err != nil {
+			return nil, false, err
+		}
+		return runtimeJSON, true, nil
+	}
+
+	return nil, false, nil
+}
+
+func runtimeChangedBetweenConfigs(beforeCfg, afterCfg *XRayConfig) bool {
+	beforeRuntime, beforeReady, beforeErr := buildRuntimeJSONForActiveSubscription(beforeCfg)
+	afterRuntime, afterReady, afterErr := buildRuntimeJSONForActiveSubscription(afterCfg)
+
+	if beforeErr != nil || afterErr != nil {
+		if beforeErr != nil {
+			log.Printf("[xray] evaluate runtime(before) failed: %v", beforeErr)
+		}
+		if afterErr != nil {
+			log.Printf("[xray] evaluate runtime(after) failed: %v", afterErr)
+		}
+		return true
+	}
+
+	if beforeReady != afterReady {
+		return true
+	}
+	if !beforeReady {
+		return false
+	}
+
+	return !bytes.Equal(beforeRuntime, afterRuntime)
 }
 
 // setSubscriptionSelectedNode updates the selected node on a specific subscription.
@@ -638,6 +713,20 @@ func normalizeImportedConfig(cfg *XRayConfig, legacyNodes []ProxyNode) {
 			sub.SelectedNode = ""
 		}
 	}
+
+	cfg.DialerProxyID = strings.TrimSpace(cfg.DialerProxyID)
+	if cfg.DialerProxyID != "" {
+		found := false
+		for i := range cfg.Subscriptions {
+			if cfg.Subscriptions[i].ID == cfg.DialerProxyID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			cfg.DialerProxyID = ""
+		}
+	}
 }
 
 // UpdateNodeLatency updates a node's latency value.
@@ -658,14 +747,40 @@ func (s *XRayService) ToggleSubscription(id string) error {
 	if id == "" {
 		return fmt.Errorf("subscription id is required")
 	}
-	return s.config.Update(func(cfg *XRayConfig) {
+
+	beforeCfg := s.config.Get()
+	updated := false
+	if err := s.config.Update(func(cfg *XRayConfig) {
 		for i := range cfg.Subscriptions {
 			if cfg.Subscriptions[i].ID == id {
 				cfg.Subscriptions[i].Enabled = !cfg.Subscriptions[i].Enabled
+				updated = true
 				break
 			}
 		}
-	})
+	}); err != nil {
+		return err
+	}
+	if !updated {
+		return fmt.Errorf("subscription not found: %s", id)
+	}
+
+	afterCfg := s.config.Get()
+	runtimeChanged := runtimeChangedBetweenConfigs(beforeCfg, afterCfg)
+
+	s.mu.RLock()
+	wasRunning := s.running
+	s.mu.RUnlock()
+	if wasRunning && runtimeChanged {
+		if err := s.Stop(); err != nil {
+			log.Printf("[xray] toggle subscription stop error: %v", err)
+		}
+		if err := s.Start(); err != nil {
+			return fmt.Errorf("restart with updated dialer proxy: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // SetActiveSubscription sets a subscription as active (only one can be active).
@@ -718,6 +833,53 @@ func (s *XRayService) SetActiveSubscription(id string) error {
 	return nil
 }
 
+// SetDialerProxySubscription sets the subscription used as dialer proxy.
+// Pass empty id to clear.
+func (s *XRayService) SetDialerProxySubscription(id string) error {
+	id = strings.TrimSpace(id)
+
+	beforeCfg := s.config.Get()
+	if id != "" {
+		found := false
+		for i := range beforeCfg.Subscriptions {
+			if beforeCfg.Subscriptions[i].ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("subscription not found: %s", id)
+		}
+	}
+
+	if strings.TrimSpace(beforeCfg.DialerProxyID) == id {
+		return nil
+	}
+
+	if err := s.config.Update(func(cfg *XRayConfig) {
+		cfg.DialerProxyID = id
+	}); err != nil {
+		return err
+	}
+
+	afterCfg := s.config.Get()
+	runtimeChanged := runtimeChangedBetweenConfigs(beforeCfg, afterCfg)
+
+	s.mu.RLock()
+	wasRunning := s.running
+	s.mu.RUnlock()
+	if wasRunning && runtimeChanged {
+		if err := s.Stop(); err != nil {
+			log.Printf("[xray] set dialer proxy stop error: %v", err)
+		}
+		if err := s.Start(); err != nil {
+			return fmt.Errorf("restart with updated dialer proxy: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // UpdateSubscriptionSelectedNode updates the selected node for a subscription.
 func (s *XRayService) UpdateSubscriptionSelectedNode(id, nodeName string) error {
 	id = strings.TrimSpace(id)
@@ -742,9 +904,11 @@ func (s *XRayService) UpdateSubscriptionSelectedNode(id, nodeName string) error 
 	}
 
 	updated := false
+	selectedChanged := false
 	if err := s.config.Update(func(cfg *XRayConfig) {
 		for i := range cfg.Subscriptions {
 			if cfg.Subscriptions[i].ID == id {
+				selectedChanged = strings.TrimSpace(cfg.Subscriptions[i].SelectedNode) != nodeName
 				cfg.Subscriptions[i].SelectedNode = nodeName
 				updated = true
 				break
@@ -756,6 +920,25 @@ func (s *XRayService) UpdateSubscriptionSelectedNode(id, nodeName string) error 
 	if !updated {
 		return fmt.Errorf("subscription not found: %s", id)
 	}
+	if !selectedChanged {
+		return nil
+	}
+
+	afterCfg := s.config.Get()
+	runtimeChanged := runtimeChangedBetweenConfigs(cfg, afterCfg)
+
+	s.mu.RLock()
+	wasRunning := s.running
+	s.mu.RUnlock()
+	if wasRunning && runtimeChanged {
+		if err := s.Stop(); err != nil {
+			log.Printf("[xray] update selected node stop error: %v", err)
+		}
+		if err := s.Start(); err != nil {
+			return fmt.Errorf("restart with updated selected node: %w", err)
+		}
+	}
+
 	return nil
 }
 

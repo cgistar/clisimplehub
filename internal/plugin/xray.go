@@ -18,12 +18,14 @@ type XRayDesktopProvider interface {
 	AddSubscription(name, url string) error
 	RemoveSubscription(id string) error
 	TestNode(ctx context.Context, nodeName string) (json.RawMessage, error)
+	TestNodeTCP(ctx context.Context, nodeName string) (json.RawMessage, error)
 	Start() error
 	Stop() error
 	ToggleSubscription(id string) error
 	RefreshSingleSubscription(ctx context.Context, id string) (json.RawMessage, error)
 	ActivateSubscription(id string) error
 	SetActiveSubscription(id string) error
+	SetDialerProxySubscription(id string) error
 	UpdateSubscriptionSelectedNode(id, nodeName string) error
 	UpdateSubscription(id, name, url string) error
 	GetNodeConfig(nodeName string) (string, error)

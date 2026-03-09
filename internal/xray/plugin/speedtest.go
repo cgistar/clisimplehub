@@ -7,6 +7,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -14,6 +16,8 @@ import (
 
 const (
 	speedTestTimeout     = 10 * time.Second // 增加超时时间到10秒
+	tcpDialTimeout       = 5 * time.Second
+	tcpSpeedTestAttempts = 3
 	instanceStartupDelay = 500 * time.Millisecond
 	maxRetries           = 2 // 最大重试次数
 )
@@ -21,8 +25,6 @@ const (
 // 多个测试目标，提高成功率
 var testTargets = []string{
 	"http://www.gstatic.com/generate_204",
-	"http://cp.cloudflare.com/generate_204",
-	"http://connectivitycheck.platform.hicloud.com/generate_204",
 }
 
 // testSingleNode tests a single node's latency using a temporary xray instance.
@@ -156,4 +158,59 @@ func reserveLocalPort() (int, error) {
 		return 0, fmt.Errorf("unexpected addr type: %T", l.Addr())
 	}
 	return addr.Port, nil
+}
+
+// testSingleNodeTCP tests a single node's TCP connect latency directly.
+func testSingleNodeTCP(ctx context.Context, svc *XRayService, nodeName string) *SpeedTestResult {
+	result := &SpeedTestResult{NodeName: nodeName, Latency: -1}
+
+	node := svc.findNodeSafe(nodeName)
+	if node == nil {
+		result.Error = "node not found"
+		return result
+	}
+
+	server := strings.TrimSpace(node.Server)
+	if server == "" || node.Port <= 0 {
+		result.Error = "invalid node server or port"
+		return result
+	}
+
+	addr := net.JoinHostPort(server, strconv.Itoa(node.Port))
+	dialer := &net.Dialer{}
+
+	bestLatency := -1
+	var lastErr error
+
+	for attempt := 0; attempt < tcpSpeedTestAttempts; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, tcpDialTimeout)
+		start := time.Now()
+		conn, err := dialer.DialContext(attemptCtx, "tcp", addr)
+		cancel()
+		if err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+
+		latency := int(time.Since(start).Milliseconds())
+		_ = conn.Close()
+
+		if bestLatency < 0 || latency < bestLatency {
+			bestLatency = latency
+		}
+	}
+
+	if bestLatency < 0 {
+		result.Error = fmt.Sprintf("tcp connect: %v", lastErr)
+		return result
+	}
+
+	result.Latency = bestLatency
+	result.Error = ""
+	svc.UpdateNodeLatency(nodeName, bestLatency)
+	log.Printf("[xray] tcp speed test: %s = %dms", nodeName, bestLatency)
+	return result
 }

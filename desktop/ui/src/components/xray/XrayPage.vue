@@ -186,6 +186,18 @@ async function handleSetActiveSubscription(id: string): Promise<void> {
   })
 }
 
+async function handleToggleDialerProxy(id: string): Promise<void> {
+  await runWithSubscriptionPending(id, async () => {
+    try {
+      const current = String(xrayStore.config.dialerProxyId || '')
+      const next = current === id ? '' : id
+      await xrayStore.setDialerProxySubscription(next)
+    } catch (error) {
+      message.error(t('xray.setDialerProxyFailed') + toErrorMessage(error))
+    }
+  })
+}
+
 async function handleToggleSubscription(id: string): Promise<void> {
   await runWithSubscriptionPending(id, async () => {
     try {
@@ -310,6 +322,26 @@ async function handleTestDraftNode(nodeName: string): Promise<void> {
 async function handleTestAllDraftNodes(): Promise<void> {
   try {
     await xrayStore.testAllDraftNodes()
+  } catch (error) {
+    message.error(t('xray.testFailedShort') + ': ' + toErrorMessage(error))
+  }
+}
+
+async function handleTestDraftNodeTCP(nodeName: string): Promise<void> {
+  try {
+    await xrayStore.testDraftNodeTCP(nodeName)
+  } catch (error) {
+    if (String(error).toLowerCase().includes('save before test')) {
+      message.warning(t('xray.saveBeforeTest'))
+      return
+    }
+    message.error(t('xray.testFailedShort') + ': ' + toErrorMessage(error))
+  }
+}
+
+async function handleTestAllDraftNodesTCP(): Promise<void> {
+  try {
+    await xrayStore.testAllDraftNodesTCP()
   } catch (error) {
     message.error(t('xray.testFailedShort') + ': ' + toErrorMessage(error))
   }
@@ -442,16 +474,18 @@ async function handleCopyProxyAddress(): Promise<void> {
           {{ t('xray.noSubscriptions') }}
         </div>
 
-        <div v-else class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div v-else class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
           <XraySubscriptionCard
             v-for="subscription in xrayStore.subscriptions"
             :key="subscription.id"
             :subscription="subscription"
             :node-count="xrayStore.getSubscriptionNodeCount(subscription.id)"
             :selected-node-label="subscription.selectedNode || '--'"
+            :dialer-proxy-active="xrayStore.config.dialerProxyId === subscription.id"
             :refreshing="!!xrayStore.refreshingSubscriptions[subscription.id]"
             :busy="isSubscriptionPending(subscription.id)"
             @set-active="handleSetActiveSubscription"
+            @toggle-dialer-proxy="handleToggleDialerProxy"
             @toggle="handleToggleSubscription"
             @refresh="handleRefreshSingleSubscription"
             @edit="openEditSubscription"
@@ -487,17 +521,21 @@ async function handleCopyProxyAddress(): Promise<void> {
       :dirty="xrayStore.hasUnsavedNodeDraftChanges"
       :refreshing="!!xrayStore.refreshingSubscriptions[xrayStore.nodesDialogSubscriptionId]"
       :testing-all="xrayStore.testingAllNodes"
+      :testing-all-tcp="xrayStore.testingAllNodesTCP"
       :saving="xrayStore.savingNodesDraft"
       :testing-node-map="xrayStore.testingNodes"
+      :testing-node-tcp-map="xrayStore.testingNodesTCP"
       @request-close="handleCloseNodesModal"
       @select-node="xrayStore.setDraftSelectedNode"
       @refresh="handleRefreshNodesDraftSubscription"
       @test-all="handleTestAllDraftNodes"
+      @test-all-tcp="handleTestAllDraftNodesTCP"
       @save="handleSaveNodesDraft"
       @open-add="showAddNodesModal = true"
       @delete-node="handleDeleteDraftNode"
       @copy-node="handleCopyNodeConfig"
       @test-node="handleTestDraftNode"
+      @test-node-tcp="handleTestDraftNodeTCP"
     />
 
     <XrayAddNodesModal

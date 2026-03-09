@@ -9,11 +9,13 @@ const props = withDefaults(
     subscription: XraySubscription
     nodeCount: number
     selectedNodeLabel?: string
+    dialerProxyActive?: boolean
     refreshing?: boolean
     busy?: boolean
   }>(),
   {
     selectedNodeLabel: '--',
+    dialerProxyActive: false,
     refreshing: false,
     busy: false
   }
@@ -21,6 +23,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'set-active': [id: string]
+  'toggle-dialer-proxy': [id: string]
   toggle: [id: string]
   refresh: [id: string]
   edit: [id: string]
@@ -85,6 +88,18 @@ const cardClass = computed(() => {
       >
         <CirclePower :size="14" />
         {{ t('xray.activate') }}
+      </button>
+
+      <button
+        type="button"
+        class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+        :class="dialerProxyActive
+          ? 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700'
+          : 'border-sky-300 text-sky-700 hover:bg-sky-50'"
+        :disabled="busy"
+        @click="emit('toggle-dialer-proxy', subscription.id)"
+      >
+        {{ t('xray.chainProxy') }}
       </button>
 
       <button

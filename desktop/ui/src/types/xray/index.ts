@@ -54,6 +54,7 @@ export interface XrayConfig {
   socksPort: number
   logLevel: XrayLogLevel | string
   globalProxy: boolean
+  dialerProxyId?: string
   subscriptions: XraySubscription[]
 }
 

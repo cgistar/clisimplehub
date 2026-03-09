@@ -82,6 +82,27 @@ func (a *App) TestXRayNode(nodeName string) (map[string]interface{}, error) {
 	return result, nil
 }
 
+// TestXRayNodeTCP tests a single node's TCP connect latency.
+func (a *App) TestXRayNodeTCP(nodeName string) (map[string]interface{}, error) {
+	vp := xrayProvider()
+	if vp == nil {
+		return nil, fmt.Errorf("xray plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := vp.TestNodeTCP(ctx, nodeName)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // GetXRayConfig returns the XRay plugin configuration.
 func (a *App) GetXRayConfig() (map[string]interface{}, error) {
 	vp := xrayProvider()
@@ -219,6 +240,15 @@ func (a *App) SetActiveXRaySubscription(id string) error {
 		return fmt.Errorf("xray plugin not available")
 	}
 	return vp.SetActiveSubscription(id)
+}
+
+// SetXRayDialerProxySubscription sets which subscription is used as dialer proxy.
+func (a *App) SetXRayDialerProxySubscription(id string) error {
+	vp := xrayProvider()
+	if vp == nil {
+		return fmt.Errorf("xray plugin not available")
+	}
+	return vp.SetDialerProxySubscription(id)
 }
 
 // UpdateXRaySubscriptionSelectedNode updates the selected node for a subscription.

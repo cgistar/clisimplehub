@@ -109,6 +109,16 @@ func (p *XRayPlugin) TestNode(ctx context.Context, nodeName string) (json.RawMes
 	return data, err
 }
 
+func (p *XRayPlugin) TestNodeTCP(ctx context.Context, nodeName string) (json.RawMessage, error) {
+	svc := p.getService()
+	if svc == nil {
+		return nil, fmt.Errorf("xray plugin not initialized")
+	}
+	result := testSingleNodeTCP(ctx, svc, nodeName)
+	data, err := json.Marshal(result)
+	return data, err
+}
+
 func (p *XRayPlugin) Start() error {
 	svc := p.getService()
 	if svc == nil {
@@ -160,6 +170,14 @@ func (p *XRayPlugin) SetActiveSubscription(id string) error {
 		return fmt.Errorf("xray plugin not initialized")
 	}
 	return svc.SetActiveSubscription(id)
+}
+
+func (p *XRayPlugin) SetDialerProxySubscription(id string) error {
+	svc := p.getService()
+	if svc == nil {
+		return fmt.Errorf("xray plugin not initialized")
+	}
+	return svc.SetDialerProxySubscription(id)
 }
 
 func (p *XRayPlugin) UpdateSubscriptionSelectedNode(id, nodeName string) error {

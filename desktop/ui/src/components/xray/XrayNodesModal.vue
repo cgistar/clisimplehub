@@ -14,8 +14,10 @@ const props = withDefaults(
     dirty?: boolean
     refreshing?: boolean
     testingAll?: boolean
+    testingAllTCP?: boolean
     saving?: boolean
     testingNodeMap?: Record<string, boolean>
+    testingNodeTCPMap?: Record<string, boolean>
   }>(),
   {
     subscriptionName: '',
@@ -23,8 +25,10 @@ const props = withDefaults(
     dirty: false,
     refreshing: false,
     testingAll: false,
+    testingAllTCP: false,
     saving: false,
-    testingNodeMap: () => ({})
+    testingNodeMap: () => ({}),
+    testingNodeTCPMap: () => ({})
   }
 )
 
@@ -34,11 +38,13 @@ const emit = defineEmits<{
   'select-node': [name: string]
   refresh: []
   'test-all': []
+  'test-all-tcp': []
   save: []
   'open-add': []
   'delete-node': [name: string]
   'copy-node': [name: string]
   'test-node': [name: string]
+  'test-node-tcp': [name: string]
 }>()
 
 const { t } = useI18n()
@@ -77,6 +83,10 @@ function latencyText(node: XrayDraftNode): string {
 
 function isNodeTesting(nodeName: string): boolean {
   return !!props.testingNodeMap[nodeName]
+}
+
+function isNodeTestingTCP(nodeName: string): boolean {
+  return !!props.testingNodeTCPMap[nodeName]
 }
 </script>
 
@@ -125,6 +135,16 @@ function isNodeTesting(nodeName: string): boolean {
           <Zap :size="14" />
           {{ testingAll ? t('xray.testing') : t('xray.testAll') }}
         </button>
+
+        <button
+          type="button"
+          class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="testingAllTCP"
+          @click="emit('test-all-tcp')"
+        >
+          <Zap :size="14" />
+          {{ testingAllTCP ? t('xray.testing') : t('xray.testAllTCP') }}
+        </button>
       </div>
 
       <div class="flex-1 overflow-y-auto p-5">
@@ -132,7 +152,7 @@ function isNodeTesting(nodeName: string): boolean {
           {{ t('xray.noNodes') }}
         </div>
 
-        <div v-else class="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <div v-else class="grid grid-cols-3 gap-3 2xl:grid-cols-4">
           <article
             v-for="node in nodes"
             :key="node.name"
@@ -150,7 +170,26 @@ function isNodeTesting(nodeName: string): boolean {
                   <span v-if="node._draftAdded"> · {{ t('xray.unsavedNode') }}</span>
                 </p>
               </div>
-              <div class="flex items-center gap-1">
+
+              <div
+                v-if="node.name === selectedNodeName"
+                class="inline-flex shrink-0 items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-700"
+              >
+                <Check :size="13" />
+                {{ t('xray.selected') }}
+              </div>
+            </div>
+
+            <p class="truncate text-xs text-slate-600" :title="`${node.server}:${node.port}`">
+              {{ node.server }}:{{ node.port }}
+            </p>
+
+            <div class="mt-1 flex items-center justify-between gap-2">
+              <p class="text-xs font-medium" :class="latencyClass(node)">
+                {{ latencyText(node) }}
+              </p>
+
+              <div class="flex items-center justify-end gap-1">
                 <button
                   type="button"
                   class="rounded border border-slate-300 p-1 text-slate-600 hover:bg-slate-100"
@@ -178,19 +217,17 @@ function isNodeTesting(nodeName: string): boolean {
                 >
                   <Zap :size="14" :class="{ 'animate-pulse': isNodeTesting(node.name) }" />
                 </button>
+
+                <button
+                  type="button"
+                  class="rounded border border-slate-300 p-1 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="node._draftAdded || isNodeTestingTCP(node.name)"
+                  :title="node._draftAdded ? t('xray.saveBeforeTest') : t('xray.testTCP')"
+                  @click.stop="emit('test-node-tcp', node.name)"
+                >
+                  <Zap :size="14" :class="{ 'animate-pulse': isNodeTestingTCP(node.name) }" />
+                </button>
               </div>
-            </div>
-
-            <p class="truncate text-xs text-slate-600" :title="`${node.server}:${node.port}`">
-              {{ node.server }}:{{ node.port }}
-            </p>
-            <p class="mt-1 text-xs font-medium" :class="latencyClass(node)">
-              {{ latencyText(node) }}
-            </p>
-
-            <div v-if="node.name === selectedNodeName" class="mt-2 inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-700">
-              <Check :size="13" />
-              {{ t('xray.selected') }}
             </div>
           </article>
         </div>

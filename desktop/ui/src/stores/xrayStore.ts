@@ -25,6 +25,7 @@ function createDefaultConfig(): XrayConfig {
     socksPort: 10808,
     logLevel: 'warning',
     globalProxy: false,
+    dialerProxyId: '',
     subscriptions: []
   }
 }
@@ -62,6 +63,7 @@ function normalizeConfig(raw: XrayConfig): XrayConfig {
     socksPort: Number(raw?.socksPort || 10808),
     logLevel: raw?.logLevel || 'warning',
     globalProxy: !!raw?.globalProxy,
+    dialerProxyId: String(raw?.dialerProxyId || ''),
     subscriptions: Array.isArray(raw?.subscriptions) ? raw.subscriptions : []
   }
 }
@@ -124,7 +126,9 @@ export const useXrayStore = defineStore('xray', () => {
   const refreshingAll = ref(false)
   const refreshingSubscriptions = ref<Record<string, boolean>>({})
   const testingNodes = ref<Record<string, boolean>>({})
+  const testingNodesTCP = ref<Record<string, boolean>>({})
   const testingAllNodes = ref(false)
+  const testingAllNodesTCP = ref(false)
   const savingConfig = ref(false)
 
   const nodesDialogSubscriptionId = ref('')
@@ -297,6 +301,18 @@ export const useXrayStore = defineStore('xray', () => {
 
     try {
       await xrayApi.setActiveSubscription(id)
+      await loadAll(true)
+    } catch (cause) {
+      error.value = toErrorMessage(cause)
+      throw cause
+    }
+  }
+
+  async function setDialerProxySubscription(id: string): Promise<void> {
+    clearError()
+
+    try {
+      await xrayApi.setDialerProxySubscription(id)
       await loadAll(true)
     } catch (cause) {
       error.value = toErrorMessage(cause)
@@ -518,6 +534,76 @@ export const useXrayStore = defineStore('xray', () => {
     }
   }
 
+  async function testDraftNodeTCP(nodeName: string): Promise<XraySpeedTestResult> {
+    const node = nodesDialogDraftNodes.value.find((item) => item.name === nodeName)
+    if (!node) {
+      throw new Error('node not found')
+    }
+    if (node._draftAdded) {
+      throw new Error('save before test')
+    }
+
+    testingNodesTCP.value = setFlagByKey(testingNodesTCP.value, nodeName, true)
+
+    try {
+      const result = await xrayApi.testNodeTCP(nodeName)
+      const targetNode = nodesDialogDraftNodes.value.find((item) => item.name === nodeName)
+      if (targetNode) {
+        targetNode.latency = typeof result?.latency === 'number' ? result.latency : -1
+      }
+      await loadAll(true)
+      return result
+    } finally {
+      testingNodesTCP.value = setFlagByKey(testingNodesTCP.value, nodeName, false)
+    }
+  }
+
+  async function testAllDraftNodesTCP(): Promise<void> {
+    const targetNodes = nodesDialogDraftNodes.value.filter((node) => !node._draftAdded)
+    if (targetNodes.length === 0) return
+
+    testingAllNodesTCP.value = true
+
+    nodesDialogDraftNodes.value = nodesDialogDraftNodes.value.map((node) => ({
+      ...node,
+      latency: node._draftAdded ? node.latency : 0
+    }))
+
+    const queue = targetNodes.map((node) => node.name)
+    const concurrency = Math.min(TEST_ALL_CONCURRENCY, queue.length)
+
+    const worker = async () => {
+      while (queue.length > 0) {
+        const nodeName = queue.shift()
+        if (!nodeName) return
+
+        testingNodesTCP.value = setFlagByKey(testingNodesTCP.value, nodeName, true)
+
+        try {
+          const result = await xrayApi.testNodeTCP(nodeName)
+          const target = nodesDialogDraftNodes.value.find((node) => node.name === nodeName)
+          if (target) {
+            target.latency = typeof result?.latency === 'number' ? result.latency : -1
+          }
+        } catch {
+          const target = nodesDialogDraftNodes.value.find((node) => node.name === nodeName)
+          if (target) {
+            target.latency = -1
+          }
+        } finally {
+          testingNodesTCP.value = setFlagByKey(testingNodesTCP.value, nodeName, false)
+        }
+      }
+    }
+
+    try {
+      await Promise.all(Array.from({ length: concurrency }, () => worker()))
+      await loadAll(true)
+    } finally {
+      testingAllNodesTCP.value = false
+    }
+  }
+
   async function saveDraftNodes(): Promise<void> {
     const subscriptionId = nodesDialogSubscriptionId.value
     if (!subscriptionId) return
@@ -605,7 +691,9 @@ export const useXrayStore = defineStore('xray', () => {
     refreshingAll,
     refreshingSubscriptions,
     testingNodes,
+    testingNodesTCP,
     testingAllNodes,
+    testingAllNodesTCP,
     savingConfig,
     nodesDialogSubscriptionId,
     nodesDialogSelectedNodeName,
@@ -628,6 +716,7 @@ export const useXrayStore = defineStore('xray', () => {
     removeSubscription,
     toggleSubscription,
     setActiveSubscription,
+    setDialerProxySubscription,
     activateSubscription,
     refreshSingleSubscription,
     saveConfig,
@@ -639,6 +728,8 @@ export const useXrayStore = defineStore('xray', () => {
     addNodesToDraft,
     testDraftNode,
     testAllDraftNodes,
+    testDraftNodeTCP,
+    testAllDraftNodesTCP,
     saveDraftNodes,
     refreshNodesDraftSubscription,
     copyNodeConfig

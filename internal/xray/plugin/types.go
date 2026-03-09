@@ -56,6 +56,7 @@ type XRayConfig struct {
 	SocksPort     int             `json:"socksPort"`
 	LogLevel      string          `json:"logLevel"`
 	GlobalProxy   bool            `json:"globalProxy"`
+	DialerProxyID string          `json:"dialerProxyId,omitempty"`
 	Template      json.RawMessage `json:"template,omitempty"`
 	Subscriptions []Subscription  `json:"subscriptions"`
 }
