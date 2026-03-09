@@ -96,6 +96,13 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		// Continue with original body if processing fails
 		processedBody = body
 	}
+	inboundModel := extractModelFromBody(processedBody)
+	if rewrittenBody, rewritten := applyResolvedModelToBody(processedBody, ""); rewritten {
+		processedBody = rewrittenBody
+	}
+	if bodyWithThinking, applied := applySuffixThinkingToCodexBody(processedBody, inboundModel); applied {
+		processedBody = bodyWithThinking
+	}
 
 	isStreaming := strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 	isStreaming = normalizeStreamingModeForCodexPath(r.URL.Path, isStreaming)

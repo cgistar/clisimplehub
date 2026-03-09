@@ -94,10 +94,17 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 		processedBody = body
 	}
 	isStreaming = normalizeStreamingModeForCodexPath(requestPath, isStreaming)
+	inboundModel := extractModelFromBody(processedBody)
 	if rewrittenBody, rewritten := applyResolvedModelToBody(processedBody, model); rewritten {
 		processedBody = rewrittenBody
 		if debugLogger != nil {
 			debugLogger.Log("应用模型映射/覆盖: upstreamModel=%q", strings.TrimSpace(model))
+		}
+	}
+	if bodyWithThinking, applied := applySuffixThinkingToCodexBody(processedBody, inboundModel); applied {
+		processedBody = bodyWithThinking
+		if debugLogger != nil {
+			debugLogger.Log("应用模型 suffix thinking: model=%q", inboundModel)
 		}
 	}
 
@@ -585,10 +592,7 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 }
 
 func applyResolvedModelToBody(body []byte, resolvedModel string) ([]byte, bool) {
-	resolvedModel = strings.TrimSpace(resolvedModel)
-	if resolvedModel == "" {
-		return body, false
-	}
+	resolvedModel = baseModelName(strings.TrimSpace(resolvedModel))
 
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -596,11 +600,18 @@ func applyResolvedModelToBody(body []byte, resolvedModel string) ([]byte, bool) 
 	}
 
 	currentModel, _ := payload["model"].(string)
-	if strings.EqualFold(strings.TrimSpace(currentModel), resolvedModel) {
+	targetModel := resolvedModel
+	if targetModel == "" {
+		targetModel = baseModelName(currentModel)
+	}
+	if strings.TrimSpace(targetModel) == "" {
+		return body, false
+	}
+	if strings.EqualFold(strings.TrimSpace(currentModel), targetModel) {
 		return body, false
 	}
 
-	payload["model"] = resolvedModel
+	payload["model"] = targetModel
 	updated, err := json.Marshal(payload)
 	if err != nil {
 		return body, false
