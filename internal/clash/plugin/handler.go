@@ -182,12 +182,8 @@ func (h *handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if h.svc.shouldRestartRuntime(before, h.svc.config.Get()) {
-			if err := h.svc.restartRuntime(); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
+		after := h.svc.config.Get()
+		h.svc.reconcileRuntimeAfterConfigChangeBestEffort(before, after, "", "http save config")
 		writeJSON(w, map[string]string{"status": "ok"})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

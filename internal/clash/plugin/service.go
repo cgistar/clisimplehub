@@ -579,10 +579,8 @@ func (s *ClashService) UpdateSubscriptionSelectedNode(id, nodeName string) error
 	}
 
 	afterCfg := s.config.Get()
-	if s.shouldRestartRuntime(beforeCfg, afterCfg) {
-		return s.restartRuntime()
-	}
-	return s.syncRuntimeSelections(afterCfg)
+	s.reconcileRuntimeAfterConfigChangeBestEffort(beforeCfg, afterCfg, id, "update subscription selected node")
+	return nil
 }
 
 func (s *ClashService) RefreshSingleSubscription(ctx context.Context, id string) (*RefreshResult, error) {
@@ -670,6 +668,9 @@ func (s *ClashService) RefreshSingleSubscription(ctx context.Context, id string)
 
 	result.TotalNodes = len(nodes)
 	afterCfg := s.config.Get()
+	if !subscriptionParticipatesInRuntime(beforeCfg, id) && !subscriptionParticipatesInRuntime(afterCfg, id) {
+		return result, nil
+	}
 	if s.shouldRestartRuntime(beforeCfg, afterCfg) {
 		if err := s.restartRuntime(); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("restart runtime: %v", err))
@@ -780,10 +781,8 @@ func (s *ClashService) ReplaceSubscriptionNodes(id string, nodes []ProxyNode, se
 	s.mu.Unlock()
 
 	afterCfg := s.config.Get()
-	if s.shouldRestartRuntime(beforeCfg, afterCfg) {
-		return s.restartRuntime()
-	}
-	return s.syncRuntimeSelections(afterCfg)
+	s.reconcileRuntimeAfterConfigChangeBestEffort(beforeCfg, afterCfg, id, "replace subscription nodes")
+	return nil
 }
 
 func (s *ClashService) AddNodesToSubscription(id, content string) (int, error) {
@@ -836,15 +835,7 @@ func (s *ClashService) AddNodesToSubscription(id, content string) (int, error) {
 	s.mu.Unlock()
 
 	afterCfg := s.config.Get()
-	if s.shouldRestartRuntime(beforeCfg, afterCfg) {
-		if err := s.restartRuntime(); err != nil {
-			return 0, err
-		}
-		return added, nil
-	}
-	if err := s.syncRuntimeSelections(afterCfg); err != nil {
-		return 0, err
-	}
+	s.reconcileRuntimeAfterConfigChangeBestEffort(beforeCfg, afterCfg, id, "add nodes to subscription")
 	return added, nil
 }
 
@@ -904,10 +895,8 @@ func (s *ClashService) RemoveNodeFromSubscription(id, nodeName string) error {
 	s.mu.Unlock()
 
 	afterCfg := s.config.Get()
-	if s.shouldRestartRuntime(beforeCfg, afterCfg) {
-		return s.restartRuntime()
-	}
-	return s.syncRuntimeSelections(afterCfg)
+	s.reconcileRuntimeAfterConfigChangeBestEffort(beforeCfg, afterCfg, id, "remove node from subscription")
+	return nil
 }
 
 func (s *ClashService) ExportSyncData() *ClashSyncData {
@@ -1102,6 +1091,47 @@ func runtimeNodeKey(subID, nodeName string) string {
 	return strings.TrimSpace(subID) + "\x00" + strings.TrimSpace(nodeName)
 }
 
+func runtimeSubscriptionIDs(cfg *ClashConfig) map[string]struct{} {
+	ids := make(map[string]struct{})
+	if cfg == nil {
+		return ids
+	}
+
+	normalized := copyConfig(cfg)
+	clampChainReferences(normalized)
+
+	activeSub := activeSubscriptionWithNodes(normalized)
+	if activeSub == nil {
+		return ids
+	}
+	ids[activeSub.ID] = struct{}{}
+
+	exitSub := findEnabledSubscriptionWithNodes(normalized, normalized.Chain.Exit.SubscriptionID)
+	if exitSub == nil || exitSub.ID == activeSub.ID {
+		return ids
+	}
+	ids[exitSub.ID] = struct{}{}
+
+	if normalized.Chain.Middle == nil {
+		return ids
+	}
+	middleSub := findEnabledSubscriptionWithNodes(normalized, normalized.Chain.Middle.SubscriptionID)
+	if middleSub == nil || middleSub.ID == activeSub.ID || middleSub.ID == exitSub.ID {
+		return ids
+	}
+	ids[middleSub.ID] = struct{}{}
+	return ids
+}
+
+func subscriptionParticipatesInRuntime(cfg *ClashConfig, subscriptionID string) bool {
+	subscriptionID = strings.TrimSpace(subscriptionID)
+	if subscriptionID == "" {
+		return false
+	}
+	_, ok := runtimeSubscriptionIDs(cfg)[subscriptionID]
+	return ok
+}
+
 func buildRuntimeYAMLForConfig(cfg *ClashConfig) ([]byte, bool, error) {
 	runtimeYAML, _, ready, err := buildRuntimeForConfig(cfg)
 	return runtimeYAML, ready, err
@@ -1251,15 +1281,16 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 		if len(exitNames) == 0 {
 			chainEnabled = false
 		} else {
+			exitSelected := selectedRuntimeBySub[exitSub.ID]
+			if exitSelected == "" {
+				exitSelected = exitNames[0]
+			}
 			proxyGroups = append(proxyGroups, map[string]any{
 				"name":    runtimeGroupExit,
 				"type":    "select",
-				"proxies": exitNames,
+				"proxies": []string{exitSelected},
 			})
-			plan.exitSelection = selectedRuntimeBySub[exitSub.ID]
-			if plan.exitSelection == "" {
-				plan.exitSelection = exitNames[0]
-			}
+			plan.exitSelection = exitSelected
 		}
 	}
 
@@ -1485,7 +1516,46 @@ func (s *ClashService) syncRuntimeSelections(cfg *ClashConfig) error {
 	if !ready {
 		return nil
 	}
-	return applyRuntimeSelections(plan)
+	if err := applyRuntimeSelections(plan); err != nil {
+		if isRuntimeSelectionMismatchError(err) {
+			log.Printf("[clash] runtime selection mismatch, restarting runtime: %v", err)
+			if restartErr := s.restartRuntime(); restartErr != nil {
+				return fmt.Errorf("runtime selection mismatch: %v; restart failed: %w", err, restartErr)
+			}
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func isRuntimeSelectionMismatchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "runtime group not found") ||
+		strings.Contains(msg, "runtime group is not selectable") ||
+		strings.Contains(msg, "proxy not exist")
+}
+
+func (s *ClashService) reconcileRuntimeAfterConfigChange(beforeCfg, afterCfg *ClashConfig, touchedSubscriptionID string) error {
+	if strings.TrimSpace(touchedSubscriptionID) != "" &&
+		!subscriptionParticipatesInRuntime(beforeCfg, touchedSubscriptionID) &&
+		!subscriptionParticipatesInRuntime(afterCfg, touchedSubscriptionID) {
+		return nil
+	}
+
+	if s.shouldRestartRuntime(beforeCfg, afterCfg) {
+		return s.restartRuntime()
+	}
+	return s.syncRuntimeSelections(afterCfg)
+}
+
+func (s *ClashService) reconcileRuntimeAfterConfigChangeBestEffort(beforeCfg, afterCfg *ClashConfig, touchedSubscriptionID, action string) {
+	if err := s.reconcileRuntimeAfterConfigChange(beforeCfg, afterCfg, touchedSubscriptionID); err != nil {
+		log.Printf("[clash] %s: runtime reconcile warning: %v", strings.TrimSpace(action), err)
+	}
 }
 
 func (s *ClashService) shouldRestartRuntime(beforeCfg, afterCfg *ClashConfig) bool {

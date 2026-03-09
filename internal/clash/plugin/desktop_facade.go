@@ -60,9 +60,8 @@ func (p *ClashPlugin) SaveConfig(_ string, dto json.RawMessage) error {
 	}); err != nil {
 		return err
 	}
-	if svc.shouldRestartRuntime(before, svc.config.Get()) {
-		return svc.restartRuntime()
-	}
+	after := svc.config.Get()
+	svc.reconcileRuntimeAfterConfigChangeBestEffort(before, after, "", "save config")
 	return nil
 }
 
