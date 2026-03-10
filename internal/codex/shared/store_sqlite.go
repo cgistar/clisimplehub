@@ -62,7 +62,7 @@ func (s *SQLiteCodexAccountStore) ListAccounts(ctx context.Context) ([]CodexAcco
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
 		       usage_primary_over_secondary_pct, usage_updated_at,
 		       created_at, updated_at
-		FROM codex_accounts ORDER BY created_at`)
+		FROM codex_accounts ORDER BY weight DESC, created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
@@ -96,7 +96,7 @@ func (s *SQLiteCodexAccountStore) ListAccountsPage(ctx context.Context, offset, 
 		       usage_primary_over_secondary_pct, usage_updated_at,
 		       created_at, updated_at
 		FROM codex_accounts
-		ORDER BY created_at, account_id
+		ORDER BY weight DESC, created_at ASC
 		LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts page: %w", err)

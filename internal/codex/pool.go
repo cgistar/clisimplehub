@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,20 @@ var (
 	globalPoolMu sync.Mutex
 )
 
+func SortAccounts(accounts []shared.CodexAccount) {
+	sort.Slice(accounts, func(i, j int) bool {
+		left := accounts[i]
+		right := accounts[j]
+
+		if left.EffectiveWeight() != right.EffectiveWeight() {
+			return left.EffectiveWeight() > right.EffectiveWeight()
+		}
+		if !left.CreatedAt.Equal(right.CreatedAt) {
+			return left.CreatedAt.Before(right.CreatedAt)
+		}
+		return strings.TrimSpace(left.AccountID) < strings.TrimSpace(right.AccountID)
+	})
+}
 func InitPool(codexJsonPath string, store shared.CodexAccountStore) error {
 	globalPoolMu.Lock()
 	defer globalPoolMu.Unlock()
@@ -53,6 +68,7 @@ func InitPool(codexJsonPath string, store shared.CodexAccountStore) error {
 		if err != nil {
 			log.Printf("[codex-pool] failed to load accounts from store: %v", err)
 		} else {
+			SortAccounts(accounts)
 			pool.accounts = accounts
 		}
 	}
@@ -217,6 +233,7 @@ func (p *CodexAccountPool) Reload() {
 
 	if p.store != nil {
 		if accounts, err := p.store.ListAccounts(context.Background()); err == nil {
+			SortAccounts(accounts)
 			p.accounts = accounts
 		}
 	}
