@@ -2,41 +2,9 @@ package clashplugin
 
 import "encoding/json"
 
-// ProxyNode represents a unified proxy node model parsed from subscriptions.
-type ProxyNode struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"` // vmess/vless/trojan/ss
-	Server   string `json:"server"`
-	Port     int    `json:"port"`
-	SourceID string `json:"sourceId"` // subscription source ID
-	Latency  int    `json:"latency"`  // speed test result (ms), 0=untested
-
-	// Protocol-specific fields
-	UUID     string `json:"uuid,omitempty"`
-	Password string `json:"password,omitempty"`
-	AlterId  int    `json:"alterId,omitempty"`
-	Cipher   string `json:"cipher,omitempty"`
-	Flow     string `json:"flow,omitempty"`
-	Mode     string `json:"mode,omitempty"`
-
-	// Transport layer
-	Network string `json:"network,omitempty"` // tcp/ws/grpc/httpupgrade/xhttp
-	Path    string `json:"path,omitempty"`
-	Host    string `json:"host,omitempty"`
-
-	// TLS / REALITY
-	Security      string `json:"security,omitempty"` // tls/reality/none
-	SNI           string `json:"sni,omitempty"`
-	AllowInsecure bool   `json:"allowInsecure,omitempty"`
-
-	PinnedPeerCertSha256 string `json:"pinnedPeerCertSha256,omitempty"`
-	VerifyPeerCertByName string `json:"verifyPeerCertByName,omitempty"`
-	Fingerprint          string `json:"fingerprint,omitempty"`
-	PublicKey            string `json:"publicKey,omitempty"`
-	ShortId              string `json:"shortId,omitempty"`
-	ServerName           string `json:"serverName,omitempty"`
-	SpiderX              string `json:"spiderX,omitempty"`
-}
+// ProxyNode stores a Clash-compatible proxy object plus local metadata fields
+// such as sourceId and latency.
+type ProxyNode map[string]any
 
 // Subscription represents a subscription source configuration.
 type Subscription struct {
@@ -70,6 +38,7 @@ type ClashConfig struct {
 	SocksPort     int            `json:"socksPort"`
 	LogLevel      string         `json:"logLevel"`
 	GlobalProxy   bool           `json:"globalProxy"`
+	UserYAML      string         `json:"userYaml"`
 	Chain         ChainConfig    `json:"chain"`
 	Subscriptions []Subscription `json:"subscriptions"`
 }

@@ -83,6 +83,7 @@ func normalizeConfig(cfg *ClashConfig) {
 		cfg.LogLevel = defaultConfig.LogLevel
 	}
 	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+	cfg.UserYAML = strings.ReplaceAll(cfg.UserYAML, "\r\n", "\n")
 	if cfg.Subscriptions == nil {
 		cfg.Subscriptions = []Subscription{}
 	}
@@ -98,6 +99,8 @@ func normalizeConfig(cfg *ClashConfig) {
 		}
 		if cfg.Subscriptions[i].Nodes == nil {
 			cfg.Subscriptions[i].Nodes = []ProxyNode{}
+		} else {
+			cfg.Subscriptions[i].Nodes = normalizeSubscriptionNodes(cfg.Subscriptions[i].Nodes, cfg.Subscriptions[i].ID)
 		}
 	}
 
@@ -191,7 +194,10 @@ func copyConfig(c *ClashConfig) *ClashConfig {
 	cp.Subscriptions = make([]Subscription, len(c.Subscriptions))
 	for i := range c.Subscriptions {
 		cp.Subscriptions[i] = c.Subscriptions[i]
-		cp.Subscriptions[i].Nodes = append([]ProxyNode(nil), c.Subscriptions[i].Nodes...)
+		cp.Subscriptions[i].Nodes = make([]ProxyNode, len(c.Subscriptions[i].Nodes))
+		for j := range c.Subscriptions[i].Nodes {
+			cp.Subscriptions[i].Nodes[j] = cloneNode(c.Subscriptions[i].Nodes[j])
+		}
 	}
 	if c.Chain.Middle != nil {
 		mid := *c.Chain.Middle

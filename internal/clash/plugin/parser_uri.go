@@ -4,17 +4,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/url"
 	"strconv"
 	"strings"
 )
 
-// ParseURIList parses a base64-encoded or raw URI list into proxy nodes.
+// ParseURIList parses a base64-encoded or raw URI list into Clash proxy nodes.
 func ParseURIList(content string, sourceID string) ([]ProxyNode, []string) {
 	var warnings []string
 
-	// Try base64 decode
 	lines := tryBase64Decode(content)
 	if lines == nil {
 		lines = splitLines(content)
@@ -53,8 +51,7 @@ func ParseURIList(content string, sourceID string) ([]ProxyNode, []string) {
 			continue
 		}
 		if node != nil {
-			node.SourceID = sourceID
-			nodes = append(nodes, *node)
+			nodes = append(nodes, normalizeProxyNode(*node, sourceID))
 		}
 	}
 	return nodes, warnings
@@ -62,13 +59,10 @@ func ParseURIList(content string, sourceID string) ([]ProxyNode, []string) {
 
 func tryBase64Decode(content string) []string {
 	content = strings.TrimSpace(content)
-	// Try standard base64
 	decoded, err := base64.StdEncoding.DecodeString(content)
 	if err != nil {
-		// Try URL-safe base64
 		decoded, err = base64.URLEncoding.DecodeString(content)
 		if err != nil {
-			// Try without padding
 			decoded, err = base64.RawStdEncoding.DecodeString(content)
 			if err != nil {
 				return nil
@@ -87,10 +81,8 @@ func splitLines(s string) []string {
 	return strings.Split(s, "\n")
 }
 
-// parseVmessURI parses vmess://base64json
 func parseVmessURI(uri string) (*ProxyNode, error) {
 	payload := strings.TrimPrefix(uri, "vmess://")
-	// Remove fragment
 	if idx := strings.Index(payload, "#"); idx >= 0 {
 		payload = payload[:idx]
 	}
@@ -100,58 +92,89 @@ func parseVmessURI(uri string) (*ProxyNode, error) {
 		return nil, fmt.Errorf("vmess base64 decode: %w", err)
 	}
 
-	var obj map[string]interface{}
+	var obj map[string]any
 	if err := json.Unmarshal(decoded, &obj); err != nil {
 		return nil, fmt.Errorf("vmess json parse: %w", err)
 	}
 
-	node := &ProxyNode{
-		Type: "vmess",
-		Name: getString(obj, "ps"),
+	node := ProxyNode{
+		"name":    getString(obj, "ps"),
+		"type":    "vmess",
+		"server":  getString(obj, "add"),
+		"port":    getInt(obj, "port"),
+		"uuid":    getString(obj, "id"),
+		"alterId": getInt(obj, "aid"),
+		"cipher":  firstNonEmptyValue(getString(obj, "scy"), "auto"),
 	}
 
-	node.Server = getString(obj, "add")
-	node.Port = getInt(obj, "port")
-	node.UUID = getString(obj, "id")
-	node.AlterId = getInt(obj, "aid")
-	node.Network = getString(obj, "net")
-	if node.Network == "" {
-		node.Network = "tcp"
+	network := getString(obj, "net")
+	if network == "" {
+		network = "tcp"
 	}
-	node.Path = getString(obj, "path")
-	node.Host = getString(obj, "host")
+	node["network"] = network
 
-	tls := getString(obj, "tls")
-	if tls == "tls" {
-		node.Security = "tls"
+	if tls := getString(obj, "tls"); tls == "tls" {
+		node["tls"] = true
 	}
-	node.SNI = getString(obj, "sni")
-	node.Cipher = getString(obj, "scy")
-	if node.Cipher == "" {
-		node.Cipher = "auto"
+	if sni := getString(obj, "sni"); sni != "" {
+		node["sni"] = sni
 	}
-	node.PinnedPeerCertSha256 = firstNonEmptyValue(
-		getString(obj, "pcs"),
-		getString(obj, "pinnedPeerCertSha256"),
-	)
-	node.VerifyPeerCertByName = firstNonEmptyValue(
-		getString(obj, "vcn"),
-		getString(obj, "verifyPeerCertByName"),
-	)
-	if parseBoolString(getString(obj, "allowInsecure")) {
-		node.AllowInsecure = true
+	if insecure, ok := firstBoolFromObject(obj, "allowInsecure", "insecure", "skip-cert-verify", "skipCertVerify"); ok {
+		node["skip-cert-verify"] = insecure
+	}
+	if udp, ok := firstBoolFromObject(obj, "udp", "enableUDP", "enable_udp"); ok {
+		node["udp"] = udp
+	}
+	if fingerprint := getString(obj, "fp"); fingerprint != "" {
+		node["fingerprint"] = fingerprint
+	}
+	if pcs := firstNonEmptyValue(getString(obj, "pcs"), getString(obj, "pinnedPeerCertSha256")); pcs != "" {
+		node["pinned-peer-cert-sha256"] = pcs
+	}
+	if vcn := firstNonEmptyValue(getString(obj, "vcn"), getString(obj, "verifyPeerCertByName")); vcn != "" {
+		node["verify-peer-cert-by-name"] = vcn
 	}
 
-	if node.Server == "" || node.Port == 0 || node.UUID == "" {
-		return nil, fmt.Errorf("vmess missing required fields (add/port/id)")
+	path := getString(obj, "path")
+	host := getString(obj, "host")
+	switch network {
+	case "ws":
+		wsOpts := map[string]any{}
+		if path != "" {
+			wsOpts["path"] = path
+		}
+		if host != "" {
+			wsOpts["headers"] = map[string]any{"Host": host}
+		}
+		if len(wsOpts) > 0 {
+			node["ws-opts"] = wsOpts
+		}
+	case "grpc":
+		if path != "" {
+			node["grpc-opts"] = map[string]any{"grpc-service-name": path}
+		}
+	case "http", "httpupgrade", "xhttp":
+		httpOpts := map[string]any{}
+		if path != "" {
+			httpOpts["path"] = []string{path}
+		}
+		if host != "" {
+			httpOpts["headers"] = map[string]any{"Host": []string{host}}
+		}
+		if len(httpOpts) > 0 {
+			node["http-opts"] = httpOpts
+		}
 	}
-	if node.Name == "" {
-		node.Name = fmt.Sprintf("%s:%d", node.Server, node.Port)
+
+	if nodeName(node) == "" {
+		setNodeString(node, "name", fmt.Sprintf("%s:%d", nodeServer(node), nodePort(node)))
 	}
-	return node, nil
+	if err := validateProxyNode(node); err != nil {
+		return nil, err
+	}
+	return &node, nil
 }
 
-// parseVlessURI parses vless://uuid@host:port?params#name
 func parseVlessURI(uri string) (*ProxyNode, error) {
 	parsed, err := url.Parse(uri)
 	if err != nil {
@@ -159,46 +182,111 @@ func parseVlessURI(uri string) (*ProxyNode, error) {
 	}
 
 	port, _ := strconv.Atoi(parsed.Port())
-	node := &ProxyNode{
-		Type:   "vless",
-		Name:   decodeFragment(parsed.Fragment),
-		Server: parsed.Hostname(),
-		Port:   port,
-		UUID:   parsed.User.Username(),
-	}
-
 	q := parsed.Query()
-	node.Network = q.Get("type")
-	if node.Network == "" {
-		node.Network = "tcp"
-	}
-	node.Security = q.Get("security")
-	node.SNI = q.Get("sni")
-	node.Flow = q.Get("flow")
-	node.Mode = q.Get("mode")
-	node.Path = q.Get("path")
-	node.Host = q.Get("host")
-	node.Fingerprint = q.Get("fp")
-	node.PublicKey = q.Get("pbk")
-	node.ShortId = q.Get("sid")
-	node.ServerName = firstNonEmptyQueryValue(q, "servername", "serverName")
-	node.SpiderX = firstNonEmptyQueryValue(q, "spx", "spiderx", "spiderX")
-	node.PinnedPeerCertSha256 = firstNonEmptyQueryValue(q, "pcs", "pinnedPeerCertSha256")
-	node.VerifyPeerCertByName = firstNonEmptyQueryValue(q, "vcn", "verifyPeerCertByName")
-	if queryBool(q, "allowInsecure") {
-		node.AllowInsecure = true
+
+	node := ProxyNode{
+		"name":   decodeFragment(parsed.Fragment),
+		"type":   "vless",
+		"server": parsed.Hostname(),
+		"port":   port,
+		"uuid":   parsed.User.Username(),
 	}
 
-	if node.Server == "" || node.Port == 0 || node.UUID == "" {
-		return nil, fmt.Errorf("vless missing required fields")
+	network := q.Get("type")
+	if network == "" {
+		network = "tcp"
 	}
-	if node.Name == "" {
-		node.Name = fmt.Sprintf("%s:%d", node.Server, node.Port)
+	node["network"] = network
+
+	if flow := q.Get("flow"); flow != "" {
+		node["flow"] = flow
 	}
-	return node, nil
+	if mode := q.Get("mode"); mode != "" {
+		node["mode"] = mode
+	}
+	if security := q.Get("security"); security == "tls" {
+		node["tls"] = true
+	} else if security == "reality" {
+		node["tls"] = true
+		realityOpts := map[string]any{}
+		if pk := q.Get("pbk"); pk != "" {
+			realityOpts["public-key"] = pk
+		}
+		if sid := q.Get("sid"); sid != "" {
+			realityOpts["short-id"] = sid
+		}
+		if len(realityOpts) > 0 {
+			node["reality-opts"] = realityOpts
+		}
+	}
+	if sni := q.Get("sni"); sni != "" {
+		node["sni"] = sni
+		node["servername"] = firstNonEmptyValue(q.Get("servername"), q.Get("serverName"), sni)
+	}
+	if insecure, ok := firstBoolFromQuery(q, "allowInsecure", "insecure", "skip-cert-verify", "skipCertVerify"); ok {
+		node["skip-cert-verify"] = insecure
+	}
+	if udp, ok := firstBoolFromQuery(q, "udp"); ok {
+		node["udp"] = udp
+	}
+	if fp := q.Get("fp"); fp != "" {
+		node["client-fingerprint"] = fp
+	}
+	if spx := firstNonEmptyQueryValue(q, "spx", "spiderx", "spiderX"); spx != "" {
+		realityOpts, _ := node["reality-opts"].(map[string]any)
+		if realityOpts == nil {
+			realityOpts = map[string]any{}
+		}
+		realityOpts["spider-x"] = spx
+		node["reality-opts"] = realityOpts
+	}
+	if pcs := firstNonEmptyQueryValue(q, "pcs", "pinnedPeerCertSha256"); pcs != "" {
+		node["pinned-peer-cert-sha256"] = pcs
+	}
+	if vcn := firstNonEmptyQueryValue(q, "vcn", "verifyPeerCertByName"); vcn != "" {
+		node["verify-peer-cert-by-name"] = vcn
+	}
+
+	path := q.Get("path")
+	host := q.Get("host")
+	switch network {
+	case "ws":
+		wsOpts := map[string]any{}
+		if path != "" {
+			wsOpts["path"] = path
+		}
+		if host != "" {
+			wsOpts["headers"] = map[string]any{"Host": host}
+		}
+		if len(wsOpts) > 0 {
+			node["ws-opts"] = wsOpts
+		}
+	case "grpc":
+		if path != "" {
+			node["grpc-opts"] = map[string]any{"grpc-service-name": path}
+		}
+	case "http", "httpupgrade", "xhttp":
+		httpOpts := map[string]any{}
+		if path != "" {
+			httpOpts["path"] = []string{path}
+		}
+		if host != "" {
+			httpOpts["headers"] = map[string]any{"Host": []string{host}}
+		}
+		if len(httpOpts) > 0 {
+			node["http-opts"] = httpOpts
+		}
+	}
+
+	if nodeName(node) == "" {
+		setNodeString(node, "name", fmt.Sprintf("%s:%d", nodeServer(node), nodePort(node)))
+	}
+	if err := validateProxyNode(node); err != nil {
+		return nil, err
+	}
+	return &node, nil
 }
 
-// parseTrojanURI parses trojan://password@host:port?params#name
 func parseTrojanURI(uri string) (*ProxyNode, error) {
 	parsed, err := url.Parse(uri)
 	if err != nil {
@@ -206,60 +294,78 @@ func parseTrojanURI(uri string) (*ProxyNode, error) {
 	}
 
 	port, _ := strconv.Atoi(parsed.Port())
-	node := &ProxyNode{
-		Type:     "trojan",
-		Name:     decodeFragment(parsed.Fragment),
-		Server:   parsed.Hostname(),
-		Port:     port,
-		Password: parsed.User.Username(),
-	}
-
 	q := parsed.Query()
-	node.Network = q.Get("type")
-	if node.Network == "" {
-		node.Network = "tcp"
-	}
-	node.Security = q.Get("security")
-	if node.Security == "" {
-		node.Security = "tls"
-	}
-	node.SNI = q.Get("sni")
-	node.Path = q.Get("path")
-	node.Host = q.Get("host")
-	node.PinnedPeerCertSha256 = firstNonEmptyQueryValue(q, "pcs", "pinnedPeerCertSha256")
-	node.VerifyPeerCertByName = firstNonEmptyQueryValue(q, "vcn", "verifyPeerCertByName")
-	if queryBool(q, "allowInsecure") {
-		node.AllowInsecure = true
+	node := ProxyNode{
+		"name":     decodeFragment(parsed.Fragment),
+		"type":     "trojan",
+		"server":   parsed.Hostname(),
+		"port":     port,
+		"password": parsed.User.Username(),
 	}
 
-	if node.Server == "" || node.Port == 0 || node.Password == "" {
-		return nil, fmt.Errorf("trojan missing required fields")
+	network := q.Get("type")
+	if network == "" {
+		network = "tcp"
 	}
-	if node.Name == "" {
-		node.Name = fmt.Sprintf("%s:%d", node.Server, node.Port)
+	node["network"] = network
+	node["tls"] = true
+	if sni := q.Get("sni"); sni != "" {
+		node["sni"] = sni
+		node["servername"] = sni
 	}
-	return node, nil
+	if q.Get("security") == "none" {
+		delete(node, "tls")
+	}
+	if insecure, ok := firstBoolFromQuery(q, "allowInsecure", "insecure", "skip-cert-verify", "skipCertVerify"); ok {
+		node["skip-cert-verify"] = insecure
+	}
+	if udp, ok := firstBoolFromQuery(q, "udp"); ok {
+		node["udp"] = udp
+	}
+	if pcs := firstNonEmptyQueryValue(q, "pcs", "pinnedPeerCertSha256"); pcs != "" {
+		node["pinned-peer-cert-sha256"] = pcs
+	}
+	if vcn := firstNonEmptyQueryValue(q, "vcn", "verifyPeerCertByName"); vcn != "" {
+		node["verify-peer-cert-by-name"] = vcn
+	}
+
+	path := q.Get("path")
+	host := q.Get("host")
+	if network == "ws" {
+		wsOpts := map[string]any{}
+		if path != "" {
+			wsOpts["path"] = path
+		}
+		if host != "" {
+			wsOpts["headers"] = map[string]any{"Host": host}
+		}
+		if len(wsOpts) > 0 {
+			node["ws-opts"] = wsOpts
+		}
+	}
+
+	if nodeName(node) == "" {
+		setNodeString(node, "name", fmt.Sprintf("%s:%d", nodeServer(node), nodePort(node)))
+	}
+	if err := validateProxyNode(node); err != nil {
+		return nil, err
+	}
+	return &node, nil
 }
 
-// parseShadowsocksURI parses ss://base64(method:password)@host:port#name (SIP002)
 func parseShadowsocksURI(uri string) (*ProxyNode, error) {
-	// Remove ss:// prefix
 	rest := strings.TrimPrefix(uri, "ss://")
 
-	// Extract fragment (name)
 	name := ""
 	if idx := strings.LastIndex(rest, "#"); idx >= 0 {
 		name, _ = url.PathUnescape(rest[idx+1:])
 		rest = rest[:idx]
 	}
 
-	// SIP002 format: base64(method:password)@host:port
-	// Legacy format: base64(method:password@host:port)
 	var method, password, host string
 	var port int
 
 	if atIdx := strings.LastIndex(rest, "@"); atIdx >= 0 {
-		// SIP002 format
 		userInfo := rest[:atIdx]
 		serverPart := rest[atIdx+1:]
 
@@ -281,7 +387,6 @@ func parseShadowsocksURI(uri string) (*ProxyNode, error) {
 		host = parsed.Hostname()
 		port, _ = strconv.Atoi(parsed.Port())
 	} else {
-		// Legacy format
 		decoded, err := base64Decode(rest)
 		if err != nil {
 			return nil, fmt.Errorf("ss legacy base64 decode: %w", err)
@@ -303,41 +408,35 @@ func parseShadowsocksURI(uri string) (*ProxyNode, error) {
 		port, _ = strconv.Atoi(serverPart[lastColon+1:])
 	}
 
-	if host == "" || port == 0 || method == "" || password == "" {
-		return nil, fmt.Errorf("ss missing required fields")
+	node := ProxyNode{
+		"name":     name,
+		"type":     "ss",
+		"server":   host,
+		"port":     port,
+		"cipher":   method,
+		"password": password,
+		"udp":      true,
 	}
-
-	node := &ProxyNode{
-		Type:     "ss",
-		Name:     name,
-		Server:   host,
-		Port:     port,
-		Password: password,
-		Cipher:   method,
-		Network:  "tcp",
+	if nodeName(node) == "" {
+		setNodeString(node, "name", fmt.Sprintf("%s:%d", host, port))
 	}
-	if node.Name == "" {
-		node.Name = fmt.Sprintf("%s:%d", host, port)
+	if err := validateProxyNode(node); err != nil {
+		return nil, err
 	}
-	return node, nil
+	return &node, nil
 }
 
-// base64Decode tries multiple base64 encodings.
 func base64Decode(s string) ([]byte, error) {
 	s = strings.TrimSpace(s)
-	// Try standard
 	if d, err := base64.StdEncoding.DecodeString(s); err == nil {
 		return d, nil
 	}
-	// Try URL-safe
 	if d, err := base64.URLEncoding.DecodeString(s); err == nil {
 		return d, nil
 	}
-	// Try raw standard (no padding)
 	if d, err := base64.RawStdEncoding.DecodeString(s); err == nil {
 		return d, nil
 	}
-	// Try raw URL-safe (no padding)
 	d, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
 		return nil, err
@@ -365,8 +464,8 @@ func firstNonEmptyValue(values ...string) string {
 
 func firstNonEmptyQueryValue(q url.Values, keys ...string) string {
 	for _, key := range keys {
-		if v := strings.TrimSpace(q.Get(key)); v != "" {
-			return v
+		if value := strings.TrimSpace(q.Get(key)); value != "" {
+			return value
 		}
 	}
 	return ""
@@ -376,8 +475,81 @@ func queryBool(q url.Values, key string) bool {
 	return parseBoolString(q.Get(key))
 }
 
-func parseBoolString(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
+func firstBoolFromQuery(q url.Values, keys ...string) (bool, bool) {
+	for _, key := range keys {
+		values, ok := q[key]
+		if !ok || len(values) == 0 {
+			continue
+		}
+		if parsed, exists := parseBoolAny(values[0]); exists {
+			return parsed, true
+		}
+		return false, true
+	}
+	return false, false
+}
+
+func firstBoolFromObject(obj map[string]any, keys ...string) (bool, bool) {
+	for _, key := range keys {
+		raw, ok := obj[key]
+		if !ok {
+			continue
+		}
+		if parsed, exists := parseBoolAny(raw); exists {
+			return parsed, true
+		}
+		return false, true
+	}
+	return false, false
+}
+
+func parseBoolAny(value any) (bool, bool) {
+	switch v := value.(type) {
+	case nil:
+		return false, false
+	case bool:
+		return v, true
+	case int:
+		return v != 0, true
+	case int8:
+		return v != 0, true
+	case int16:
+		return v != 0, true
+	case int32:
+		return v != 0, true
+	case int64:
+		return v != 0, true
+	case uint:
+		return v != 0, true
+	case uint8:
+		return v != 0, true
+	case uint16:
+		return v != 0, true
+	case uint32:
+		return v != 0, true
+	case uint64:
+		return v != 0, true
+	case float32:
+		return v != 0, true
+	case float64:
+		return v != 0, true
+	case string:
+		text := strings.TrimSpace(v)
+		if text == "" {
+			return false, false
+		}
+		return parseBoolString(text), true
+	default:
+		text := strings.TrimSpace(fmt.Sprintf("%v", v))
+		if text == "" {
+			return false, false
+		}
+		return parseBoolString(text), true
+	}
+}
+
+func parseBoolString(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "on":
 		return true
 	default:
@@ -385,36 +557,34 @@ func parseBoolString(v string) bool {
 	}
 }
 
-func getString(m map[string]interface{}, key string) string {
-	v, ok := m[key]
-	if !ok {
+func getString(obj map[string]any, key string) string {
+	raw, ok := obj[key]
+	if !ok || raw == nil {
 		return ""
 	}
-	switch val := v.(type) {
+	switch value := raw.(type) {
 	case string:
-		return val
+		return strings.TrimSpace(value)
 	case float64:
-		return strconv.FormatFloat(val, 'f', -1, 64)
+		return strconv.FormatFloat(value, 'f', -1, 64)
 	default:
-		return fmt.Sprintf("%v", val)
+		return strings.TrimSpace(fmt.Sprintf("%v", value))
 	}
 }
 
-func getInt(m map[string]interface{}, key string) int {
-	v, ok := m[key]
-	if !ok {
+func getInt(obj map[string]any, key string) int {
+	raw, ok := obj[key]
+	if !ok || raw == nil {
 		return 0
 	}
-	switch val := v.(type) {
+	switch value := raw.(type) {
+	case int:
+		return value
 	case float64:
-		return int(val)
+		return int(value)
 	case string:
-		n, err := strconv.Atoi(val)
-		if err != nil {
-			log.Printf("[clash] getInt: key=%s value=%q not a number", key, val)
-			return 0
-		}
-		return n
+		i, _ := strconv.Atoi(strings.TrimSpace(value))
+		return i
 	default:
 		return 0
 	}

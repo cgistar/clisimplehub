@@ -54,6 +54,9 @@ func (p *ClashPlugin) SaveConfig(_ string, dto json.RawMessage) error {
 	if err := json.Unmarshal(dto, &cfg); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
+	if _, err := parseUserYAMLOverride(&cfg); err != nil {
+		return fmt.Errorf("invalid user yaml: %w", err)
+	}
 	before := svc.config.Get()
 	if err := svc.config.Update(func(c *ClashConfig) {
 		*c = cfg

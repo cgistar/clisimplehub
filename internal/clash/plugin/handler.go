@@ -78,7 +78,7 @@ func (h *handler) handleTestNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), speedTestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), speedTestTotalTimeout)
 	defer cancel()
 
 	result := testSingleNode(ctx, h.svc, req.NodeName)

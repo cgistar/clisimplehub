@@ -7,23 +7,7 @@ export interface ClashNode {
   port: number
   sourceId: string
   latency: number
-  uuid?: string
-  password?: string
-  alterId?: number
-  cipher?: string
-  flow?: string
-  mode?: string
-  network?: string
-  path?: string
-  host?: string
-  security?: string
-  sni?: string
-  allowInsecure?: boolean
-  pinnedPeerCertSha256?: string
-  verifyPeerCertByName?: string
-  fingerprint?: string
-  publicKey?: string
-  shortId?: string
+  [key: string]: unknown
 }
 
 export interface ClashDraftNode extends ClashNode {
@@ -65,6 +49,7 @@ export interface ClashConfig {
   socksPort: number
   logLevel: ClashLogLevel | string
   globalProxy: boolean
+  userYaml: string
   chain?: ClashChainConfig
   dialerProxyId?: string
   subscriptions: ClashSubscription[]

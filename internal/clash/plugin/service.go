@@ -15,8 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/metacubex/mihomo/adapter/outboundgroup"
-	"github.com/metacubex/mihomo/tunnel"
 	"gopkg.in/yaml.v3"
 )
 
@@ -88,7 +86,7 @@ func (s *ClashService) Start() error {
 	if err := s.startWithRuntime(runtimeYAML); err != nil {
 		return err
 	}
-	if err := applyRuntimeSelectionsWithRetry(plan, 20, 50*time.Millisecond); err != nil {
+	if err := applyRuntimeSelectionsWithRetry(cfg, plan, 20, 50*time.Millisecond); err != nil {
 		log.Printf("[clash] apply runtime selections warning: %v", err)
 	}
 	return nil
@@ -202,7 +200,9 @@ func (s *ClashService) GetNodes() []ProxyNode {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]ProxyNode, len(s.nodes))
-	copy(out, s.nodes)
+	for i := range s.nodes {
+		out[i] = cloneNode(s.nodes[i])
+	}
 	return out
 }
 
@@ -258,7 +258,7 @@ func (s *ClashService) RefreshSubscriptions(ctx context.Context) (*RefreshResult
 			sub.SelectedNode = ""
 		}
 		if sub.SelectedNode == "" && len(sub.Nodes) > 0 {
-			sub.SelectedNode = sub.Nodes[0].Name
+			sub.SelectedNode = nodeName(sub.Nodes[0])
 		}
 
 		allNodes = append(allNodes, sub.Nodes...)
@@ -362,7 +362,7 @@ func (s *ClashService) RemoveSubscription(id string) error {
 	s.mu.Lock()
 	newNodes := make([]ProxyNode, 0, len(s.nodes))
 	for _, n := range s.nodes {
-		if n.SourceID != id {
+		if nodeSourceID(n) != id {
 			newNodes = append(newNodes, n)
 		}
 	}
@@ -415,12 +415,12 @@ func (s *ClashService) UpdateSubscription(id, name, rawURL string) error {
 	return nil
 }
 
-func (s *ClashService) UpdateNodeLatency(nodeName string, latency int) {
+func (s *ClashService) UpdateNodeLatency(targetName string, latency int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.nodes {
-		if s.nodes[i].Name == nodeName {
-			s.nodes[i].Latency = latency
+		if nodeName(s.nodes[i]) == targetName {
+			setNodeInt(s.nodes[i], nodeFieldLatency, latency)
 			return
 		}
 	}
@@ -474,7 +474,7 @@ func (s *ClashService) SetActiveSubscription(id string) error {
 				continue
 			}
 			if cfg.Subscriptions[i].SelectedNode == "" && len(cfg.Subscriptions[i].Nodes) > 0 {
-				cfg.Subscriptions[i].SelectedNode = cfg.Subscriptions[i].Nodes[0].Name
+				cfg.Subscriptions[i].SelectedNode = nodeName(cfg.Subscriptions[i].Nodes[0])
 			}
 			if cfg.Subscriptions[i].SelectedNode != "" {
 				cfg.Chain.Entry = NodeRef{SubscriptionID: id, NodeName: cfg.Subscriptions[i].SelectedNode}
@@ -511,7 +511,7 @@ func (s *ClashService) SetDialerProxySubscription(id string) error {
 				continue
 			}
 			if cfg.Subscriptions[i].SelectedNode == "" && len(cfg.Subscriptions[i].Nodes) > 0 {
-				cfg.Subscriptions[i].SelectedNode = cfg.Subscriptions[i].Nodes[0].Name
+				cfg.Subscriptions[i].SelectedNode = nodeName(cfg.Subscriptions[i].Nodes[0])
 			}
 			cfg.Chain.Exit = NodeRef{SubscriptionID: id, NodeName: cfg.Subscriptions[i].SelectedNode}
 			return
@@ -646,7 +646,7 @@ func (s *ClashService) RefreshSingleSubscription(ctx context.Context, id string)
 				c.Subscriptions[i].SelectedNode = ""
 			}
 			if c.Subscriptions[i].SelectedNode == "" && len(c.Subscriptions[i].Nodes) > 0 {
-				c.Subscriptions[i].SelectedNode = c.Subscriptions[i].Nodes[0].Name
+				c.Subscriptions[i].SelectedNode = nodeName(c.Subscriptions[i].Nodes[0])
 			}
 			break
 		}
@@ -658,7 +658,7 @@ func (s *ClashService) RefreshSingleSubscription(ctx context.Context, id string)
 	s.mu.Lock()
 	newNodes := make([]ProxyNode, 0, len(s.nodes))
 	for _, n := range s.nodes {
-		if n.SourceID != id {
+		if nodeSourceID(n) != id {
 			newNodes = append(newNodes, n)
 		}
 	}
@@ -757,7 +757,7 @@ func (s *ClashService) ReplaceSubscriptionNodes(id string, nodes []ProxyNode, se
 			case oldSelected != "" && hasNodeByName(normalized, oldSelected):
 				cfg.Subscriptions[i].SelectedNode = oldSelected
 			default:
-				cfg.Subscriptions[i].SelectedNode = normalized[0].Name
+				cfg.Subscriptions[i].SelectedNode = nodeName(normalized[0])
 			}
 			break
 		}
@@ -772,7 +772,7 @@ func (s *ClashService) ReplaceSubscriptionNodes(id string, nodes []ProxyNode, se
 	s.mu.Lock()
 	remaining := make([]ProxyNode, 0, len(s.nodes))
 	for _, n := range s.nodes {
-		if n.SourceID != id {
+		if nodeSourceID(n) != id {
 			remaining = append(remaining, n)
 		}
 	}
@@ -812,13 +812,13 @@ func (s *ClashService) AddNodesToSubscription(id, content string) (int, error) {
 			}
 			existing := cfg.Subscriptions[i].Nodes
 			for k := range nodes {
-				nodes[k].SourceID = id
-				nodes[k].Name = uniqueNodeName(nodes[k].Name, existing)
+				nodes[k] = normalizeProxyNode(nodes[k], id)
+				setNodeString(nodes[k], nodeFieldName, uniqueNodeName(nodeName(nodes[k]), existing))
 				existing = append(existing, nodes[k])
 			}
 			cfg.Subscriptions[i].Nodes = existing
 			if cfg.Subscriptions[i].SelectedNode == "" && len(cfg.Subscriptions[i].Nodes) > 0 {
-				cfg.Subscriptions[i].SelectedNode = cfg.Subscriptions[i].Nodes[0].Name
+				cfg.Subscriptions[i].SelectedNode = nodeName(cfg.Subscriptions[i].Nodes[0])
 			}
 			added = len(nodes)
 			break
@@ -839,13 +839,13 @@ func (s *ClashService) AddNodesToSubscription(id, content string) (int, error) {
 	return added, nil
 }
 
-func (s *ClashService) RemoveNodeFromSubscription(id, nodeName string) error {
+func (s *ClashService) RemoveNodeFromSubscription(id, targetNodeName string) error {
 	id = strings.TrimSpace(id)
-	nodeName = strings.TrimSpace(nodeName)
+	targetNodeName = strings.TrimSpace(targetNodeName)
 	if id == "" {
 		return fmt.Errorf("subscription id is required")
 	}
-	if nodeName == "" {
+	if targetNodeName == "" {
 		return fmt.Errorf("node name is required")
 	}
 
@@ -859,14 +859,14 @@ func (s *ClashService) RemoveNodeFromSubscription(id, nodeName string) error {
 			}
 			subFound = true
 			for j, n := range cfg.Subscriptions[i].Nodes {
-				if n.Name != nodeName {
+				if nodeName(n) != targetNodeName {
 					continue
 				}
 				cfg.Subscriptions[i].Nodes = append(cfg.Subscriptions[i].Nodes[:j], cfg.Subscriptions[i].Nodes[j+1:]...)
-				if cfg.Subscriptions[i].SelectedNode == nodeName {
+				if cfg.Subscriptions[i].SelectedNode == targetNodeName {
 					cfg.Subscriptions[i].SelectedNode = ""
 					if len(cfg.Subscriptions[i].Nodes) > 0 {
-						cfg.Subscriptions[i].SelectedNode = cfg.Subscriptions[i].Nodes[0].Name
+						cfg.Subscriptions[i].SelectedNode = nodeName(cfg.Subscriptions[i].Nodes[0])
 					}
 				}
 				removed = true
@@ -882,12 +882,12 @@ func (s *ClashService) RemoveNodeFromSubscription(id, nodeName string) error {
 		return fmt.Errorf("subscription not found: %s", id)
 	}
 	if !removed {
-		return fmt.Errorf("node not found: %s", nodeName)
+		return fmt.Errorf("node not found: %s", targetNodeName)
 	}
 
 	s.mu.Lock()
 	for i := 0; i < len(s.nodes); i++ {
-		if s.nodes[i].SourceID == id && s.nodes[i].Name == nodeName {
+		if nodeSourceID(s.nodes[i]) == id && nodeName(s.nodes[i]) == targetNodeName {
 			s.nodes = append(s.nodes[:i], s.nodes[i+1:]...)
 			break
 		}
@@ -926,7 +926,7 @@ func normalizeImportedConfig(cfg *ClashConfig, legacyNodes []ProxyNode) {
 		nodesBySource := make(map[string][]ProxyNode)
 		var noSource []ProxyNode
 		for _, n := range legacyNodes {
-			sourceID := strings.TrimSpace(n.SourceID)
+			sourceID := strings.TrimSpace(nodeSourceID(n))
 			if sourceID == "" {
 				noSource = append(noSource, n)
 				continue
@@ -968,17 +968,17 @@ func (s *ClashService) findNodeSafe(name string) *ProxyNode {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for i := range s.nodes {
-		if s.nodes[i].Name == name {
-			n := s.nodes[i]
+		if nodeName(s.nodes[i]) == name {
+			n := cloneNode(s.nodes[i])
 			return &n
 		}
 	}
 	return nil
 }
 
-func hasNodeByName(nodes []ProxyNode, nodeName string) bool {
+func hasNodeByName(nodes []ProxyNode, targetName string) bool {
 	for _, n := range nodes {
-		if n.Name == nodeName {
+		if nodeName(n) == targetName {
 			return true
 		}
 	}
@@ -1005,9 +1005,8 @@ func normalizeSubscriptionNodes(nodes []ProxyNode, sourceID string) []ProxyNode 
 	existing := make([]ProxyNode, 0, len(nodes))
 	out := make([]ProxyNode, 0, len(nodes))
 	for i := range nodes {
-		node := nodes[i]
-		node.SourceID = sourceID
-		node.Name = uniqueNodeName(node.Name, existing)
+		node := normalizeProxyNode(nodes[i], sourceID)
+		setNodeString(node, nodeFieldName, uniqueNodeName(nodeName(node), existing))
 		existing = append(existing, node)
 		out = append(out, node)
 	}
@@ -1080,7 +1079,7 @@ func selectedNodeForSubscription(sub *Subscription) string {
 	if selected != "" && hasNodeByName(sub.Nodes, selected) {
 		return selected
 	}
-	return strings.TrimSpace(sub.Nodes[0].Name)
+	return strings.TrimSpace(nodeName(sub.Nodes[0]))
 }
 
 func runtimeProxyName(subID, nodeName string) string {
@@ -1185,27 +1184,10 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 		names := make([]string, 0, len(sub.Nodes))
 		selectedNodeName := selectedNodeForSubscription(sub)
 		selectedRuntimeName := ""
-		selectedIdx := -1
-		for i := range sub.Nodes {
-			if sub.Nodes[i].Name == selectedNodeName {
-				selectedIdx = i
-				break
-			}
-		}
-		orderedNodes := make([]ProxyNode, 0, len(sub.Nodes))
-		if selectedIdx >= 0 {
-			orderedNodes = append(orderedNodes, sub.Nodes[selectedIdx])
-		}
-		for i := range sub.Nodes {
-			if i == selectedIdx {
-				continue
-			}
-			orderedNodes = append(orderedNodes, sub.Nodes[i])
-		}
 
-		for i := range orderedNodes {
-			node := orderedNodes[i]
-			name := runtimeProxyName(sub.ID, node.Name)
+		for i := range sub.Nodes {
+			node := sub.Nodes[i]
+			name := runtimeProxyName(sub.ID, nodeName(node))
 			if _, exists := usedRuntimeNames[name]; exists {
 				for suffix := 2; ; suffix++ {
 					candidate := fmt.Sprintf("%s (%d)", name, suffix)
@@ -1217,7 +1199,7 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 				}
 			}
 			usedRuntimeNames[name] = struct{}{}
-			nodeRuntimeByKey[runtimeNodeKey(sub.ID, node.Name)] = name
+			nodeRuntimeByKey[runtimeNodeKey(sub.ID, nodeName(node))] = name
 
 			nodeCopy := node
 			proxyMap, err := buildProxyMap(name, &nodeCopy)
@@ -1229,7 +1211,7 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 			}
 			proxies = append(proxies, proxyMap)
 			names = append(names, name)
-			if node.Name == selectedNodeName {
+			if nodeName(node) == selectedNodeName {
 				selectedRuntimeName = name
 			}
 		}
@@ -1288,7 +1270,7 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 			proxyGroups = append(proxyGroups, map[string]any{
 				"name":    runtimeGroupExit,
 				"type":    "select",
-				"proxies": []string{exitSelected},
+				"proxies": exitNames,
 			})
 			plan.exitSelection = exitSelected
 		}
@@ -1341,25 +1323,19 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 		}
 	}
 
-	runtimeCfg := map[string]any{
-		"socks-port":   socksPort(normalized),
-		"bind-address": socksListen(normalized),
-		"allow-lan":    false,
-		"mode":         "rule",
-		"log-level":    clashLogLevel(normalized),
-		"ipv6":         false,
-		"profile": map[string]any{
-			"store-selected": false,
-		},
-		"dns": map[string]any{
-			"enable":             true,
-			"ipv6":               false,
-			"default-nameserver": []string{"223.5.5.5", "1.1.1.1"},
-			"nameserver":         []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"},
-		},
-		"proxies":      proxies,
-		"proxy-groups": proxyGroups,
-		"rules":        []string{"MATCH," + plan.trafficGroup},
+	runtimeCfg := buildRuntimeBaseConfig(normalized)
+	runtimeCfg["profile"] = map[string]any{
+		"store-selected": false,
+	}
+	runtimeCfg["proxies"] = proxies
+	runtimeCfg["proxy-groups"] = proxyGroups
+	runtimeCfg["rules"] = []string{"MATCH," + plan.trafficGroup}
+
+	runtimeCfg, err := mergeRuntimeConfigWithUserYAML(runtimeCfg, normalized,
+		"mixed-port", "bind-address", "allow-lan", "mode", "log-level", "ipv6", "profile", "proxies", "proxy-groups", "rules",
+	)
+	if err != nil {
+		return nil, nil, false, err
 	}
 
 	runtimeYAML, err := yaml.Marshal(runtimeCfg)
@@ -1383,7 +1359,7 @@ func clampChainReferences(cfg *ClashConfig) {
 		if len(sub.Nodes) == 0 {
 			sub.SelectedNode = ""
 		} else if !hasNodeByName(sub.Nodes, sub.SelectedNode) {
-			sub.SelectedNode = sub.Nodes[0].Name
+			sub.SelectedNode = nodeName(sub.Nodes[0])
 		}
 
 		if sub.Active {
@@ -1446,61 +1422,6 @@ func clampChainReferences(cfg *ClashConfig) {
 	}
 }
 
-func applyRuntimeSelections(plan *runtimePlan) error {
-	if plan == nil {
-		return nil
-	}
-	if plan.exitSelection != "" {
-		if err := setRuntimeGroupSelection(runtimeGroupExit, plan.exitSelection); err != nil {
-			return err
-		}
-	}
-	if plan.middleSelection != "" {
-		if err := setRuntimeGroupSelection(runtimeGroupMiddle, plan.middleSelection); err != nil {
-			return err
-		}
-	}
-	if plan.trafficGroup != "" && plan.trafficSelection != "" {
-		if err := setRuntimeGroupSelection(plan.trafficGroup, plan.trafficSelection); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func applyRuntimeSelectionsWithRetry(plan *runtimePlan, attempts int, delay time.Duration) error {
-	if attempts <= 0 {
-		attempts = 1
-	}
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		lastErr = applyRuntimeSelections(plan)
-		if lastErr == nil {
-			return nil
-		}
-		if i+1 < attempts {
-			time.Sleep(delay)
-		}
-	}
-	return lastErr
-}
-
-func setRuntimeGroupSelection(groupName, proxyName string) error {
-	proxies := tunnel.Proxies()
-	group, ok := proxies[groupName]
-	if !ok {
-		return fmt.Errorf("runtime group not found: %s", groupName)
-	}
-	selector, ok := group.Adapter().(outboundgroup.SelectAble)
-	if !ok {
-		return fmt.Errorf("runtime group is not selectable: %s", groupName)
-	}
-	if err := selector.Set(proxyName); err != nil {
-		return fmt.Errorf("set runtime group %s -> %s: %w", groupName, proxyName, err)
-	}
-	return nil
-}
-
 func (s *ClashService) syncRuntimeSelections(cfg *ClashConfig) error {
 	s.mu.RLock()
 	running := s.running
@@ -1516,7 +1437,9 @@ func (s *ClashService) syncRuntimeSelections(cfg *ClashConfig) error {
 	if !ready {
 		return nil
 	}
-	if err := applyRuntimeSelections(plan); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeControllerRequestTimeout)
+	defer cancel()
+	if err := applyRuntimeSelections(ctx, cfg, plan); err != nil {
 		if isRuntimeSelectionMismatchError(err) {
 			log.Printf("[clash] runtime selection mismatch, restarting runtime: %v", err)
 			if restartErr := s.restartRuntime(); restartErr != nil {
@@ -1533,9 +1456,9 @@ func isRuntimeSelectionMismatchError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "runtime group not found") ||
-		strings.Contains(msg, "runtime group is not selectable") ||
+		strings.Contains(msg, "proxy group not found") ||
 		strings.Contains(msg, "proxy not exist")
 }
 

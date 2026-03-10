@@ -25,6 +25,7 @@ function createDefaultConfig(): ClashConfig {
     socksPort: 10808,
     logLevel: 'warning',
     globalProxy: false,
+    userYaml: '',
     chain: {
       entry: { subscriptionId: '', nodeName: '' },
       exit: { subscriptionId: '', nodeName: '' }
@@ -72,6 +73,7 @@ function normalizeConfig(raw: ClashConfig): ClashConfig {
     socksPort: Number(raw?.socksPort || 10808),
     logLevel: raw?.logLevel || 'warning',
     globalProxy: !!raw?.globalProxy,
+    userYaml: String(raw?.userYaml || ''),
     chain,
     dialerProxyId: exitSubID || String(raw?.dialerProxyId || ''),
     subscriptions: Array.isArray(raw?.subscriptions) ? raw.subscriptions : []
