@@ -307,7 +307,7 @@ func (a *App) StartCodexHeadlessLoginWithProvider(email, password, clientID, ema
 		ctx = context.Background()
 	}
 
-	// Resolve proxy URL with priority: global clash proxy -> account proxy -> codex.json proxy
+	// Resolve proxy URL with priority: appConfig.proxyUrl -> account proxy -> codex.json proxy
 	// This follows the same pattern as forward.go:forwardToUpstream
 	proxyURL := a.resolveCodexProxyForEmail(email)
 
@@ -339,7 +339,7 @@ func (a *App) StartCodexHeadlessLoginWithProvider(email, password, clientID, ema
 }
 
 // resolveCodexProxyForEmail resolves proxy URL for a Codex account by email
-// Priority: global clash proxy -> account-level proxy -> pool.ProxyURL() (codex.json global proxy)
+// Priority: appConfig.proxyUrl -> account-level proxy -> pool.ProxyURL() (codex.json global proxy)
 // This mirrors the logic in internal/codex/plugin/forward.go:forwardToUpstream
 func (a *App) resolveCodexProxyForEmail(email string) string {
 	configPath := a.getCodexMultiConfigPath()
@@ -352,11 +352,7 @@ func (a *App) resolveCodexProxyForEmail(email string) string {
 		return ""
 	}
 
-	// Priority 1: Global clash proxy (from clash plugin)
-	proxyURL := ""
-	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
-		proxyURL = gp.GetGlobalProxyURL()
-	}
+	proxyURL := plugin.GetAppProxyURL()
 
 	// Priority 2: Account-level proxy
 	if proxyURL == "" {
@@ -444,9 +440,7 @@ func (a *App) StartCodexSignup(req CodexSignupRequestDTO) (*SignupStateDTO, erro
 	}
 
 	proxyURL := ""
-	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
-		proxyURL = gp.GetGlobalProxyURL()
-	}
+	proxyURL = plugin.GetAppProxyURL()
 	if proxyURL == "" {
 		globalConfigRaw, err := cp.GetCodexGlobalConfig(a.getCodexMultiConfigPath())
 		if err == nil {

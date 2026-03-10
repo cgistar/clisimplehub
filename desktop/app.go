@@ -33,6 +33,7 @@ import (
 type Settings struct {
 	Port       int    `json:"port"`
 	APIKey     string `json:"apiKey"`
+	ProxyURL   string `json:"proxyUrl,omitempty"`
 	Fallback   bool   `json:"fallback"`
 	DebugMode  string `json:"debugMode,omitempty"`
 	ListenAddr string `json:"listenAddr,omitempty"`
@@ -152,6 +153,7 @@ func (a *App) GetSettings() (*Settings, error) {
 	settings := &Settings{
 		Port:       5600, // Default port
 		APIKey:     "",
+		ProxyURL:   "",
 		Fallback:   false, // Default fallback disabled
 		DebugMode:  "",
 		ListenAddr: "0.0.0.0",
@@ -169,6 +171,11 @@ func (a *App) GetSettings() (*Settings, error) {
 	apiKey, err := a.storage.GetConfig(ConfigKeyAPIKey)
 	if err == nil {
 		settings.APIKey = apiKey
+	}
+
+	proxyURL, err := a.storage.GetConfig(ConfigKeyProxyURL)
+	if err == nil {
+		settings.ProxyURL = strings.TrimSpace(proxyURL)
 	}
 
 	// Get fallback setting from storage
@@ -206,6 +213,7 @@ func (a *App) SaveSettings(settings *Settings) error {
 		oldPort = a.proxyServer.GetPort()
 	}
 	normalizedAPIKey := strings.TrimSpace(settings.APIKey)
+	normalizedProxyURL := strings.TrimSpace(settings.ProxyURL)
 
 	// Validate port
 	if err := config.ValidatePort(settings.Port); err != nil {
@@ -220,6 +228,10 @@ func (a *App) SaveSettings(settings *Settings) error {
 	// Save proxy auth token to storage (empty => no auth)
 	if err := a.storage.SetConfig(ConfigKeyAPIKey, normalizedAPIKey); err != nil {
 		return fmt.Errorf("failed to save api key: %w", err)
+	}
+
+	if err := a.storage.SetConfig(ConfigKeyProxyURL, normalizedProxyURL); err != nil {
+		return fmt.Errorf("failed to save proxy url: %w", err)
 	}
 
 	// Save fallback setting to storage as bool

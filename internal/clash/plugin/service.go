@@ -1082,8 +1082,12 @@ func selectedNodeForSubscription(sub *Subscription) string {
 	return strings.TrimSpace(nodeName(sub.Nodes[0]))
 }
 
-func runtimeProxyName(subID, nodeName string) string {
-	return strings.TrimSpace(subID) + " :: " + strings.TrimSpace(nodeName)
+func runtimeProxyName(subName, subID, nodeName string) string {
+	prefix := strings.TrimSpace(subName)
+	if prefix == "" {
+		prefix = strings.TrimSpace(subID)
+	}
+	return prefix + ":" + strings.TrimSpace(nodeName)
 }
 
 func runtimeNodeKey(subID, nodeName string) string {
@@ -1187,7 +1191,7 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 
 		for i := range sub.Nodes {
 			node := sub.Nodes[i]
-			name := runtimeProxyName(sub.ID, nodeName(node))
+			name := runtimeProxyName(sub.Name, sub.ID, nodeName(node))
 			if _, exists := usedRuntimeNames[name]; exists {
 				for suffix := 2; ; suffix++ {
 					candidate := fmt.Sprintf("%s (%d)", name, suffix)

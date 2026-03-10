@@ -44,20 +44,17 @@ func getSharedTransport() *http.Transport {
 }
 
 // NewHTTPClient 创建 HTTP 客户端，支持代理配置
-// 优先级: plugin.GetGlobalProxyURL() > endpoint.ProxyURL > 默认直连
+// 优先级: appConfig.proxyUrl > endpoint.ProxyURL > 默认直连
 func NewHTTPClient(endpoint *EndpointConfig, timeout time.Duration) *http.Client {
 	client := &http.Client{
 		Timeout:   normalizeHTTPClientTimeout(timeout),
 		Transport: getSharedTransport(),
 	}
 
-	// Global proxy takes highest priority.
-	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
-		if gpURL := gp.GetGlobalProxyURL(); gpURL != "" {
-			if t := buildProxyTransport(gpURL); t != nil {
-				client.Transport = t
-				return client
-			}
+	if proxyURL := plugin.GetAppProxyURL(); proxyURL != "" {
+		if t := buildProxyTransport(proxyURL); t != nil {
+			client.Transport = t
+			return client
 		}
 	}
 

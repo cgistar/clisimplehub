@@ -139,18 +139,20 @@ func main() {
 	proxyServer.SetConfigPath(configPath)
 
 	// Initialize all plugins
+	configGetter := func(key string) (string, error) {
+		if strings.TrimSpace(key) == "configPath" {
+			return configPath, nil
+		}
+		return store.GetConfig(key)
+	}
+	plugin.SetConfigGetter(configGetter)
 	reloadOnce := func() {
 		reloadConfig(store, router, proxyServer)
 	}
 	for _, pl := range plugin.All() {
 		if err := pl.Init(plugin.InitConfig{
-			ConfigPath: configPath,
-			ConfigGetter: func(key string) (string, error) {
-				if strings.TrimSpace(key) == "configPath" {
-					return configPath, nil
-				}
-				return store.GetConfig(key)
-			},
+			ConfigPath:    configPath,
+			ConfigGetter:  configGetter,
 			Storage:       store,
 			TriggerReload: reloadOnce,
 		}); err != nil {

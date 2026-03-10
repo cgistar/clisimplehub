@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NInput, NModal, NRadioButton, NRadioGroup, NSelect } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { endpointApi } from '@/api/endpoint'
@@ -40,6 +40,9 @@ const loadingServers = ref(false)
 const savingServer = ref(false)
 const testingServer = ref(false)
 const syncingServer = ref(false)
+const generalAutoSaveReady = ref(false)
+const lastSavedGeneralSnapshot = ref('')
+let generalSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 const backups = ref<WebDAVBackupItem[]>([])
 const servers = ref<ServerConfig[]>([])
@@ -171,6 +174,7 @@ async function loadServers(): Promise<void> {
 }
 
 async function loadPageData(): Promise<void> {
+  generalAutoSaveReady.value = false
   loading.value = true
   try {
     await Promise.all([
@@ -179,6 +183,8 @@ async function loadPageData(): Promise<void> {
       loadServers()
     ])
     await loadBackupsList()
+    updateGeneralSnapshot()
+    generalAutoSaveReady.value = true
   } catch (error) {
     feedback.error(t('settings.loadFailed') + ': ' + toErrorMessage(error))
   } finally {
@@ -195,12 +201,60 @@ function formatBackupTime(raw?: string): string {
   return raw
 }
 
-async function saveGeneralSettings(): Promise<void> {
+function getGeneralSnapshot(): string {
+  return JSON.stringify({
+    port: Number(settingsForm.value.port),
+    apiKey: String(settingsForm.value.apiKey || ''),
+    proxyUrl: String(settingsForm.value.proxyUrl || '').trim(),
+    fallback: !!settingsForm.value.fallback,
+    debugMode: String(settingsForm.value.debugMode || ''),
+    listenAddr: String(settingsForm.value.listenAddr || ''),
+    claudeConfigDir: String(cliDirs.value.claudeConfigDir || '').trim(),
+    codexConfigDir: String(cliDirs.value.codexConfigDir || '').trim()
+  })
+}
+
+function updateGeneralSnapshot(): void {
+  lastSavedGeneralSnapshot.value = getGeneralSnapshot()
+}
+
+function clearGeneralSaveTimer(): void {
+  if (generalSaveTimer === null) return
+  clearTimeout(generalSaveTimer)
+  generalSaveTimer = null
+}
+
+function scheduleGeneralAutoSave(): void {
+  if (!generalAutoSaveReady.value || loading.value) return
+  clearGeneralSaveTimer()
+  generalSaveTimer = setTimeout(() => {
+    generalSaveTimer = null
+    void saveGeneralSettings(true)
+  }, 500)
+}
+
+async function saveGeneralSettings(quiet = false): Promise<void> {
+  const snapshotBeforeSave = getGeneralSnapshot()
+  if (quiet && snapshotBeforeSave === lastSavedGeneralSnapshot.value) {
+    return
+  }
+
   savingGeneral.value = true
   try {
-    await saveGeneralSettingsCore()
+    const saved = await saveGeneralSettingsCore({ quiet })
+    if (saved) {
+      updateGeneralSnapshot()
+    }
   } finally {
     savingGeneral.value = false
+    const latestSnapshot = getGeneralSnapshot()
+    if (
+      generalAutoSaveReady.value &&
+      latestSnapshot !== lastSavedGeneralSnapshot.value &&
+      latestSnapshot !== snapshotBeforeSave
+    ) {
+      scheduleGeneralAutoSave()
+    }
   }
 }
 
@@ -228,6 +282,26 @@ async function saveWebDAVConfig(): Promise<void> {
     savingWebdav.value = false
   }
 }
+
+watch(
+  () => [
+    settingsForm.value.port,
+    settingsForm.value.apiKey,
+    settingsForm.value.proxyUrl,
+    settingsForm.value.fallback,
+    settingsForm.value.debugMode,
+    settingsForm.value.listenAddr,
+    cliDirs.value.claudeConfigDir,
+    cliDirs.value.codexConfigDir
+  ],
+  () => {
+    scheduleGeneralAutoSave()
+  }
+)
+
+onBeforeUnmount(() => {
+  clearGeneralSaveTimer()
+})
 
 async function backupToWebDAV(): Promise<void> {
   const config = getWebDAVConfigFromForm()
@@ -525,6 +599,11 @@ onMounted(() => {
       <section class="settings-card">
         <div class="settings-card-header">
           <h2>{{ t('settings.sectionGeneral') }}</h2>
+          <div class="settings-card-header-actions">
+            <span class="settings-inline-hint">
+              {{ savingGeneral ? t('settings.autoSaving') : t('settings.autoSaveHint') }}
+            </span>
+          </div>
         </div>
 
         <div v-if="loading" class="settings-loading">{{ t('common.loading') }}</div>
@@ -553,6 +632,12 @@ onMounted(() => {
           <div>
             <input v-model="settingsForm.apiKey" type="password" :placeholder="t('settings.apiKeyPlaceholder')">
             <small>{{ t('settings.apiKeyHelp') }}</small>
+          </div>
+
+          <label>{{ t('settings.proxyUrl') }}</label>
+          <div>
+            <input v-model="settingsForm.proxyUrl" type="text" :placeholder="t('settings.proxyUrlPlaceholder')">
+            <small>{{ t('settings.proxyUrlHelp') }}</small>
           </div>
 
           <label>{{ t('settings.fallback') }}</label>
@@ -592,12 +677,6 @@ onMounted(() => {
             <input v-model="cliDirs.codexConfigDir" type="text" placeholder="~/.codex">
             <small>{{ t('settings.codexConfigDirHelp') }}</small>
           </div>
-        </div>
-
-        <div class="settings-card-actions">
-          <button class="btn btn-primary" :disabled="loading || savingGeneral" @click="saveGeneralSettings">
-            {{ savingGeneral ? t('settings.saving') : t('settings.save') }}
-          </button>
         </div>
       </section>
 

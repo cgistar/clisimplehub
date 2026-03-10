@@ -334,11 +334,8 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 		config = &codexShared.CodexMultiConfig{}
 	}
 
-	// Resolve proxy: global > account > plugin
-	proxyURL := ""
-	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
-		proxyURL = gp.GetGlobalProxyURL()
-	}
+	// Resolve proxy: appConfig.proxyUrl > account > plugin
+	proxyURL := plugin.GetAppProxyURL()
 	if proxyURL == "" {
 		proxyURL = strings.TrimSpace(account.ProxyUrl)
 	}

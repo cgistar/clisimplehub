@@ -37,7 +37,7 @@ type ClashConfig struct {
 	SocksListen   string         `json:"socksListen"`
 	SocksPort     int            `json:"socksPort"`
 	LogLevel      string         `json:"logLevel"`
-	GlobalProxy   bool           `json:"globalProxy"`
+	GlobalProxy   bool           `json:"globalProxy,omitempty"`
 	UserYAML      string         `json:"userYaml"`
 	Chain         ChainConfig    `json:"chain"`
 	Subscriptions []Subscription `json:"subscriptions"`

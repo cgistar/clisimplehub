@@ -48,7 +48,6 @@ export interface ClashConfig {
   socksListen: string
   socksPort: number
   logLevel: ClashLogLevel | string
-  globalProxy: boolean
   userYaml: string
   chain?: ClashChainConfig
   dialerProxyId?: string

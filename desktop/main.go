@@ -38,6 +38,7 @@ const (
 const (
 	ConfigKeyPort      = "port"
 	ConfigKeyAPIKey    = "apiKey"
+	ConfigKeyProxyURL  = "proxyUrl"
 	ConfigKeyFallback  = "fallback"
 	ConfigKeyDebugMode = "debugMode"
 	// Temporary disable TTL for failed endpoints (minutes)
@@ -167,17 +168,19 @@ func main() {
 			log.Printf("Warning: reload config failed: %v", err)
 		}
 	}
+	configGetter := func(key string) (string, error) {
+		if strings.TrimSpace(key) == "configPath" {
+			return configPath, nil
+		}
+		return store.GetConfig(key)
+	}
+	plugin.SetConfigGetter(configGetter)
 
 	// Initialize all plugins
 	for _, pl := range plugin.All() {
 		if err := pl.Init(plugin.InitConfig{
-			ConfigPath: configPath,
-			ConfigGetter: func(key string) (string, error) {
-				if strings.TrimSpace(key) == "configPath" {
-					return configPath, nil
-				}
-				return store.GetConfig(key)
-			},
+			ConfigPath:    configPath,
+			ConfigGetter:  configGetter,
 			Storage:       store,
 			TriggerReload: reloadOnce,
 		}); err != nil {

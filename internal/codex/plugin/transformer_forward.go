@@ -229,11 +229,8 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 	configPath := pool.ConfigPath()
 
-	// Resolve proxy: global > account > plugin
-	proxyURL := ""
-	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
-		proxyURL = gp.GetGlobalProxyURL()
-	}
+	// Resolve proxy: appConfig.proxyUrl > account > plugin
+	proxyURL := plugin.GetAppProxyURL()
 	if proxyURL == "" {
 		proxyURL = strings.TrimSpace(account.ProxyUrl)
 	}

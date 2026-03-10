@@ -24,11 +24,11 @@ type oauthSession struct {
 }
 
 var (
-	oauthSessions  = make(map[string]*oauthSession)
+	oauthSessions   = make(map[string]*oauthSession)
 	oauthSessionsMu sync.Mutex
 	sessionTTL      = 10 * time.Minute
 
-	webUILoginMu     sync.Mutex
+	webUILoginMu      sync.Mutex
 	webUILoginCancel  context.CancelFunc
 	webUILoginCleanup func()
 	webUILoginGen     uint64
@@ -303,10 +303,8 @@ func resolveProxyURL(requested, codexJsonPath string) string {
 	if u := strings.TrimSpace(requested); u != "" {
 		return u
 	}
-	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
-		if u := gp.GetGlobalProxyURL(); u != "" {
-			return u
-		}
+	if u := plugin.GetAppProxyURL(); u != "" {
+		return u
 	}
 	if codexJsonPath != "" {
 		if mc, err := codexShared.LoadCodexMultiConfig(codexJsonPath); err == nil && mc != nil {

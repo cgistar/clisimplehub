@@ -33,7 +33,6 @@ const form = reactive({
   socksListen: '127.0.0.1',
   socksPort: 10808,
   logLevel: 'warning' as ClashLogLevel,
-  globalProxy: false,
   userYaml: ''
 })
 
@@ -41,7 +40,6 @@ function syncFromProps(): void {
   form.socksListen = props.config?.socksListen || '127.0.0.1'
   form.socksPort = Number(props.config?.socksPort || 10808)
   form.logLevel = (props.config?.logLevel || 'warning') as ClashLogLevel
-  form.globalProxy = !!props.config?.globalProxy
   form.userYaml = props.config?.userYaml || ''
 }
 
@@ -65,7 +63,6 @@ function handleSave(): void {
     socksListen: form.socksListen.trim() || '127.0.0.1',
     socksPort: Number(form.socksPort || 10808),
     logLevel: form.logLevel,
-    globalProxy: !!form.globalProxy,
     userYaml: form.userYaml,
     subscriptions: Array.isArray(props.config?.subscriptions) ? props.config.subscriptions : []
   })
@@ -105,7 +102,7 @@ function handleSave(): void {
           </label>
         </div>
 
-        <div class="grid gap-4 md:grid-cols-[minmax(0,1fr),auto] md:items-start">
+        <div>
           <label class="block text-sm">
             <span class="mb-1 block text-slate-700">{{ t('clash.logLevel') }}</span>
             <n-select
@@ -114,24 +111,6 @@ function handleSave(): void {
               class="w-full"
             />
           </label>
-
-          <div class="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
-            <label class="flex items-center justify-between gap-3 text-sm">
-              <span class="font-medium text-slate-800">{{ t('clash.globalProxy') }}</span>
-              <span class="relative inline-flex h-6 w-11 shrink-0 items-center">
-                <input v-model="form.globalProxy" type="checkbox" class="peer sr-only" />
-                <span
-                  class="h-6 w-11 rounded-full bg-slate-300 transition-colors duration-200 peer-checked:bg-sky-600"
-                ></span>
-                <span
-                  class="pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-5"
-                ></span>
-              </span>
-            </label>
-            <p class="text-xs leading-5 text-slate-600">
-              {{ t('clash.globalProxyHelp') }}
-            </p>
-          </div>
         </div>
 
         <label class="block text-sm">

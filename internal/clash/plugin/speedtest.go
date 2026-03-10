@@ -145,7 +145,7 @@ func getSpeedTestProxy(svc *ClashService, node *ProxyNode) (C.Proxy, error) {
 		return nil, fmt.Errorf("node is nil")
 	}
 
-	proxyName := runtimeProxyName(nodeSourceID(*node), nodeName(*node))
+	proxyName := runtimeProxyName("", nodeSourceID(*node), nodeName(*node))
 	svc.mu.RLock()
 	running := svc.running
 	svc.mu.RUnlock()
@@ -271,7 +271,7 @@ func buildRuntimeYAMLForSubscription(sub *Subscription, cfg *ClashConfig) ([]byt
 
 	for i := range sub.Nodes {
 		node := sub.Nodes[i]
-		name := runtimeProxyName(sub.ID, nodeName(node))
+		name := runtimeProxyName(sub.Name, sub.ID, nodeName(node))
 		if _, exists := usedNames[name]; exists {
 			for suffix := 2; ; suffix++ {
 				candidate := fmt.Sprintf("%s (%d)", name, suffix)

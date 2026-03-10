@@ -79,10 +79,8 @@ func (m *CodexAuthManager) SetProxyURL(proxyURL string) {
 }
 
 func (m *CodexAuthManager) resolveProxyURL() string {
-	if gp := plugin.GetGlobalProxyProviderCached(); gp != nil {
-		if gpURL := gp.GetGlobalProxyURL(); gpURL != "" {
-			return gpURL
-		}
+	if proxyURL := plugin.GetAppProxyURL(); proxyURL != "" {
+		return proxyURL
 	}
 	return m.proxyURL
 }

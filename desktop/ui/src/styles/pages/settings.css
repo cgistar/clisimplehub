@@ -48,6 +48,11 @@
     align-items: center;
   }
 
+  .settings-page .settings-inline-hint {
+    color: var(--text-tertiary);
+    font-size: 12px;
+  }
+
   .settings-page .settings-loading {
     color: var(--text-tertiary);
     padding: 10px 0;

@@ -8,6 +8,7 @@ import type { CLIConfigDirsPayload, SettingsPayload, WebDAVConfig } from '@/type
 
 type LanguageOption = { label: string; value: string }
 type LanguageSelectValue = string | number | boolean | null
+type SaveGeneralSettingsOptions = { quiet?: boolean }
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -18,6 +19,7 @@ function normalizeSettings(settings: SettingsPayload): SettingsPayload {
   return {
     port: settings.port || 5600,
     apiKey: settings.apiKey || '',
+    proxyUrl: settings.proxyUrl || '',
     fallback: !!settings.fallback,
     debugMode: settings.debugMode || '',
     listenAddr: settings.listenAddr || ''
@@ -56,6 +58,7 @@ export function useSettings() {
   const settingsForm = ref<SettingsPayload>({
     port: 5600,
     apiKey: '',
+    proxyUrl: '',
     fallback: false,
     debugMode: ''
   })
@@ -135,16 +138,20 @@ export function useSettings() {
     }
   }
 
-  async function saveGeneralSettings(): Promise<boolean> {
+  async function saveGeneralSettings(options: SaveGeneralSettingsOptions = {}): Promise<boolean> {
+    const quiet = options.quiet === true
     const port = Number(settingsForm.value.port)
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      feedback.error(t('settings.portHelp'))
+      if (!quiet) {
+        feedback.error(t('settings.portHelp'))
+      }
       return false
     }
 
     try {
       await endpointApi.saveSettings({
         ...settingsForm.value,
+        proxyUrl: String(settingsForm.value.proxyUrl || '').trim(),
         port
       })
       await endpointApi.reloadConfig()
@@ -155,7 +162,9 @@ export function useSettings() {
       })
 
       await settingsStore.loadSettings()
-      feedback.success(t('settings.saveSuccess'))
+      if (!quiet) {
+        feedback.success(t('settings.saveSuccess'))
+      }
       return true
     } catch (error) {
       feedback.error(t('settings.saveFailed') + ': ' + toErrorMessage(error))
