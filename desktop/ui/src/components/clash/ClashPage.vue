@@ -132,12 +132,9 @@ async function handleStartStop(): Promise<void> {
   }
 }
 
-async function handleRefreshSubscriptions(): Promise<void> {
+async function handleReloadConfig(): Promise<void> {
   try {
-    const result = await clashStore.refreshSubscriptions()
-    if (result.errors?.length) {
-      message.warning(result.errors.join('; '))
-    }
+    await clashStore.reloadConfigFromDisk()
   } catch (error) {
     message.error(t('clash.refreshFailed') + toErrorMessage(error))
   }
@@ -446,11 +443,11 @@ async function handleCopyProxyAddress(): Promise<void> {
           <button
             type="button"
             class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="clashStore.refreshingAll"
-            @click="handleRefreshSubscriptions"
+            :disabled="clashStore.reloadingConfig"
+            @click="handleReloadConfig"
           >
-            <RefreshCcw :size="14" :class="{ 'animate-spin': clashStore.refreshingAll }" />
-            {{ clashStore.refreshingAll ? t('clash.refreshing') : t('clash.refreshSubs') }}
+            <RefreshCcw :size="14" :class="{ 'animate-spin': clashStore.reloadingConfig }" />
+            {{ clashStore.reloadingConfig ? t('clash.refreshing') : t('clash.refreshSubs') }}
           </button>
 
           <button

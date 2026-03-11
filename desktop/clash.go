@@ -133,6 +133,15 @@ func (a *App) GetClashConfig() (map[string]interface{}, error) {
 	return result, nil
 }
 
+// ReloadClashConfig reloads clash-config.json from disk and refreshes in-memory state.
+func (a *App) ReloadClashConfig() error {
+	vp := clashProvider()
+	if vp == nil {
+		return fmt.Errorf("clash plugin not available")
+	}
+	return vp.ReloadConfigFromDisk()
+}
+
 // SaveClashConfig saves the Clash plugin configuration.
 func (a *App) SaveClashConfig(config string) error {
 	vp := clashProvider()

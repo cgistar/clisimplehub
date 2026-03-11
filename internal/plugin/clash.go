@@ -14,6 +14,7 @@ type ClashDesktopProvider interface {
 	SelectNode(nodeName string) error
 	GetConfig(configPath string) (json.RawMessage, error)
 	SaveConfig(configPath string, dto json.RawMessage) error
+	ReloadConfigFromDisk() error
 	RefreshSubscriptions(ctx context.Context) (json.RawMessage, error)
 	AddSubscription(name, url string) error
 	RemoveSubscription(id string) error

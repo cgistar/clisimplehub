@@ -20,6 +20,10 @@ export const clashApi = {
     return App.GetClashConfig()
   },
 
+  async reloadConfigFromDisk(): Promise<void> {
+    await App.ReloadClashConfig()
+  },
+
   async getNodes(): Promise<ClashNode[]> {
     return App.GetClashNodes()
   },

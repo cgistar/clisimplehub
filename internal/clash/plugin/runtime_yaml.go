@@ -32,26 +32,11 @@ func buildRuntimeBaseConfig(cfg *ClashConfig) map[string]any {
 }
 
 func mergeRuntimeConfigWithUserYAML(base map[string]any, cfg *ClashConfig, protectedKeys ...string) (map[string]any, error) {
-	runtimeCfg := cloneAnyMap(base)
 	userCfg, err := parseUserYAMLOverride(cfg)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(userCfg) > 0 {
-		mergeAnyMap(runtimeCfg, userCfg)
-	}
-
-	delete(runtimeCfg, "socks-port")
-	for _, key := range protectedKeys {
-		value, ok := base[key]
-		if !ok {
-			continue
-		}
-		runtimeCfg[key] = cloneAnyValue(value)
-	}
-
-	return runtimeCfg, nil
+	return mergeRuntimeConfigWithUserYAMLMap(base, userCfg, protectedKeys...), nil
 }
 
 func parseUserYAMLOverride(cfg *ClashConfig) (map[string]any, error) {
@@ -67,6 +52,114 @@ func parseUserYAMLOverride(cfg *ClashConfig) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	return userCfg, nil
+}
+
+func mergeRuntimeConfigWithUserYAMLPrependRules(base map[string]any, cfg *ClashConfig, protectedKeys ...string) (map[string]any, error) {
+	userCfg, err := parseUserYAMLOverride(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	baseRules, _, err := parseRuntimeRuleList(base["rules"])
+	if err != nil {
+		return nil, err
+	}
+
+	userRules, hasUserRules, err := parseRuntimeRuleList(nil)
+	if userCfg != nil {
+		userRules, hasUserRules, err = parseRuntimeRuleList(userCfg["rules"])
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Keep base rules (MATCH,...) as the last rule(s) to avoid breaking group selection.
+	mergedRules := baseRules
+	if hasUserRules && len(userRules) > 0 {
+		mergedRules = append(append([]string(nil), userRules...), baseRules...)
+	}
+
+	filteredProtected := removeProtectedKey(protectedKeys, "rules")
+	runtimeCfg := mergeRuntimeConfigWithUserYAMLMap(base, userCfg, filteredProtected...)
+	runtimeCfg["rules"] = mergedRules
+	return runtimeCfg, nil
+}
+
+func mergeRuntimeConfigWithUserYAMLMap(base map[string]any, userCfg map[string]any, protectedKeys ...string) map[string]any {
+	runtimeCfg := cloneAnyMap(base)
+	if len(userCfg) > 0 {
+		mergeAnyMap(runtimeCfg, userCfg)
+	}
+
+	delete(runtimeCfg, "socks-port")
+	for _, key := range protectedKeys {
+		value, ok := base[key]
+		if !ok {
+			continue
+		}
+		runtimeCfg[key] = cloneAnyValue(value)
+	}
+
+	return runtimeCfg
+}
+
+func removeProtectedKey(keys []string, key string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return append([]string(nil), keys...)
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if strings.TrimSpace(k) == key {
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+func parseRuntimeRuleList(value any) ([]string, bool, error) {
+	if value == nil {
+		return nil, false, nil
+	}
+
+	switch typed := value.(type) {
+	case string:
+		v := strings.TrimSpace(typed)
+		if v == "" {
+			return nil, true, nil
+		}
+		return []string{v}, true, nil
+	case []string:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			v := strings.TrimSpace(item)
+			if v == "" {
+				continue
+			}
+			out = append(out, v)
+		}
+		return out, true, nil
+	case []any:
+		out := make([]string, 0, len(typed))
+		for i := range typed {
+			s, ok := typed[i].(string)
+			if !ok {
+				return nil, true, fmt.Errorf("rules[%d] must be a string", i)
+			}
+			v := strings.TrimSpace(s)
+			if v == "" {
+				continue
+			}
+			out = append(out, v)
+		}
+		return out, true, nil
+	default:
+		return nil, true, fmt.Errorf("rules must be a string list, got %T", value)
+	}
 }
 
 func allowLAN(cfg *ClashConfig) bool {

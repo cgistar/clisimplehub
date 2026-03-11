@@ -9,15 +9,47 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const runtimeControllerRequestTimeout = 2 * time.Second
 
+const (
+	runtimeControllerSuccessBodyLimit = 1 << 20
+	runtimeControllerErrorBodyLimit   = 4 << 10
+)
+
 type runtimeControllerConfig struct {
 	baseURL string
 	secret  string
+}
+
+type runtimeDelayResponse struct {
+	Delay int `json:"delay"`
+}
+
+type runtimeProxyResponse struct {
+	Now string `json:"now"`
+}
+
+type runtimeControllerError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *runtimeControllerError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.StatusCode > 0 {
+		return http.StatusText(e.StatusCode)
+	}
+	return "runtime controller request failed"
 }
 
 func resolveRuntimeControllerConfig(cfg *ClashConfig) (*runtimeControllerConfig, error) {
@@ -138,35 +170,158 @@ func putRuntimeGroupSelection(ctx context.Context, cfg *runtimeControllerConfig,
 		return fmt.Errorf("marshal controller payload: %w", err)
 	}
 
-	endpoint := cfg.baseURL + "/proxies/" + url.PathEscape(groupName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(payload))
+	_, err = doRuntimeControllerRequest(ctx, cfg, http.MethodPut, "/proxies/"+url.PathEscape(groupName), nil, bytes.NewReader(payload), "application/json")
 	if err != nil {
-		return fmt.Errorf("create runtime controller request: %w", err)
+		return fmt.Errorf("set runtime group %s -> %s: %w", groupName, proxyName, err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	return nil
+}
+
+func getRuntimeProxyDelay(ctx context.Context, cfg *runtimeControllerConfig, proxyName, targetURL string, timeout time.Duration) (int, error) {
+	if cfg == nil {
+		return -1, fmt.Errorf("runtime controller config is nil")
+	}
+	if strings.TrimSpace(proxyName) == "" {
+		return -1, fmt.Errorf("proxy name is empty")
+	}
+	if strings.TrimSpace(targetURL) == "" {
+		return -1, fmt.Errorf("target url is empty")
+	}
+
+	timeoutMS := timeout.Milliseconds()
+	if timeoutMS <= 0 {
+		timeoutMS = 1
+	}
+
+	query := url.Values{}
+	query.Set("url", targetURL)
+	query.Set("timeout", strconv.FormatInt(timeoutMS, 10))
+
+	body, err := doRuntimeControllerRequest(ctx, cfg, http.MethodGet, "/proxies/"+url.PathEscape(proxyName)+"/delay", query, nil, "")
+	if err != nil {
+		return -1, fmt.Errorf("get runtime proxy delay %s: %w", proxyName, err)
+	}
+
+	var payload runtimeDelayResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return -1, fmt.Errorf("decode runtime delay response: %w", err)
+	}
+	if payload.Delay <= 0 {
+		return -1, fmt.Errorf("empty delay result")
+	}
+	return payload.Delay, nil
+}
+
+func runtimeControllerHasProxy(ctx context.Context, cfg *runtimeControllerConfig, proxyName string) (bool, error) {
+	if cfg == nil {
+		return false, fmt.Errorf("runtime controller config is nil")
+	}
+	if strings.TrimSpace(proxyName) == "" {
+		return false, fmt.Errorf("proxy name is empty")
+	}
+
+	body, err := doRuntimeControllerRequest(ctx, cfg, http.MethodGet, "/proxies", nil, nil, "")
+	if err != nil {
+		return false, fmt.Errorf("list runtime proxies: %w", err)
+	}
+
+	var payload struct {
+		Proxies map[string]json.RawMessage `json:"proxies"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false, fmt.Errorf("decode runtime proxies response: %w", err)
+	}
+	_, exists := payload.Proxies[proxyName]
+	return exists, nil
+}
+
+func getRuntimeProxyNow(ctx context.Context, cfg *runtimeControllerConfig, proxyName string) (string, error) {
+	if cfg == nil {
+		return "", fmt.Errorf("runtime controller config is nil")
+	}
+	if strings.TrimSpace(proxyName) == "" {
+		return "", fmt.Errorf("proxy name is empty")
+	}
+
+	body, err := doRuntimeControllerRequest(ctx, cfg, http.MethodGet, "/proxies/"+url.PathEscape(proxyName), nil, nil, "")
+	if err != nil {
+		return "", err
+	}
+
+	var payload runtimeProxyResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", fmt.Errorf("decode runtime proxy response: %w", err)
+	}
+	return strings.TrimSpace(payload.Now), nil
+}
+
+func doRuntimeControllerRequest(ctx context.Context, cfg *runtimeControllerConfig, method, path string, query url.Values, body io.Reader, contentType string) ([]byte, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("runtime controller config is nil")
+	}
+	endpoint, err := buildRuntimeControllerEndpoint(cfg, path, query)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return nil, fmt.Errorf("create runtime controller request: %w", err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 	if cfg.secret != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.secret)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("set runtime group %s -> %s: %w", groupName, proxyName, err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
+	bodyLimit := int64(runtimeControllerErrorBodyLimit)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
+		bodyLimit = runtimeControllerSuccessBodyLimit
 	}
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	message := extractControllerErrorMessage(body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
+	if err != nil {
+		return nil, fmt.Errorf("read runtime controller response: %w", err)
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return respBody, nil
+	}
+
+	message := extractControllerErrorMessage(respBody)
 	if message == "" {
-		message = strings.TrimSpace(string(body))
+		message = strings.TrimSpace(string(respBody))
 	}
 	if message == "" {
 		message = resp.Status
 	}
-	return fmt.Errorf("set runtime group %s -> %s: %s", groupName, proxyName, message)
+	return nil, &runtimeControllerError{
+		StatusCode: resp.StatusCode,
+		Message:    fmt.Sprintf("%s %s: %s", method, path, message),
+	}
+}
+
+func buildRuntimeControllerEndpoint(cfg *runtimeControllerConfig, path string, query url.Values) (string, error) {
+	baseURL, err := url.Parse(cfg.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse runtime controller base url: %w", err)
+	}
+	path = "/" + strings.TrimLeft(strings.TrimSpace(path), "/")
+	decodedPath, err := url.PathUnescape(path)
+	if err != nil {
+		return "", fmt.Errorf("unescape runtime controller path: %w", err)
+	}
+	basePath := strings.TrimRight(baseURL.Path, "/")
+	baseURL.Path = basePath + decodedPath
+	baseURL.RawPath = basePath + path
+	baseURL.RawQuery = query.Encode()
+	return baseURL.String(), nil
 }
 
 func extractControllerErrorMessage(body []byte) string {

@@ -145,6 +145,7 @@ export const useClashStore = defineStore('clash', () => {
 
   const refreshingAll = ref(false)
   const refreshingSubscriptions = ref<Record<string, boolean>>({})
+  const reloadingConfig = ref(false)
   const testingNodes = ref<Record<string, boolean>>({})
   const testingNodesTCP = ref<Record<string, boolean>>({})
   const testingAllNodes = ref(false)
@@ -286,6 +287,20 @@ export const useClashStore = defineStore('clash', () => {
       throw cause
     } finally {
       refreshingAll.value = false
+    }
+  }
+
+  async function reloadConfigFromDisk(): Promise<void> {
+    clearError()
+    reloadingConfig.value = true
+    try {
+      await clashApi.reloadConfigFromDisk()
+      await loadAll(true)
+    } catch (cause) {
+      error.value = toErrorMessage(cause)
+      throw cause
+    } finally {
+      reloadingConfig.value = false
     }
   }
 
@@ -753,6 +768,7 @@ export const useClashStore = defineStore('clash', () => {
     subscriptions,
     refreshingAll,
     refreshingSubscriptions,
+    reloadingConfig,
     testingNodes,
     testingNodesTCP,
     testingAllNodes,
@@ -775,6 +791,7 @@ export const useClashStore = defineStore('clash', () => {
     selectNode,
     testNode,
     refreshSubscriptions,
+    reloadConfigFromDisk,
     addSubscription,
     updateSubscription,
     removeSubscription,
