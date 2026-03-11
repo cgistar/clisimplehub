@@ -55,13 +55,14 @@ export function useSettings() {
   const feedback = useFeedback()
   const settingsStore = useSettingsStore()
 
-  const settingsForm = ref<SettingsPayload>({
-    port: 5600,
-    apiKey: '',
-    proxyUrl: '',
-    fallback: false,
-    debugMode: ''
-  })
+	  const settingsForm = ref<SettingsPayload>({
+	    port: 5600,
+	    apiKey: '',
+	    proxyUrl: '',
+	    fallback: false,
+	    debugMode: '',
+	    listenAddr: ''
+	  })
 
   const cliDirs = ref<CLIConfigDirsPayload>({
     claudeConfigDir: '',

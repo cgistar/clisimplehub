@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -21,6 +22,10 @@ import (
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
 )
+
+type kiroSyncAbsentMarker struct {
+	Absent bool `json:"__clisimplehub_absent"`
+}
 
 func init() {
 	plugin.Register(&KiroPlugin{})
@@ -127,6 +132,11 @@ func (p *KiroPlugin) SyncExport(configPath string) (string, json.RawMessage, err
 	kiroJsonPath := kiroJsonPathFromConfig(configPath)
 	mc, err := kiroShared.LoadKiroMultiConfig(kiroJsonPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// Snapshot for rollback: file was absent before sync.
+			// Keep payload non-empty so rollback calls SyncImport and can delete kiro.json.
+			return "kiroConfig", marshalJSON(kiroSyncAbsentMarker{Absent: true}), nil
+		}
 		return "", nil, err
 	}
 	data, err := json.Marshal(mc)
@@ -137,6 +147,24 @@ func (p *KiroPlugin) SyncExport(configPath string) (string, json.RawMessage, err
 }
 
 func (p *KiroPlugin) SyncImport(configPath string, data json.RawMessage) error {
+	// Support rollback snapshots for the "file absent" case.
+	var marker kiroSyncAbsentMarker
+	if err := json.Unmarshal(data, &marker); err == nil && marker.Absent {
+		kiroJsonPath := kiroJsonPathFromConfig(configPath)
+		if kiroJsonPath != "" {
+			if err := os.Remove(kiroJsonPath); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		if pool := kiroapi.GetPool(); pool != nil {
+			pool.Reload()
+		}
+		kiro_claude.SetCachedBufferedStream(false)
+		kiro_claude.SetCachedModelMapping(kiroShared.DefaultKiroModelMapping())
+		_ = kiro_claude.ReloadAllTransformers()
+		return nil
+	}
+
 	var mc kiroShared.KiroMultiConfig
 	if err := json.Unmarshal(data, &mc); err != nil {
 		return err

@@ -168,6 +168,9 @@ func main() {
 			log.Printf("Warning: reload config failed: %v", err)
 		}
 	}
+	// Allow /reload and /sync/config to hot-reload runtime state in GUI mode too.
+	// Without this, incoming server sync writes config to disk but leaves router/plugins stale until manual refresh.
+	proxyServer.SetReloadFunc(reloadOnce)
 	configGetter := func(key string) (string, error) {
 		if strings.TrimSpace(key) == "configPath" {
 			return configPath, nil

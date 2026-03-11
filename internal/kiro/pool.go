@@ -2,6 +2,7 @@ package kiro
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -193,6 +194,12 @@ func (p *KiroAccountPool) Reload() {
 
 	cfg, err := shared.LoadKiroMultiConfig(p.configPath)
 	if err != nil || cfg == nil {
+		if err != nil && os.IsNotExist(err) {
+			// kiro.json was removed; clear in-memory state to avoid using stale accounts.
+			p.config = nil
+			p.failed = make(map[string]shared.KiroAccountStatus)
+			p.wrrCounters = nil
+		}
 		return
 	}
 	p.config = cfg

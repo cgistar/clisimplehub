@@ -622,17 +622,27 @@ onMounted(() => {
             </n-radio-button>
           </n-radio-group>
 
-          <label>{{ t('settings.port') }}</label>
-          <div>
-            <input v-model.number="settingsForm.port" type="number" min="1" max="65535" placeholder="5600">
-            <small>{{ t('settings.portHelp') }}</small>
-          </div>
+	          <label>{{ t('settings.port') }}</label>
+	          <div>
+	            <input v-model.number="settingsForm.port" type="number" min="1" max="65535" placeholder="5600">
+	            <small>{{ t('settings.portHelp') }}</small>
+	          </div>
 
-          <label>{{ t('settings.apiKey') }}</label>
-          <div>
-            <input v-model="settingsForm.apiKey" type="password" :placeholder="t('settings.apiKeyPlaceholder')">
-            <small>{{ t('settings.apiKeyHelp') }}</small>
-          </div>
+	          <label>{{ t('settings.listenAddr') }}</label>
+	          <div>
+	            <input
+	              v-model="settingsForm.listenAddr"
+	              type="text"
+	              :placeholder="t('settings.listenAddrPlaceholder')"
+	            >
+	            <small>{{ t('settings.listenAddrHelp') }}</small>
+	          </div>
+
+	          <label>{{ t('settings.apiKey') }}</label>
+	          <div>
+	            <input v-model="settingsForm.apiKey" type="password" :placeholder="t('settings.apiKeyPlaceholder')">
+	            <small>{{ t('settings.apiKeyHelp') }}</small>
+	          </div>
 
           <label>{{ t('settings.proxyUrl') }}</label>
           <div>

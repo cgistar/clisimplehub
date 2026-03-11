@@ -21,13 +21,17 @@ import (
 	"time"
 
 	"clisimplehub/internal/config"
+	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
 
 	"github.com/google/uuid"
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+const configReloadedEventName = "config:reloaded"
 
 // Settings represents the application settings exposed to frontend
 type Settings struct {
@@ -76,6 +80,8 @@ type App struct {
 	configLoader *config.ConfigLoader
 	usageStats   *statsdb.SQLiteUsageStatsStore
 	logBridge    *goLogBridge
+
+	reloadMu sync.Mutex
 
 	kiroSignServer  *http.Server
 	kiroSignMu      sync.Mutex
@@ -209,15 +215,24 @@ func (a *App) SaveSettings(settings *Settings) error {
 	}
 
 	oldPort := 0
+	oldListenAddr := ""
 	if a.proxyServer != nil {
 		oldPort = a.proxyServer.GetPort()
+		oldListenAddr = strings.TrimSpace(a.proxyServer.GetListenAddr())
 	}
 	normalizedAPIKey := strings.TrimSpace(settings.APIKey)
 	normalizedProxyURL := strings.TrimSpace(settings.ProxyURL)
+	normalizedListenAddr := strings.TrimSpace(settings.ListenAddr)
+	if normalizedListenAddr == "" {
+		normalizedListenAddr = "0.0.0.0"
+	}
 
 	// Validate port
 	if err := config.ValidatePort(settings.Port); err != nil {
 		return fmt.Errorf("invalid port: %w", err)
+	}
+	if err := config.ValidateListenAddr(normalizedListenAddr); err != nil {
+		return fmt.Errorf("invalid listen address: %w", err)
 	}
 
 	// Save port to storage
@@ -244,16 +259,22 @@ func (a *App) SaveSettings(settings *Settings) error {
 		return fmt.Errorf("failed to save debug mode: %w", err)
 	}
 
+	// Save listen address to storage
+	if err := a.storage.SetConfig(ConfigKeyListenAddr, normalizedListenAddr); err != nil {
+		return fmt.Errorf("failed to save listen address: %w", err)
+	}
+
 	// Update proxy server port if available
 	if a.proxyServer != nil {
 		a.proxyServer.SetPort(settings.Port)
 		a.proxyServer.SetAuthKey(normalizedAPIKey)
 		a.proxyServer.SetFallbackEnabled(settings.Fallback)
+		a.proxyServer.SetListenAddr(normalizedListenAddr)
 		// 热更新调试日志配置
 		a.proxyServer.UpdateDebugFileLogger()
 
-		// 端口变化需要重启代理服务才能生效
-		if oldPort != 0 && oldPort != settings.Port {
+		// 端口 / 监听地址变化需要重启代理服务才能生效
+		if (oldPort != 0 && oldPort != settings.Port) || (oldListenAddr != "" && oldListenAddr != normalizedListenAddr) {
 			a.restartProxyServerAsync()
 		}
 	}
@@ -915,6 +936,9 @@ func (a *App) ReloadConfig() error {
 		return fmt.Errorf("storage not initialized")
 	}
 
+	a.reloadMu.Lock()
+	defer a.reloadMu.Unlock()
+
 	// Refresh router temp-disable TTL from config.json appConfig (default 5 minutes).
 	if a.router != nil {
 		tempDisableMinutes := 5
@@ -944,6 +968,20 @@ func (a *App) ReloadConfig() error {
 		a.proxyServer.SetPort(settings.Port)
 		a.proxyServer.SetAuthKey(settings.APIKey)
 		a.proxyServer.SetFallbackEnabled(settings.Fallback)
+	}
+
+	// Reload plugins so their in-memory state reflects the latest config + synced plugin payloads.
+	for _, pl := range plugin.All() {
+		if err := pl.Reload(); err != nil {
+			fmt.Printf("warning: plugin %s reload failed: %v\n", pl.Name(), err)
+		}
+	}
+
+	// Notify frontend to refresh stores (endpoints/kiro/codex/clash) after external sync or manual reload.
+	if a.ctx != nil {
+		wailsRuntime.EventsEmit(a.ctx, configReloadedEventName, map[string]any{
+			"at": time.Now().Format(time.RFC3339Nano),
+		})
 	}
 
 	return nil

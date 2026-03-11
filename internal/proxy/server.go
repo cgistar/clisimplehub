@@ -1035,6 +1035,7 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 	// Preflight plugin payload decode + plugin state snapshot for rollback.
 	pluginPlans := make([]pluginImportPlan, 0, len(pluginData))
 	pluginResults := map[string]interface{}{}
+	clashSynced := false
 	for _, pl := range plugin.All() {
 		importer, ok := pl.(plugin.ConfigSyncImporter)
 		if !ok {
@@ -1147,6 +1148,9 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pluginResults[plan.name] = map[string]interface{}{"synced": true}
+		if plan.name == "clash" {
+			clashSynced = true
+		}
 	}
 
 	// Trigger hot reload after successful full sync.
@@ -1156,6 +1160,42 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 
 	if reloadFunc != nil {
 		reloadFunc()
+	}
+
+	// Best-effort: if clash config was synced but runtime is not running, try to start it.
+	// This makes the synced config immediately effective without requiring manual UI operations.
+	if clashSynced {
+		if pl := plugin.ByName("clash"); pl != nil {
+			if dp, ok := pl.(plugin.ClashDesktopProvider); ok {
+				statusRaw, err := dp.GetStatus()
+				running := false
+				if err == nil && len(statusRaw) > 0 {
+					var st struct {
+						Running bool `json:"running"`
+					}
+					if json.Unmarshal(statusRaw, &st) == nil {
+						running = st.Running
+					}
+				}
+				if !running {
+					if err := dp.Start(); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already running") {
+						if existing, ok := pluginResults["clash"].(map[string]interface{}); ok && existing != nil {
+							existing["warning"] = "auto-start failed: " + err.Error()
+							pluginResults["clash"] = existing
+						} else {
+							pluginResults["clash"] = map[string]interface{}{"synced": true, "warning": "auto-start failed: " + err.Error()}
+						}
+					} else {
+						if existing, ok := pluginResults["clash"].(map[string]interface{}); ok && existing != nil {
+							existing["autoStarted"] = true
+							pluginResults["clash"] = existing
+						} else {
+							pluginResults["clash"] = map[string]interface{}{"synced": true, "autoStarted": true}
+						}
+					}
+				}
+			}
+		}
 	}
 
 	resp := map[string]interface{}{
