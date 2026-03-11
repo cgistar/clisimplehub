@@ -243,63 +243,115 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 		debugLogger.SetMetadata("ProxyURL", proxyURL)
 	}
 
+	upstreamURL := getCodexUpstreamURL(config, requestPath)
+
 	// Get access token
 	authMgr := s.GetOrCreateAuthManager(account.AccountID, configPath, proxyURL)
-	accessToken, accountID, err := authMgr.GetAccessToken()
-	if err != nil {
+	var accessToken string
+	var accountID string
+	var err error
+	for authAttempt := 1; authAttempt <= codexNetworkRetryAttempts; authAttempt++ {
+		accessToken, accountID, err = authMgr.GetAccessToken()
+		if err == nil {
+			break
+		}
 		if debugLogger != nil {
 			debugLogger.Log("认证失败: %v", err)
 		}
-		// Handle auth error
 		errStr := err.Error()
 		if strings.Contains(errStr, "refresh_token_reused") {
 			pool.MarkFailed(account.AccountID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
+			return &executor.ForwardResult{
+				StatusCode: http.StatusUnauthorized,
+				Error:      fmt.Errorf("auth failed: %v", err),
+			}, true
 		} else if strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
 			pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 0, "auth_failed")
-		} else {
-			pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, 2*time.Minute, "auth_transient")
+			return &executor.ForwardResult{
+				StatusCode: http.StatusUnauthorized,
+				Error:      fmt.Errorf("auth failed: %v", err),
+			}, true
 		}
-		return &executor.ForwardResult{
-			StatusCode: http.StatusUnauthorized,
-			Error:      fmt.Errorf("auth failed: %v", err),
-		}, true
+		if authAttempt < codexNetworkRetryAttempts {
+			if debugLogger != nil {
+				debugLogger.Log("认证瞬时失败，%d 秒后进行第 %d/%d 次重试", int(codexNetworkRetryDelay/time.Second), authAttempt+1, codexNetworkRetryAttempts)
+			}
+			if waitErr := waitForRetry(ctx, codexNetworkRetryDelay); waitErr != nil {
+				return buildCancelledExecutorError(waitErr), false
+			}
+			continue
+		}
+		return buildGatewayExecutorError(
+			"auth_transient",
+			"Codex authentication temporarily unavailable after retries",
+			map[string]any{
+				"accountId":         account.AccountID,
+				"category":          "auth_transient",
+				"reason":            errStr,
+				"attempts":          codexNetworkRetryAttempts,
+				"retryDelaySeconds": int(codexNetworkRetryDelay / time.Second),
+			},
+			fmt.Errorf("auth failed: %v", err),
+			upstreamURL,
+		), false
 	}
 
 	// Create HTTP client
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 0)
 
-	// Build upstream request
-	upstreamURL := getCodexUpstreamURL(config, requestPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
-	if err != nil {
-		if debugLogger != nil {
-			debugLogger.Log("创建请求失败: %v", err)
+	buildRequest := func() (*http.Request, error) {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
+		if reqErr != nil {
+			return nil, reqErr
 		}
-		return buildInternalError(err), false
+		applyCodexHeaders(req, accessToken, accountID, isStreaming, config, http.Header{})
+		return req, nil
 	}
 
-	// Apply headers
-	applyCodexHeaders(req, accessToken, accountID, isStreaming, config, http.Header{})
+	var resp *http.Response
+	for requestAttempt := 1; requestAttempt <= codexNetworkRetryAttempts; requestAttempt++ {
+		req, reqErr := buildRequest()
+		if reqErr != nil {
+			if debugLogger != nil {
+				debugLogger.Log("创建请求失败: %v", reqErr)
+			}
+			return buildInternalError(reqErr), false
+		}
 
-	if debugLogger != nil {
-		debugLogger.SetMetadata("UpstreamURL", upstreamURL)
-		debugLogger.Log("发送上游请求")
-	}
+		if debugLogger != nil {
+			debugLogger.SetMetadata("UpstreamURL", upstreamURL)
+			debugLogger.Log("发送上游请求")
+		}
 
-	// Execute request
-	resp, err := client.Do(req)
-	if err != nil {
+		resp, err = client.Do(req)
+		if err == nil {
+			break
+		}
 		if debugLogger != nil {
 			debugLogger.Log("上游请求失败: %v", err)
 		}
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, 30*time.Second, "transport_error")
-		return &executor.ForwardResult{
-			StatusCode: http.StatusBadGateway,
-			Error:      fmt.Errorf("upstream error: %v", err),
-			Body:       []byte(fmt.Sprintf(`{"error":{"type":"upstream_error","message":"%s"}}`, err.Error())),
-			Headers:    http.Header{"Content-Type": []string{"application/json"}},
-			TargetURL:  upstreamURL,
-		}, true
+		if requestAttempt < codexNetworkRetryAttempts {
+			if debugLogger != nil {
+				debugLogger.Log("网络请求失败，%d 秒后进行第 %d/%d 次重试", int(codexNetworkRetryDelay/time.Second), requestAttempt+1, codexNetworkRetryAttempts)
+			}
+			if waitErr := waitForRetry(ctx, codexNetworkRetryDelay); waitErr != nil {
+				return buildCancelledExecutorError(waitErr), false
+			}
+			continue
+		}
+		return buildGatewayExecutorError(
+			"transport_error",
+			"Codex upstream network request failed after retries",
+			map[string]any{
+				"accountId":         account.AccountID,
+				"category":          "transport_error",
+				"reason":            err.Error(),
+				"attempts":          codexNetworkRetryAttempts,
+				"retryDelaySeconds": int(codexNetworkRetryDelay / time.Second),
+			},
+			fmt.Errorf("upstream error: %v", err),
+			upstreamURL,
+		), false
 	}
 	defer resp.Body.Close()
 

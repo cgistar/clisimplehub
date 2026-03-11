@@ -1,13 +1,30 @@
 package codexplugin
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/usage"
 )
+
+const statusClientClosedRequest = 499
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // buildInternalError constructs a structured error response for internal errors.
 func buildInternalError(err error) *executor.ForwardResult {
@@ -71,6 +88,75 @@ func buildAllFailedError(lastErr error) (statusCode int, body []byte) {
 		},
 	})
 	return http.StatusBadGateway, errJSON
+}
+
+func buildGatewayErrorPayload(errorType, message string, details map[string]any) []byte {
+	if details == nil {
+		details = map[string]any{}
+	}
+
+	errorPayload := map[string]any{
+		"type":    errorType,
+		"message": message,
+	}
+	if len(details) > 0 {
+		errorPayload["details"] = details
+	}
+
+	payload := map[string]any{"error": errorPayload}
+	errJSON, _ := json.Marshal(payload)
+	return errJSON
+}
+
+// buildGatewayError constructs a structured error response for upstream/network/auth transient errors.
+func buildGatewayError(errorType, message string, details map[string]any) *forwardResult {
+	errJSON := buildGatewayErrorPayload(errorType, message, details)
+	return &forwardResult{
+		statusCode: http.StatusBadGateway,
+		body:       errJSON,
+		headers:    http.Header{"Content-Type": []string{"application/json"}},
+		errMsg:     message,
+	}
+}
+
+// buildGatewayExecutorError constructs a structured executor error response for upstream/network/auth transient errors.
+func buildGatewayExecutorError(errorType, message string, details map[string]any, err error, targetURL string) *executor.ForwardResult {
+	errJSON := buildGatewayErrorPayload(errorType, message, details)
+	return &executor.ForwardResult{
+		StatusCode: http.StatusBadGateway,
+		Body:       errJSON,
+		Headers:    http.Header{"Content-Type": []string{"application/json"}},
+		Error:      err,
+		TargetURL:  targetURL,
+	}
+}
+
+func buildCancelledForwardError(err error) *forwardResult {
+	message := "Request cancelled by client"
+	if err != nil {
+		message = fmt.Sprintf("%s: %v", message, err)
+	}
+
+	return &forwardResult{
+		statusCode: statusClientClosedRequest,
+		body:       buildGatewayErrorPayload("request_cancelled", message, nil),
+		headers:    http.Header{"Content-Type": []string{"application/json"}},
+		errMsg:     message,
+	}
+}
+
+func buildCancelledExecutorError(err error) *executor.ForwardResult {
+	message := "Request cancelled by client"
+	if err != nil {
+		message = fmt.Sprintf("%s: %v", message, err)
+	}
+
+	return &executor.ForwardResult{
+		StatusCode: statusClientClosedRequest,
+		Body:       buildGatewayErrorPayload("request_cancelled", message, nil),
+		Headers:    http.Header{"Content-Type": []string{"application/json"}},
+		Error:      err,
+	}
 }
 
 // extractTokensFromBody extracts token usage from a non-streaming response body.

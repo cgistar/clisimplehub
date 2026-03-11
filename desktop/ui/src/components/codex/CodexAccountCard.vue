@@ -16,8 +16,6 @@
       <n-tag v-if="account.planType" type="info" size="small">
         {{ planTypeLabel }}
       </n-tag>
-      <n-tag size="small">OpenAI</n-tag>
-      <n-tag v-if="account.weight > 0" size="small">W:{{ account.weight }}</n-tag>
       <n-tag v-if="!hasRefreshToken" type="warning" size="small" :title="t('codex.noRefreshToken')">
         {{ t('codex.tempToken') }}
       </n-tag>

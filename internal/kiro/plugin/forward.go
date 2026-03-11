@@ -19,6 +19,30 @@ import (
 	"clisimplehub/internal/usage"
 )
 
+func buildNoAccountsError(mode string) (int, []byte) {
+	var message string
+	switch mode {
+	case kiroShared.RotationFixed:
+		message = "No available Kiro accounts in fixed mode. The active account may be banned, exhausted, or unavailable."
+	case kiroShared.RotationFailover:
+		message = "No available Kiro accounts in failover mode. All accounts may be banned, exhausted, or unavailable."
+	case kiroShared.RotationLoadBalance:
+		message = "No available Kiro accounts in load balance mode. All accounts may be banned, exhausted, or unavailable."
+	default:
+		message = "No available Kiro accounts."
+	}
+
+	errJSON, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"type":    "no_available_accounts",
+			"message": message,
+			"code":    "kiro_account_unavailable",
+			"mode":    mode,
+		},
+	})
+	return http.StatusServiceUnavailable, errJSON
+}
+
 // Forward implements executor.TransformerForwarder for the Kiro plugin.
 func (s *KiroService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
 	_ = requestPath // Kiro always uses /generateAssistantResponse, ignore client path
@@ -54,27 +78,8 @@ func (s *KiroService) Forward(ctx context.Context, body []byte, model string, is
 			// No accounts available - return structured error immediately
 			result.StatusCode = http.StatusServiceUnavailable
 			result.Error = fmt.Errorf("no available kiro accounts in %s mode", mode)
-
-			var message string
-			switch mode {
-			case kiroShared.RotationFixed:
-				message = "No available Kiro accounts in fixed mode. The active account may be banned, exhausted, or unavailable."
-			case kiroShared.RotationFailover:
-				message = "No available Kiro accounts in failover mode. All accounts may be banned, exhausted, or unavailable."
-			case kiroShared.RotationLoadBalance:
-				message = "No available Kiro accounts in load balance mode. All accounts may be banned, exhausted, or unavailable."
-			default:
-				message = "No available Kiro accounts."
-			}
-
-			errJSON, _ := json.Marshal(map[string]any{
-				"error": map[string]any{
-					"type":    "no_available_accounts",
-					"message": message,
-					"code":    "kiro_account_unavailable",
-					"mode":    mode,
-				},
-			})
+			statusCode, errJSON := buildNoAccountsError(mode)
+			result.StatusCode = statusCode
 			result.Body = errJSON
 			result.Headers = http.Header{"Content-Type": []string{"application/json"}}
 			return result

@@ -190,7 +190,7 @@ func (p *ProxyServer) registerCoreRoutes(r chi.Router) {
 	r.HandleFunc("/transformers", p.handleTransformers)
 	r.HandleFunc("/reload", p.requireAuth(p.handleReload))
 	r.HandleFunc("/endpoint", p.requireAuth(p.handleEndpoint))
-	r.HandleFunc("/sync/config", p.requireAuthStrict(p.handleSyncConfig))
+	r.HandleFunc("/sync/config", p.requireAuth(p.handleSyncConfig))
 	r.Get("/v1/models", p.requireAuth(p.handleUnifiedModelsRoute))
 }
 

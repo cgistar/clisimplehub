@@ -24,7 +24,11 @@ import (
 	"clisimplehub/internal/plugin"
 )
 
-const maxRetryAccounts = 5
+const (
+	maxRetryAccounts          = 5
+	codexNetworkRetryAttempts = 3
+	codexNetworkRetryDelay    = 3 * time.Second
+)
 
 // logCodexRequestToConsole 输出 Codex 请求日志到控制台
 func logCodexRequestToConsole(requestID, method, path string, account *codexShared.CodexAccount, statusCode int, status string, runTime int64) {
@@ -192,28 +196,9 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		finalStatusCode = http.StatusServiceUnavailable
 		logCodexRequestToConsole(requestID, r.Method, r.URL.Path, nil, finalStatusCode, finalStatus, runTime)
 
-		var message string
-		switch mode {
-		case codexShared.RotationFixed:
-			message = "No available Codex accounts in fixed mode. The active account may be banned, exhausted, or cooling down."
-		case codexShared.RotationFailover:
-			message = "No available Codex accounts in failover mode. All accounts may be banned, exhausted, or cooling down."
-		case codexShared.RotationLoadBalance:
-			message = "No available Codex accounts in load balance mode. All accounts may be banned, exhausted, or cooling down."
-		default:
-			message = "No available Codex accounts."
-		}
-
-		errJSON, _ := json.Marshal(map[string]any{
-			"error": map[string]any{
-				"type":    "no_available_accounts",
-				"message": message,
-				"code":    "codex_account_unavailable",
-				"mode":    mode,
-			},
-		})
+		statusCode, errJSON := buildNoAccountsError(mode)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
+		w.WriteHeader(statusCode)
 		_, _ = w.Write(errJSON)
 		return
 	}
@@ -349,60 +334,111 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 	}
 
 	authMgr := s.GetOrCreateAuthManager(account.AccountID, configPath, proxyURL)
-	accessToken, accountID, err := authMgr.GetAccessToken()
-	if err != nil {
+	var accessToken string
+	var accountID string
+	for authAttempt := 1; authAttempt <= codexNetworkRetryAttempts; authAttempt++ {
+		accessToken, accountID, err = authMgr.GetAccessToken()
+		if err == nil {
+			break
+		}
 		if debugLogger != nil {
 			debugLogger.Log("认证失败: %v", err)
 		}
 		errStr := err.Error()
 		if strings.Contains(errStr, "refresh_token_reused") {
 			pool.MarkFailed(account.AccountID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
+			return &forwardResult{errMsg: fmt.Sprintf("auth failed: %v", err)}, true
 		} else if strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
 			pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 0, "auth_failed")
-		} else {
-			// Transient failure: short cooldown, not permanent ban
-			pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, 2*time.Minute, "auth_transient")
+			return &forwardResult{errMsg: fmt.Sprintf("auth failed: %v", err)}, true
 		}
-		return &forwardResult{errMsg: fmt.Sprintf("auth failed: %v", err)}, true
+		if authAttempt < codexNetworkRetryAttempts {
+			if debugLogger != nil {
+				debugLogger.Log("认证瞬时失败，%d 秒后进行第 %d/%d 次重试", int(codexNetworkRetryDelay/time.Second), authAttempt+1, codexNetworkRetryAttempts)
+			}
+			if waitErr := waitForRetry(ctx, codexNetworkRetryDelay); waitErr != nil {
+				return buildCancelledForwardError(waitErr), false
+			}
+			continue
+		}
+		return buildGatewayError(
+			"auth_transient",
+			"Codex authentication temporarily unavailable after retries",
+			map[string]any{
+				"accountId":         account.AccountID,
+				"category":          "auth_transient",
+				"reason":            errStr,
+				"attempts":          codexNetworkRetryAttempts,
+				"retryDelaySeconds": int(codexNetworkRetryDelay / time.Second),
+			},
+		), false
 	}
 
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 0)
 
 	upstreamURL := getCodexUpstreamURL(config, requestPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
-	if err != nil {
-		if debugLogger != nil {
-			debugLogger.Log("创建请求失败: %v", err)
+	buildRequest := func() (*http.Request, error) {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
+		if reqErr != nil {
+			return nil, reqErr
 		}
-		return &forwardResult{errMsg: err.Error()}, false
+		applyCodexHeaders(req, accessToken, accountID, isStreaming, config, clientHeaders)
+		return req, nil
 	}
-	applyCodexHeaders(req, accessToken, accountID, isStreaming, config, clientHeaders)
 
-	if debugLogger != nil {
-		debugLogger.SetMetadata("UpstreamURL", upstreamURL)
-		debugLogger.Log("发送上游请求")
-		// 记录请求头（脱敏）
-		var headerLines []string
-		for k, vals := range req.Header {
-			if k == "Authorization" {
-				headerLines = append(headerLines, fmt.Sprintf("%s: Bearer ***", k))
-			} else {
-				for _, v := range vals {
-					headerLines = append(headerLines, fmt.Sprintf("%s: %s", k, v))
+	var resp *http.Response
+	for requestAttempt := 1; requestAttempt <= codexNetworkRetryAttempts; requestAttempt++ {
+		req, reqErr := buildRequest()
+		if reqErr != nil {
+			if debugLogger != nil {
+				debugLogger.Log("创建请求失败: %v", reqErr)
+			}
+			return &forwardResult{errMsg: reqErr.Error()}, false
+		}
+
+		if debugLogger != nil {
+			debugLogger.SetMetadata("UpstreamURL", upstreamURL)
+			debugLogger.Log("发送上游请求")
+			var headerLines []string
+			for k, vals := range req.Header {
+				if k == "Authorization" {
+					headerLines = append(headerLines, fmt.Sprintf("%s: Bearer ***", k))
+				} else {
+					for _, v := range vals {
+						headerLines = append(headerLines, fmt.Sprintf("%s: %s", k, v))
+					}
 				}
 			}
+			debugLogger.SetSection("UpstreamRequestHeaders", strings.Join(headerLines, "\n"))
 		}
-		debugLogger.SetSection("UpstreamRequestHeaders", strings.Join(headerLines, "\n"))
-	}
 
-	resp, err := client.Do(req)
-	if err != nil {
+		resp, err = client.Do(req)
+		if err == nil {
+			break
+		}
 		if debugLogger != nil {
 			debugLogger.Log("上游请求失败: %v", err)
 		}
-		// Transport error: short cooldown to avoid reselecting same broken account
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, 30*time.Second, "transport_error")
-		return &forwardResult{errMsg: fmt.Sprintf("upstream error: %v", err)}, true
+		if requestAttempt < codexNetworkRetryAttempts {
+			if debugLogger != nil {
+				debugLogger.Log("网络请求失败，%d 秒后进行第 %d/%d 次重试", int(codexNetworkRetryDelay/time.Second), requestAttempt+1, codexNetworkRetryAttempts)
+			}
+			if waitErr := waitForRetry(ctx, codexNetworkRetryDelay); waitErr != nil {
+				return buildCancelledForwardError(waitErr), false
+			}
+			continue
+		}
+		return buildGatewayError(
+			"transport_error",
+			"Codex upstream network request failed after retries",
+			map[string]any{
+				"accountId":         account.AccountID,
+				"category":          "transport_error",
+				"reason":            err.Error(),
+				"attempts":          codexNetworkRetryAttempts,
+				"retryDelaySeconds": int(codexNetworkRetryDelay / time.Second),
+			},
+		), false
 	}
 	defer resp.Body.Close()
 

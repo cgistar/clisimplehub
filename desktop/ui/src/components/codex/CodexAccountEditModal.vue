@@ -29,7 +29,11 @@
         <n-input
           v-model:value="formData.mfaCode"
           :placeholder="t('codex.mfaCodePlaceholder')"
-        />
+        >
+          <template #suffix>
+            <span class="mfa-code-suffix">{{ totpValue }}</span>
+          </template>
+        </n-input>
       </n-form-item>
 
       <n-form-item :label="t('codex.proxyUrlLabel')" path="proxyUrl">
@@ -59,11 +63,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
 import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSpace } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { CodexAccount, CodexAccountInput } from '@/types/codex'
+import { generateTotpCode } from '@/utils/totp'
 
 const { t } = useI18n()
 
@@ -91,6 +96,7 @@ const emit = defineEmits<{
 
 const visible = ref(false)
 const formRef = ref<FormInst | null>(null)
+const totpValue = ref('')
 const formData = ref<EditFormData>({
   accountId: '',
   refreshToken: '',
@@ -101,6 +107,31 @@ const formData = ref<EditFormData>({
 })
 
 const rules: FormRules = {}
+let totpTimer: ReturnType<typeof setInterval> | null = null
+
+async function refreshTotpValue() {
+  const secret = String(formData.value.mfaCode || '').trim()
+  if (!visible.value || !secret) {
+    totpValue.value = ''
+    return
+  }
+  totpValue.value = await generateTotpCode(secret)
+}
+
+function stopTotpTimer() {
+  if (totpTimer) {
+    clearInterval(totpTimer)
+    totpTimer = null
+  }
+}
+
+function startTotpTimer() {
+  stopTotpTimer()
+  void refreshTotpValue()
+  totpTimer = setInterval(() => {
+    void refreshTotpValue()
+  }, 1000)
+}
 
 watch(() => props.show, (newVal) => {
   visible.value = newVal
@@ -114,12 +145,26 @@ watch(() => props.show, (newVal) => {
       weight: props.account.weight || 0
     }
   }
+  if (newVal) {
+    startTotpTimer()
+  } else {
+    stopTotpTimer()
+    totpValue.value = ''
+  }
 })
 
 watch(visible, (newVal) => {
   if (!newVal) {
     emit('update:show', false)
   }
+})
+
+watch(() => formData.value.mfaCode, () => {
+  void refreshTotpValue()
+})
+
+onBeforeUnmount(() => {
+  stopTotpTimer()
 })
 
 function handleCancel() {
@@ -138,3 +183,12 @@ async function handleSave() {
   }
 }
 </script>
+
+<style scoped>
+.mfa-code-suffix {
+  color: var(--app-text-secondary, #8b949e);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+</style>
