@@ -9,6 +9,25 @@ import (
 
 const defaultExternalController = ":9090"
 
+var defaultHubRuntimeRulesHead = []string{
+	"IP-CIDR,1.1.1.1/32," + runtimeGroupHub + ",no-resolve",
+	"IP-CIDR,8.8.4.4/32," + runtimeGroupHub + ",no-resolve",
+	"IP-CIDR,8.8.8.8/32," + runtimeGroupHub + ",no-resolve",
+}
+
+var defaultHubRuntimeRulesTail = []string{
+	"IP-CIDR,127.0.0.0/8,DIRECT",
+	"IP-CIDR,172.16.0.0/12,DIRECT",
+	"IP-CIDR,192.168.0.0/16,DIRECT",
+	"IP-CIDR,10.0.0.0/8,DIRECT",
+	"IP-CIDR,17.0.0.0/8,DIRECT",
+	"IP-CIDR,100.64.0.0/10,DIRECT",
+	"IP-CIDR,224.0.0.0/4,DIRECT",
+	"IP-CIDR6,fe80::/10,DIRECT",
+	"DOMAIN-SUFFIX,cn,DIRECT",
+	"DOMAIN-KEYWORD,-cn,DIRECT",
+}
+
 func defaultRuntimeDNSConfig() map[string]any {
 	return map[string]any{
 		"enable":             true,
@@ -75,14 +94,90 @@ func mergeRuntimeConfigWithUserYAMLPrependRules(base map[string]any, cfg *ClashC
 
 	// Keep base rules (MATCH,...) as the last rule(s) to avoid breaking group selection.
 	mergedRules := baseRules
-	if hasUserRules && len(userRules) > 0 {
-		mergedRules = append(append([]string(nil), userRules...), baseRules...)
+	if hasRuntimeProxyGroup(base, runtimeGroupHub) {
+		headSet := make(map[string]struct{}, len(defaultHubRuntimeRulesHead))
+		for _, r := range defaultHubRuntimeRulesHead {
+			headSet[strings.TrimSpace(r)] = struct{}{}
+		}
+		tailSet := make(map[string]struct{}, len(defaultHubRuntimeRulesTail))
+		for _, r := range defaultHubRuntimeRulesTail {
+			tailSet[strings.TrimSpace(r)] = struct{}{}
+		}
+
+		filteredUser := make([]string, 0, len(userRules))
+		for _, r := range userRules {
+			key := strings.TrimSpace(r)
+			if key == "" {
+				continue
+			}
+			if _, ok := headSet[key]; ok {
+				continue
+			}
+			if _, ok := tailSet[key]; ok {
+				continue
+			}
+			filteredUser = append(filteredUser, key)
+		}
+		filteredUser = dedupeRules(filteredUser)
+
+		combined := make([]string, 0, len(defaultHubRuntimeRulesHead)+len(filteredUser)+len(defaultHubRuntimeRulesTail))
+		combined = append(combined, defaultHubRuntimeRulesHead...)
+		combined = append(combined, filteredUser...)
+		combined = append(combined, defaultHubRuntimeRulesTail...)
+		mergedRules = append(combined, baseRules...)
+	} else if hasUserRules && len(userRules) > 0 {
+		mergedRules = append(append([]string(nil), dedupeRules(userRules)...), baseRules...)
 	}
 
 	filteredProtected := removeProtectedKey(protectedKeys, "rules")
 	runtimeCfg := mergeRuntimeConfigWithUserYAMLMap(base, userCfg, filteredProtected...)
 	runtimeCfg["rules"] = mergedRules
 	return runtimeCfg, nil
+}
+
+func hasRuntimeProxyGroup(cfg map[string]any, groupName string) bool {
+	groupName = strings.TrimSpace(groupName)
+	if cfg == nil || groupName == "" {
+		return false
+	}
+	raw := cfg["proxy-groups"]
+	if raw == nil {
+		return false
+	}
+
+	switch typed := raw.(type) {
+	case []any:
+		for i := range typed {
+			m, ok := typed[i].(map[string]any)
+			if !ok || m == nil {
+				continue
+			}
+			if strings.TrimSpace(fmt.Sprint(m["name"])) == groupName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dedupeRules(rules []string) []string {
+	if len(rules) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(rules))
+	out := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		rule = strings.TrimSpace(rule)
+		if rule == "" {
+			continue
+		}
+		if _, ok := seen[rule]; ok {
+			continue
+		}
+		seen[rule] = struct{}{}
+		out = append(out, rule)
+	}
+	return out
 }
 
 func mergeRuntimeConfigWithUserYAMLMap(base map[string]any, userCfg map[string]any, protectedKeys ...string) map[string]any {

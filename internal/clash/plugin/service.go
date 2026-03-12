@@ -27,6 +27,14 @@ const (
 	runtimeGroupExit     = "chain-exit"
 	runtimeGroupMiddle   = "chain-middle"
 	runtimeGroupAllNodes = "all-nodes"
+
+	runtimeGroupHub        = "Hub"
+	runtimeGroupAutoSelect = "auto-select"
+	runtimeGroupFailover   = "failover"
+
+	runtimeGroupTestURL          = "http://www.gstatic.com/generate_204"
+	runtimeAutoSelectIntervalSec = 86400
+	runtimeFailoverIntervalSec   = 7200
 )
 
 // ClashService manages the mihomo instance lifecycle and node state.
@@ -154,6 +162,38 @@ type runtimePlan struct {
 	trafficSelection string
 	exitSelection    string
 	middleSelection  string
+}
+
+func defaultHubProxyGroups(allProxyNames []string) []any {
+	if len(allProxyNames) == 0 {
+		return nil
+	}
+
+	hubProxies := make([]string, 0, len(allProxyNames)+2)
+	hubProxies = append(hubProxies, runtimeGroupAutoSelect, runtimeGroupFailover)
+	hubProxies = append(hubProxies, allProxyNames...)
+
+	return []any{
+		map[string]any{
+			"name":    runtimeGroupHub,
+			"type":    "select",
+			"proxies": hubProxies,
+		},
+		map[string]any{
+			"name":     runtimeGroupAutoSelect,
+			"type":     "url-test",
+			"url":      runtimeGroupTestURL,
+			"interval": runtimeAutoSelectIntervalSec,
+			"proxies":  allProxyNames,
+		},
+		map[string]any{
+			"name":     runtimeGroupFailover,
+			"type":     "fallback",
+			"url":      runtimeGroupTestURL,
+			"interval": runtimeFailoverIntervalSec,
+			"proxies":  allProxyNames,
+		},
+	}
 }
 
 func NewClashService(cfgPath string) (*ClashService, error) {
@@ -1469,6 +1509,10 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 		})
 		plan.exitSelection = ""
 		plan.middleSelection = ""
+	}
+
+	if len(allProxyNames) > 0 {
+		proxyGroups = append(defaultHubProxyGroups(allProxyNames), proxyGroups...)
 	}
 
 	if current := nodeRuntimeByKey[runtimeNodeKey(activeSub.ID, selectedNodeForSubscription(activeSub))]; current != "" {

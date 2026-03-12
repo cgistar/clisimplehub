@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/config"
+	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/statsdb"
 	"clisimplehub/internal/storage"
@@ -176,6 +177,7 @@ func (p *ProxyServer) Start() error {
 func (p *ProxyServer) buildGatewayRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Use(chiMiddleware.Recoverer)
+	r.Use(appmiddleware.CodexResponsesAdaptMiddleware)
 
 	p.registerCoreRoutes(r)
 	p.registerPluginForwardMiddlewares()
