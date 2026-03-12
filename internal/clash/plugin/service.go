@@ -106,11 +106,6 @@ func (s *ClashService) SyncSelectedNodesFromController(ctx context.Context) (int
 	if now, err := getRuntimeProxyNow(ctx, controllerCfg, runtimeGroupMiddle); err == nil {
 		applyNow(now, false)
 	}
-	// 3) Optional all-nodes group: only sync subscriptions not covered above.
-	if now, err := getRuntimeProxyNow(ctx, controllerCfg, runtimeGroupAllNodes); err == nil {
-		applyNow(now, true)
-	}
-
 	if len(updates) == 0 {
 		return 0, nil
 	}

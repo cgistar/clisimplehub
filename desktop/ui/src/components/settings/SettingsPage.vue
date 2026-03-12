@@ -40,6 +40,7 @@ const loadingServers = ref(false)
 const savingServer = ref(false)
 const testingServer = ref(false)
 const syncingServer = ref(false)
+const copyingServerCurl = ref(false)
 const generalAutoSaveReady = ref(false)
 const lastSavedGeneralSnapshot = ref('')
 let generalSaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -73,6 +74,38 @@ const serverFormTitle = computed(() =>
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+function fallbackCopyWithExecCommand(text: string): boolean {
+  if (typeof document === 'undefined') return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  const copied = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  return copied
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return
+    }
+  } catch {
+    // fallback below
+  }
+
+  if (!fallbackCopyWithExecCommand(text)) {
+    throw new Error('clipboard_unavailable')
+  }
 }
 
 function parseWebDAVBackupsXml(xmlText: string): WebDAVBackupItem[] {
@@ -588,6 +621,21 @@ async function syncSelectedServer(): Promise<void> {
   }
 }
 
+async function copySelectedServerCurl(): Promise<void> {
+  if (!selectedServer.value) return
+
+  copyingServerCurl.value = true
+  try {
+    const curlCommand = await endpointApi.buildSyncConfigCurl(selectedServerIndex.value)
+    await copyText(curlCommand)
+    feedback.success(t('serverSync.copyCurlSuccess'))
+  } catch (error) {
+    feedback.error(t('serverSync.copyCurlFailed') + toErrorMessage(error))
+  } finally {
+    copyingServerCurl.value = false
+  }
+}
+
 onMounted(() => {
   void loadPageData()
 })
@@ -789,6 +837,9 @@ onMounted(() => {
         </div>
 
         <div class="settings-card-actions">
+          <button class="btn btn-secondary" :disabled="!hasSelectedServer || copyingServerCurl" @click="copySelectedServerCurl">
+            {{ copyingServerCurl ? t('serverSync.copyingCurl') : t('serverSync.copyCurl') }}
+          </button>
           <button class="btn btn-primary" :disabled="!hasSelectedServer || syncingServer" @click="syncSelectedServer">
             {{ syncingServer ? t('serverSync.syncing') : t('serverSync.sync') }}
           </button>

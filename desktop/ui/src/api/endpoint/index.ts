@@ -374,6 +374,10 @@ export const endpointApi = {
     await App.SyncConfigToServer(index)
   },
 
+  async buildSyncConfigCurl(index: number): Promise<string> {
+    return App.BuildSyncConfigCurl(index)
+  },
+
   async applyEndpointToConfig(endpoint: Endpoint): Promise<void> {
     if (!isEndpointConfigTarget(endpoint.interfaceType)) {
       throw new Error('unsupported_endpoint_type')

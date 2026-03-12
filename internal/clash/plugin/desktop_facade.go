@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"clisimplehub/internal/plugin"
 )
@@ -43,11 +42,6 @@ func (p *ClashPlugin) GetConfig(_ string) (json.RawMessage, error) {
 	if svc == nil {
 		return nil, fmt.Errorf("clash plugin not initialized")
 	}
-
-	// Best effort: reflect external-controller selections in the saved config.
-	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
-	_, _ = svc.SyncSelectedNodesFromController(ctx)
-	cancel()
 
 	return json.Marshal(svc.config.Get())
 }

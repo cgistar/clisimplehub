@@ -3498,6 +3498,100 @@ func normalizeRemoteServerBaseURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
+type syncRequestData struct {
+	server      config.ServerConfig
+	syncURL     string
+	body        []byte
+	verifyCodex bool
+}
+
+func encodeSyncPayload(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, _ = gz.Write(raw)
+	_ = gz.Close()
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func shellSingleQuote(raw string) string {
+	if raw == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(raw, "'", `'"'"'`) + "'"
+}
+
+func (a *App) buildSyncRequestData(index int) (*syncRequestData, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+
+	fileStore, ok := a.storage.(*storage.ConfigFileStore)
+	if !ok {
+		return nil, fmt.Errorf("storage type does not support servers")
+	}
+
+	servers, err := fileStore.GetServers()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get servers: %w", err)
+	}
+	if index < 0 || index >= len(servers) {
+		return nil, fmt.Errorf("invalid server index: %d", index)
+	}
+
+	server := servers[index]
+	base, err := normalizeRemoteServerBaseURL(server.URL)
+	if err != nil {
+		return nil, err
+	}
+	syncURL := *base
+	syncURL.Path += "/sync/config"
+
+	if a.configLoader == nil {
+		return nil, fmt.Errorf("config loader not initialized")
+	}
+	cfg, err := a.configLoader.Load()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	type syncPayload struct {
+		Vendors            []config.VendorConfig   `json:"vendors"`
+		Endpoints          []config.EndpointConfig `json:"endpoints"`
+		KiroConfigEncoded  string                  `json:"kiroConfigEncoded,omitempty"`
+		ClashConfigEncoded string                  `json:"clashConfigEncoded,omitempty"`
+		CodexConfigEncoded string                  `json:"codexConfigEncoded,omitempty"`
+	}
+
+	payload := syncPayload{
+		Vendors:            cfg.Vendors,
+		Endpoints:          cfg.Endpoints,
+		KiroConfigEncoded:  encodeSyncPayload(a.kiroSyncExportRaw()),
+		ClashConfigEncoded: encodeSyncPayload(a.clashSyncExportRaw()),
+	}
+
+	if raw, err := a.codexSyncExportRaw(); err != nil {
+		return nil, fmt.Errorf("failed to export codex sync payload: %w", err)
+	} else {
+		payload.CodexConfigEncoded = encodeSyncPayload(raw)
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize config: %w", err)
+	}
+
+	return &syncRequestData{
+		server:      server,
+		syncURL:     syncURL.String(),
+		body:        body,
+		verifyCodex: payload.CodexConfigEncoded != "",
+	}, nil
+}
+
 // GetServers returns the list of remote servers from config.
 func (a *App) GetServers() ([]config.ServerConfig, error) {
 	if a.storage == nil {
@@ -3555,97 +3649,45 @@ func (a *App) TestServerConnection(serverURL, apiKey string) error {
 	return nil
 }
 
+// BuildSyncConfigCurl builds a complete curl command for syncing config to a selected server.
+func (a *App) BuildSyncConfigCurl(index int) (string, error) {
+	reqData, err := a.buildSyncRequestData(index)
+	if err != nil {
+		return "", err
+	}
+
+	const payloadDelimiter = "__CLISIMPLEHUB_SYNC_PAYLOAD__"
+
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "curl --request POST --url %s \\\n", shellSingleQuote(reqData.syncURL))
+	fmt.Fprintf(&builder, "  --header %s", shellSingleQuote("Content-Type: application/json"))
+	if strings.TrimSpace(reqData.server.APIKey) != "" {
+		fmt.Fprintf(&builder, " \\\n  --header %s", shellSingleQuote("Authorization: Bearer "+reqData.server.APIKey))
+	}
+	fmt.Fprintf(&builder, " \\\n  --data-binary @- <<'%s'\n", payloadDelimiter)
+	builder.Write(reqData.body)
+	if len(reqData.body) == 0 || reqData.body[len(reqData.body)-1] != '\n' {
+		builder.WriteByte('\n')
+	}
+	builder.WriteString(payloadDelimiter)
+	return builder.String(), nil
+}
+
 // SyncConfigToServer syncs the current config to a remote headless server.
 func (a *App) SyncConfigToServer(index int) error {
-	if a.storage == nil {
-		return fmt.Errorf("storage not initialized")
-	}
-
-	fileStore, ok := a.storage.(*storage.ConfigFileStore)
-	if !ok {
-		return fmt.Errorf("storage type does not support servers")
-	}
-
-	servers, err := fileStore.GetServers()
-	if err != nil {
-		return fmt.Errorf("failed to get servers: %w", err)
-	}
-	if index < 0 || index >= len(servers) {
-		return fmt.Errorf("invalid server index: %d", index)
-	}
-
-	server := servers[index]
-	base, err := normalizeRemoteServerBaseURL(server.URL)
+	reqData, err := a.buildSyncRequestData(index)
 	if err != nil {
 		return err
 	}
-	syncURL := *base
-	syncURL.Path += "/sync/config"
-
-	// Load full config
-	if a.configLoader == nil {
-		return fmt.Errorf("config loader not initialized")
-	}
-	cfg, err := a.configLoader.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	// 同步 vendors + endpoints + plugin configs；避免泄露本地 app settings 和 credentials。
-	type syncPayload struct {
-		Vendors            []config.VendorConfig   `json:"vendors"`
-		Endpoints          []config.EndpointConfig `json:"endpoints"`
-		KiroConfigEncoded  string                  `json:"kiroConfigEncoded,omitempty"`
-		ClashConfigEncoded string                  `json:"clashConfigEncoded,omitempty"`
-		CodexConfigEncoded string                  `json:"codexConfigEncoded,omitempty"`
-	}
-	payload := syncPayload{
-		Vendors:   cfg.Vendors,
-		Endpoints: cfg.Endpoints,
-	}
-
-	// 附加 kiro 多账号配置：gzip+base64 编码，避免凭据明文传输
-	if raw := a.kiroSyncExportRaw(); len(raw) > 0 {
-		var buf bytes.Buffer
-		gz := gzip.NewWriter(&buf)
-		_, _ = gz.Write(raw)
-		_ = gz.Close()
-		payload.KiroConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
-	}
-
-	// 附加 clash 配置：gzip+base64 编码
-	if raw := a.clashSyncExportRaw(); len(raw) > 0 {
-		var buf bytes.Buffer
-		gz := gzip.NewWriter(&buf)
-		_, _ = gz.Write(raw)
-		_ = gz.Close()
-		payload.ClashConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
-	}
-
-	// 附加 codex 全局配置与账号：gzip+base64 编码（账号存储于 sqlite）
-	if raw, err := a.codexSyncExportRaw(); err != nil {
-		return fmt.Errorf("failed to export codex sync payload: %w", err)
-	} else if len(raw) > 0 {
-		var buf bytes.Buffer
-		gz := gzip.NewWriter(&buf)
-		_, _ = gz.Write(raw)
-		_ = gz.Close()
-		payload.CodexConfigEncoded = base64.StdEncoding.EncodeToString(buf.Bytes())
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to serialize config: %w", err)
-	}
 
 	client := &http.Client{Timeout: 120 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, syncURL.String(), bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, reqData.syncURL, bytes.NewReader(reqData.body))
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if server.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+server.APIKey)
+	if reqData.server.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+reqData.server.APIKey)
 	}
 
 	resp, err := client.Do(req)
@@ -3659,7 +3701,7 @@ func (a *App) SyncConfigToServer(index int) error {
 		return fmt.Errorf("sync failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	if payload.CodexConfigEncoded != "" {
+	if reqData.verifyCodex {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		var syncResp struct {
 			Codex struct {
