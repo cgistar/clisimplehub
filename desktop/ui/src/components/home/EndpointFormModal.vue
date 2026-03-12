@@ -95,20 +95,22 @@ const transformerOptions = computed<Array<{ label: string; value: string }>>(() 
   ...availableTransformers.value.map((item) => ({ label: item, value: item }))
 ])
 const modelOptions = computed<Array<{ label: string; value: string }>>(() =>
-  fetchedModels.value.map((model) => ({
-    label: model,
-    value: model
-  }))
+  Array.from(new Set([form.value.model.trim(), ...fetchedModels.value]))
+    .filter((model) => model.length > 0)
+    .map((model) => ({
+      label: model,
+      value: model
+    }))
 )
 
-function createDefaultForm(): EndpointFormState {
+function createDefaultForm(interfaceType: InterfaceType = endpointStore.currentTab): EndpointFormState {
   return {
     id: 0,
     providerName: '',
     name: '',
     apiUrl: '',
     apiKey: '',
-    interfaceType: 'claude',
+    interfaceType,
     model: '',
     transformer: '',
     proxyUrl: '',
@@ -256,7 +258,13 @@ async function fetchModels(): Promise<void> {
     const result = await endpointApi.fetchModels(apiUrl, apiKey, form.value.interfaceType)
 
     if (result.success && result.models.length > 0) {
-      fetchedModels.value = result.models
+      fetchedModels.value = Array.from(new Set(result.models.map((item) => item.trim()).filter((item) => item.length > 0)))
+      if (fetchedModels.value.length > 0) {
+        const currentModel = form.value.model.trim()
+        if (!currentModel || !fetchedModels.value.includes(currentModel)) {
+          form.value.model = fetchedModels.value[0]
+        }
+      }
       feedback.success(t('manage.fetchModelsSuccess').replace('{count}', String(result.models.length)))
     } else {
       const message = result.message?.includes('no_models_found')
@@ -407,7 +415,7 @@ async function open(endpoint: Endpoint | null = null): Promise<void> {
       ensureTransformersLoaded(true),
       ensureVendorsLoaded(true)
     ])
-    form.value = createDefaultForm()
+    form.value = createDefaultForm(endpointStore.currentTab)
 
     if (endpoint && endpoint.id > 0) {
       const full = await endpointApi.getById(endpoint.id)
@@ -571,6 +579,7 @@ defineExpose({
                 :options="modelOptions"
                 :placeholder="t('manage.modelPlaceholder')"
                 clearable
+                :blur-after-select="true"
               />
               <n-button
                 :loading="fetchingModels"

@@ -610,6 +610,17 @@ func (f *desktopFacade) DeleteAccount(configPath, refreshToken string) error {
 	return kiroShared.SaveKiroMultiConfig(configPath, config)
 }
 
+func (f *desktopFacade) DeleteAccounts(configPath string, refreshTokens []string) error {
+	config, err := f.loadOrCreateMultiConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load kiro config: %w", err)
+	}
+	if config.DeleteAccounts(refreshTokens) == 0 {
+		return fmt.Errorf("account not found")
+	}
+	return kiroShared.SaveKiroMultiConfig(configPath, config)
+}
+
 // --- Auth testing ---
 
 type testResultJSON struct {

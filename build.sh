@@ -9,7 +9,7 @@ if [ -f ".env" ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
-VERSION="${VERSION:-dev}"
+VERSION="${VERSION:-}"
 OUTPUT_DIR="dist"
 BUILD_TAGS=""
 SKIP_DEPS=0
@@ -98,15 +98,15 @@ split_platform() {
 # Sign macOS app
 sign_macos_app() {
     local app_path=$1
-    
+
     if [ -z "$APPLE_SIGN_IDENTITY" ]; then
         print_warn "APPLE_SIGN_IDENTITY not set, skipping code signing"
         return 0
     fi
-    
+
     print_info "Signing app with identity: ${APPLE_SIGN_IDENTITY}"
     codesign --force --deep --sign "$APPLE_SIGN_IDENTITY" --options runtime "$app_path"
-    
+
     # Verify signature
     codesign --verify --verbose "$app_path"
     print_info "App signed successfully"
@@ -116,26 +116,26 @@ sign_macos_app() {
 notarize_macos_app() {
     local app_path=$1
     local app_name=$(basename "$app_path")
-    
+
     if [ -z "$APPLE_ID" ] || [ -z "$APPLE_ID_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
         print_warn "Apple notarization credentials not set, skipping notarization"
         return 0
     fi
-    
+
     print_info "Creating zip for notarization..."
     local zip_path="/tmp/${app_name}-notarize.zip"
     ditto -c -k --keepParent "$app_path" "$zip_path"
-    
+
     print_info "Submitting for notarization (this may take a few minutes)..."
     xcrun notarytool submit "$zip_path" \
         --apple-id "$APPLE_ID" \
         --password "$APPLE_ID_PASSWORD" \
         --team-id "$APPLE_TEAM_ID" \
         --wait
-    
+
     print_info "Stapling notarization ticket..."
     xcrun stapler staple "$app_path"
-    
+
     rm -f "$zip_path"
     print_info "Notarization complete"
 }
@@ -208,25 +208,25 @@ package_desktop() {
                 notarize_macos_app "desktop/build/bin/CliSimpleHub.app"
 
                 cd desktop/build/bin
-                zip -r "../../../${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.zip" "CliSimpleHub.app"
+                zip -r "../../../${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip" "CliSimpleHub.app"
                 cd ../../..
-                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.zip"
+                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip"
             else
-                tar -czf "${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.tar.gz" -C desktop/build/bin "$bin_name"
-                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.tar.gz"
+                tar -czf "${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.tar.gz" -C desktop/build/bin "$bin_name"
+                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.tar.gz"
             fi
             ;;
         linux)
-            tar -czf "${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.tar.gz" -C desktop/build/bin "$bin_name"
-            print_info "Created: ${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.tar.gz"
+            tar -czf "${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.tar.gz" -C desktop/build/bin "$bin_name"
+            print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.tar.gz"
             ;;
         windows)
             if [ -f "desktop/build/bin/cliSimpleHub.exe" ]; then
-                zip -j "${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.zip" desktop/build/bin/cliSimpleHub.exe
-                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.zip"
+                zip -j "${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip" desktop/build/bin/cliSimpleHub.exe
+                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip"
             elif [ -f "desktop/build/bin/CliSimpleHub.exe" ]; then
-                zip -j "${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.zip" desktop/build/bin/CliSimpleHub.exe
-                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub-${VERSION}-${platform}-${arch}${suffix}.zip"
+                zip -j "${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip" desktop/build/bin/CliSimpleHub.exe
+                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip"
             else
                 print_warn "desktop/build/bin/cliSimpleHub.exe not found, skipping packaging"
             fi
@@ -269,7 +269,7 @@ package_server() {
         ext=".exe"
     fi
 
-    local base="cliSimpleHub-server-${VERSION}-${platform}-${arch}${suffix}"
+    local base="cliSimpleHub-server${VERSION}-${platform}-${arch}${suffix}"
     local bin_name="cliSimpleHub-server${ext}"
     local bin_path="${staging_dir}/${bin_name}"
 
@@ -385,7 +385,7 @@ PLATFORMS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         -v|--version)
-            VERSION="$2"
+            VERSION="-$2"
             shift 2
             ;;
         desktop|server|both)

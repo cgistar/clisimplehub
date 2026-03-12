@@ -201,18 +201,9 @@ async function handleBulkDelete(refreshTokens: string[]): Promise<void> {
 
   if (!confirmed) return
 
-  let successCount = 0
-  for (const refreshToken of refreshTokens) {
-    try {
-      await kiroStore.deleteAccount(refreshToken)
-      successCount += 1
-    } catch {
-      // Continue deleting the remaining accounts.
-    }
-  }
+  await kiroStore.deleteAccounts(refreshTokens)
 
-  message.success(`${t('kiro.bulkDeleteSuccess')} (${successCount}/${refreshTokens.length})`)
-  await loadAccountsWithFeedback()
+  message.success(`${t('kiro.bulkDeleteSuccess')} (${refreshTokens.length}/${refreshTokens.length})`)
 }
 
 async function addAccountFromCredential(credential: KiroAuthCredential): Promise<void> {

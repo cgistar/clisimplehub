@@ -111,6 +111,17 @@ export const useKiroAccountsStore = defineStore('kiroAccounts', () => {
     }
   }
 
+  async function deleteAccounts(refreshTokens: string[]): Promise<void> {
+    clearError()
+    try {
+      await kiroApi.deleteAccounts(refreshTokens)
+      await loadAccounts()
+    } catch (cause) {
+      error.value = String(cause)
+      throw cause
+    }
+  }
+
   async function testAccount(refreshToken: string): Promise<KiroTestResult> {
     clearError()
     try {
@@ -161,6 +172,7 @@ export const useKiroAccountsStore = defineStore('kiroAccounts', () => {
     addAccount,
     updateAccount,
     deleteAccount,
+    deleteAccounts,
     testAccount,
     fetchUsage,
     setSearchQuery,

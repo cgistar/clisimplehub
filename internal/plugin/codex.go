@@ -17,6 +17,7 @@ type CodexDesktopProvider interface {
 	AddAccount(configPath string, dto json.RawMessage) (json.RawMessage, error)
 	UpdateAccount(configPath string, dto json.RawMessage) error
 	DeleteAccount(configPath, refreshToken string) error
+	DeleteAccounts(configPath string, accountIDs []string) error
 	StartLogin(ctx context.Context, proxyURL string) (json.RawMessage, error)
 	StartLoginWithURL(ctx context.Context, proxyURL string) (authURL string, err error)
 	WaitForLoginCallback(ctx context.Context) (json.RawMessage, error)

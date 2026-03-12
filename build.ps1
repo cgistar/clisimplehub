@@ -1,4 +1,4 @@
-<# 
+<#
 CliSimpleHub build script (PowerShell, Windows-friendly).
 
 Examples:
@@ -95,7 +95,7 @@ function Install-Deps() {
 function Package-Desktop([string]$os, [string]$arch) {
   Ensure-Dir $OutputDir
   $suffix = Variant-Suffix $BuildTags
-  $base = "cliSimpleHub-$Version-$os-$arch$suffix"
+  $base = "cliSimpleHub-$os-$arch$suffix"
 
   if ($os -eq 'windows') {
     $exe = "desktop/build/bin/cliSimpleHub.exe"
@@ -144,7 +144,7 @@ function Build-Desktop([string]$os, [string]$arch) {
 function Package-Server([string]$os, [string]$arch) {
   Ensure-Dir $OutputDir
   $suffix = Variant-Suffix $BuildTags
-  $base = "cliSimpleHub-server-$Version-$os-$arch$suffix"
+  $base = "cliSimpleHub-server-$os-$arch$suffix"
 
   $staging = Join-Path $OutputDir ".staging"
   Ensure-Dir $staging

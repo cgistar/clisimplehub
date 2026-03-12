@@ -34,6 +34,7 @@ type KiroDesktopProvider interface {
 	AddAccount(configPath string, dto json.RawMessage) (json.RawMessage, error)
 	UpdateAccount(configPath string, dto json.RawMessage) error
 	DeleteAccount(configPath, refreshToken string) error
+	DeleteAccounts(configPath string, refreshTokens []string) error
 
 	// --- Auth testing ---
 	TestRefreshToken(config json.RawMessage) (json.RawMessage, error)

@@ -68,6 +68,10 @@ export const kiroApi = {
     await App.DeleteKiroAccount(refreshToken)
   },
 
+  async deleteAccounts(refreshTokens: string[]): Promise<void> {
+    await App.DeleteKiroAccounts(refreshTokens)
+  },
+
   async testAccount(refreshToken: string): Promise<KiroTestResult> {
     return App.TestKiroAccount(refreshToken)
   },

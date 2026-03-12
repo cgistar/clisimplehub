@@ -231,6 +231,14 @@ func (a *App) DeleteCodexAccount(accountId string) error {
 	return cp.DeleteAccount(a.getCodexMultiConfigPath(), accountId)
 }
 
+func (a *App) DeleteCodexAccounts(accountIds []string) error {
+	cp := codexProvider()
+	if cp == nil {
+		return fmt.Errorf("codex plugin not available")
+	}
+	return cp.DeleteAccounts(a.getCodexMultiConfigPath(), accountIds)
+}
+
 func (a *App) StartCodexLogin() (*CodexLoginResultDTO, error) {
 	cp := codexProvider()
 	if cp == nil {

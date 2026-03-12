@@ -256,6 +256,42 @@ func (s *SQLiteCodexAccountStore) Delete(ctx context.Context, accountID string) 
 	})
 }
 
+func (s *SQLiteCodexAccountStore) DeleteMany(ctx context.Context, accountIDs []string) error {
+	normalized := make([]string, 0, len(accountIDs))
+	seen := make(map[string]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	placeholders := strings.Repeat("?,", len(normalized))
+	placeholders = strings.TrimSuffix(placeholders, ",")
+	args := make([]any, len(normalized))
+	for i := range normalized {
+		args[i] = normalized[i]
+	}
+
+	return s.queue.WithTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_account_stats WHERE account_id IN (`+placeholders+`)`, args...); err != nil {
+			return fmt.Errorf("delete stats: %w", err)
+		}
+		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_accounts WHERE account_id IN (`+placeholders+`)`, args...); err != nil {
+			return fmt.Errorf("delete accounts: %w", err)
+		}
+		return nil
+	})
+}
+
 // ReplaceAllAccounts replaces all codex accounts in one transaction.
 // It keeps usage history for current accounts and removes orphaned stats via relational delete.
 func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accounts []CodexAccount) error {

@@ -30,10 +30,14 @@ var defaultHubRuntimeRulesTail = []string{
 
 func defaultRuntimeDNSConfig() map[string]any {
 	return map[string]any{
-		"enable":             true,
-		"ipv6":               false,
-		"default-nameserver": []string{"223.5.5.5", "1.1.1.1"},
-		"nameserver":         []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"},
+		"enable":                  true,
+		"ipv6":                    false,
+		"use-system-hosts":        false,
+		"respect-rules":           true,
+		"default-nameserver":      []string{"223.5.5.5", "1.2.4.8"},
+		"nameserver":              []string{"https://cloudflare-dns.com/dns-query", "https://77.88.8.8/dns-query"},
+		"direct-nameserver":       []string{"https://223.5.5.5/dns-query", "https://doh.pub/dns-query"},
+		"proxy-server-nameserver": []string{"https://223.5.5.5/dns-query", "https://doh.pub/dns-query"},
 	}
 }
 

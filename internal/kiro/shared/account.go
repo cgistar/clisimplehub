@@ -215,6 +215,51 @@ func (c *KiroMultiConfig) DeleteAccount(refreshToken string) bool {
 	return false
 }
 
+// DeleteAccounts 删除多个账号，并在需要时重置激活账号。
+func (c *KiroMultiConfig) DeleteAccounts(refreshTokens []string) int {
+	if c == nil || len(refreshTokens) == 0 {
+		return 0
+	}
+
+	targets := make(map[string]struct{}, len(refreshTokens))
+	for _, token := range refreshTokens {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		targets[token] = struct{}{}
+	}
+	if len(targets) == 0 {
+		return 0
+	}
+
+	nextAccounts := make([]KiroAccount, 0, len(c.Accounts))
+	deleted := 0
+	activeDeleted := false
+	for i := range c.Accounts {
+		token := strings.TrimSpace(c.Accounts[i].RefreshToken)
+		if _, ok := targets[token]; ok {
+			deleted++
+			if token == c.ActiveRefreshToken {
+				activeDeleted = true
+			}
+			continue
+		}
+		nextAccounts = append(nextAccounts, c.Accounts[i])
+	}
+	if deleted == 0 {
+		return 0
+	}
+
+	c.Accounts = nextAccounts
+	if len(c.Accounts) == 0 {
+		c.ActiveRefreshToken = ""
+	} else if activeDeleted || strings.TrimSpace(c.ActiveRefreshToken) == "" {
+		c.ActiveRefreshToken = c.Accounts[0].RefreshToken
+	}
+	return deleted
+}
+
 // IsMonthlyRequestCountError 检查错误消息是否为 MONTHLY_REQUEST_COUNT 错误
 // 1. 直接字符串包含匹配
 // 2. JSON reason 字段

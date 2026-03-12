@@ -43,6 +43,7 @@ type CodexAccountStore interface {
 	Insert(ctx context.Context, account *CodexAccount) error
 	Update(ctx context.Context, account *CodexAccount) error
 	Delete(ctx context.Context, accountID string) error
+	DeleteMany(ctx context.Context, accountIDs []string) error
 
 	// Hot-path partial updates
 	UpdateTokens(ctx context.Context, accountID, accessToken, idToken, refreshToken string, expiresAt time.Time) error

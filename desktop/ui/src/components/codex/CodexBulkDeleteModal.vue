@@ -191,17 +191,9 @@ async function handleDelete(): Promise<void> {
 
   deleting.value = true
   try {
-    let successCount = 0
-    for (const accountId of selectedAccountIds.value) {
-      try {
-        await codexStore.deleteAccount(accountId)
-        successCount += 1
-      } catch (cause) {
-        console.error('Delete failed:', cause)
-      }
-    }
-
-    message.success(`${t('codex.deletedCount')} ${successCount}/${selectedAccountIds.value.length}`)
+    const requestIDs = [...selectedAccountIds.value]
+    await codexStore.deleteAccounts(requestIDs, { reload: false })
+    message.success(`${t('codex.deletedCount')} ${requestIDs.length}/${requestIDs.length}`)
     visible.value = false
     emit('success')
   } catch (error) {

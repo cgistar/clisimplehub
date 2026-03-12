@@ -682,6 +682,49 @@ export const useClashStore = defineStore('clash', () => {
     }
   }
 
+  function applySavedSubscriptionNodes(subscriptionId: string, nextNodes: ClashNode[], selectedNode: string): void {
+    const subscription = subscriptions.value.find((item) => item.id === subscriptionId) || null
+    if (!subscription) return
+
+    const previousNodes = nodes.value.filter((node) => node.sourceId === subscriptionId)
+    const previousLatencyByName = new Map(previousNodes.map((node) => [node.name, node.latency]))
+
+    const normalizedNextNodes = nextNodes.map((node) => ({
+      ...node,
+      latency: previousLatencyByName.get(node.name) ?? (typeof node.latency === 'number' ? node.latency : 0)
+    }))
+
+    const nextSubscriptions = subscriptions.value.map((item) => {
+      if (item.id !== subscriptionId) return item
+      return {
+        ...item,
+        selectedNode,
+        nodes: normalizedNextNodes
+      }
+    })
+    config.value = {
+      ...config.value,
+      subscriptions: nextSubscriptions
+    }
+
+    if (subscription.enabled) {
+      const firstIndex = nodes.value.findIndex((node) => node.sourceId === subscriptionId)
+      const without = nodes.value.filter((node) => node.sourceId !== subscriptionId)
+      nodes.value = firstIndex >= 0
+        ? [...without.slice(0, firstIndex), ...normalizedNextNodes, ...without.slice(firstIndex)]
+        : [...without, ...normalizedNextNodes]
+    } else {
+      nodes.value = nodes.value.filter((node) => node.sourceId !== subscriptionId)
+    }
+
+    const active = nextSubscriptions.find((item) => item.active)
+    status.value = {
+      ...status.value,
+      selectedNode: active?.selectedNode || '',
+      nodeCount: nodes.value.length
+    }
+  }
+
   async function saveDraftNodes(): Promise<void> {
     const subscriptionId = nodesDialogSubscriptionId.value
     if (!subscriptionId) return
@@ -703,7 +746,7 @@ export const useClashStore = defineStore('clash', () => {
 
     try {
       await clashApi.replaceSubscriptionNodes(subscriptionId, cleanNodes, selectedNode || '')
-      await loadAll(true)
+      applySavedSubscriptionNodes(subscriptionId, cleanNodes, selectedNode || '')
       resetNodesDraftState()
     } catch (cause) {
       error.value = toErrorMessage(cause)

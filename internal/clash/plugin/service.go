@@ -295,6 +295,9 @@ func (s *ClashService) SelectNode(nodeName string) error {
 		return fmt.Errorf("no active subscription")
 	}
 	activeSub := cfg.Subscriptions[activeIdx]
+	if resolved, ok := resolveSubscriptionNodeName(cfg, activeSub.ID, nodeName); ok && resolved != "" {
+		nodeName = resolved
+	}
 	if !hasNodeByName(activeSub.Nodes, nodeName) {
 		return fmt.Errorf("node not found in active subscription: %s", nodeName)
 	}
@@ -699,19 +702,24 @@ func (s *ClashService) UpdateSubscriptionSelectedNode(id, nodeName string) error
 			if cfg.Subscriptions[i].ID != id {
 				continue
 			}
-			if nodeName != "" && !hasNodeByName(cfg.Subscriptions[i].Nodes, nodeName) {
-				return
+			resolvedNodeName := nodeName
+			if resolvedNodeName != "" && !hasNodeByName(cfg.Subscriptions[i].Nodes, resolvedNodeName) {
+				if resolved, ok := resolveSubscriptionNodeName(cfg, id, resolvedNodeName); ok && resolved != "" {
+					resolvedNodeName = resolved
+				} else {
+					return
+				}
 			}
 			oldNode := strings.TrimSpace(cfg.Subscriptions[i].SelectedNode)
-			cfg.Subscriptions[i].SelectedNode = nodeName
+			cfg.Subscriptions[i].SelectedNode = resolvedNodeName
 			if cfg.Chain.Entry.SubscriptionID == id && cfg.Chain.Entry.NodeName == oldNode {
-				cfg.Chain.Entry.NodeName = nodeName
+				cfg.Chain.Entry.NodeName = resolvedNodeName
 			}
 			if cfg.Chain.Exit.SubscriptionID == id && cfg.Chain.Exit.NodeName == oldNode {
-				cfg.Chain.Exit.NodeName = nodeName
+				cfg.Chain.Exit.NodeName = resolvedNodeName
 			}
 			if cfg.Chain.Middle != nil && cfg.Chain.Middle.SubscriptionID == id && cfg.Chain.Middle.NodeName == oldNode {
-				cfg.Chain.Middle.NodeName = nodeName
+				cfg.Chain.Middle.NodeName = resolvedNodeName
 			}
 			updated = true
 			return
@@ -880,11 +888,14 @@ func (s *ClashService) ReplaceSubscriptionNodes(id string, nodes []ProxyNode, se
 	}
 
 	normalized := normalizeSubscriptionNodes(nodes, id)
-	if selectedNode != "" && !hasNodeByName(normalized, selectedNode) {
-		return fmt.Errorf("selected node not found: %s", selectedNode)
-	}
-
 	beforeCfg := s.config.Get()
+	if selectedNode != "" && !hasNodeByName(normalized, selectedNode) {
+		if resolved, ok := resolveSubscriptionNodeName(beforeCfg, id, selectedNode); ok && resolved != "" && hasNodeByName(normalized, resolved) {
+			selectedNode = resolved
+		} else {
+			return fmt.Errorf("selected node not found: %s", selectedNode)
+		}
+	}
 	subFound := false
 	if err := s.config.Update(func(cfg *ClashConfig) {
 		for i := range cfg.Subscriptions {
@@ -1199,6 +1210,53 @@ func activeSubscriptionWithNodes(cfg *ClashConfig) *Subscription {
 		}
 	}
 	return nil
+}
+
+func resolveSubscriptionNodeName(cfg *ClashConfig, subscriptionID string, requested string) (string, bool) {
+	subscriptionID = strings.TrimSpace(subscriptionID)
+	requested = strings.TrimSpace(requested)
+	if cfg == nil || subscriptionID == "" {
+		return "", false
+	}
+
+	var sub *Subscription
+	for i := range cfg.Subscriptions {
+		if strings.TrimSpace(cfg.Subscriptions[i].ID) == subscriptionID {
+			sub = &cfg.Subscriptions[i]
+			break
+		}
+	}
+	if sub == nil {
+		return "", false
+	}
+	if requested == "" {
+		return "", true
+	}
+	if hasNodeByName(sub.Nodes, requested) {
+		return requested, true
+	}
+
+	if ref, ok := runtimeNodeRefByRuntimeProxyName(cfg)[requested]; ok {
+		if strings.TrimSpace(ref.SubscriptionID) == subscriptionID && hasNodeByName(sub.Nodes, ref.NodeName) {
+			return ref.NodeName, true
+		}
+	}
+
+	prefixes := []string{strings.TrimSpace(sub.Name), strings.TrimSpace(sub.ID)}
+	for _, prefix := range prefixes {
+		if prefix == "" {
+			continue
+		}
+		p := prefix + ":"
+		if strings.HasPrefix(requested, p) {
+			candidate := strings.TrimSpace(strings.TrimPrefix(requested, p))
+			if candidate != "" && hasNodeByName(sub.Nodes, candidate) {
+				return candidate, true
+			}
+		}
+	}
+
+	return "", false
 }
 
 func findEnabledSubscriptionWithNodes(cfg *ClashConfig, id string) *Subscription {

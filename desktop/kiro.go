@@ -378,6 +378,15 @@ func (a *App) DeleteKiroAccount(refreshToken string) error {
 	return kp.DeleteAccount(a.getKiroMultiConfigPath(), refreshToken)
 }
 
+// DeleteKiroAccounts 批量删除 Kiro 账号（参数为 refreshToken 列表）
+func (a *App) DeleteKiroAccounts(refreshTokens []string) error {
+	kp := kiroProvider()
+	if kp == nil {
+		return fmt.Errorf("kiro plugin not available")
+	}
+	return kp.DeleteAccounts(a.getKiroMultiConfigPath(), refreshTokens)
+}
+
 // TestKiroAccount 测试指定账号的连接（参数为 refreshToken）
 func (a *App) TestKiroAccount(refreshToken string) (*KiroTestResult, error) {
 	kp := kiroProvider()

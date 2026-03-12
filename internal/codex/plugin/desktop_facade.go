@@ -291,6 +291,58 @@ func (d *desktopFacade) DeleteAccount(configPath, accountId string) error {
 	return nil
 }
 
+func (d *desktopFacade) DeleteAccounts(configPath string, accountIDs []string) error {
+	store := getStore()
+	if store == nil {
+		return fmt.Errorf("account store not initialized")
+	}
+
+	normalized := make([]string, 0, len(accountIDs))
+	seen := make(map[string]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	if err := store.DeleteMany(context.Background(), normalized); err != nil {
+		return err
+	}
+
+	mc, _ := codexShared.LoadCodexMultiConfig(configPath)
+	if mc != nil {
+		activeID := strings.TrimSpace(mc.ActiveAccountID)
+		if activeID != "" {
+			for _, id := range normalized {
+				if id == activeID {
+					accounts, _ := store.ListAccounts(context.Background())
+					if len(accounts) > 0 {
+						mc.ActiveAccountID = accounts[0].AccountID
+					} else {
+						mc.ActiveAccountID = ""
+					}
+					_ = codexShared.SaveCodexMultiConfig(configPath, mc)
+					break
+				}
+			}
+		}
+	}
+
+	if pool := codex.GetPool(); pool != nil {
+		pool.Reload()
+	}
+	return nil
+}
+
 func (d *desktopFacade) TestAccount(configPath, accountId string) (json.RawMessage, error) {
 	accountId = strings.TrimSpace(accountId)
 	if accountId == "" {

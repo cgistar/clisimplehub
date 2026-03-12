@@ -97,6 +97,10 @@ export const codexApi = {
     await App.DeleteCodexAccount(accountId)
   },
 
+  async deleteAccounts(accountIds: string[]): Promise<void> {
+    await App.DeleteCodexAccounts(accountIds)
+  },
+
   async testAccount(accountId: string): Promise<CodexTestResult> {
     return App.TestCodexAccount(accountId)
   },

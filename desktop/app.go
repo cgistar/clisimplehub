@@ -1792,9 +1792,50 @@ func (a *App) FetchModels(apiURL, apiKey, interfaceType string) string {
 	return toJSON(FetchModelsResult{Success: true, Message: fmt.Sprintf("Found %d models", len(models)), Models: models})
 }
 
+func buildModelsURL(apiURL, versionPath string, query url.Values) (string, error) {
+	parsedURL, err := url.Parse(apiURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid api url: %w", err)
+	}
+
+	versionPath = "/" + strings.Trim(strings.TrimSuffix(versionPath, "/"), "/")
+	modelsPath := versionPath + "/models"
+	currentPath := strings.TrimSuffix(parsedURL.Path, "/")
+
+	switch {
+	case currentPath == "":
+		parsedURL.Path = modelsPath
+	case strings.HasSuffix(currentPath, modelsPath):
+		parsedURL.Path = currentPath
+	case strings.HasSuffix(currentPath, versionPath):
+		parsedURL.Path = currentPath + "/models"
+	default:
+		parsedURL.Path = currentPath + modelsPath
+	}
+
+	if len(query) > 0 {
+		values := parsedURL.Query()
+		for key, items := range query {
+			if len(items) == 0 {
+				continue
+			}
+			values.Del(key)
+			for _, item := range items {
+				values.Add(key, item)
+			}
+		}
+		parsedURL.RawQuery = values.Encode()
+	}
+
+	return parsedURL.String(), nil
+}
+
 // fetchOpenAIModels fetches models from OpenAI-compatible API
 func (a *App) fetchOpenAIModels(apiURL, apiKey string) ([]string, error) {
-	url := fmt.Sprintf("%s/v1/models", apiURL)
+	url, err := buildModelsURL(apiURL, "/v1", nil)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -1839,7 +1880,12 @@ func (a *App) fetchOpenAIModels(apiURL, apiKey string) ([]string, error) {
 
 // fetchGeminiModels fetches models from Gemini API
 func (a *App) fetchGeminiModels(apiURL, apiKey string) ([]string, error) {
-	url := fmt.Sprintf("%s/v1beta/models?key=%s", apiURL, apiKey)
+	url, err := buildModelsURL(apiURL, "/v1beta", url.Values{
+		"key": []string{apiKey},
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

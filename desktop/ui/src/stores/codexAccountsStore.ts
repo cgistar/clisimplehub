@@ -227,11 +227,29 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     }
   }
 
-  async function deleteAccount(accountId: string): Promise<void> {
+  async function deleteAccount(accountId: string, options?: { reload?: boolean }): Promise<void> {
     clearError()
 
     try {
       await codexApi.deleteAccount(accountId)
+      if (options?.reload === false) {
+        return
+      }
+      await loadAccounts(true)
+    } catch (cause) {
+      error.value = String(cause)
+      throw cause
+    }
+  }
+
+  async function deleteAccounts(accountIds: string[], options?: { reload?: boolean }): Promise<void> {
+    clearError()
+
+    try {
+      await codexApi.deleteAccounts(accountIds)
+      if (options?.reload === false) {
+        return
+      }
       await loadAccounts(true)
     } catch (cause) {
       error.value = String(cause)
@@ -325,6 +343,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     addAccount,
     updateAccount,
     deleteAccount,
+    deleteAccounts,
     testAccount,
     fetchUsage,
     setSearchQuery,
