@@ -1,6 +1,10 @@
 package codexplugin
 
-import appmiddleware "clisimplehub/internal/middleware"
+import (
+	"encoding/json"
+
+	appmiddleware "clisimplehub/internal/middleware"
+)
 
 var errCompactStreamingNotSupported = appmiddleware.ErrCompactStreamingNotSupported
 
@@ -20,4 +24,22 @@ func normalizeStreamingModeForCodexPath(requestPath string, isStreaming bool) bo
 
 func compactStreamingErrorPayload() []byte {
 	return appmiddleware.CompactStreamingErrorPayload()
+}
+
+// adaptConvertedResponsesBody applies non-CLI adaptations (instructions injection,
+// field cleanup) to a Responses API body that was converted from Chat Completions.
+func adaptConvertedResponsesBody(body []byte, userAgent string) []byte {
+	if appmiddleware.IsCodexCLI(userAgent) {
+		return body
+	}
+	var reqBody map[string]any
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		return body
+	}
+	appmiddleware.AdaptResponsesPayloadForNonCLI(reqBody)
+	adapted, err := json.Marshal(reqBody)
+	if err != nil {
+		return body
+	}
+	return adapted
 }

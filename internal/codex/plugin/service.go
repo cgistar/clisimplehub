@@ -111,26 +111,82 @@ func (s *CodexService) ensureCodexEndpoint() {
 		return
 	}
 
+	hasCodexEndpoint := false
 	for _, ep := range endpoints {
 		if ep.Transformer == "openai/codex" && ep.InterfaceType == "codex" {
+			hasCodexEndpoint = true
+			break
+		}
+	}
+
+	if !hasCodexEndpoint {
+		newEndpoint := &storage.Endpoint{
+			Name:          "Codex Provider",
+			APIURL:        "http://127.0.0.1:5600/codex/v1",
+			APIKey:        "-",
+			Active:        false,
+			Enabled:       true,
+			InterfaceType: "codex",
+			Transformer:   "openai/codex",
+			Priority:      8,
+		}
+
+		sameTypeCount := 0
+		for _, ep := range endpoints {
+			if ep.InterfaceType == "codex" {
+				sameTypeCount++
+			}
+		}
+		if sameTypeCount == 0 {
+			newEndpoint.Active = true
+		}
+
+		if err := st.SaveEndpoint(newEndpoint); err != nil {
+			return
+		}
+		sa.TriggerReload()
+	}
+
+	s.ensureCodexChatEndpoint()
+}
+
+func (s *CodexService) ensureCodexChatEndpoint() {
+	s.mu.RLock()
+	sa := s.storageAccessor
+	s.mu.RUnlock()
+	if sa == nil {
+		return
+	}
+	st := sa.GetStorage()
+	if st == nil {
+		return
+	}
+
+	endpoints, err := st.GetEndpoints()
+	if err != nil {
+		return
+	}
+
+	for _, ep := range endpoints {
+		if ep.Transformer == "openai/codex" && ep.InterfaceType == "chat" {
 			return
 		}
 	}
 
 	newEndpoint := &storage.Endpoint{
-		Name:          "Codex Provider",
+		Name:          "Codex Chat Provider",
 		APIURL:        "http://127.0.0.1:5600/codex/v1",
 		APIKey:        "-",
 		Active:        false,
 		Enabled:       true,
-		InterfaceType: "codex",
+		InterfaceType: "chat",
 		Transformer:   "openai/codex",
 		Priority:      8,
 	}
 
 	sameTypeCount := 0
 	for _, ep := range endpoints {
-		if ep.InterfaceType == "codex" {
+		if ep.InterfaceType == "chat" {
 			sameTypeCount++
 		}
 	}
@@ -141,6 +197,5 @@ func (s *CodexService) ensureCodexEndpoint() {
 	if err := st.SaveEndpoint(newEndpoint); err != nil {
 		return
 	}
-
 	sa.TriggerReload()
 }

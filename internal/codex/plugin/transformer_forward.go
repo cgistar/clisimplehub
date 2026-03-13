@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +16,9 @@ import (
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
+	chat_responses "clisimplehub/internal/transformer/chat/openai/responses"
+
+	"github.com/tidwall/gjson"
 )
 
 // Forward implements the TransformerForwarder interface for Codex plugin.
@@ -73,40 +75,19 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 
 	// Transformer forward path now receives original request headers via context.
 	userAgent := ""
-	if headers := executor.ForwardRequestHeadersFromContext(ctx); headers != nil {
-		userAgent = headers.Get("User-Agent")
+	clientHeaders := executor.ForwardRequestHeadersFromContext(ctx)
+	if clientHeaders != nil {
+		userAgent = clientHeaders.Get("User-Agent")
 	}
 
-	processedBody, err := processRequestBody(body, requestPath, userAgent)
-	if err != nil {
-		if errors.Is(err, errCompactStreamingNotSupported) {
-			return &executor.ForwardResult{
-				StatusCode: http.StatusBadRequest,
-				Error:      errCompactStreamingNotSupported,
-				Body:       compactStreamingErrorPayload(),
-				Headers:    http.Header{"Content-Type": []string{"application/json"}},
-			}
-		}
-		if debugLogger != nil {
-			debugLogger.Log("请求体处理失败: %v", err)
-		}
-		// Continue with original body if processing fails
-		processedBody = body
+	prepared, prepErr := s.prepareCodexRequest(ctx, body, requestPath, userAgent, model, clientHeaders, isStreaming)
+	if prepErr != nil {
+		return prepErr
 	}
-	isStreaming = normalizeStreamingModeForCodexPath(requestPath, isStreaming)
-	inboundModel := extractModelFromBody(processedBody)
-	if rewrittenBody, rewritten := applyResolvedModelToBody(processedBody, model); rewritten {
-		processedBody = rewrittenBody
-		if debugLogger != nil {
-			debugLogger.Log("应用模型映射/覆盖: upstreamModel=%q", strings.TrimSpace(model))
-		}
-	}
-	if bodyWithThinking, applied := applySuffixThinkingToCodexBody(processedBody, inboundModel); applied {
-		processedBody = bodyWithThinking
-		if debugLogger != nil {
-			debugLogger.Log("应用模型 suffix thinking: model=%q", inboundModel)
-		}
-	}
+	processedBody := prepared.body
+	isStreaming = prepared.isStreaming
+	requestModel = prepared.requestModel
+	chatConv := prepared.chatConv
 
 	pool := codex.GetPool()
 	if pool == nil {
@@ -174,7 +155,7 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 		}
 
 		// Forward to upstream with this account
-		fwdResult, retryable := s.forwardWithAccount(ctx, account, processedBody, isStreaming, w, pool, config, requestPath)
+		fwdResult, retryable := s.forwardWithAccount(ctx, account, processedBody, isStreaming, w, pool, config, prepared.clientHeaders, requestPath, chatConv)
 		if fwdResult == nil {
 			// Should not happen - forwardWithAccount always returns a result now
 			if debugLogger != nil {
@@ -225,7 +206,7 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 
 // forwardWithAccount forwards a single request using the specified account.
 // Returns (result, retryable) where retryable indicates if another account should be tried.
-func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, config *codexShared.CodexMultiConfig, requestPath string) (*executor.ForwardResult, bool) {
+func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, config *codexShared.CodexMultiConfig, clientHeaders http.Header, requestPath string, chatConv *chatCompletionsConversion) (*executor.ForwardResult, bool) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 	configPath := pool.ConfigPath()
 
@@ -304,7 +285,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 		if reqErr != nil {
 			return nil, reqErr
 		}
-		applyCodexHeaders(req, accessToken, accountID, isStreaming, config, http.Header{})
+		applyCodexHeaders(req, accessToken, accountID, isStreaming, config, clientHeaders)
 		return req, nil
 	}
 
@@ -321,6 +302,17 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 		if debugLogger != nil {
 			debugLogger.SetMetadata("UpstreamURL", upstreamURL)
 			debugLogger.Log("发送上游请求")
+			var headerLines []string
+			for k, vals := range req.Header {
+				if strings.EqualFold(k, "Authorization") {
+					headerLines = append(headerLines, fmt.Sprintf("%s: Bearer ***", k))
+					continue
+				}
+				for _, v := range vals {
+					headerLines = append(headerLines, fmt.Sprintf("%s: %s", k, v))
+				}
+			}
+			debugLogger.SetSection("UpstreamRequestHeaders", strings.Join(headerLines, "\n"))
 		}
 
 		resp, err = client.Do(req)
@@ -375,7 +367,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 				}
 				retryReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
 				if reqErr == nil {
-					applyCodexHeaders(retryReq, newToken, newAccountID, isStreaming, config, http.Header{})
+					applyCodexHeaders(retryReq, newToken, newAccountID, isStreaming, config, clientHeaders)
 					retryResp, retryErr := client.Do(retryReq)
 					if retryErr == nil {
 						defer retryResp.Body.Close()
@@ -383,7 +375,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 							if debugLogger != nil {
 								debugLogger.Log("重试成功")
 							}
-							return s.handleSuccessResponse(ctx, retryResp, isStreaming, w, pool, account, upstreamURL)
+							return s.handleSuccessResponse(ctx, retryResp, isStreaming, w, pool, account, upstreamURL, chatConv)
 						}
 					}
 				}
@@ -466,11 +458,11 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 		debugLogger.Log("请求成功")
 	}
 
-	return s.handleSuccessResponse(ctx, resp, isStreaming, w, pool, account, upstreamURL)
+	return s.handleSuccessResponse(ctx, resp, isStreaming, w, pool, account, upstreamURL, chatConv)
 }
 
 // handleSuccessResponse processes a successful (200 OK) response.
-func (s *CodexService) handleSuccessResponse(ctx context.Context, resp *http.Response, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, account *codexShared.CodexAccount, upstreamURL string) (*executor.ForwardResult, bool) {
+func (s *CodexService) handleSuccessResponse(ctx context.Context, resp *http.Response, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, account *codexShared.CodexAccount, upstreamURL string, chatConv *chatCompletionsConversion) (*executor.ForwardResult, bool) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
 	// Update usage snapshot if available
@@ -486,7 +478,7 @@ func (s *CodexService) handleSuccessResponse(ctx context.Context, resp *http.Res
 		if debugLogger != nil {
 			debugLogger.Log("开始流式响应")
 		}
-		result := s.streamResponseToWriter(ctx, resp, w, upstreamURL)
+		result := s.streamResponseToWriter(ctx, resp, w, upstreamURL, chatConv)
 		return result, false
 	}
 
@@ -500,13 +492,28 @@ func (s *CodexService) handleSuccessResponse(ctx context.Context, resp *http.Res
 		return buildInternalError(fmt.Errorf("read response: %v", err)), false
 	}
 
+	// Convert Responses API → Chat Completions if needed
+	headers := resp.Header.Clone()
+	if chatConv != nil && resp.StatusCode == http.StatusOK && len(respBody) > 0 {
+		tr := chat_responses.Transformer{}
+		requestModel := extractModelFromBody(chatConv.originalBody)
+		if converted, convErr := tr.TransformResponseNonStream(ctx, requestModel, chatConv.originalBody, nil, respBody, nil); convErr == nil {
+			respBody = converted
+			headers.Del("Content-Length")
+			headers.Set("Content-Type", "application/json")
+			if debugLogger != nil {
+				debugLogger.Log("Responses API → Chat Completions 非流式响应转换完成")
+			}
+		}
+	}
+
 	if debugLogger != nil {
 		debugLogger.Log("读取响应体成功，长度: %d bytes", len(respBody))
 	}
 
 	return &executor.ForwardResult{
 		StatusCode: resp.StatusCode,
-		Headers:    resp.Header.Clone(),
+		Headers:    headers,
 		Body:       respBody,
 		Tokens:     extractTokensFromBody(respBody),
 		TargetURL:  upstreamURL,
@@ -515,7 +522,7 @@ func (s *CodexService) handleSuccessResponse(ctx context.Context, resp *http.Res
 
 // streamResponseToWriter streams the response to the http.ResponseWriter.
 // Returns a ForwardResult with captured stream content for logging.
-func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Response, w http.ResponseWriter, upstreamURL string) *executor.ForwardResult {
+func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Response, w http.ResponseWriter, upstreamURL string, chatConv *chatCompletionsConversion) *executor.ForwardResult {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
 	flusher, ok := w.(http.Flusher)
@@ -524,6 +531,13 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 			debugLogger.Log("ResponseWriter 不支持 Flusher，回退到非流式")
 		}
 		respBody, _ := io.ReadAll(resp.Body)
+		if chatConv != nil && resp.StatusCode == http.StatusOK && len(respBody) > 0 {
+			tr := chat_responses.Transformer{}
+			requestModel := extractModelFromBody(chatConv.originalBody)
+			if converted, convErr := tr.TransformResponseNonStream(ctx, requestModel, chatConv.originalBody, nil, respBody, nil); convErr == nil {
+				respBody = converted
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(respBody)
@@ -536,11 +550,14 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 		}
 	}
 
-	// Copy headers
+	// Copy headers; override Content-Type for chat conversion
 	for k, vals := range resp.Header {
 		for _, v := range vals {
 			w.Header().Add(k, v)
 		}
+	}
+	if chatConv != nil {
+		w.Header().Set("Content-Type", "text/event-stream")
 	}
 	w.WriteHeader(resp.StatusCode)
 
@@ -563,33 +580,57 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 		capture.Write(line)
 		capture.WriteByte('\n')
 
-		if _, err := w.Write(line); err != nil {
-			if debugLogger != nil {
-				debugLogger.Log("写入响应失败（客户端可能已断开）: %v", err)
+		if chatConv != nil {
+			// Convert Responses API SSE → Chat Completions SSE
+			tr := chat_responses.Transformer{}
+			requestModel := extractModelFromBody(chatConv.originalBody)
+			outs, _ := tr.TransformResponseStream(ctx, requestModel, chatConv.originalBody, nil, line, &chatConv.streamState)
+			for _, out := range outs {
+				if _, err := w.Write([]byte(out)); err != nil {
+					if debugLogger != nil {
+						debugLogger.Log("写入转换响应失败: %v", err)
+					}
+					return &executor.ForwardResult{
+						StatusCode:     resp.StatusCode,
+						Headers:        resp.Header.Clone(),
+						ResponseStream: capture.String(),
+						Streamed:       true,
+						TargetURL:      upstreamURL,
+						Error:          err,
+					}
+				}
+				flusher.Flush()
 			}
-			return &executor.ForwardResult{
-				StatusCode:     resp.StatusCode,
-				Headers:        resp.Header.Clone(),
-				ResponseStream: capture.String(),
-				Streamed:       true,
-				TargetURL:      upstreamURL,
-				Error:          err,
+		} else {
+			// Original passthrough logic
+			if _, err := w.Write(line); err != nil {
+				if debugLogger != nil {
+					debugLogger.Log("写入响应失败（客户端可能已断开）: %v", err)
+				}
+				return &executor.ForwardResult{
+					StatusCode:     resp.StatusCode,
+					Headers:        resp.Header.Clone(),
+					ResponseStream: capture.String(),
+					Streamed:       true,
+					TargetURL:      upstreamURL,
+					Error:          err,
+				}
 			}
+			if _, err := w.Write([]byte("\n")); err != nil {
+				if debugLogger != nil {
+					debugLogger.Log("写入换行符失败: %v", err)
+				}
+				return &executor.ForwardResult{
+					StatusCode:     resp.StatusCode,
+					Headers:        resp.Header.Clone(),
+					ResponseStream: capture.String(),
+					Streamed:       true,
+					TargetURL:      upstreamURL,
+					Error:          err,
+				}
+			}
+			flusher.Flush()
 		}
-		if _, err := w.Write([]byte("\n")); err != nil {
-			if debugLogger != nil {
-				debugLogger.Log("写入换行符失败: %v", err)
-			}
-			return &executor.ForwardResult{
-				StatusCode:     resp.StatusCode,
-				Headers:        resp.Header.Clone(),
-				ResponseStream: capture.String(),
-				Streamed:       true,
-				TargetURL:      upstreamURL,
-				Error:          err,
-			}
-		}
-		flusher.Flush()
 
 		eventCount++
 		totalBytes += int64(len(line)) + 1
@@ -612,10 +653,6 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 		}
 	}
 
-	if debugLogger != nil {
-		debugLogger.Log("流式传输完成: %d 事件, %d bytes", eventCount, totalBytes)
-	}
-
 	var streamErr error
 	if err := scanner.Err(); err != nil {
 		streamErr = err
@@ -629,6 +666,16 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 		}
 	}
 
+	// Write [DONE] marker for chat conversion (only after successful stream)
+	if chatConv != nil && streamErr == nil {
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
+	}
+
+	if debugLogger != nil {
+		debugLogger.Log("流式传输完成: %d 事件, %d bytes", eventCount, totalBytes)
+	}
+
 	return &executor.ForwardResult{
 		StatusCode:     resp.StatusCode,
 		Headers:        resp.Header.Clone(),
@@ -638,6 +685,17 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 		TargetURL:      upstreamURL,
 		Error:          streamErr,
 	}
+}
+
+// chatCompletionsConversion holds state for Chat Completions ↔ Responses API conversion.
+type chatCompletionsConversion struct {
+	originalBody []byte
+	streamState  any
+}
+
+// isChatCompletionsFormat detects if the body is a Chat Completions request (has "messages" but not "input").
+func isChatCompletionsFormat(body []byte) bool {
+	return gjson.GetBytes(body, "messages").Exists() && !gjson.GetBytes(body, "input").Exists()
 }
 
 func applyResolvedModelToBody(body []byte, resolvedModel string) ([]byte, bool) {

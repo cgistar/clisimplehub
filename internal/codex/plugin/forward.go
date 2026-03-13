@@ -22,6 +22,7 @@ import (
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/logger"
 	"clisimplehub/internal/plugin"
+	chat_responses "clisimplehub/internal/transformer/chat/openai/responses"
 )
 
 const (
@@ -150,6 +151,21 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	var usedAccount *codexShared.CodexAccount
 	var finalInputTokens, finalOutputTokens int64
 	requestModel := extractModelFromBody(processedBody)
+	configPath := pool.ConfigPath()
+	config, cfgErr := codexShared.LoadCodexMultiConfig(configPath)
+	if cfgErr != nil && !os.IsNotExist(cfgErr) {
+		if debugLogger != nil {
+			debugLogger.Log("配置加载失败: %v", cfgErr)
+		}
+		result := buildInternalError(fmt.Errorf("config load failed: %v", cfgErr))
+		runTime := time.Since(startTime).Milliseconds()
+		logCodexRequestToConsole(requestID, r.Method, r.URL.Path, nil, result.StatusCode, "error_config_load", runTime)
+		writeExecutorResult(w, result)
+		return
+	}
+	if config == nil {
+		config = &codexShared.CodexMultiConfig{}
+	}
 
 	// Check if any accounts are available before retrying
 	mode := pool.Mode()
@@ -225,12 +241,14 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 			debugLogger.Log("尝试账号 %s (attempt %d)", maskToken(account.RefreshToken), attempt+1)
 		}
 
-		result, retryable := s.forwardToUpstream(ctx, account, processedBody, isStreaming, w, pool, clientHeaders, r.URL.Path)
-		if result.streamed {
+		result, retryable := s.forwardWithAccount(ctx, account, processedBody, isStreaming, w, pool, config, clientHeaders, r.URL.Path, nil)
+		if result.Streamed {
 			finalStatusCode = http.StatusOK
 			finalStatus = "success"
-			finalInputTokens = result.inputTokens
-			finalOutputTokens = result.outputTokens
+			if result.Tokens != nil {
+				finalInputTokens = result.Tokens.InputTokens
+				finalOutputTokens = result.Tokens.OutputTokens
+			}
 			if debugLogger != nil {
 				debugLogger.Log("流式响应已写入")
 			}
@@ -239,27 +257,34 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		finalStatusCode = result.statusCode
-		if result.statusCode == http.StatusOK {
+		finalStatusCode = result.StatusCode
+		if result.StatusCode == http.StatusOK {
 			finalStatus = "success"
-			finalInputTokens = result.inputTokens
-			finalOutputTokens = result.outputTokens
+			if result.Tokens != nil {
+				finalInputTokens = result.Tokens.InputTokens
+				finalOutputTokens = result.Tokens.OutputTokens
+			}
+		} else if result.Error != nil {
+			finalStatus = result.Error.Error()
 		} else {
-			finalStatus = result.errMsg
+			finalStatus = fmt.Sprintf("upstream_status_%d", result.StatusCode)
 		}
 
 		if !retryable {
 			if debugLogger != nil {
-				debugLogger.SetMetadata("FinalStatusCode", fmt.Sprintf("%d", result.statusCode))
+				debugLogger.SetMetadata("FinalStatusCode", fmt.Sprintf("%d", result.StatusCode))
 				debugLogger.Log("请求完成（不可重试）")
 			}
 			// 打印控制台日志
 			runTime := time.Since(startTime).Milliseconds()
 			logCodexRequestToConsole(requestID, r.Method, r.URL.Path, account, finalStatusCode, finalStatus, runTime)
-			writeResult(w, result)
+			writeExecutorResult(w, result)
 			return
 		}
-		lastErr = fmt.Errorf("account %s: %s", maskToken(account.RefreshToken), result.errMsg)
+		lastErr = result.Error
+		if lastErr == nil {
+			lastErr = fmt.Errorf("status %d", result.StatusCode)
+		}
 		if debugLogger != nil {
 			debugLogger.Log("账号失败，准备重试: %v", lastErr)
 		}
@@ -281,10 +306,10 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	logCodexRequestToConsole(requestID, r.Method, r.URL.Path, usedAccount, finalStatusCode, finalStatus, runTime)
 
 	if lastErr != nil {
-		errJSON, _ := json.Marshal(map[string]string{"error": lastErr.Error()})
+		_, errBody := buildAllFailedError(lastErr)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write(errJSON)
+		_, _ = w.Write(errBody)
 		return
 	}
 	http.Error(w, `{"error":"no available codex accounts"}`, http.StatusServiceUnavailable)
@@ -300,7 +325,7 @@ type forwardResult struct {
 	streamed     bool
 }
 
-func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, clientHeaders http.Header, requestPath string) (result *forwardResult, retryable bool) {
+func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShared.CodexAccount, body []byte, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, clientHeaders http.Header, requestPath string, chatConv *chatCompletionsConversion) (result *forwardResult, retryable bool) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 	configPath := pool.ConfigPath()
 
@@ -479,7 +504,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 							if debugLogger != nil {
 								debugLogger.Log("重试成功")
 							}
-							return s.handleSuccess(ctx, retryResp, isStreaming, w, pool, account)
+							return s.handleSuccess(ctx, retryResp, isStreaming, w, pool, account, chatConv)
 						}
 					}
 				}
@@ -543,10 +568,10 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 	if debugLogger != nil {
 		debugLogger.Log("请求成功")
 	}
-	return s.handleSuccess(ctx, resp, isStreaming, w, pool, account)
+	return s.handleSuccess(ctx, resp, isStreaming, w, pool, account, chatConv)
 }
 
-func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, account *codexShared.CodexAccount) (result *forwardResult, retryable bool) {
+func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, isStreaming bool, w http.ResponseWriter, pool *codex.CodexAccountPool, account *codexShared.CodexAccount, chatConv *chatCompletionsConversion) (result *forwardResult, retryable bool) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
 	if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
@@ -561,7 +586,7 @@ func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, i
 		if debugLogger != nil {
 			debugLogger.Log("开始流式响应")
 		}
-		input, output := s.streamResponse(ctx, resp, w)
+		input, output := s.streamResponse(ctx, resp, w, chatConv)
 		return &forwardResult{statusCode: http.StatusOK, streamed: true, inputTokens: input, outputTokens: output}, false
 	}
 
@@ -573,6 +598,24 @@ func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, i
 		return &forwardResult{errMsg: fmt.Sprintf("read response: %v", err)}, false
 	}
 
+	// Extract tokens BEFORE CC conversion (Responses API format)
+	input, output := parseCodexBodyUsage(respBody)
+
+	// Convert Responses API → Chat Completions if needed
+	headers := resp.Header.Clone()
+	if chatConv != nil && resp.StatusCode == http.StatusOK && len(respBody) > 0 {
+		tr := chat_responses.Transformer{}
+		requestModel := extractModelFromBody(chatConv.originalBody)
+		if converted, convErr := tr.TransformResponseNonStream(ctx, requestModel, chatConv.originalBody, nil, respBody, nil); convErr == nil {
+			respBody = converted
+			headers.Del("Content-Length")
+			headers.Set("Content-Type", "application/json")
+			if debugLogger != nil {
+				debugLogger.Log("Responses API → Chat Completions 非流式响应转换完成")
+			}
+		}
+	}
+
 	if debugLogger != nil {
 		debugLogger.Log("读取响应体成功，长度: %d bytes", len(respBody))
 		if len(respBody) > 0 && len(respBody) < 10240 { // 仅记录小于 10KB 的响应
@@ -582,11 +625,10 @@ func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, i
 		}
 	}
 
-	input, output := parseCodexBodyUsage(respBody)
-	return &forwardResult{statusCode: resp.StatusCode, headers: resp.Header.Clone(), body: respBody, inputTokens: input, outputTokens: output}, false
+	return &forwardResult{statusCode: resp.StatusCode, headers: headers, body: respBody, inputTokens: input, outputTokens: output}, false
 }
 
-func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, w http.ResponseWriter) (int64, int64) {
+func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, w http.ResponseWriter, chatConv *chatCompletionsConversion) (int64, int64) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
 	flusher, ok := w.(http.Flusher)
@@ -595,6 +637,13 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 			debugLogger.Log("ResponseWriter 不支持 Flusher，回退到非流式")
 		}
 		respBody, _ := io.ReadAll(resp.Body)
+		if chatConv != nil && resp.StatusCode == http.StatusOK && len(respBody) > 0 {
+			tr := chat_responses.Transformer{}
+			requestModel := extractModelFromBody(chatConv.originalBody)
+			if converted, convErr := tr.TransformResponseNonStream(ctx, requestModel, chatConv.originalBody, nil, respBody, nil); convErr == nil {
+				respBody = converted
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(respBody)
@@ -606,6 +655,9 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 		for _, v := range vals {
 			w.Header().Add(k, v)
 		}
+	}
+	if chatConv != nil {
+		w.Header().Set("Content-Type", "text/event-stream")
 	}
 	w.WriteHeader(resp.StatusCode)
 
@@ -622,9 +674,25 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		_, _ = w.Write(line)
-		_, _ = w.Write([]byte("\n"))
-		flusher.Flush()
+
+		if chatConv != nil {
+			tr := chat_responses.Transformer{}
+			requestModel := extractModelFromBody(chatConv.originalBody)
+			outs, _ := tr.TransformResponseStream(ctx, requestModel, chatConv.originalBody, nil, line, &chatConv.streamState)
+			for _, out := range outs {
+				if _, err := w.Write([]byte(out)); err != nil {
+					if debugLogger != nil {
+						debugLogger.Log("写入转换响应失败: %v", err)
+					}
+					return capturedInput, capturedOutput
+				}
+				flusher.Flush()
+			}
+		} else {
+			_, _ = w.Write(line)
+			_, _ = w.Write([]byte("\n"))
+			flusher.Flush()
+		}
 
 		eventCount++
 		totalBytes += int64(len(line)) + 1
@@ -652,6 +720,11 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 			debugLogger.Log("流式传输错误: %v", err)
 		}
 		_, _ = fmt.Fprintf(w, "data: {\"error\":\"stream read error: %s\"}\n\n", err.Error())
+		flusher.Flush()
+	}
+
+	if chatConv != nil && scanner.Err() == nil {
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		flusher.Flush()
 	}
 

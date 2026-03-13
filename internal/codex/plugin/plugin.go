@@ -77,6 +77,7 @@ func (p *CodexPlugin) Init(cfg plugin.InitConfig) error {
 	transformer.RegisterAvailability("codex", func() map[string][]string {
 		return map[string][]string{
 			"codex": {"openai/codex"},
+			"chat":  {"openai/codex"},
 		}
 	})
 

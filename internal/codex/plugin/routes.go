@@ -40,6 +40,8 @@ func (p *CodexPlugin) handleCodexRoute(w http.ResponseWriter, r *http.Request) {
 	switch normalizeCodexRoutePath(r.URL.Path) {
 	case "/codex/v1/responses", "/codex/v1/responses/compact":
 		svc.HandleResponses(w, r)
+	case "/codex/v1/chat/completions":
+		svc.HandleChatCompletions(w, r)
 	case "/codex/v1/models":
 		handleCodexModels(w, r)
 	default:
