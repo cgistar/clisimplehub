@@ -51,7 +51,7 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 	} else {
 		req.Header.Set("Accept", "application/json")
 	}
-	req.Header.Set("Connection", "Keep-Alive")
+	req.Header.Set("Connection", "close")
 
 	// Only set Originator and Chatgpt-Account-Id for non-API-key mode
 	// API key mode detection: if Authorization was already set by client, it's API key mode

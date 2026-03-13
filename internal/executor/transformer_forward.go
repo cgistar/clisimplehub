@@ -76,7 +76,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 
 	// Build target URL
 	baseURL := endpoint.APIURL
-	targetURL, err := BuildTargetURL(baseURL, targetPath, req.RawQuery)
+	targetURL, err := BuildTargetURL(baseURL, targetPath, normalizeTransformerRawQuery(tr.TargetInterfaceType(), targetPath, req.RawQuery))
 	if err != nil {
 		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 目标URL构造失败: endpoint=%s apiUrl=%s path=%s err=%v", endpoint.Name, baseURL, targetPath, err))
 		result.Error = err
@@ -108,7 +108,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 
-		copyRequestHeaders(proxyReq, req.Headers)
+		applyTransformerTargetHeaders(proxyReq, req.Headers, tr.TargetInterfaceType(), targetPath, req.IsStreaming)
 		ApplyAuthForInterfaceType(proxyReq, endpoint.APIKey, tr.TargetInterfaceType(), req.IsStreaming)
 		ApplyEndpointHeaders(proxyReq, endpoint)
 

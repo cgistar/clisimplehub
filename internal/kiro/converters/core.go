@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	kiroShared "clisimplehub/internal/kiro/shared"
 	"github.com/google/uuid"
 )
 
@@ -924,6 +925,7 @@ func BuildKiroPayload(
 			fullSystemPrompt = strings.TrimSpace(toolDoc)
 		}
 	}
+	fullSystemPrompt = kiroShared.StripInjectedMiddlewareSystemText(fullSystemPrompt)
 	fullSystemPrompt = stripClaudeCodeIdentity(fullSystemPrompt)
 
 	// Strip tool content if no tools defined

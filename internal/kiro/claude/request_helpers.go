@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	kiroShared "clisimplehub/internal/kiro/shared"
 	"clisimplehub/internal/transformer/shared"
 
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ func normalizeAndMergeClaudeMessages(rawMessages []interface{}, systemPrompt *st
 	var out []normalizedClaudeMessage
 
 	flushSystem := func(text string) {
+		text = kiroShared.StripInjectedMiddlewareSystemText(text)
 		if strings.TrimSpace(text) == "" || systemPrompt == nil {
 			return
 		}
@@ -185,7 +187,7 @@ func extractSystemPrompt(claudeReq map[string]interface{}) string {
 
 	switch s := system.(type) {
 	case string:
-		return strings.TrimSpace(s)
+		return kiroShared.StripInjectedMiddlewareSystemText(s)
 	case []interface{}:
 		var parts []string
 		for _, part := range s {
@@ -198,7 +200,7 @@ func extractSystemPrompt(claudeReq map[string]interface{}) string {
 				}
 			}
 		}
-		return strings.TrimSpace(strings.Join(parts, "\n"))
+		return kiroShared.StripInjectedMiddlewareSystemText(strings.Join(parts, "\n"))
 	}
 	return ""
 }
