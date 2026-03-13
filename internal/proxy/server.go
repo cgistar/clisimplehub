@@ -178,6 +178,7 @@ func (p *ProxyServer) buildGatewayRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(appmiddleware.CodexResponsesAdaptMiddleware)
+	r.Use(appmiddleware.ClaudeMessagesAdaptMiddleware)
 
 	p.registerCoreRoutes(r)
 	p.registerPluginForwardMiddlewares()
