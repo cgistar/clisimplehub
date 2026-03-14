@@ -40,7 +40,6 @@ jobs:
             desktop: true
             pr_desktop: false
 
-    if: github.event_name != 'pull_request' || matrix.pr_desktop
     runs-on: ${{ matrix.os }}
 
     steps:
