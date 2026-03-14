@@ -4,6 +4,8 @@ package clashplugin
 
 import "golang.org/x/sys/windows"
 
+const stillActiveExitCode = uint32(windows.STATUS_PENDING)
+
 func processExists(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -19,7 +21,7 @@ func processExists(pid int) bool {
 	if err := windows.GetExitCodeProcess(handle, &code); err != nil {
 		return false
 	}
-	return code == windows.STILL_ACTIVE
+	return code == stillActiveExitCode
 }
 
 func terminateProcess(pid int) error {
