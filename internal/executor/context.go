@@ -11,9 +11,9 @@ import (
 // ExecutionContext 执行上下文
 // 封装执行器和端点提供者，简化请求处理
 type ExecutionContext struct {
-	provider              EndpointProvider
-	observer              ExecutionObserver
-	transformerForwarders map[string]TransformerForwarder // spec → forwarder
+	provider                 EndpointProvider
+	observer                 ExecutionObserver
+	transformerRoundTrippers map[string]UpstreamRoundTripper // spec → round-tripper
 }
 
 // ExecutionObserver 执行观察者接口
@@ -43,19 +43,19 @@ func (c *ExecutionContext) SetObserver(observer ExecutionObserver) {
 	c.observer = observer
 }
 
-// RegisterTransformerForwarder registers a TransformerForwarder for a given transformer spec.
-func (c *ExecutionContext) RegisterTransformerForwarder(spec string, f TransformerForwarder) {
-	if c.transformerForwarders == nil {
-		c.transformerForwarders = make(map[string]TransformerForwarder)
+// RegisterTransformerRoundTripper registers an UpstreamRoundTripper for a given transformer spec.
+func (c *ExecutionContext) RegisterTransformerRoundTripper(spec string, rt UpstreamRoundTripper) {
+	if c.transformerRoundTrippers == nil {
+		c.transformerRoundTrippers = make(map[string]UpstreamRoundTripper)
 	}
-	c.transformerForwarders[strings.ToLower(strings.TrimSpace(spec))] = f
+	c.transformerRoundTrippers[strings.ToLower(strings.TrimSpace(spec))] = rt
 }
 
-func (c *ExecutionContext) getTransformerForwarder(spec string) TransformerForwarder {
-	if c.transformerForwarders == nil {
+func (c *ExecutionContext) getTransformerRoundTripper(spec string) UpstreamRoundTripper {
+	if c.transformerRoundTrippers == nil {
 		return nil
 	}
-	return c.transformerForwarders[strings.ToLower(strings.TrimSpace(spec))]
+	return c.transformerRoundTrippers[strings.ToLower(strings.TrimSpace(spec))]
 }
 
 // GetProvider 获取端点提供者

@@ -99,25 +99,25 @@ func (p *KiroPlugin) Reload() error {
 	return svc.Reload()
 }
 
-// --- TransformerForwarderProvider ---
+// --- TransformerRoundTripperProvider ---
 
-func (p *KiroPlugin) TransformerForwarderSpecs() []string {
+func (p *KiroPlugin) TransformerRoundTripperSpecs() []string {
 	return []string{"kiro/claude"}
 }
 
-// --- executor.TransformerForwarder ---
+// --- executor.UpstreamRoundTripper ---
 
-func (p *KiroPlugin) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
+func (p *KiroPlugin) RoundTrip(ctx context.Context, req *executor.UpstreamRequest) *executor.UpstreamRoundTripResult {
 	p.mu.RLock()
 	svc := p.service
 	p.mu.RUnlock()
 	if svc == nil {
-		return &executor.ForwardResult{
+		return &executor.UpstreamRoundTripResult{
 			StatusCode: http.StatusInternalServerError,
 			Error:      fmt.Errorf("kiro plugin not initialized"),
 		}
 	}
-	return svc.Forward(ctx, body, model, isStreaming, w, requestPath)
+	return svc.RoundTrip(ctx, req)
 }
 
 // --- TokenEstimator ---

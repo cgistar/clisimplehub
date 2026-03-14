@@ -3,9 +3,11 @@ package executor
 
 import (
 	"context"
+	"io"
 	"net/http"
 	
 	"clisimplehub/internal/storage"
+	"clisimplehub/internal/transformer"
 )
 
 // ForwardRequest 表示转发请求的输入
@@ -36,6 +38,58 @@ type ForwardResult struct {
 	Error                         error
 }
 
+type StreamInputMode string
+
+const (
+	StreamInputModeLine  StreamInputMode = "line"
+	StreamInputModeChunk StreamInputMode = "chunk"
+)
+
+type TransformContext struct {
+	OriginalRequestBody    []byte
+	TransformedRequestBody []byte
+	StreamState            any
+	Metadata               map[string]any
+}
+
+type TransformationPlan struct {
+	Transformer         transformer.Transformer
+	TargetInterfaceType string
+	TargetPath          string
+	RawQuery            string
+	RequestBody         []byte
+	IsStreaming         bool
+	OutputContentType   string
+	StreamInputMode     StreamInputMode
+	Context             *TransformContext
+}
+
+type UpstreamRequest struct {
+	Method              string
+	TargetPath          string
+	RawQuery            string
+	Headers             http.Header
+	Body                []byte
+	IsStreaming         bool
+	RequestModel        string
+	OriginalPath        string
+	TargetInterfaceType string
+	Endpoint            *EndpointConfig
+	Transformer         transformer.Transformer
+	TransformContext    *TransformContext
+}
+
+type UpstreamRoundTripResult struct {
+	StatusCode    int
+	Headers       http.Header
+	Body          []byte
+	Stream        io.ReadCloser
+	TargetURL     string
+	TargetHeaders map[string]string
+	Tokens        *TokenUsage
+	Error         error
+}
+
 // StreamWriter 用于写入流式响应
 type StreamWriter interface {
 	http.ResponseWriter
@@ -58,10 +112,10 @@ type EndpointConfig = storage.Endpoint
 // ModelMapping is an alias for storage.ModelMapping
 type ModelMapping = storage.ModelMapping
 
-// TransformerForwarder handles the full request lifecycle for a specific transformer spec.
-// Plugins implement this to own the entire forwarding flow (auth, HTTP, streaming, failover).
-type TransformerForwarder interface {
-	Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *ForwardResult
+// UpstreamRoundTripper handles upstream transport for a specific transformer spec.
+// Plugins implement this to own auth, HTTP, retry, and failover without writing the downstream response.
+type UpstreamRoundTripper interface {
+	RoundTrip(ctx context.Context, req *UpstreamRequest) *UpstreamRoundTripResult
 }
 
 // Executor 定义执行器接口

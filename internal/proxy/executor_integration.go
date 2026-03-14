@@ -28,12 +28,12 @@ func (p *ProxyServer) ensureExecutor() *proxyExecutor {
 	observer := &proxyExecutionObserver{server: p}
 	execCtx.SetObserver(observer)
 
-	// Register plugin-provided TransformerForwarders
+	// Register plugin-provided transformer round-trippers.
 	for _, pl := range plugin.All() {
-		if fp, ok := pl.(plugin.TransformerForwarderProvider); ok {
-			if fwd, ok := pl.(executor.TransformerForwarder); ok {
-				for _, spec := range fp.TransformerForwarderSpecs() {
-					execCtx.RegisterTransformerForwarder(spec, fwd)
+		if provider, ok := pl.(plugin.TransformerRoundTripperProvider); ok {
+			if rt, ok := pl.(executor.UpstreamRoundTripper); ok {
+				for _, spec := range provider.TransformerRoundTripperSpecs() {
+					execCtx.RegisterTransformerRoundTripper(spec, rt)
 				}
 			}
 		}

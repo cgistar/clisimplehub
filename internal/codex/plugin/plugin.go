@@ -119,25 +119,25 @@ func (p *CodexPlugin) Reload() error {
 	return nil
 }
 
-// --- TransformerForwarderProvider ---
+// --- TransformerRoundTripperProvider ---
 
-func (p *CodexPlugin) TransformerForwarderSpecs() []string {
+func (p *CodexPlugin) TransformerRoundTripperSpecs() []string {
 	return []string{"openai/codex"}
 }
 
-// --- executor.TransformerForwarder ---
+// --- executor.UpstreamRoundTripper ---
 
-func (p *CodexPlugin) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
+func (p *CodexPlugin) RoundTrip(ctx context.Context, req *executor.UpstreamRequest) *executor.UpstreamRoundTripResult {
 	p.mu.RLock()
 	svc := p.service
 	p.mu.RUnlock()
 	if svc == nil {
-		return &executor.ForwardResult{
+		return &executor.UpstreamRoundTripResult{
 			StatusCode: http.StatusInternalServerError,
 			Error:      fmt.Errorf("codex plugin not initialized"),
 		}
 	}
-	return svc.Forward(ctx, body, model, isStreaming, w, requestPath)
+	return svc.RoundTrip(ctx, req)
 }
 
 type codexSyncPayload struct {

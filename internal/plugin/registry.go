@@ -52,9 +52,9 @@ type TokenEstimator interface {
 	EstimateInputTokens(body []byte) int
 }
 
-// TransformerForwarderProvider is an optional interface for plugins that handle transformer forwarding.
-type TransformerForwarderProvider interface {
-	TransformerForwarderSpecs() []string
+// TransformerRoundTripperProvider is an optional interface for plugins that provide upstream round-trippers.
+type TransformerRoundTripperProvider interface {
+	TransformerRoundTripperSpecs() []string
 }
 
 // ConfigSyncExporter is an optional interface for plugins that export config for sync.

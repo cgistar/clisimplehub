@@ -11,13 +11,17 @@ import (
 
 func getResponseReader(resp *http.Response) io.Reader {
 	encoding := resp.Header.Get("Content-Encoding")
+	return getEncodedReader(encoding, resp.Body)
+}
+
+func getEncodedReader(encoding string, body io.Reader) io.Reader {
 	if strings.EqualFold(encoding, "gzip") {
-		gzReader, err := gzip.NewReader(resp.Body)
+		gzReader, err := gzip.NewReader(body)
 		if err != nil {
 			logger.Warn("[Executor] gzip reader failed: %v", err)
-			return resp.Body
+			return body
 		}
 		return gzReader
 	}
-	return resp.Body
+	return body
 }

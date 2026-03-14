@@ -12,106 +12,116 @@ import (
 	"sort"
 	"strings"
 
-	"clisimplehub/internal/transformer"
 	"clisimplehub/internal/usage"
 )
 
 func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest, w http.ResponseWriter) *ForwardResult {
+	plan, out := c.BuildTransformationPlan(ctx, interfaceType, endpoint, req)
+	if out != nil {
+		return out
+	}
+	if plan == nil {
+		return &ForwardResult{
+			StatusCode: http.StatusBadRequest,
+			Error:      fmt.Errorf("nil transformation plan"),
+		}
+	}
+
+	upstreamReq := &UpstreamRequest{
+		Method:              req.Method,
+		TargetPath:          plan.TargetPath,
+		RawQuery:            plan.RawQuery,
+		Headers:             req.Headers.Clone(),
+		Body:                plan.RequestBody,
+		IsStreaming:         plan.IsStreaming,
+		RequestModel:        planRequestModel(plan),
+		OriginalPath:        req.Path,
+		TargetInterfaceType: plan.TargetInterfaceType,
+		Endpoint:            endpoint,
+		Transformer:         plan.Transformer,
+		TransformContext:    plan.Context,
+	}
+
+	if rt := c.getTransformerRoundTripper(endpoint.Transformer); rt != nil {
+		return c.FinalizeTransformation(ctx, w, plan, rt.RoundTrip(ctx, upstreamReq))
+	}
+	return c.FinalizeTransformation(ctx, w, plan, c.standardTransformerRoundTrip(ctx, upstreamReq))
+}
+
+func (c *ExecutionContext) FinalizeTransformation(ctx context.Context, w http.ResponseWriter, plan *TransformationPlan, upstream *UpstreamRoundTripResult) *ForwardResult {
 	result := &ForwardResult{}
 	debugLogger := DebugLoggerFromContext(ctx)
 
-	if endpoint == nil || req == nil {
+	if plan == nil {
 		result.StatusCode = http.StatusBadRequest
-		result.Error = fmt.Errorf("nil endpoint or request")
+		result.Error = fmt.Errorf("nil transformation plan")
+		return result
+	}
+	if upstream == nil {
+		result.StatusCode = http.StatusBadGateway
+		result.Error = fmt.Errorf("nil upstream result")
 		return result
 	}
 
-	// Delegate to registered TransformerForwarder if available.
-	if fwd := c.getTransformerForwarder(endpoint.Transformer); fwd != nil {
-		upstreamModel := ResolveUpstreamModel(extractModelFromBody(req.Body), endpoint)
-		ctxWithHeaders := WithForwardRequestHeaders(ctx, req.Headers)
-		return fwd.Forward(ctxWithHeaders, req.Body, upstreamModel, req.IsStreaming, w, req.Path)
+	result.StatusCode = upstream.StatusCode
+	result.Headers = cloneHTTPHeader(upstream.Headers)
+	result.TargetURL = strings.TrimSpace(upstream.TargetURL)
+	result.TargetHeaders = cloneStringMap(upstream.TargetHeaders)
+	result.Tokens = upstream.Tokens
+
+	if len(plan.RequestBody) > 0 && shouldCaptureUpstreamRequestBody(ctx) {
+		result.UpstreamRequestBody = capturedUpstreamRequestBody(plan.RequestBody)
 	}
 
-	tr, err := transformer.Get(interfaceType, endpoint.Transformer)
-	if err != nil {
-		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 解析失败: interfaceType=%s transformer=%q err=%v", interfaceType, endpoint.Transformer, err))
-		result.StatusCode = http.StatusBadRequest
-		result.Error = err
-		return result
-	}
-	if tr == nil {
-		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 解析失败: interfaceType=%s transformer=%q err=nil transformer", interfaceType, endpoint.Transformer))
-		result.StatusCode = http.StatusBadRequest
-		result.Error = fmt.Errorf("nil transformer: interfaceType=%s transformer=%q", interfaceType, endpoint.Transformer)
-		return result
-	}
-
-	originalBody := req.Body
-	requestModel := extractModelFromBody(originalBody)
-	upstreamModel := ResolveUpstreamModel(requestModel, endpoint)
-
-	targetPath := tr.TargetPath(req.IsStreaming, upstreamModel)
-	if strings.TrimSpace(targetPath) == "" {
-		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 目标路径为空: endpoint=%s transformer=%q", endpoint.Name, endpoint.Transformer))
-		result.StatusCode = http.StatusBadRequest
-		result.Error = fmt.Errorf("empty transformer target path: transformer=%q", endpoint.Transformer)
-		return result
-	}
-
-	// NOTE: `modelName` passed into the transformer must be the *upstream* model
-	// (after applying endpoint default / alias mapping).
-	transformedBody, err := tr.TransformRequest(upstreamModel, originalBody, req.IsStreaming)
-	if err != nil {
-		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 请求转换失败: endpoint=%s transformer=%q err=%v", endpoint.Name, endpoint.Transformer, err))
-		result.StatusCode = http.StatusBadRequest
-		result.Error = err
-		return result
-	}
-
-	// 记录转换后的请求体
 	if debugLogger != nil {
-		debugLogger.SetSection("TransformedRequest", string(transformedBody))
+		if result.TargetURL != "" {
+			debugLogger.SetMetadata("UpstreamURL", result.TargetURL)
+		}
+		if len(result.TargetHeaders) > 0 {
+			debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(result.TargetHeaders))
+		}
+		if result.StatusCode > 0 || len(result.Headers) > 0 {
+			debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(httpStatusLine(result.StatusCode), result.Headers))
+		}
 	}
 
-	// Build target URL
-	baseURL := endpoint.APIURL
-	targetURL, err := BuildTargetURL(baseURL, targetPath, normalizeTransformerRawQuery(tr.TargetInterfaceType(), targetPath, req.RawQuery))
+	if upstream.Error != nil && upstream.StatusCode == 0 && upstream.Stream == nil && len(upstream.Body) == 0 {
+		result.Error = upstream.Error
+		if debugLogger != nil {
+			debugLogger.SetSection("UpstreamError", formatErrorChain(upstream.Error))
+		}
+		return result
+	}
+
+	if shouldTreatAsStreaming(upstream, plan) {
+		return handleTransformedStreamingResponse(ctx, w, upstream, result, plan)
+	}
+	return handleTransformedNonStreamingResponse(ctx, upstream, result, plan)
+}
+
+func (c *ExecutionContext) standardTransformerRoundTrip(ctx context.Context, req *UpstreamRequest) *UpstreamRoundTripResult {
+	result := &UpstreamRoundTripResult{}
+	if req == nil || req.Endpoint == nil {
+		result.Error = fmt.Errorf("nil upstream request or endpoint")
+		return result
+	}
+
+	targetURL, err := BuildTargetURL(req.Endpoint.APIURL, req.TargetPath, req.RawQuery)
 	if err != nil {
-		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] 目标URL构造失败: endpoint=%s apiUrl=%s path=%s err=%v", endpoint.Name, baseURL, targetPath, err))
 		result.Error = err
 		return result
 	}
 	result.TargetURL = targetURL
 
-	// 记录上游URL
-	if debugLogger != nil {
-		debugLogger.SetMetadata("UpstreamURL", targetURL)
-	}
-
-	requestBody := transformedBody
-	if shouldCaptureUpstreamRequestBody(ctx) {
-		result.UpstreamRequestBody = capturedUpstreamRequestBody(requestBody)
-	}
-	finalModel := extractModelFromBody(requestBody)
-	if strings.TrimSpace(finalModel) == "" {
-		finalModel = upstreamModel
-	}
-
-	modelMapped := strings.TrimSpace(requestModel) != "" && strings.TrimSpace(upstreamModel) != "" && !strings.EqualFold(requestModel, upstreamModel)
-
-	c.DebugLog(ctx, 1, fmt.Sprintf("转发: endpoint=%s interface=%s transformer=%q target=%s model(client=%q upstream=%q final=%q mapped=%v) clientStream=%v", endpoint.Name, interfaceType, endpoint.Transformer, targetURL, requestModel, upstreamModel, finalModel, modelMapped, req.IsStreaming))
-
 	buildProxyReq := func() (*http.Request, error) {
-		proxyReq, err := http.NewRequestWithContext(ctx, req.Method, targetURL, bytes.NewReader(requestBody))
+		proxyReq, err := http.NewRequestWithContext(ctx, req.Method, targetURL, bytes.NewReader(req.Body))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 
-		applyTransformerTargetHeaders(proxyReq, req.Headers, tr.TargetInterfaceType(), targetPath, req.IsStreaming)
-		ApplyAuthForInterfaceType(proxyReq, endpoint.APIKey, tr.TargetInterfaceType(), req.IsStreaming)
-		ApplyEndpointHeaders(proxyReq, endpoint)
-
+		applyTransformerTargetHeaders(proxyReq, req.Headers, req.TargetInterfaceType, req.TargetPath, req.IsStreaming)
+		ApplyAuthForInterfaceType(proxyReq, req.Endpoint.APIKey, req.TargetInterfaceType, req.IsStreaming)
+		ApplyEndpointHeaders(proxyReq, req.Endpoint)
 		return proxyReq, nil
 	}
 
@@ -121,93 +131,116 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		return result
 	}
 	result.TargetHeaders = sanitizeHeaders(proxyReq.Header)
-	if debugLogger != nil {
-		debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(result.TargetHeaders))
-	}
 
 	clientTimeout := DefaultHTTPTimeout
 	if req.IsStreaming {
 		clientTimeout = DisableHTTPClientTimeout
 	}
-	client := NewHTTPClient(endpoint, clientTimeout)
+	client := NewHTTPClient(req.Endpoint, clientTimeout)
 	resp, err := client.Do(proxyReq)
 	if err != nil && isRetryableEOF(err) {
-		if debugLogger != nil {
-			debugLogger.Log("上游请求 EOF，重试一次: err=%T %v", err, err)
-		}
 		sleepWithContext(ctx, eofBackoffDuration(2))
 		if retryReq, buildErr := buildProxyReq(); buildErr == nil {
 			resp, err = client.Do(retryReq)
-			if debugLogger != nil {
-				if err == nil {
-					debugLogger.Log("上游请求 EOF 重试成功")
-				} else {
-					debugLogger.Log("上游请求 EOF 重试失败: err=%T %v", err, err)
-				}
-			}
 		}
 	}
 	if err != nil {
 		result.Error = fmt.Errorf("request failed: %w", err)
-		if debugLogger != nil {
-			debugLogger.SetSection("UpstreamError", formatErrorChain(result.Error))
-		}
 		return result
 	}
-	defer resp.Body.Close()
 
 	result.StatusCode = resp.StatusCode
 	result.Headers = resp.Header.Clone()
-	if debugLogger != nil {
-		debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(resp.Status, resp.Header))
-	}
-
-	if req.IsStreaming && resp.StatusCode == http.StatusOK && shouldTreatAsStreaming(resp, tr) {
-		c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s (stream)", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
-		return handleTransformedStreamingResponse(ctx, w, resp, result, tr, requestModel, originalBody, requestBody)
-	}
-
-	c.DebugLog(ctx, 1, fmt.Sprintf("响应: endpoint=%s status=%d content-type=%s", endpoint.Name, resp.StatusCode, resp.Header.Get("Content-Type")))
-	out := handleTransformedNonStreamingResponse(ctx, resp, result, tr, requestModel, originalBody, requestBody)
-	if out != nil && (out.Error != nil || out.StatusCode >= 400) && len(out.Body) > 0 {
-		level := 2
-		if out.Error != nil || out.StatusCode >= 500 {
-			level = 3
-		}
-		c.DebugLog(ctx, level, fmt.Sprintf("[Transformer] 响应片段: endpoint=%s status=%d body=%s", endpoint.Name, out.StatusCode, truncateForLog(out.Body, 2048)))
-	}
-	return out
+	result.Stream = resp.Body
+	return result
 }
 
-func shouldTreatAsStreaming(resp *http.Response, tr transformer.Transformer) bool {
-	if resp == nil || tr == nil {
+func shouldTreatAsStreaming(upstream *UpstreamRoundTripResult, plan *TransformationPlan) bool {
+	if upstream == nil || plan == nil || upstream.Stream == nil {
 		return false
 	}
-	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if !plan.IsStreaming || upstream.StatusCode != http.StatusOK {
+		return false
+	}
+	if plan.StreamInputMode == StreamInputModeChunk {
+		return true
+	}
+	ct := strings.ToLower(upstream.Headers.Get("Content-Type"))
 	if strings.Contains(ct, "text/event-stream") {
 		return true
 	}
-	// Gemini often streams as JSON lines (not SSE) depending on gateway; treat it as stream when requested.
-	return strings.EqualFold(strings.TrimSpace(tr.TargetInterfaceType()), "gemini")
+	if strings.EqualFold(strings.TrimSpace(plan.TargetInterfaceType), "gemini") {
+		return true
+	}
+	return sniffLikelyEventStream(upstream)
 }
 
-func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
+func sniffLikelyEventStream(upstream *UpstreamRoundTripResult) bool {
+	if upstream == nil || upstream.Stream == nil {
+		return false
+	}
+	encoding := strings.TrimSpace(upstream.Headers.Get("Content-Encoding"))
+	if encoding != "" && !strings.EqualFold(encoding, "identity") {
+		return false
+	}
+
+	reader := bufio.NewReaderSize(upstream.Stream, 4096)
+	sample, err := reader.Peek(512)
+	upstream.Stream = wrapReadCloser(reader, upstream.Stream)
+	if len(sample) == 0 {
+		return false
+	}
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
+		return false
+	}
+	return looksLikeEventStream(sample)
+}
+
+func looksLikeEventStream(sample []byte) bool {
+	scanner := bufio.NewScanner(bytes.NewReader(sample))
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		return bytes.HasPrefix(line, []byte("event:")) || bytes.HasPrefix(line, []byte("data:")) || bytes.HasPrefix(line, []byte(":"))
+	}
+
+	trimmed := bytes.TrimSpace(sample)
+	return bytes.HasPrefix(trimmed, []byte("event:")) || bytes.HasPrefix(trimmed, []byte("data:")) || bytes.HasPrefix(trimmed, []byte(":"))
+}
+
+func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWriter, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
+	if upstream == nil || upstream.Stream == nil {
+		return handleTransformedNonStreamingResponse(ctx, upstream, result, plan)
+	}
+	defer upstream.Stream.Close()
+
+	if shouldSkipResponseTransform(plan) {
+		return handleLineStreamingResponse(ctx, w, upstream, result, plan)
+	}
+	if plan.StreamInputMode == StreamInputModeChunk {
+		return handleChunkStreamingResponse(ctx, w, upstream, result, plan)
+	}
+	return handleLineStreamingResponse(ctx, w, upstream, result, plan)
+}
+
+func handleLineStreamingResponse(ctx context.Context, w http.ResponseWriter, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
 	debugLogger := DebugLoggerFromContext(ctx)
 
-	// Force Claude streaming semantics to the caller.
-	for key, values := range resp.Header {
+	for key, values := range upstream.Headers {
 		switch strings.ToLower(key) {
-		case "content-length", "content-encoding":
-			continue
-		case "content-type":
+		case "content-length", "content-encoding", "content-type":
 			continue
 		}
 		for _, v := range values {
 			w.Header().Add(key, v)
 		}
 	}
-	w.Header().Set("Content-Type", tr.OutputContentType(true))
-	w.WriteHeader(resp.StatusCode)
+	if plan.OutputContentType != "" {
+		w.Header().Set("Content-Type", plan.OutputContentType)
+	}
+	w.WriteHeader(upstream.StatusCode)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -215,24 +248,15 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 		return result
 	}
 
-	reader := getResponseReader(resp)
-	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
-		defer closer.Close()
-	}
-	reader = NewIdleTimeoutReader(reader, resp.Body, DefaultStreamReadIdleTimeout)
+	reader := getEncodedReader(upstream.Headers.Get("Content-Encoding"), upstream.Stream)
+	reader = NewIdleTimeoutReader(reader, upstream.Stream, DefaultStreamReadIdleTimeout)
 
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var capture strings.Builder
-
-	captureUpstream := shouldCaptureUpstreamResponseBody(ctx)
-	var upstream limitedByteBuffer
-
-	// 调试日志：捕获上游原始响应
-	var debugUpstreamRaw strings.Builder
-
-	var state any
+	var rawCapture strings.Builder
+	var upstreamCapture limitedByteBuffer
 
 readLoop:
 	for scanner.Scan() {
@@ -242,25 +266,32 @@ readLoop:
 		}
 
 		line := scanner.Bytes()
-		capture.Write(line)
-		capture.WriteByte('\n')
-		if captureUpstream {
-			upstream.Append(line)
-			upstream.AppendByte('\n')
-		}
-		// 调试日志：追加原始数据
-		if debugLogger != nil {
-			debugUpstreamRaw.Write(line)
-			debugUpstreamRaw.WriteByte('\n')
+		rawCapture.Write(line)
+		rawCapture.WriteByte('\n')
+		if shouldCaptureUpstreamResponseBody(ctx) {
+			upstreamCapture.Append(line)
+			upstreamCapture.AppendByte('\n')
 		}
 
-		if tokens := extractStreamTokensFromLine(line); tokens != nil {
-			result.Tokens = tokens
-		}
-
-		outs, err := tr.TransformResponseStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, line, &state)
-		if err != nil {
+		if plan.Transformer == nil {
+			if _, err := w.Write(line); err != nil {
+				result.Error = fmt.Errorf("downstream write failed: %w", err)
+				break
+			}
+			if _, err := w.Write([]byte("\n")); err != nil {
+				result.Error = fmt.Errorf("downstream write failed: %w", err)
+				break
+			}
+			capture.Write(line)
+			capture.WriteByte('\n')
+			flusher.Flush()
 			continue
+		}
+
+		outs, err := plan.Transformer.TransformResponseStream(ctx, planRequestModel(plan), plan.Context.OriginalRequestBody, plan.Context.TransformedRequestBody, line, &plan.Context.StreamState)
+		if err != nil {
+			result.Error = err
+			break
 		}
 		for _, out := range outs {
 			if out == "" {
@@ -270,6 +301,7 @@ readLoop:
 				result.Error = fmt.Errorf("downstream write failed: %w", err)
 				break readLoop
 			}
+			capture.WriteString(out)
 			flusher.Flush()
 		}
 	}
@@ -278,17 +310,249 @@ readLoop:
 		result.Error = err
 	}
 
-	// 记录上游原始响应
-	if debugLogger != nil && debugUpstreamRaw.Len() > 0 {
-		debugLogger.SetSection("UpstreamResponseRaw", debugUpstreamRaw.String())
+	if debugLogger != nil && rawCapture.Len() > 0 {
+		debugLogger.SetSection("UpstreamResponseRaw", rawCapture.String())
 	}
 
 	result.ResponseStream = capture.String()
 	result.Streamed = true
-	if captureUpstream {
-		result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
+	if shouldCaptureUpstreamResponseBody(ctx) {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(upstreamCapture.Bytes())
+	}
+	if result.Tokens == nil {
+		result.Tokens = extractTokensFromStreamCapture(rawCapture.String())
 	}
 	return result
+}
+
+func handleChunkStreamingResponse(ctx context.Context, w http.ResponseWriter, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
+	debugLogger := DebugLoggerFromContext(ctx)
+
+	for key, values := range upstream.Headers {
+		switch strings.ToLower(key) {
+		case "content-length", "content-encoding", "content-type":
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(key, v)
+		}
+	}
+	if plan.OutputContentType != "" {
+		w.Header().Set("Content-Type", plan.OutputContentType)
+	}
+	w.WriteHeader(upstream.StatusCode)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		result.Error = fmt.Errorf("response writer does not support flushing")
+		return result
+	}
+
+	reader := getEncodedReader(upstream.Headers.Get("Content-Encoding"), upstream.Stream)
+	reader = NewIdleTimeoutReader(reader, upstream.Stream, DefaultStreamReadIdleTimeout)
+
+	buf := make([]byte, 32*1024)
+	var capture strings.Builder
+	var rawCapture []byte
+
+readLoop:
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			chunk := append([]byte(nil), buf[:n]...)
+			rawCapture = append(rawCapture, chunk...)
+
+			outs, trErr := transformChunkOrPassthrough(ctx, plan, chunk)
+			if trErr != nil {
+				result.Error = trErr
+				break
+			}
+			for _, out := range outs {
+				if out == "" {
+					continue
+				}
+				if _, writeErr := w.Write([]byte(out)); writeErr != nil {
+					result.Error = fmt.Errorf("downstream write failed: %w", writeErr)
+					break readLoop
+				}
+				capture.WriteString(out)
+				flusher.Flush()
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			result.Error = err
+			break
+		}
+	}
+
+	if plan.Transformer != nil {
+		outs, trErr := plan.Transformer.TransformResponseStream(ctx, planRequestModel(plan), plan.Context.OriginalRequestBody, plan.Context.TransformedRequestBody, nil, &plan.Context.StreamState)
+		if trErr == nil {
+			for _, out := range outs {
+				if out == "" {
+					continue
+				}
+				if _, writeErr := w.Write([]byte(out)); writeErr != nil {
+					result.Error = fmt.Errorf("downstream write failed: %w", writeErr)
+					break
+				}
+				capture.WriteString(out)
+				flusher.Flush()
+			}
+		}
+	}
+
+	if debugLogger != nil && len(rawCapture) > 0 {
+		debugLogger.SetSection("UpstreamResponseRaw", bytesToSafeText(rawCapture))
+	}
+
+	result.ResponseStream = capture.String()
+	result.Streamed = true
+	if shouldCaptureUpstreamResponseBody(ctx) && len(rawCapture) > 0 {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(rawCapture)
+	}
+	return result
+}
+
+func transformChunkOrPassthrough(ctx context.Context, plan *TransformationPlan, chunk []byte) ([]string, error) {
+	if plan == nil {
+		return nil, fmt.Errorf("nil transformation plan")
+	}
+	if plan.Transformer == nil {
+		return []string{string(chunk)}, nil
+	}
+	return plan.Transformer.TransformResponseStream(ctx, planRequestModel(plan), plan.Context.OriginalRequestBody, plan.Context.TransformedRequestBody, chunk, &plan.Context.StreamState)
+}
+
+func handleTransformedNonStreamingResponse(ctx context.Context, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
+	debugLogger := DebugLoggerFromContext(ctx)
+
+	body, readErr := readUpstreamBody(upstream)
+	if readErr != nil {
+		result.Error = fmt.Errorf("failed to read response: %w", readErr)
+		return result
+	}
+
+	if shouldCaptureUpstreamResponseBody(ctx) {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(body)
+	}
+	if debugLogger != nil && len(body) > 0 {
+		debugLogger.SetSection("UpstreamResponseRaw", bytesToSafeText(body))
+	}
+
+	if result.Headers == nil {
+		result.Headers = http.Header{}
+	}
+	if strings.EqualFold(result.Headers.Get("Content-Encoding"), "gzip") {
+		result.Headers.Del("Content-Encoding")
+		result.Headers.Del("Content-Length")
+	}
+
+	if isLikelyHTMLResponse(result.StatusCode, result.Headers.Get("Content-Type"), body) {
+		result.StatusCode = http.StatusServiceUnavailable
+		result.Error = fmt.Errorf("upstream returned HTML with HTTP 200")
+		result.Body = body
+		return result
+	}
+
+	if plan.Transformer == nil || !shouldTransformResponse(plan, result.StatusCode) {
+		result.Body = body
+		if result.Tokens == nil {
+			result.Tokens = usageTokens(body)
+		}
+		return result
+	}
+
+	converted, err := plan.Transformer.TransformResponseNonStream(ctx, planRequestModel(plan), plan.Context.OriginalRequestBody, plan.Context.TransformedRequestBody, body, &plan.Context.StreamState)
+	if err != nil {
+		result.Error = err
+		result.Body = body
+		return result
+	}
+
+	result.Body = converted
+	result.Headers.Set("Content-Type", plan.OutputContentType)
+	result.Headers.Del("Content-Length")
+	result.Headers.Del("Content-Encoding")
+	if result.Tokens == nil {
+		result.Tokens = usageTokens(converted)
+	}
+	return result
+}
+
+func shouldTransformResponse(plan *TransformationPlan, statusCode int) bool {
+	if plan == nil || plan.Transformer == nil {
+		return false
+	}
+	if shouldSkipResponseTransform(plan) {
+		return false
+	}
+	if plan.Context == nil || plan.Context.Metadata == nil {
+		return true
+	}
+	onSuccessOnly, _ := plan.Context.Metadata["response_transform_on_success_only"].(bool)
+	if onSuccessOnly {
+		return statusCode == http.StatusOK
+	}
+	return true
+}
+
+func shouldSkipResponseTransform(plan *TransformationPlan) bool {
+	if plan == nil || plan.Context == nil || plan.Context.Metadata == nil {
+		return false
+	}
+	skip, _ := plan.Context.Metadata["skip_response_transform"].(bool)
+	return skip
+}
+
+func readUpstreamBody(upstream *UpstreamRoundTripResult) ([]byte, error) {
+	if upstream == nil {
+		return nil, fmt.Errorf("nil upstream result")
+	}
+	if len(upstream.Body) > 0 {
+		return upstream.Body, nil
+	}
+	if upstream.Stream == nil {
+		return upstream.Body, nil
+	}
+	defer upstream.Stream.Close()
+	reader := getEncodedReader(upstream.Headers.Get("Content-Encoding"), upstream.Stream)
+	return io.ReadAll(reader)
+}
+
+func httpStatusLine(statusCode int) string {
+	if statusCode <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode))
+}
+
+func planRequestModel(plan *TransformationPlan) string {
+	if plan == nil || plan.Context == nil || plan.Context.Metadata == nil {
+		return ""
+	}
+	if upstreamModel, _ := plan.Context.Metadata["upstream_model"].(string); strings.TrimSpace(upstreamModel) != "" {
+		return upstreamModel
+	}
+	if requestModel, _ := plan.Context.Metadata["request_model"].(string); strings.TrimSpace(requestModel) != "" {
+		return requestModel
+	}
+	return ""
+}
+
+func extractTokensFromStreamCapture(raw string) *TokenUsage {
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var latest *TokenUsage
+	for scanner.Scan() {
+		if tokens := extractStreamTokensFromLine(scanner.Bytes()); tokens != nil {
+			latest = tokens
+		}
+	}
+	return latest
 }
 
 func truncateForLog(body []byte, maxLen int) string {
@@ -299,54 +563,6 @@ func truncateForLog(body []byte, maxLen int) string {
 		return raw
 	}
 	return raw[:maxLen] + "...(truncated)"
-}
-
-func handleTransformedNonStreamingResponse(ctx context.Context, resp *http.Response, result *ForwardResult, tr transformer.Transformer, modelName string, originalRequestRawJSON, requestRawJSON []byte) *ForwardResult {
-	debugLogger := DebugLoggerFromContext(ctx)
-
-	reader := getResponseReader(resp)
-	if closer, ok := reader.(io.Closer); ok && reader != resp.Body {
-		defer closer.Close()
-	}
-
-	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
-		result.Headers.Del("Content-Encoding")
-		result.Headers.Del("Content-Length")
-	}
-
-	body, err := io.ReadAll(reader)
-	if err != nil {
-		result.Error = fmt.Errorf("failed to read response: %w", err)
-		return result
-	}
-
-	if shouldCaptureUpstreamResponseBody(ctx) {
-		result.UpstreamResponseBody = capturedUpstreamResponseBody(body)
-	}
-
-	// 记录上游原始响应
-	if debugLogger != nil && len(body) > 0 {
-		debugLogger.SetSection("UpstreamResponseRaw", string(body))
-	}
-
-	if isLikelyHTMLResponse(resp.StatusCode, resp.Header.Get("Content-Type"), body) {
-		result.StatusCode = http.StatusServiceUnavailable
-		result.Error = fmt.Errorf("upstream returned HTML with HTTP 200")
-		result.Body = body
-		return result
-	}
-
-	converted, err := tr.TransformResponseNonStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, body, nil)
-	if err != nil {
-		result.Error = err
-		result.Body = body
-		return result
-	}
-
-	result.Body = converted
-	result.Headers.Set("Content-Type", tr.OutputContentType(false))
-	result.Tokens = usageTokens(converted)
-	return result
 }
 
 func usageTokens(body []byte) *TokenUsage {
@@ -446,4 +662,37 @@ func bytesToSafeText(b []byte) string {
 		return ""
 	}
 	return strings.ToValidUTF8(string(b), "�")
+}
+
+type readerWithCloser struct {
+	io.Reader
+	io.Closer
+}
+
+func wrapReadCloser(reader io.Reader, closer io.Closer) io.ReadCloser {
+	if rc, ok := reader.(io.ReadCloser); ok {
+		return rc
+	}
+	return &readerWithCloser{
+		Reader: reader,
+		Closer: closer,
+	}
+}
+
+func cloneHTTPHeader(src http.Header) http.Header {
+	if src == nil {
+		return http.Header{}
+	}
+	return src.Clone()
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
 }

@@ -43,7 +43,7 @@ func buildNoAccountsError(mode string) (int, []byte) {
 	return http.StatusServiceUnavailable, errJSON
 }
 
-// Forward implements executor.TransformerForwarder for the Kiro plugin.
+// Forward preserves the legacy full-lifecycle Kiro forwarding path.
 func (s *KiroService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) *executor.ForwardResult {
 	_ = requestPath // Kiro always uses /generateAssistantResponse, ignore client path
 	result := &executor.ForwardResult{}

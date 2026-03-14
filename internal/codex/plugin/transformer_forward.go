@@ -21,7 +21,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Forward implements the TransformerForwarder interface for Codex plugin.
+// Forward preserves the legacy full-lifecycle Codex forwarding path.
 // It handles the complete request lifecycle including account selection, authentication,
 // HTTP forwarding, and response streaming.
 func (s *CodexService) Forward(ctx context.Context, body []byte, model string, isStreaming bool, w http.ResponseWriter, requestPath string) (ret *executor.ForwardResult) {

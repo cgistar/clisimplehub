@@ -476,7 +476,7 @@ func (p *ProxyServer) isPluginRouteMatched(pluginName, path string) bool {
 func (p *ProxyServer) rebuildTransformerOwners() {
 	owners := make(map[string]string)
 	for _, pl := range plugin.All() {
-		provider, ok := pl.(plugin.TransformerForwarderProvider)
+		provider, ok := pl.(plugin.TransformerRoundTripperProvider)
 		if !ok {
 			continue
 		}
@@ -484,7 +484,7 @@ func (p *ProxyServer) rebuildTransformerOwners() {
 		if pluginName == "" {
 			continue
 		}
-		for _, spec := range provider.TransformerForwarderSpecs() {
+		for _, spec := range provider.TransformerRoundTripperSpecs() {
 			key := strings.ToLower(strings.TrimSpace(spec))
 			if key == "" {
 				continue
