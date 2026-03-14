@@ -130,14 +130,9 @@ func (cs *configStore) applyEnvOverrides(cfg *ClashConfig) {
 
 	if listen := strings.TrimSpace(os.Getenv("CLASH_SOCKS_LISTEN")); listen != "" {
 		cfg.SocksListen = listen
-	} else if listen := strings.TrimSpace(os.Getenv("XRAY_SOCKS_LISTEN")); listen != "" {
-		cfg.SocksListen = listen
 	}
 
 	portFromEnv := strings.TrimSpace(os.Getenv("CLASH_SOCKS_PORT"))
-	if portFromEnv == "" {
-		portFromEnv = strings.TrimSpace(os.Getenv("XRAY_SOCKS_PORT"))
-	}
 	if portFromEnv != "" {
 		if port, err := strconv.Atoi(portFromEnv); err == nil && port > 0 && port <= 65535 {
 			cfg.SocksPort = port

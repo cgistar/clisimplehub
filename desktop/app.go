@@ -38,6 +38,7 @@ type Settings struct {
 	Port       int    `json:"port"`
 	APIKey     string `json:"apiKey"`
 	ProxyURL   string `json:"proxyUrl,omitempty"`
+	ClashPath  string `json:"clashPath,omitempty"`
 	Fallback   bool   `json:"fallback"`
 	DebugMode  string `json:"debugMode,omitempty"`
 	ListenAddr string `json:"listenAddr,omitempty"`
@@ -160,6 +161,7 @@ func (a *App) GetSettings() (*Settings, error) {
 		Port:       5600, // Default port
 		APIKey:     "",
 		ProxyURL:   "",
+		ClashPath:  "",
 		Fallback:   false, // Default fallback disabled
 		DebugMode:  "",
 		ListenAddr: "0.0.0.0",
@@ -182,6 +184,11 @@ func (a *App) GetSettings() (*Settings, error) {
 	proxyURL, err := a.storage.GetConfig(ConfigKeyProxyURL)
 	if err == nil {
 		settings.ProxyURL = strings.TrimSpace(proxyURL)
+	}
+
+	clashPath, err := a.storage.GetConfig(ConfigKeyClashPath)
+	if err == nil {
+		settings.ClashPath = strings.TrimSpace(clashPath)
 	}
 
 	// Get fallback setting from storage
@@ -222,6 +229,7 @@ func (a *App) SaveSettings(settings *Settings) error {
 	}
 	normalizedAPIKey := strings.TrimSpace(settings.APIKey)
 	normalizedProxyURL := strings.TrimSpace(settings.ProxyURL)
+	normalizedClashPath := strings.TrimSpace(settings.ClashPath)
 	normalizedListenAddr := strings.TrimSpace(settings.ListenAddr)
 	if normalizedListenAddr == "" {
 		normalizedListenAddr = "0.0.0.0"
@@ -247,6 +255,10 @@ func (a *App) SaveSettings(settings *Settings) error {
 
 	if err := a.storage.SetConfig(ConfigKeyProxyURL, normalizedProxyURL); err != nil {
 		return fmt.Errorf("failed to save proxy url: %w", err)
+	}
+
+	if err := a.storage.SetConfig(ConfigKeyClashPath, normalizedClashPath); err != nil {
+		return fmt.Errorf("failed to save clash path: %w", err)
 	}
 
 	// Save fallback setting to storage as bool

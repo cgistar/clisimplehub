@@ -39,6 +39,7 @@ const (
 	ConfigKeyPort      = "port"
 	ConfigKeyAPIKey    = "apiKey"
 	ConfigKeyProxyURL  = "proxyUrl"
+	ConfigKeyClashPath = "clashPath"
 	ConfigKeyFallback  = "fallback"
 	ConfigKeyDebugMode = "debugMode"
 	// Temporary disable TTL for failed endpoints (minutes)
@@ -59,6 +60,23 @@ func main() {
 	log.SetOutput(io.MultiWriter(os.Stderr, app.GoLogWriter()))
 
 	log.Println("Starting Cli Simple Hub in GUI mode...")
+
+	if isBindingsBuild() {
+		log.Println("Bindings generation mode: skipping runtime initialization")
+		err := wails.Run(&options.App{
+			Title:            "Cli Simple Hub",
+			Width:            1200,
+			Height:           800,
+			AssetServer:      &assetserver.Options{Assets: assets},
+			OnStartup:        app.startup,
+			BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+			Bind:             []interface{}{app},
+		})
+		if err != nil {
+			log.Printf("Error: %v", err.Error())
+		}
+		return
+	}
 
 	// Get data directory with priority:
 	// 1. CODESP_DATA environment variable (highest priority)
@@ -235,6 +253,11 @@ func main() {
 			// Graceful shutdown
 			// Requirements: 5.4
 			log.Println("Shutting down...")
+			if clashProvider := plugin.GetClashDesktopProvider(); clashProvider != nil {
+				if err := clashProvider.Stop(); err != nil {
+					log.Printf("Error stopping clash runtime: %v", err)
+				}
+			}
 			sseHub.Stop()
 			if err := proxyServer.Stop(); err != nil {
 				log.Printf("Error stopping proxy server: %v", err)

@@ -85,6 +85,8 @@ function isTabVisible(tab: HeaderTab): boolean {
   return props[tab.visibleProp]
 }
 
+const visibleTabs = computed(() => tabs.filter((tab) => isTabVisible(tab)))
+
 async function handleLanguageChange(value: string | number | boolean | null): Promise<void> {
   if (value !== 'en' && value !== 'zh-CN') return
   if (value === language.value || switchingLanguage.value) return
@@ -109,8 +111,7 @@ async function handleLanguageChange(value: string | number | boolean | null): Pr
           @update:value="onTabUpdate"
         >
           <n-tab-pane
-            v-for="tab in tabs"
-            v-show="isTabVisible(tab)"
+            v-for="tab in visibleTabs"
             :key="tab.key"
             :name="tab.key"
           >

@@ -9,8 +9,15 @@ on:
       - master
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
+
+env:
+  WAILS_VERSION: 2.10.2
 
 jobs:
   build:
@@ -21,27 +28,19 @@ jobs:
             platform: linux
             arch: amd64
             desktop: true
-          - os: ubuntu-latest
+            pr_desktop: true
+          - os: ubuntu-24.04-arm
             platform: linux
             arch: arm64
-            desktop: false
-          - os: macos-latest
-            platform: darwin
-            arch: amd64
             desktop: true
-          - os: macos-latest
-            platform: darwin
-            arch: arm64
-            desktop: true
+            pr_desktop: false
           - os: windows-latest
             platform: windows
             arch: amd64
             desktop: true
-          - os: windows-latest
-            platform: windows
-            arch: arm64
-            desktop: true
+            pr_desktop: false
 
+    if: github.event_name != 'pull_request' || matrix.pr_desktop
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -67,12 +66,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/ui/package-lock.json
 
       - name: Install npm dependencies
         if: matrix.desktop
         run: |
           cd desktop/ui
-          npm install
+          npm ci
         shell: bash
 
       - name: Cache Wails CLI
@@ -81,7 +82,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/go/bin/wails
-          key: ${{ runner.os }}-wails-v2.10.2
+          key: ${{ runner.os }}-wails-${{ env.WAILS_VERSION }}
 
       - name: Get version
         id: get_version
@@ -108,7 +109,13 @@ jobs:
           # Verify the symlink was created
           pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 found" || echo "✗ webkit2gtk-4.0 NOT found"
           pkg-config --modversion webkit2gtk-4.0 || true
-          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          go install github.com/wailsapp/wails/v2/cmd/wails@v${WAILS_VERSION}
+
+      - name: Install Wails (Windows)
+        if: matrix.desktop && matrix.platform == 'windows' && steps.cache-wails.outputs.cache-hit != 'true'
+        run: |
+          go install "github.com/wailsapp/wails/v2/cmd/wails@v$env:WAILS_VERSION"
+        shell: pwsh
 
       - name: Install Linux dependencies (cached)
         if: matrix.desktop && matrix.platform == 'linux' && steps.cache-wails.outputs.cache-hit == 'true'
@@ -124,61 +131,43 @@ jobs:
           done
           pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 found" || echo "✗ webkit2gtk-4.0 NOT found"
 
-      - name: Install Wails (macOS)
-        if: matrix.desktop && matrix.platform == 'darwin' && steps.cache-wails.outputs.cache-hit != 'true'
-        run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-      - name: Install Wails (Windows)
-        if: matrix.desktop && matrix.platform == 'windows' && steps.cache-wails.outputs.cache-hit != 'true'
-        run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@latest
-        shell: pwsh
-
-      - name: Build application (Linux/macOS)
-        if: matrix.desktop && matrix.platform != 'windows'
+      - name: Build application (Linux)
+        if: matrix.desktop && matrix.platform == 'linux'
         env:
           CGO_ENABLED: 1
         run: |
           export PATH=$PATH:$(go env GOPATH)/bin
           cd desktop
-          if [ "${{ matrix.platform }}" == "linux" ]; then
-            # Verify webkit2gtk-4.0 is available before building
-            echo "Checking WebKit2GTK availability..."
-            pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 is available" || echo "✗ webkit2gtk-4.0 NOT available"
-            pkg-config --modversion webkit2gtk-4.0 || true
+          echo "Checking WebKit2GTK availability..."
+          pkg-config --exists webkit2gtk-4.0 && echo "✓ webkit2gtk-4.0 is available" || echo "✗ webkit2gtk-4.0 NOT available"
+          pkg-config --modversion webkit2gtk-4.0 || true
 
-            export CGO_CFLAGS="$(pkg-config --cflags gtk+-3.0 webkit2gtk-4.0)"
-            export CGO_LDFLAGS="$(pkg-config --libs gtk+-3.0 webkit2gtk-4.0)"
-            export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH}"
+          export DEB_HOST_MULTIARCH="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+          export CGO_CFLAGS="$(pkg-config --cflags gtk+-3.0 webkit2gtk-4.0)"
+          export CGO_LDFLAGS="$(pkg-config --libs gtk+-3.0 webkit2gtk-4.0)"
+          export PKG_CONFIG_PATH="/usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH}"
 
-            echo "CGO_CFLAGS: $CGO_CFLAGS"
-            echo "CGO_LDFLAGS: $CGO_LDFLAGS"
-          fi
+          echo "DEB_HOST_MULTIARCH: $DEB_HOST_MULTIARCH"
+          echo "CGO_CFLAGS: $CGO_CFLAGS"
+          echo "CGO_LDFLAGS: $CGO_LDFLAGS"
+
           wails build -platform ${{ matrix.platform }}/${{ matrix.arch }}
-          if [ "${{ matrix.platform }}" == "darwin" ] && [ -d "build/bin/CliSimpleHub.app" ]; then
-            mv build/bin/CliSimpleHub.app ../CliSimpleHub-proxy.app
-          elif [ -f "build/bin/cliSimpleHub" ]; then
-            mv build/bin/cliSimpleHub ../cliSimpleHub-proxy
+          if [ -f "build/bin/cliSimpleHub" ]; then
+            echo "Desktop default binary output ready: build/bin/cliSimpleHub"
+            mkdir -p ../desktop-package/default
+            cp build/bin/cliSimpleHub ../desktop-package/default/cliSimpleHub
           else
-            echo "Desktop build output not found for proxy"
+            echo "Desktop build output not found for default"
             ls -la build/bin
             exit 1
           fi
 
-          wails build -platform ${{ matrix.platform }}/${{ matrix.arch }} -tags noxray
-          if [ "${{ matrix.platform }}" == "darwin" ] && [ -d "build/bin/CliSimpleHub.app" ]; then
-            echo "Desktop no-proxy app output ready: build/bin/CliSimpleHub.app"
-            if [ -d "../CliSimpleHub-proxy.app" ]; then
-              mv ../CliSimpleHub-proxy.app build/bin/CliSimpleHub-proxy.app
-            fi
-          elif [ -f "build/bin/cliSimpleHub" ]; then
-            echo "Desktop no-proxy binary output ready: build/bin/cliSimpleHub"
-            if [ -f "../cliSimpleHub-proxy" ]; then
-              mv ../cliSimpleHub-proxy build/bin/cliSimpleHub-proxy
-            fi
+          wails build -platform ${{ matrix.platform }}/${{ matrix.arch }} -tags proxy
+          if [ -f "build/bin/cliSimpleHub" ]; then
+            mkdir -p ../desktop-package/proxy
+            cp build/bin/cliSimpleHub ../desktop-package/proxy/cliSimpleHub
           else
-            echo "Desktop build output not found for no-proxy"
+            echo "Desktop build output not found for proxy"
             ls -la build/bin
             exit 1
           fi
@@ -190,92 +179,36 @@ jobs:
           cd desktop
           wails build -platform ${{ matrix.platform }}/${{ matrix.arch }}
           if (Test-Path "build\bin\cliSimpleHub.exe") {
-            Move-Item -Path "build\bin\cliSimpleHub.exe" -Destination "..\cliSimpleHub-proxy.exe" -Force
+            Write-Output "Desktop default output ready: build\bin\cliSimpleHub.exe"
+            New-Item -ItemType Directory -Force -Path "..\desktop-package\default" | Out-Null
+            Copy-Item -Path "build\bin\cliSimpleHub.exe" -Destination "..\desktop-package\default\cliSimpleHub.exe" -Force
+          } else {
+            throw "Desktop build output not found for default"
+          }
+          wails build -platform ${{ matrix.platform }}/${{ matrix.arch }} -tags proxy
+          if (Test-Path "build\bin\cliSimpleHub.exe") {
+            New-Item -ItemType Directory -Force -Path "..\desktop-package\proxy" | Out-Null
+            Copy-Item -Path "build\bin\cliSimpleHub.exe" -Destination "..\desktop-package\proxy\cliSimpleHub.exe" -Force
           } else {
             throw "Desktop build output not found for proxy"
           }
-          wails build -platform ${{ matrix.platform }}/${{ matrix.arch }} -tags noxray
-          if (Test-Path "build\bin\cliSimpleHub.exe") {
-            Write-Output "Desktop no-proxy output ready: build\bin\cliSimpleHub.exe"
-            if (Test-Path "..\cliSimpleHub-proxy.exe") {
-              Move-Item -Path "..\cliSimpleHub-proxy.exe" -Destination "build\bin\cliSimpleHub-proxy.exe" -Force
-            }
-          } else {
-            throw "Desktop build output not found for no-proxy"
-          }
-        shell: pwsh
-
-      - name: Build headless server (Linux/macOS)
-        if: matrix.platform != 'windows'
-        env:
-          CGO_ENABLED: 0
-          GOOS: ${{ matrix.platform }}
-          GOARCH: ${{ matrix.arch }}
-          GOFLAGS: -mod=mod
-        run: |
-          go build -trimpath -ldflags "-s -w" -o cliSimpleHub-server-proxy ./cmd/server
-          go build -trimpath -tags noxray -ldflags "-s -w" -o cliSimpleHub-server ./cmd/server
-
-      - name: Build headless server (Windows)
-        if: matrix.platform == 'windows'
-        env:
-          CGO_ENABLED: 0
-          GOFLAGS: -mod=mod
-        run: |
-          $env:GOOS = "${{ matrix.platform }}"
-          $env:GOARCH = "${{ matrix.arch }}"
-          $env:CGO_ENABLED = "0"
-          go build -trimpath -ldflags "-s -w" -o cliSimpleHub-server-proxy.exe .\cmd\server
-          go build -trimpath -tags noxray -ldflags "-s -w" -o cliSimpleHub-server.exe .\cmd\server
         shell: pwsh
 
       - name: Package application (Linux)
-        if: matrix.desktop && matrix.platform == 'linux'
+        if: matrix.desktop && matrix.platform == 'linux' && github.event_name != 'pull_request'
         run: |
-          cd desktop/build/bin
-          tar -czf cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub
-          tar -czf cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-proxy
-          mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../
-          mv cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../
-
-      - name: Package application (macOS)
-        if: matrix.desktop && matrix.platform == 'darwin'
-        run: |
-          cd desktop/build/bin
-          if [ -d "CliSimpleHub.app" ] && [ -d "CliSimpleHub-proxy.app" ]; then
-            zip -r cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip "CliSimpleHub.app"
-            zip -r cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip "CliSimpleHub-proxy.app"
-          else
-            tar -czf cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub
-            tar -czf cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-proxy
-          fi
-          mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip ../../../ 2>/dev/null || true
-          mv cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../ 2>/dev/null || true
-          mv cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip ../../../ 2>/dev/null || true
-          mv cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ../../../ 2>/dev/null || true
+          tar -czf cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C desktop-package/default cliSimpleHub
+          tar -czf cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C desktop-package/proxy cliSimpleHub
 
       - name: Package application (Windows)
-        if: matrix.desktop && matrix.platform == 'windows'
+        if: matrix.desktop && matrix.platform == 'windows' && github.event_name != 'pull_request'
         run: |
-          cd desktop/build/bin
-          Compress-Archive -Path cliSimpleHub.exe -DestinationPath ../../../cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip -Force
-          Compress-Archive -Path cliSimpleHub-proxy.exe -DestinationPath ../../../cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip -Force
-        shell: pwsh
-
-      - name: Package headless server (Linux/macOS)
-        if: matrix.platform != 'windows'
-        run: |
-          tar -czf cliSimpleHub-server-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-server
-          tar -czf cliSimpleHub-server-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz cliSimpleHub-server-proxy
-
-      - name: Package headless server (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          Compress-Archive -Path cliSimpleHub-server.exe -DestinationPath cliSimpleHub-server-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
-          Compress-Archive -Path cliSimpleHub-server-proxy.exe -DestinationPath cliSimpleHub-server-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          Compress-Archive -Path desktop-package\default\cliSimpleHub.exe -DestinationPath cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip -Force
+          Compress-Archive -Path desktop-package\proxy\cliSimpleHub.exe -DestinationPath cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip -Force
         shell: pwsh
 
       - name: Upload artifacts
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: cliSimpleHub-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
@@ -283,8 +216,116 @@ jobs:
             cliSimpleHub-*.tar.gz
             cliSimpleHub-*.zip
 
+  headless:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Generate go.sum
+        env:
+          GOFLAGS: -mod=mod
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.ref_type }}" == "tag" ]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Build headless server (all targets)
+        env:
+          CGO_ENABLED: 0
+          GOFLAGS: -mod=mod
+        run: |
+          set -euo pipefail
+          mkdir -p dist/headless
+
+          while read -r goos goarch; do
+            [ -n "$goos" ] || continue
+            ext=""
+            if [ "$goos" = "windows" ]; then
+              ext=".exe"
+            fi
+
+            echo "Building headless for ${goos}/${goarch}"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "-s -w" -o "dist/headless/cliSimpleHub-server-${goos}-${goarch}${ext}" ./cmd/server
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -tags proxy -ldflags "-s -w" -o "dist/headless/cliSimpleHub-server-proxy-${goos}-${goarch}${ext}" ./cmd/server
+          done <<'EOF'
+          linux amd64
+          linux arm64
+          windows amd64
+          windows arm64
+          darwin amd64
+          darwin arm64
+          EOF
+
+      - name: Package headless server
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/headless-packages
+
+          while read -r goos goarch; do
+            [ -n "$goos" ] || continue
+            ext=""
+            pkg_ext="tar.gz"
+            if [ "$goos" = "windows" ]; then
+              ext=".exe"
+              pkg_ext="zip"
+            fi
+
+            for variant in server server-proxy; do
+              src="dist/headless/cliSimpleHub-${variant}-${goos}-${goarch}${ext}"
+              stage="$(mktemp -d)"
+              package_bin="cliSimpleHub-${variant%-proxy}${ext}"
+              cp "$src" "$stage/${package_bin}"
+
+              if [ "$goos" = "windows" ]; then
+                (
+                  cd "$stage"
+                  zip -q "${GITHUB_WORKSPACE}/dist/headless-packages/cliSimpleHub-${variant}-${{ steps.get_version.outputs.version }}-${goos}-${goarch}.${pkg_ext}" "${package_bin}"
+                )
+              else
+                tar -czf "dist/headless-packages/cliSimpleHub-${variant}-${{ steps.get_version.outputs.version }}-${goos}-${goarch}.${pkg_ext}" -C "$stage" "${package_bin}"
+              fi
+
+              rm -rf "$stage"
+            done
+          done <<'EOF'
+          linux amd64
+          linux arm64
+          windows amd64
+          windows arm64
+          darwin amd64
+          darwin arm64
+          EOF
+
+      - name: Upload headless artifacts
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cliSimpleHub-headless-${{ steps.get_version.outputs.version }}
+          path: dist/headless-packages/*
+
   release:
-    needs: build
+    needs:
+      - build
+      - headless
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 

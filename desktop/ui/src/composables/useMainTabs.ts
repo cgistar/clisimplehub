@@ -25,6 +25,10 @@ function setTabVisibility({
   if (kiro !== undefined) showKiro.value = !!kiro
   if (codex !== undefined) showCodex.value = !!codex
   if (clash !== undefined) showClash.value = !!clash
+  if (showClash.value === false && activeTab.value === 'clash') {
+    setTab('home')
+    window.dispatchEvent(new Event('home:visible'))
+  }
 }
 
 async function switchMainTab(tabName: MainTabName): Promise<void> {

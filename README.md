@@ -13,10 +13,9 @@
   - `data.sqlite`：请求使用统计、Codex 账号与账号统计。
   - `kiro.json`：Kiro 多账号配置。
   - `codex.json`：Codex 全局配置。
-  - `xray-config.json`：XRay 配置（启用 XRay 插件时）。
 - 备份与同步：
   - WebDAV 备份/恢复（merge/replace）。
-  - 多服务器配置同步（含 Kiro/Codex/XRay 插件配置，带回滚保护）。
+  - 多服务器配置同步（含 Kiro/Codex 插件配置，带回滚保护）。
 
 ## 2. 运行模式
 
@@ -80,6 +79,58 @@ docker-compose up -d --build
 curl http://localhost:5600/health
 ```
 
+### 3.4 各平台编译
+
+构建脚本：
+
+- macOS / Linux：`./build.sh`
+- Windows PowerShell 5.x+：`.\build.ps1`
+
+常用目标：
+
+| 目标 | macOS / Linux | Windows |
+| --- | --- | --- |
+| 桌面端当前平台 | `./build.sh` | `.\build.ps1` |
+| 无头服务当前平台 | `./build.sh server current` | `.\build.ps1 -Target server -Command current` |
+| 桌面端 + 服务端当前平台 | `./build.sh both current` | `.\build.ps1 -Target both -Command current` |
+| 指定平台构建 | `./build.sh both --platform linux/amd64` | `.\build.ps1 -Target both -Platform linux/amd64` |
+| 追加自定义 build tags | `./build.sh --tags xxx,yyy` | `.\build.ps1 -Tags xxx,yyy` |
+| 跳过前端依赖安装 | `./build.sh --no-deps` | `.\build.ps1 -NoDeps` |
+| 清理产物 | `./build.sh clean` | `.\build.ps1 -Command clean` |
+
+桌面端本地编译前置依赖：
+
+- Go
+- Node.js / npm
+- Wails CLI：`go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+
+各平台说明：
+
+- macOS：
+  - 桌面端建议在 macOS 本机编译。
+  - Apple 签名与公证为可选，`build.sh` 支持通过 `APPLE_SIGN_IDENTITY`、`APPLE_ID`、`APPLE_ID_PASSWORD`、`APPLE_TEAM_ID` 注入。
+  - 在 Apple Silicon 上，`./build.sh desktop macos` 会尝试构建 `darwin/amd64` 和 `darwin/arm64`。
+- Linux：
+  - 桌面端依赖 GTK/WebKit2GTK，通常需要先安装 `libgtk-3-dev`、`libwebkit2gtk-4.1-dev`、`pkg-config`。
+  - 无头服务端可直接交叉编译 `linux/amd64` 和 `linux/arm64`。
+- Windows：
+  - 桌面端建议在 Windows 本机编译。
+  - `build.ps1` 已兼容 Windows PowerShell 5.x。
+
+跨平台限制：
+
+- 服务端使用 `go build`，通常可以通过 `GOOS/GOARCH` 交叉编译到各平台。
+- 桌面端使用 `wails build`，依赖原生 GUI 与 CGO 工具链。
+- `build.sh all` 在桌面端默认只包含 `darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`，不默认包含 Windows 桌面构建。
+- 在 macOS ARM 主机上，`server all` 可以作为全平台服务端构建使用；`desktop all` 不能等同于“稳定支持全平台桌面交叉编译”。
+
+GitHub Actions 发布构建：
+
+- 桌面端发布产物：`linux/amd64`、`linux/arm64`、`windows/amd64`
+- 桌面端 PR 校验：仅 `linux/amd64`
+- 无头服务端：`linux/amd64`、`linux/arm64`、`darwin/amd64`、`darwin/arm64`、`windows/amd64`、`windows/arm64`
+- 发布工作流见 `.github/workflows/build.yml`
+
 ## 4. 端点模型与路由
 
 每个端点可配置：
@@ -109,13 +160,73 @@ curl http://localhost:5600/health
 
 插件可动态注册，例如：
 
-- Kiro: `kiro/claude`、`kiro/chat`
+- Kiro: `kiro/claude`
 - Codex: `openai/codex`（通过插件实现完整转发链路）
 
 查询接口：
 
 - `GET /transformers`
 - `GET /transformers?from=claude`
+
+### 5.1 `chat` 端点如何选择 transformer
+
+`interfaceType: "chat"` 表示对外提供 OpenAI Chat Completions 兼容接口。是否需要协议转换，取决于上游实际接口类型：
+
+- 上游原生就是 Chat Completions：`transformer` 可留空。
+- 上游是 OpenAI Responses / Codex Responses：使用 `openai/responses` 或 `openai/codex`。
+- 上游是 Anthropic Messages / Claude 兼容接口：使用 `anthropic/messages`。
+- 上游走 Kiro 插件：使用 `kiro/claude`。
+
+常见组合：
+
+| `interfaceType` | `transformer` | 上游接口 | 说明 |
+| --- | --- | --- | --- |
+| `chat` | 留空 | Chat Completions | 不做协议转换，直接按 `/v1/chat/completions` 转发。 |
+| `chat` | `openai/responses` | OpenAI Responses | 将 Chat Completions 请求转为 Responses，请求返回前再转回 Chat Completions。 |
+| `chat` | `anthropic/messages` | Claude `/v1/messages` | 将 Chat Completions 请求转为 Claude Messages，适合 Anthropic 或兼容 Claude 的上游。 |
+| `chat` | `openai/codex` | Codex 插件 / Responses | 通过 Codex 账号池转发，对外仍保持 Chat Completions 兼容。 |
+| `chat` | `kiro/claude` | Kiro 插件 | 先由执行器完成 `chat -> claude` 转换，再交给 Kiro 插件处理。 |
+
+最小配置示例：
+
+```json
+{
+  "endpoints": [
+    {
+      "name": "OpenAI Chat Direct",
+      "apiUrl": "https://api.openai.com",
+      "interfaceType": "chat",
+      "transformer": "",
+      "enabled": true
+    },
+    {
+      "name": "Responses Upstream",
+      "apiUrl": "https://api.openai.com",
+      "interfaceType": "chat",
+      "transformer": "openai/responses",
+      "enabled": true
+    },
+    {
+      "name": "Claude via Chat",
+      "apiUrl": "https://api.anthropic.com",
+      "interfaceType": "chat",
+      "transformer": "anthropic/messages",
+      "enabled": true
+    }
+  ]
+}
+```
+
+插件相关 transformer：
+
+- `openai/codex`：需要已启用 Codex 插件；插件会注册 `chat` 端点可用的 `openai/codex` transformer。
+- `kiro/claude`：需要已启用 Kiro 插件；该模式下插件只负责 Claude/Kiro 协议，外层 `chat -> claude` 由统一转换链路完成。
+
+使用建议：
+
+- 想让客户端始终走 `/v1/chat/completions`，但上游不是 Chat Completions 协议时，优先把端点配置成 `interfaceType: "chat"` + 对应 `transformer`。
+- 如果你的上游本身就是 Claude 协议，也可以直接把端点配置为 `interfaceType: "claude"`；两种方式的差别在于客户端入口协议不同。
+- `routes`、`models`、`model` 仍然对 `chat` 端点生效，可用于按模型分流和上游模型名映射。
 
 ## 6. 插件说明
 
@@ -159,11 +270,10 @@ curl http://localhost:5600/health
 - `GET /v0/management/codex-auth-url`
 - `POST /v0/management/oauth-callback`
 
-### 6.3 XRay 插件（`xray`，可选）
+### 6.3 科学上网 插件
 
 - 订阅管理、节点解析、节点测速、激活订阅、启动/停止代理。
 - 全局代理桥接：当启用全局代理并运行中时，向其他插件提供 `socks5://...`。
-- 支持通过 build tag `noxray` 编译关闭。
 
 ## 7. 远程同步与备份
 
@@ -171,7 +281,7 @@ curl http://localhost:5600/health
 
 桌面端可将本地配置同步到远端无头节点：
 
-- 同步内容：`vendors`、`endpoints`、Kiro/Codex/XRay 插件配置。
+- 同步内容：`vendors`、`endpoints`、Kiro/Codex/Clash 插件配置。
 - 传输方式：插件配置经 `gzip + base64`。
 - 远端行为：先做插件快照，再替换配置；任一步失败则回滚并返回告警。
 
@@ -187,8 +297,8 @@ curl http://localhost:5600/health
 - `LISTEN_ADDR`：监听地址（允许 `127.0.0.1`/`0.0.0.0`/`::1`/`::`）
 - `API_KEY`：管理接口认证密钥（高优先级）
 - `DATA`：数据目录（配置与数据库落盘目录）
-- `XRAY_SOCKS_LISTEN`：XRay SOCKS 监听地址
-- `XRAY_SOCKS_PORT`：XRay SOCKS 端口
+- `Clash_SOCKS_LISTEN`：Clash SOCKS 监听地址
+- `Clash_SOCKS_PORT`：Clash SOCKS 端口
 
 ## 9. 目录结构（核心）
 
@@ -200,7 +310,7 @@ curl http://localhost:5600/health
 - `internal/transformer/`：转换器框架与内置转换实现
 - `internal/kiro/`：Kiro 认证、池化、插件实现
 - `internal/codex/`：Codex 认证、池化、插件实现
-- `internal/xray/`：XRay 插件实现
+- `internal/clash/`Clash 插件实现
 - `internal/storage/`：`config.json` 存储层
 - `internal/statsdb/`：`usage_stats` 存储层
 

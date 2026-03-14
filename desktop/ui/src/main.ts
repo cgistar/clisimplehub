@@ -21,6 +21,20 @@ import { waitForWails } from './utils/helper'
 let settingsStore: ReturnType<typeof useSettingsStore> | null = null
 const { setTabVisibility, showKiro, showCodex, showClash } = useMainTabs()
 
+const refreshTabVisibility = async (): Promise<void> => {
+    try {
+        const safeBool = async (fn: () => Promise<boolean>) => { try { return !!(await fn()) } catch { return false } }
+        const [kiro, codex, clash] = await Promise.all([
+            safeBool(() => window.go.main.App.IsKiroAvailable()),
+            safeBool(() => window.go.main.App.IsCodexAccountsAvailable()),
+            safeBool(() => window.go.main.App.IsClashAvailable()),
+        ])
+        setTabVisibility({ kiro, codex, clash })
+    } catch (e) {
+        console.error('Tab visibility check failed:', e)
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     await waitForWails()
 
@@ -40,6 +54,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const clashStore = useClashStore(pinia)
 
     const refreshAfterConfigReload = async (): Promise<void> => {
+        await refreshTabVisibility()
+
         try {
             await endpointsStore.refreshCurrent()
         } catch {
@@ -86,18 +102,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ignore
     }
 
-    // Query backend for tab visibility
-    try {
-        const safeBool = async (fn: () => Promise<boolean>) => { try { return !!(await fn()) } catch { return false } }
-        const [kiro, codex, clash] = await Promise.all([
-            safeBool(() => window.go.main.App.IsKiroAvailable()),
-            safeBool(() => window.go.main.App.IsCodexAccountsAvailable()),
-            safeBool(() => window.go.main.App.IsClashAvailable()),
-        ])
-        setTabVisibility({ kiro, codex, clash })
-    } catch (e) {
-        console.error('Tab visibility check failed:', e)
-    }
+    await refreshTabVisibility()
 
     await settingsStore.loadSettings()
 })

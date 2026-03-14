@@ -1,0 +1,117 @@
+name: Build macOS Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional version override for artifact names
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  WAILS_VERSION: 2.10.2
+
+jobs:
+  build-macos:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Generate go.sum
+        env:
+          GOFLAGS: -mod=mod
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/ui/package-lock.json
+
+      - name: Install npm dependencies
+        run: |
+          cd desktop/ui
+          npm ci
+        shell: bash
+
+      - name: Cache Wails CLI
+        id: cache-wails
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/wails
+          key: ${{ runner.os }}-wails-${{ env.WAILS_VERSION }}
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+        shell: bash
+
+      - name: Install Wails
+        if: steps.cache-wails.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v${WAILS_VERSION}
+
+      - name: Restore Wails from cache
+        if: steps.cache-wails.outputs.cache-hit == 'true'
+        run: |
+          echo "Using cached Wails CLI"
+
+      - name: Build and package macOS desktop
+        env:
+          CGO_ENABLED: 1
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          cd desktop
+          for arch in amd64 arm64; do
+            platform="darwin/${arch}"
+
+            wails build -platform "${platform}" -clean
+            if [ ! -d "build/bin/CliSimpleHub.app" ]; then
+              echo "Desktop build output not found for default (${platform})"
+              ls -la build/bin
+              exit 1
+            fi
+            ditto -c -k --keepParent "build/bin/CliSimpleHub.app" "../cliSimpleHub-${{ steps.get_version.outputs.version }}-darwin-${arch}.zip"
+
+            wails build -platform "${platform}" -clean -tags proxy
+            if [ ! -d "build/bin/CliSimpleHub.app" ]; then
+              echo "Desktop build output not found for proxy (${platform})"
+              ls -la build/bin
+              exit 1
+            fi
+            ditto -c -k --keepParent "build/bin/CliSimpleHub.app" "../cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-darwin-${arch}.zip"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cliSimpleHub-macos-${{ steps.get_version.outputs.version }}
+          path: |
+            cliSimpleHub-${{ steps.get_version.outputs.version }}-darwin-amd64.zip
+            cliSimpleHub-${{ steps.get_version.outputs.version }}-darwin-arm64.zip
+            cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-darwin-amd64.zip
+            cliSimpleHub-proxy-${{ steps.get_version.outputs.version }}-darwin-arm64.zip

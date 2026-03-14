@@ -693,6 +693,10 @@ export default {
     proxyUrl: 'Proxy URL',
     proxyUrlPlaceholder: 'e.g., socks5://127.0.0.1:1080',
     proxyUrlHelp: 'Optional app-level proxy for forwarded requests, supports socks5/http/https',
+    clashPath: 'External Clash Path',
+    clashPathPlaceholder: 'e.g., /path/to/mihomo',
+    clashPathHelp:
+      'The default build shows the Clash tab only when this path is configured and exists',
     fallback: 'Auto Failover',
     fallbackHelp: 'Automatically switch to next endpoint by priority on failure',
     debugMode: 'Debug Mode',

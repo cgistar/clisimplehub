@@ -6,13 +6,13 @@ services:
     container_name: clisimplehub-server
     ports:
       - '${PORT:-5600}:5600'
-      - '${XRAY_SOCKS_PORT:-10808}:${XRAY_SOCKS_PORT:-10808}'
+      - '${CLASH_SOCKS_PORT:-10808}:${CLASH_SOCKS_PORT:-10808}'
     environment:
       PORT: '${PORT:-5600}'
       LISTEN_ADDR: '${LISTEN_ADDR:-0.0.0.0}'
       DATA: '/data'
-      XRAY_SOCKS_LISTEN: '${XRAY_SOCKS_LISTEN:-0.0.0.0}'
-      XRAY_SOCKS_PORT: '${XRAY_SOCKS_PORT:-10808}'
+      CLASH_SOCKS_LISTEN: '${CLASH_SOCKS_LISTEN:-0.0.0.0}'
+      CLASH_SOCKS_PORT: '${CLASH_SOCKS_PORT:-10808}'
       API_KEY: '${API_KEY:-abcd1234}'
     volumes:
       - ./data:/data

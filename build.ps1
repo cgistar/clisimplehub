@@ -2,10 +2,10 @@
 CliSimpleHub build script (PowerShell, Windows-friendly).
 
 Examples:
-  .\build.ps1                          # desktop current
-  .\build.ps1 linux -NoClash           # desktop linux (server cross-build only; desktop may require host toolchain)
-  .\build.ps1 server current -NoClash  # server current (noclash)
-  .\build.ps1 both -Platform linux/amd64 -Platform windows/amd64
+  .\build.ps1                                        # desktop current
+  .\build.ps1 -Command linux                         # desktop linux + desktop linux-proxy
+  .\build.ps1 -Target server -Command current        # server current + server current-proxy
+  .\build.ps1 -Target both -Platform linux/amd64 -Platform windows/amd64
 #>
 
 [CmdletBinding(PositionalBinding=$false)]
@@ -20,8 +20,6 @@ param(
 
   [Alias('v')]
   [string]$Version = $env:VERSION,
-
-  [switch]$NoClash,
 
   [string]$Tags = '',
 
@@ -39,6 +37,25 @@ function Fail([string]$msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red; ex
 if ([string]::IsNullOrWhiteSpace($Version)) { $Version = 'dev' }
 $OutputDir = "dist"
 
+function Get-TagDisplay([string]$tags) {
+  if ([string]::IsNullOrWhiteSpace($tags)) { return 'none' }
+  return $tags
+}
+
+function Test-IsWindowsHost() {
+  if (Get-Variable -Name IsWindows -Scope Global -ErrorAction SilentlyContinue) {
+    return [bool]$global:IsWindows
+  }
+  return $env:OS -eq 'Windows_NT'
+}
+
+function Test-IsLinuxHost() {
+  if (Get-Variable -Name IsLinux -Scope Global -ErrorAction SilentlyContinue) {
+    return [bool]$global:IsLinux
+  }
+  return $false
+}
+
 function Append-Tags([string]$cur, [string]$add) {
   $add = $add.Trim().Trim(',')
   if ([string]::IsNullOrWhiteSpace($add)) { return $cur }
@@ -47,17 +64,28 @@ function Append-Tags([string]$cur, [string]$add) {
 }
 
 $BuildTags = ''
-if ($NoClash) { $BuildTags = Append-Tags $BuildTags 'noclash' }
 if (-not [string]::IsNullOrWhiteSpace($Tags)) { $BuildTags = Append-Tags $BuildTags $Tags }
 
 function Variant-Suffix([string]$tags) {
   $t = ",$tags,"
-  if ($t -like '*,noclash,*') { return '-noclash' }
+  if ($t -like '*,proxy,*') { return '-proxy' }
   return ''
 }
 
+function Remove-Tag([string]$cur, [string]$remove) {
+  if ([string]::IsNullOrWhiteSpace($cur)) { return '' }
+  $parts = $cur.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne $remove }
+  return [string]::Join(',', $parts)
+}
+
 function Detect-HostPlatform() {
-  $os = if ($IsWindows) { 'windows' } elseif ($IsLinux) { 'linux' } else { 'darwin' }
+  if (Test-IsWindowsHost) {
+    $os = 'windows'
+  } elseif (Test-IsLinuxHost) {
+    $os = 'linux'
+  } else {
+    $os = 'darwin'
+  }
   $arch = $env:PROCESSOR_ARCHITECTURE
   switch ($arch) {
     'AMD64' { $arch = 'amd64' }
@@ -92,10 +120,9 @@ function Install-Deps() {
   }
 }
 
-function Package-Desktop([string]$os, [string]$arch) {
+function Package-Desktop([string]$os, [string]$arch, [string]$variantName) {
   Ensure-Dir $OutputDir
-  $suffix = Variant-Suffix $BuildTags
-  $base = "cliSimpleHub-$os-$arch$suffix"
+  $base = "$variantName-$os-$arch"
 
   if ($os -eq 'windows') {
     $exe = "desktop/build/bin/cliSimpleHub.exe"
@@ -107,56 +134,74 @@ function Package-Desktop([string]$os, [string]$arch) {
   }
 
   # On Windows, tar/gzip is not always available; zip is universal for packaging.
-  $bin = "desktop/build/bin/cliSimpleHub"
-  if (-not (Test-Path $bin)) { $bin = "desktop/build/bin/CliSimpleHub" }
+  if ($os -eq 'darwin') {
+    $bin = "desktop/build/bin/CliSimpleHub.app"
+  } else {
+    $bin = "desktop/build/bin/cliSimpleHub"
+    if (-not (Test-Path $bin)) { $bin = "desktop/build/bin/CliSimpleHub" }
+  }
   if (-not (Test-Path $bin)) { Warn "Desktop binary not found, skipping packaging"; return }
   Compress-Archive -Force -Path $bin -DestinationPath (Join-Path $OutputDir "$base.zip")
   Info "Created: $OutputDir/$base.zip"
 }
 
-function Build-Desktop([string]$os, [string]$arch) {
+function Build-DesktopVariant([string]$os, [string]$arch, [string]$variantName, [string]$tags) {
   Check-Wails
   if (-not $NoDeps) { Install-Deps }
 
-  if ($IsWindows -and $os -ne 'windows') {
+  if ((Test-IsWindowsHost) -and $os -ne 'windows') {
     Warn "Desktop cross-build from Windows to $os/$arch may require additional toolchain support; Wails build may fail."
   }
 
-  $goflags = $env:GOFLAGS
-  if (-not [string]::IsNullOrWhiteSpace($BuildTags)) {
-    # Override any existing -tags in GOFLAGS for this build.
+  $goflags = [string]$env:GOFLAGS
+  if ($goflags -match '(^|\s)-tags=\S+') {
+    Warn "GOFLAGS already contains -tags, overriding for this build"
     $goflags = ($goflags -replace '(^|\s)-tags=\S+', '').Trim()
-    if ([string]::IsNullOrWhiteSpace($goflags)) { $goflags = "-tags=$BuildTags" } else { $goflags = "$goflags -tags=$BuildTags" }
+  } else {
+    $goflags = $goflags.Trim()
   }
 
-  Info "Building desktop: $os/$arch tags=$($BuildTags ?? 'none')"
+  Info "Building desktop variant $variantName : $os/$arch tags=$(Get-TagDisplay $tags)"
   Push-Location "desktop"
   try {
+    $originalGOFLAGS = $env:GOFLAGS
     $env:GOFLAGS = $goflags
-    wails build -platform "$os/$arch" -clean
+    if ([string]::IsNullOrWhiteSpace($tags)) {
+      wails build -platform "$os/$arch" -clean
+    } else {
+      wails build -platform "$os/$arch" -clean -tags $tags
+    }
   } finally {
+    $env:GOFLAGS = $originalGOFLAGS
     Pop-Location
   }
 
-  Package-Desktop $os $arch
+  Package-Desktop $os $arch $variantName
 }
 
-function Package-Server([string]$os, [string]$arch) {
+function Build-Desktop([string]$os, [string]$arch) {
+  $defaultTags = Remove-Tag $BuildTags 'proxy'
+  $proxyTags = Append-Tags $defaultTags 'proxy'
+
+  Build-DesktopVariant $os $arch 'cliSimpleHub' $defaultTags
+  Build-DesktopVariant $os $arch 'cliSimpleHub-proxy' $proxyTags
+}
+
+function Package-Server([string]$os, [string]$arch, [string]$variantName, [string]$tags) {
   Ensure-Dir $OutputDir
-  $suffix = Variant-Suffix $BuildTags
-  $base = "cliSimpleHub-server-$os-$arch$suffix"
+  $base = "$variantName-$os-$arch"
 
   $staging = Join-Path $OutputDir ".staging"
   Ensure-Dir $staging
 
   $ext = if ($os -eq 'windows') { '.exe' } else { '' }
-  $binName = "cliSimpleHub-server$ext"
+  $binName = "$(($variantName -replace '-proxy$',''))$ext"
   $binPath = Join-Path $staging $binName
 
   $tagsArgs = @()
-  if (-not [string]::IsNullOrWhiteSpace($BuildTags)) { $tagsArgs = @('-tags', $BuildTags) }
+  if (-not [string]::IsNullOrWhiteSpace($tags)) { $tagsArgs = @('-tags', $tags) }
 
-  Info "Building server: $os/$arch tags=$($BuildTags ?? 'none')"
+  Info "Building server: $variantName $os/$arch tags=$(Get-TagDisplay $tags)"
   $env:GOOS = $os
   $env:GOARCH = $arch
   if (-not $env:CGO_ENABLED) { $env:CGO_ENABLED = '0' }
@@ -209,9 +254,11 @@ foreach ($p in $platforms) {
     Build-Desktop $os $arch
   }
   if ($Target -eq 'server' -or $Target -eq 'both') {
-    Package-Server $os $arch
+    $defaultTags = Remove-Tag $BuildTags 'proxy'
+    $proxyTags = Append-Tags $defaultTags 'proxy'
+    Package-Server $os $arch 'cliSimpleHub-server' $defaultTags
+    Package-Server $os $arch 'cliSimpleHub-server-proxy' $proxyTags
   }
 }
 
 Info "Build complete! Output in: $OutputDir/"
-

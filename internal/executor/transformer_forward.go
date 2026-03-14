@@ -31,7 +31,7 @@ func (c *ExecutionContext) executeWithTransformer(ctx context.Context, interface
 		Method:              req.Method,
 		TargetPath:          plan.TargetPath,
 		RawQuery:            plan.RawQuery,
-		Headers:             req.Headers.Clone(),
+		Headers:             planRequestHeaders(req.Headers, plan),
 		Body:                plan.RequestBody,
 		IsStreaming:         plan.IsStreaming,
 		RequestModel:        planRequestModel(plan),
@@ -541,6 +541,18 @@ func planRequestModel(plan *TransformationPlan) string {
 		return requestModel
 	}
 	return ""
+}
+
+func planRequestHeaders(headers http.Header, plan *TransformationPlan) http.Header {
+	if plan != nil && plan.Context != nil && plan.Context.Metadata != nil {
+		if targetHeaders, ok := plan.Context.Metadata["target_headers"].(http.Header); ok && targetHeaders != nil {
+			return targetHeaders.Clone()
+		}
+	}
+	if headers == nil {
+		return http.Header{}
+	}
+	return headers.Clone()
 }
 
 func extractTokensFromStreamCapture(raw string) *TokenUsage {

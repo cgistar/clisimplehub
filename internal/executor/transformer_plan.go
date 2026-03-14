@@ -10,6 +10,7 @@ import (
 
 	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/transformer"
+	chat_anthropic "clisimplehub/internal/transformer/chat/anthropic/messages"
 	chat_responses "clisimplehub/internal/transformer/chat/openai/responses"
 
 	"github.com/tidwall/gjson"
@@ -25,6 +26,9 @@ func (c *ExecutionContext) BuildTransformationPlan(ctx context.Context, interfac
 
 	if strings.EqualFold(strings.TrimSpace(endpoint.Transformer), "openai/codex") {
 		return c.buildCodexTransformationPlan(ctx, interfaceType, endpoint, req)
+	}
+	if strings.EqualFold(strings.TrimSpace(interfaceType), "chat") && strings.EqualFold(strings.TrimSpace(endpoint.Transformer), "kiro/claude") {
+		return c.buildKiroChatTransformationPlan(ctx, endpoint, req)
 	}
 	return c.buildStandardTransformationPlan(ctx, interfaceType, endpoint, req)
 }
@@ -58,6 +62,18 @@ func (c *ExecutionContext) buildStandardTransformationPlan(ctx context.Context, 
 		return nil, &ForwardResult{StatusCode: http.StatusBadRequest, Error: err}
 	}
 
+	normalizedRawQuery := normalizeTransformerRawQuery(tr.TargetInterfaceType(), targetPath, req.RawQuery)
+	metadata := map[string]any{
+		"request_model":  requestModel,
+		"upstream_model": upstreamModel,
+	}
+	if shouldNormalizeClaudeMessagesRequest(tr.TargetInterfaceType(), targetPath) {
+		normalizedBody, targetHeaders, rawQuery := appmiddleware.NormalizeClaudeMessagesRequest(transformedBody, req.Headers, normalizedRawQuery)
+		transformedBody = normalizedBody
+		normalizedRawQuery = rawQuery
+		metadata["target_headers"] = targetHeaders
+	}
+
 	if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
 		debugLogger.SetSection("TransformedRequest", string(transformedBody))
 	}
@@ -66,7 +82,7 @@ func (c *ExecutionContext) buildStandardTransformationPlan(ctx context.Context, 
 		Transformer:         tr,
 		TargetInterfaceType: tr.TargetInterfaceType(),
 		TargetPath:          targetPath,
-		RawQuery:            normalizeTransformerRawQuery(tr.TargetInterfaceType(), targetPath, req.RawQuery),
+		RawQuery:            normalizedRawQuery,
 		RequestBody:         transformedBody,
 		IsStreaming:         req.IsStreaming,
 		OutputContentType:   tr.OutputContentType(req.IsStreaming),
@@ -74,10 +90,64 @@ func (c *ExecutionContext) buildStandardTransformationPlan(ctx context.Context, 
 		Context: &TransformContext{
 			OriginalRequestBody:    append([]byte(nil), originalBody...),
 			TransformedRequestBody: append([]byte(nil), transformedBody...),
-			Metadata: map[string]any{
-				"request_model":  requestModel,
-				"upstream_model": upstreamModel,
-			},
+			Metadata:               metadata,
+		},
+	}
+	return plan, nil
+}
+
+func (c *ExecutionContext) buildKiroChatTransformationPlan(ctx context.Context, endpoint *EndpointConfig, req *ForwardRequest) (*TransformationPlan, *ForwardResult) {
+	tr := chat_anthropic.Transformer{}
+
+	originalBody := req.Body
+	requestModel := extractModelFromBody(originalBody)
+	upstreamModel := ResolveUpstreamModel(requestModel, endpoint)
+
+	targetPath := tr.TargetPath(req.IsStreaming, upstreamModel)
+	if strings.TrimSpace(targetPath) == "" {
+		err := fmt.Errorf("empty transformer target path: transformer=%q", endpoint.Transformer)
+		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] Kiro chat target path empty: endpoint=%s transformer=%q", endpoint.Name, endpoint.Transformer))
+		return nil, &ForwardResult{StatusCode: http.StatusBadRequest, Error: err}
+	}
+
+	transformedBody, err := tr.TransformRequest(upstreamModel, originalBody, req.IsStreaming)
+	if err != nil {
+		c.DebugLog(ctx, 3, fmt.Sprintf("[Transformer] Kiro chat request conversion failed: endpoint=%s transformer=%q err=%v", endpoint.Name, endpoint.Transformer, err))
+		return nil, &ForwardResult{StatusCode: http.StatusBadRequest, Error: err}
+	}
+
+	normalizedRawQuery := normalizeTransformerRawQuery(tr.TargetInterfaceType(), targetPath, req.RawQuery)
+	metadata := map[string]any{
+		"request_model":                      requestModel,
+		"upstream_model":                     upstreamModel,
+		"source_type":                        "chat",
+		"chat_conversion":                    true,
+		"response_transform_on_success_only": true,
+	}
+	if shouldNormalizeClaudeMessagesRequest(tr.TargetInterfaceType(), targetPath) {
+		normalizedBody, targetHeaders, rawQuery := appmiddleware.NormalizeClaudeMessagesRequest(transformedBody, req.Headers, normalizedRawQuery)
+		transformedBody = normalizedBody
+		normalizedRawQuery = rawQuery
+		metadata["target_headers"] = targetHeaders
+	}
+
+	if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
+		debugLogger.SetSection("TransformedRequest", string(transformedBody))
+	}
+
+	plan := &TransformationPlan{
+		Transformer:         tr,
+		TargetInterfaceType: tr.TargetInterfaceType(),
+		TargetPath:          targetPath,
+		RawQuery:            normalizedRawQuery,
+		RequestBody:         transformedBody,
+		IsStreaming:         req.IsStreaming,
+		OutputContentType:   tr.OutputContentType(req.IsStreaming),
+		StreamInputMode:     streamInputModeForTransformer(tr),
+		Context: &TransformContext{
+			OriginalRequestBody:    append([]byte(nil), originalBody...),
+			TransformedRequestBody: append([]byte(nil), transformedBody...),
+			Metadata:               metadata,
 		},
 	}
 	return plan, nil
@@ -162,10 +232,10 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 			OriginalRequestBody:    originalBody,
 			TransformedRequestBody: append([]byte(nil), body...),
 			Metadata: map[string]any{
-				"request_model":  requestModel,
-				"upstream_model": baseModelName(strings.TrimSpace(resolvedModel)),
-				"source_type":    interfaceType,
-				"chat_conversion": responseTransformer != nil,
+				"request_model":                      requestModel,
+				"upstream_model":                     baseModelName(strings.TrimSpace(resolvedModel)),
+				"source_type":                        interfaceType,
+				"chat_conversion":                    responseTransformer != nil,
 				"response_transform_on_success_only": true,
 			},
 		},
@@ -338,4 +408,12 @@ func streamInputModeForTransformer(tr transformer.Transformer) StreamInputMode {
 		}
 	}
 	return StreamInputModeLine
+}
+
+func shouldNormalizeClaudeMessagesRequest(targetInterfaceType, targetPath string) bool {
+	if !strings.EqualFold(strings.TrimSpace(targetInterfaceType), "claude") {
+		return false
+	}
+	path := strings.ToLower(strings.TrimRight(strings.TrimSpace(targetPath), "/"))
+	return strings.HasSuffix(path, "/v1/messages")
 }

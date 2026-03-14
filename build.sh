@@ -57,11 +57,26 @@ append_build_tags() {
 
 variant_suffix() {
     local tags=",$1,"
-    if [[ "$tags" == *",noclash,"* ]]; then
-        echo "-noclash"
+    if [[ "$tags" == *",proxy,"* ]]; then
+        echo "-proxy"
         return 0
     fi
     echo ""
+}
+
+remove_build_tag() {
+    local cur="$1"
+    local remove="$2"
+    local out=""
+    IFS=',' read -ra parts <<<"$cur"
+    for part in "${parts[@]}"; do
+        part="${part// /}"
+        if [ -z "$part" ] || [ "$part" = "$remove" ]; then
+            continue
+        fi
+        out="$(append_build_tags "$out" "$part")"
+    done
+    echo "$out"
 }
 
 detect_host_platform() {
@@ -175,60 +190,70 @@ check_port_5600() {
 run_wails_build() {
     local platform="$1"
     local arch="$2"
+    local tags="$3"
 
     local goflags="${GOFLAGS:-}"
-    if [ -n "$BUILD_TAGS" ]; then
-        if [[ "$goflags" == *"-tags="* ]]; then
-            print_warn "GOFLAGS already contains -tags, overriding for this build"
-            goflags="$(echo "$goflags" | sed -E 's/(^| )-tags=[^ ]+//g' | xargs)"
-        fi
-        goflags="${goflags:+$goflags }-tags=${BUILD_TAGS}"
+    if [[ "$goflags" == *"-tags="* ]]; then
+        print_warn "GOFLAGS already contains -tags, overriding for this build"
+        goflags="$(echo "$goflags" | sed -E 's/(^| )-tags=[^ ]+//g' | xargs)"
     fi
 
-    GOFLAGS="$goflags" wails build -platform "${platform}/${arch}" -clean
+    local cmd=(wails build -platform "${platform}/${arch}" -clean)
+    if [ -n "$tags" ]; then
+        cmd+=(-tags "$tags")
+    fi
+
+    GOFLAGS="$goflags" "${cmd[@]}"
 }
 
 package_desktop() {
     local platform="$1"
     local arch="$2"
-    local suffix
-    suffix="$(variant_suffix "$BUILD_TAGS")"
+    local variant_name="$3"
 
     mkdir -p "${OUTPUT_DIR}"
 
-    local bin_name="cliSimpleHub"
-    if [ ! -f "desktop/build/bin/${bin_name}" ] && [ -f "desktop/build/bin/CliSimpleHub" ]; then
-        bin_name="CliSimpleHub"
-    fi
-
     case "${platform}" in
         darwin)
-            if [ -d "desktop/build/bin/CliSimpleHub.app" ]; then
-                sign_macos_app "desktop/build/bin/CliSimpleHub.app"
-                notarize_macos_app "desktop/build/bin/CliSimpleHub.app"
+            local app_name="CliSimpleHub.app"
+            local archive_path="${OUTPUT_DIR}/${variant_name}${VERSION}-${platform}-${arch}.zip"
+            if [ -d "desktop/build/bin/${app_name}" ]; then
+                sign_macos_app "desktop/build/bin/${app_name}"
+                notarize_macos_app "desktop/build/bin/${app_name}"
 
+                rm -f "${archive_path}"
                 cd desktop/build/bin
-                zip -r "../../../${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip" "CliSimpleHub.app"
+                zip -r "../../../${archive_path}" "${app_name}"
                 cd ../../..
-                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip"
+                print_info "Created: ${archive_path}"
             else
-                tar -czf "${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.tar.gz" -C desktop/build/bin "$bin_name"
-                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.tar.gz"
+                print_warn "desktop/build/bin/${app_name} not found, skipping packaging"
             fi
             ;;
         linux)
-            tar -czf "${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.tar.gz" -C desktop/build/bin "$bin_name"
-            print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.tar.gz"
+            local bin_name="cliSimpleHub"
+            if [ ! -f "desktop/build/bin/${bin_name}" ] && [ -f "desktop/build/bin/CliSimpleHub" ]; then
+                bin_name="CliSimpleHub"
+            fi
+            if [ -f "desktop/build/bin/${bin_name}" ]; then
+                tar -czf "${OUTPUT_DIR}/${variant_name}${VERSION}-${platform}-${arch}.tar.gz" -C desktop/build/bin "${bin_name}"
+                print_info "Created: ${OUTPUT_DIR}/${variant_name}${VERSION}-${platform}-${arch}.tar.gz"
+            else
+                print_warn "desktop/build/bin/${bin_name} not found, skipping packaging"
+            fi
             ;;
         windows)
-            if [ -f "desktop/build/bin/cliSimpleHub.exe" ]; then
-                zip -j "${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip" desktop/build/bin/cliSimpleHub.exe
-                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip"
-            elif [ -f "desktop/build/bin/CliSimpleHub.exe" ]; then
-                zip -j "${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip" desktop/build/bin/CliSimpleHub.exe
-                print_info "Created: ${OUTPUT_DIR}/cliSimpleHub${VERSION}-${platform}-${arch}${suffix}.zip"
+            local exe_name="cliSimpleHub.exe"
+            local archive_path="${OUTPUT_DIR}/${variant_name}${VERSION}-${platform}-${arch}.zip"
+            if [ ! -f "desktop/build/bin/${exe_name}" ] && [ -f "desktop/build/bin/CliSimpleHub.exe" ]; then
+                exe_name="CliSimpleHub.exe"
+            fi
+            if [ -f "desktop/build/bin/${exe_name}" ]; then
+                rm -f "${archive_path}"
+                zip -j "${archive_path}" "desktop/build/bin/${exe_name}"
+                print_info "Created: ${archive_path}"
             else
-                print_warn "desktop/build/bin/cliSimpleHub.exe not found, skipping packaging"
+                print_warn "desktop/build/bin/${exe_name} not found, skipping packaging"
             fi
             ;;
         *)
@@ -237,29 +262,46 @@ package_desktop() {
     esac
 }
 
+build_desktop_variant() {
+    local platform="$1"
+    local arch="$2"
+    local variant_name="$3"
+    local tags="$4"
+
+    print_info "Building desktop variant ${variant_name}: ${platform}/${arch} tags=${tags:-none}"
+
+    cd desktop
+    run_wails_build "${platform}" "${arch}" "${tags}"
+    cd ..
+
+    package_desktop "${platform}" "${arch}" "${variant_name}"
+}
+
 # Build desktop for a specific platform
 build_desktop_platform() {
     local platform=$1
     local arch=$2
+    local default_tags
+    local proxy_tags
+
+    default_tags="$(remove_build_tag "$BUILD_TAGS" "proxy")"
+    proxy_tags="$(append_build_tags "$default_tags" "proxy")"
 
     print_info "Building for ${platform}/${arch}..."
 
     # Check port availability (warning only, don't block build)
     check_port_5600 || print_warn "Continuing build despite port conflict..."
 
-    cd desktop
-    run_wails_build "${platform}" "${arch}"
-    cd ..
-
-    package_desktop "${platform}" "${arch}"
+    build_desktop_variant "${platform}" "${arch}" "cliSimpleHub" "${default_tags}"
+    build_desktop_variant "${platform}" "${arch}" "cliSimpleHub-proxy" "${proxy_tags}"
 }
 
-package_server() {
+package_server_variant() {
     local platform="$1"
     local arch="$2"
+    local variant_name="$3"
+    local tags="$4"
     local staging_dir="${OUTPUT_DIR}/.staging"
-    local suffix
-    suffix="$(variant_suffix "$BUILD_TAGS")"
 
     mkdir -p "${OUTPUT_DIR}"
     mkdir -p "${staging_dir}"
@@ -269,28 +311,43 @@ package_server() {
         ext=".exe"
     fi
 
-    local base="cliSimpleHub-server${VERSION}-${platform}-${arch}${suffix}"
-    local bin_name="cliSimpleHub-server${ext}"
-    local bin_path="${staging_dir}/${bin_name}"
+    local base="${variant_name}${VERSION}-${platform}-${arch}"
+    local package_bin_name="${variant_name%-proxy}${ext}"
+    local bin_path="${staging_dir}/${package_bin_name}"
 
     local tags_args=()
-    if [ -n "$BUILD_TAGS" ]; then
-        tags_args=(-tags "$BUILD_TAGS")
+    if [ -n "$tags" ]; then
+        tags_args=(-tags "$tags")
     fi
 
-    print_info "Building server binary: ${platform}/${arch} tags=${BUILD_TAGS:-none}"
+    print_info "Building server binary: ${variant_name} ${platform}/${arch} tags=${tags:-none}"
     GOOS="$platform" GOARCH="$arch" CGO_ENABLED="${CGO_ENABLED:-0}" go build -trimpath "${tags_args[@]}" -o "$bin_path" ./cmd/server
 
     if [ "$platform" = "windows" ]; then
-        zip -j "${OUTPUT_DIR}/${base}.zip" "$bin_path"
-        print_info "Created: ${OUTPUT_DIR}/${base}.zip"
+        local archive_path="${OUTPUT_DIR}/${base}.zip"
+        rm -f "${archive_path}"
+        zip -j "${archive_path}" "$bin_path"
+        print_info "Created: ${archive_path}"
     else
-        tar -czf "${OUTPUT_DIR}/${base}.tar.gz" -C "$staging_dir" "$bin_name"
+        tar -czf "${OUTPUT_DIR}/${base}.tar.gz" -C "$staging_dir" "${package_bin_name}"
         print_info "Created: ${OUTPUT_DIR}/${base}.tar.gz"
     fi
 
     rm -f "$bin_path"
     rmdir "$staging_dir" 2>/dev/null || true
+}
+
+build_server_platform() {
+    local platform="$1"
+    local arch="$2"
+    local default_tags
+    local proxy_tags
+
+    default_tags="$(remove_build_tag "$BUILD_TAGS" "proxy")"
+    proxy_tags="$(append_build_tags "$default_tags" "proxy")"
+
+    package_server_variant "$platform" "$arch" "cliSimpleHub-server" "$default_tags"
+    package_server_variant "$platform" "$arch" "cliSimpleHub-server-proxy" "$proxy_tags"
 }
 
 # Show usage
@@ -307,7 +364,6 @@ usage() {
     echo ""
     echo "Options:"
     echo "  -v, --version VERSION    Set version string (default: dev)"
-    echo "  --noclash                Build with 'noclash' tag (exclude clash plugin)"
     echo "  --tags TAG,LIST          Additional Go build tags (comma-separated)"
     echo "  --platform OS/ARCH       Build a specific platform (repeatable)"
     echo "  --no-deps                Skip npm install (desktop only)"
@@ -320,8 +376,8 @@ usage() {
     echo ""
     echo "Examples:"
     echo "  $0                                 # desktop current"
-    echo "  $0 linux --noclash                 # desktop linux (noclash)"
-    echo "  $0 server current --noclash        # server current (noclash)"
+    echo "  $0 linux                           # desktop linux + desktop linux-proxy"
+    echo "  $0 server current                  # server current + server current-proxy"
     echo "  $0 both --platform linux/amd64     # desktop+server linux/amd64"
 }
 
@@ -372,7 +428,7 @@ build_targets() {
                 print_error "Invalid --platform: $p (expected OS/ARCH)"
                 exit 1
             fi
-            package_server "$os" "$arch"
+            build_server_platform "$os" "$arch"
         done
     fi
 }
@@ -419,10 +475,6 @@ while [[ $# -gt 0 ]]; do
         --platform)
             PLATFORMS+=("$2")
             shift 2
-            ;;
-        --noclash)
-            BUILD_TAGS="$(append_build_tags "$BUILD_TAGS" "noclash")"
-            shift
             ;;
         --tags)
             BUILD_TAGS="$(append_build_tags "$BUILD_TAGS" "$2")"

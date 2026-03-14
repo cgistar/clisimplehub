@@ -5,17 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 
+	clashplugin "clisimplehub/internal/clash/plugin"
 	"clisimplehub/internal/plugin"
 )
 
 // clashProvider returns the cached ClashDesktopProvider or nil.
 func clashProvider() plugin.ClashDesktopProvider {
+	if !clashplugin.ShouldShowClashUI() {
+		return nil
+	}
 	return plugin.GetClashDesktopProviderCached()
 }
 
-// IsClashAvailable returns true if the clash plugin is compiled and available.
+// IsClashAvailable returns true if Clash should be shown in the desktop UI.
 func (a *App) IsClashAvailable() bool {
-	return clashProvider() != nil
+	return clashplugin.ShouldShowClashUI() && clashProvider() != nil
 }
 
 // GetClashStatus returns the current Clash service status.

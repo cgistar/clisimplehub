@@ -16,11 +16,11 @@ import (
 	"clisimplehub/internal/executor"
 	kiroapi "clisimplehub/internal/kiro"
 	kiro_claude "clisimplehub/internal/kiro/claude"
-	kiro_chat "clisimplehub/internal/kiro/openai/chat-completions"
 	kiroShared "clisimplehub/internal/kiro/shared"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
+	chat_anthropic "clisimplehub/internal/transformer/chat/anthropic/messages"
 )
 
 type kiroSyncAbsentMarker struct {
@@ -49,17 +49,14 @@ func (p *KiroPlugin) Init(cfg plugin.InitConfig) error {
 	transformer.RegisterFactory("claude", "kiro/claude", func() transformer.Transformer {
 		return kiro_claude.NewTransformer()
 	})
-	transformer.RegisterFactory("chat", "kiro/chat", func() transformer.Transformer {
-		return kiro_chat.NewTransformer()
+	transformer.RegisterFactory("chat", "kiro/claude", func() transformer.Transformer {
+		return chat_anthropic.Transformer{}
 	})
 	transformer.RegisterAvailability("kiro", func() map[string][]string {
-		if !kiro_claude.HasValidLocalAccessToken() {
-			return nil
-		}
 		return map[string][]string{
 			"claude": {"kiro/claude"},
 			"kiro":   {"claude"},
-			"chat":   {"kiro/chat"},
+			"chat":   {"kiro/claude"},
 		}
 	})
 

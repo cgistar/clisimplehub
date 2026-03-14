@@ -88,11 +88,11 @@ onMounted(() => {
 
           <!-- Clash (Vue) -->
           <div
-            v-show="activeTab === 'clash'"
+            v-show="showClash && activeTab === 'clash'"
             class="main-container clash-view"
             id="clashView"
           >
-            <ClashPage :active="activeTab === 'clash'" />
+            <ClashPage :active="showClash && activeTab === 'clash'" />
           </div>
 
           <!-- Settings (Vue) -->

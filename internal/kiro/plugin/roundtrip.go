@@ -20,8 +20,8 @@ func (s *KiroService) RoundTrip(ctx context.Context, req *executor.UpstreamReque
 	}
 
 	recorder := httptest.NewRecorder()
-	legacyBody, legacyModel := legacyForwardInput(req)
-	result := s.Forward(ctx, legacyBody, legacyModel, req.IsStreaming, recorder, req.OriginalPath)
+	forwardBody, forwardModel := forwardInput(req)
+	result := s.Forward(ctx, forwardBody, forwardModel, req.IsStreaming, recorder, req.OriginalPath)
 	if result == nil {
 		return &executor.UpstreamRoundTripResult{
 			StatusCode: 0,
@@ -29,7 +29,7 @@ func (s *KiroService) RoundTrip(ctx context.Context, req *executor.UpstreamReque
 		}
 	}
 
-	if req.TransformContext != nil {
+	if req.TransformContext != nil && shouldSkipOuterResponseTransform(req) {
 		if req.TransformContext.Metadata == nil {
 			req.TransformContext.Metadata = make(map[string]any)
 		}
@@ -53,9 +53,20 @@ func (s *KiroService) RoundTrip(ctx context.Context, req *executor.UpstreamReque
 	return roundTrip
 }
 
-func legacyForwardInput(req *executor.UpstreamRequest) ([]byte, string) {
+func forwardInput(req *executor.UpstreamRequest) ([]byte, string) {
 	if req == nil {
 		return nil, ""
+	}
+
+	if isChatConversion(req) {
+		body := append([]byte(nil), req.Body...)
+		model := strings.TrimSpace(req.RequestModel)
+		if model == "" && req.TransformContext != nil && req.TransformContext.Metadata != nil {
+			if upstreamModel, _ := req.TransformContext.Metadata["upstream_model"].(string); strings.TrimSpace(upstreamModel) != "" {
+				model = strings.TrimSpace(upstreamModel)
+			}
+		}
+		return body, model
 	}
 
 	body := append([]byte(nil), req.Body...)
@@ -76,6 +87,23 @@ func legacyForwardInput(req *executor.UpstreamRequest) ([]byte, string) {
 		model = strings.TrimSpace(requestModel)
 	}
 	return body, model
+}
+
+func isChatConversion(req *executor.UpstreamRequest) bool {
+	if req == nil || req.TransformContext == nil || req.TransformContext.Metadata == nil {
+		return false
+	}
+	if chatConversion, _ := req.TransformContext.Metadata["chat_conversion"].(bool); chatConversion {
+		return true
+	}
+	if sourceType, _ := req.TransformContext.Metadata["source_type"].(string); strings.EqualFold(strings.TrimSpace(sourceType), "chat") {
+		return true
+	}
+	return false
+}
+
+func shouldSkipOuterResponseTransform(req *executor.UpstreamRequest) bool {
+	return !isChatConversion(req)
 }
 
 func selectRoundTripHeaders(result *executor.ForwardResult, recorder *httptest.ResponseRecorder, streamed bool) http.Header {

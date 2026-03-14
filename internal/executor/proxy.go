@@ -36,6 +36,45 @@ var (
 	sharedTransport     *http.Transport
 )
 
+type modelSuffixParts struct {
+	baseModel string
+	rawSuffix string
+	hasSuffix bool
+}
+
+func splitModelSuffix(model string) modelSuffixParts {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return modelSuffixParts{}
+	}
+
+	lastOpen := strings.LastIndex(model, "(")
+	if lastOpen == -1 || !strings.HasSuffix(model, ")") {
+		return modelSuffixParts{baseModel: model}
+	}
+
+	return modelSuffixParts{
+		baseModel: strings.TrimSpace(model[:lastOpen]),
+		rawSuffix: model[lastOpen:],
+		hasSuffix: true,
+	}
+}
+
+func applyModelSuffix(model, suffix string) string {
+	model = strings.TrimSpace(model)
+	suffix = strings.TrimSpace(suffix)
+	if model == "" || suffix == "" {
+		return model
+	}
+	if strings.HasSuffix(model, suffix) {
+		return model
+	}
+	if split := splitModelSuffix(model); split.hasSuffix {
+		return model
+	}
+	return model + suffix
+}
+
 func getSharedTransport() *http.Transport {
 	sharedTransportOnce.Do(func() {
 		sharedTransport = newBaseTransport()
@@ -221,21 +260,35 @@ func ResolveUpstreamModel(requestModel string, endpoint *EndpointConfig) string 
 		return ""
 	}
 
+	requestParts := splitModelSuffix(requestModel)
+	requestBaseModel := strings.TrimSpace(requestParts.baseModel)
+	if requestBaseModel == "" {
+		requestBaseModel = strings.TrimSpace(requestModel)
+	}
+
 	// 检查模型映射
 	for _, mapping := range endpoint.Models {
 		alias := strings.TrimSpace(mapping.Alias)
 		name := strings.TrimSpace(mapping.Name)
+		aliasBase := strings.TrimSpace(splitModelSuffix(alias).baseModel)
+		nameBase := strings.TrimSpace(splitModelSuffix(name).baseModel)
 
 		// 如果请求的模型匹配别名，返回实际模型名
-		if alias != "" && strings.EqualFold(alias, requestModel) {
+		if alias != "" && (strings.EqualFold(alias, requestModel) || (aliasBase != "" && strings.EqualFold(aliasBase, requestBaseModel))) {
 			if name != "" {
+				if requestParts.hasSuffix {
+					return applyModelSuffix(name, requestParts.rawSuffix)
+				}
 				return name
 			}
 			return requestModel
 		}
 
 		// 如果请求的模型匹配实际名称，直接返回
-		if name != "" && strings.EqualFold(name, requestModel) {
+		if name != "" && (strings.EqualFold(name, requestModel) || (nameBase != "" && strings.EqualFold(nameBase, requestBaseModel))) {
+			if requestParts.hasSuffix {
+				return applyModelSuffix(name, requestParts.rawSuffix)
+			}
 			return name
 		}
 	}

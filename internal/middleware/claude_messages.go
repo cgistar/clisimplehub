@@ -4,8 +4,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-
-	"github.com/tidwall/gjson"
 )
 
 // IsClaudeMessagesPath 判断请求路径是否为 POST /v1/messages（精确匹配，排除子路径如 count_tokens）。
@@ -35,41 +33,11 @@ func ClaudeMessagesAdaptMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		original := body // 保留原始 body 用于 fallback
-		isStream := detectStream(r, body)
-		userAgent := r.Header.Get("User-Agent")
-
-		// Body 改写链
-		body, _ = normalizeModel(body)
-		body = applyCloaking(body, userAgent)
-		body = disableThinkingIfToolChoiceForced(body)
-		body = ensureCacheControl(body)
-		body = enforceCacheControlLimit(body, 4)
-		body = normalizeCacheControlTTL(body)
-		extraBetas, body := extractAndRemoveBetas(body)
-
-		// 防护: 如果处理链导致 body 变 nil，回退到原始 body
-		if body == nil {
-			body = original
-		}
-
+		body, headers, rawQuery := NormalizeClaudeMessagesRequest(body, r.Header, r.URL.RawQuery)
 		restoreRequestBody(r, body)
-
-		// Header 改写
-		applyClaudeHeaders(r, extraBetas, isStream)
-		appendBetaQueryParam(r)
+		r.Header = headers
+		r.URL.RawQuery = rawQuery
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-// detectStream 检测请求是否为流式。
-func detectStream(r *http.Request, body []byte) bool {
-	if strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream") {
-		return true
-	}
-	if v := strings.TrimSpace(r.URL.Query().Get("stream")); strings.EqualFold(v, "true") || v == "1" {
-		return true
-	}
-	return gjson.GetBytes(body, "stream").Bool()
 }

@@ -81,6 +81,7 @@ export interface SettingsPayload {
   port: number
   apiKey: string
   proxyUrl?: string
+  clashPath?: string
   fallback: boolean
   debugMode?: string
   listenAddr?: string

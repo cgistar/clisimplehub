@@ -33,3 +33,11 @@ func GetAppProxyURL() string {
 	}
 	return strings.TrimSpace(value)
 }
+
+func GetAppClashPath() string {
+	value, err := GetConfigValue("clashPath")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}

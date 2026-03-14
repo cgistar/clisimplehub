@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	chat_anthropic "clisimplehub/internal/transformer/chat/anthropic/messages"
 	chat_responses "clisimplehub/internal/transformer/chat/openai/responses"
 	claude_gemini "clisimplehub/internal/transformer/claude/gemini"
 	claude_chat "clisimplehub/internal/transformer/claude/openai/chat-completions"
@@ -122,10 +123,12 @@ func getFromCodex(spec string) (Transformer, error) {
 
 func getFromChat(spec string) (Transformer, error) {
 	switch {
+	case strings.Contains(spec, "anthropic/messages") || strings.Contains(spec, "anthropic"):
+		return chat_anthropic.Transformer{}, nil
 	case strings.Contains(spec, "responses"):
 		return chat_responses.Transformer{}, nil
 	default:
-		return nil, fmt.Errorf("unsupported chat transformer spec=%q (expected openai/responses)", spec)
+		return nil, fmt.Errorf("unsupported chat transformer spec=%q (expected openai/responses | anthropic/messages)", spec)
 	}
 }
 
@@ -145,7 +148,7 @@ func List(fromInterfaceType string) ([]string, error) {
 		if specs, ok := avail["chat"]; ok && len(specs) > 0 {
 			out = append(out, specs...)
 		}
-		out = append(out, "openai/responses")
+		out = append(out, "openai/responses", "anthropic/messages")
 		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported transformer source interfaceType=%q", fromInterfaceType)
@@ -157,7 +160,7 @@ func ListAll() map[string][]string {
 	out := map[string][]string{
 		"claude": {"openai/chat-completions", "openai/responses", "gemini"},
 		"codex":  {"openai/chat-completions"},
-		"chat":   {"openai/responses"},
+		"chat":   {"openai/responses", "anthropic/messages"},
 	}
 
 	for k, v := range registeredAvailability() {

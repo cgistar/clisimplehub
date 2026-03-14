@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NInput, NModal, NRadioButton, NRadioGroup, NSelect } from 'naive-ui'
+import { NButton, NInput, NInputGroup, NModal, NRadioButton, NRadioGroup, NSelect } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { endpointApi } from '@/api/endpoint'
 import { useSettings } from '@/composables/useSettings'
@@ -41,6 +41,7 @@ const savingServer = ref(false)
 const testingServer = ref(false)
 const syncingServer = ref(false)
 const copyingServerCurl = ref(false)
+const pickingClashPath = ref(false)
 const generalAutoSaveReady = ref(false)
 const lastSavedGeneralSnapshot = ref('')
 let generalSaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -239,6 +240,7 @@ function getGeneralSnapshot(): string {
     port: Number(settingsForm.value.port),
     apiKey: String(settingsForm.value.apiKey || ''),
     proxyUrl: String(settingsForm.value.proxyUrl || '').trim(),
+    clashPath: String(settingsForm.value.clashPath || '').trim(),
     fallback: !!settingsForm.value.fallback,
     debugMode: String(settingsForm.value.debugMode || ''),
     listenAddr: String(settingsForm.value.listenAddr || ''),
@@ -295,6 +297,21 @@ async function onLanguageSelect(lang: string | number | boolean | null): Promise
   await onLanguageSelectCore(lang)
 }
 
+async function pickClashExecutable(): Promise<void> {
+  if (pickingClashPath.value) return
+
+  pickingClashPath.value = true
+  try {
+    const selectedPath = await endpointApi.pickClashExecutable()
+    if (!selectedPath) return
+    settingsForm.value.clashPath = selectedPath
+  } catch (error) {
+    feedback.error(t('settings.saveFailed') + ': ' + toErrorMessage(error))
+  } finally {
+    pickingClashPath.value = false
+  }
+}
+
 async function testWebDAVConnection(): Promise<void> {
   testingWebdav.value = true
   try {
@@ -321,6 +338,7 @@ watch(
     settingsForm.value.port,
     settingsForm.value.apiKey,
     settingsForm.value.proxyUrl,
+    settingsForm.value.clashPath,
     settingsForm.value.fallback,
     settingsForm.value.debugMode,
     settingsForm.value.listenAddr,
@@ -696,6 +714,23 @@ onMounted(() => {
           <div>
             <input v-model="settingsForm.proxyUrl" type="text" :placeholder="t('settings.proxyUrlPlaceholder')">
             <small>{{ t('settings.proxyUrlHelp') }}</small>
+          </div>
+
+          <label>{{ t('settings.clashPath') }}</label>
+          <div>
+            <n-input-group>
+              <n-input
+                v-model:value="settingsForm.clashPath"
+                :placeholder="t('settings.clashPathPlaceholder')"
+              />
+              <n-button
+                :disabled="pickingClashPath"
+                @click="pickClashExecutable"
+              >
+                ...
+              </n-button>
+            </n-input-group>
+            <small>{{ t('settings.clashPathHelp') }}</small>
           </div>
 
           <label>{{ t('settings.fallback') }}</label>

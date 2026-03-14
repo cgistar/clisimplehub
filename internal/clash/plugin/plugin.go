@@ -41,6 +41,11 @@ func (p *ClashPlugin) Init(cfg plugin.InitConfig) error {
 	if runtimeYAML, ready, err := buildRuntimeYAMLForConfig(svc.config.Get()); err != nil {
 		log.Printf("[clash] auto-start skipped (invalid chain): %v", err)
 	} else if ready {
+		if !CanStartManagedRuntime() {
+			log.Printf("[clash] auto-start skipped: no usable runtime configured")
+			_ = runtimeYAML
+			return nil
+		}
 		if err := svc.Start(); err != nil {
 			log.Printf("[clash] auto-start failed: %v", err)
 		} else {

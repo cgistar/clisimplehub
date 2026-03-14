@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1779,12 +1778,9 @@ func (s *ClashService) restartRuntime() error {
 }
 
 func (s *ClashService) startWithRuntime(runtimeYAML []byte) error {
-	runtimePath := filepath.Join(s.dataDir, "clash-runtime.yaml")
-	_ = os.WriteFile(runtimePath, runtimeYAML, 0o600)
-
-	inst, err := startMihomoInstance(runtimeYAML, s.dataDir)
+	inst, err := startRuntimeInstance(runtimeYAML, s.dataDir)
 	if err != nil {
-		return fmt.Errorf("start mihomo: %w", err)
+		return fmt.Errorf("start clash runtime: %w", err)
 	}
 	s.instance = inst
 	s.running = true

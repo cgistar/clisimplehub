@@ -243,6 +243,10 @@ export const endpointApi = {
     return App.GetSettings()
   },
 
+  async pickClashExecutable(): Promise<string> {
+    return App.PickClashExecutable()
+  },
+
   async getStatsByInterfaceType(range: string): Promise<InterfaceTypeStatsSummaryInfo[]> {
     return App.GetStatsByInterfaceType(range)
   },

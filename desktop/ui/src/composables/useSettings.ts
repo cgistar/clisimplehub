@@ -20,6 +20,7 @@ function normalizeSettings(settings: SettingsPayload): SettingsPayload {
     port: settings.port || 5600,
     apiKey: settings.apiKey || '',
     proxyUrl: settings.proxyUrl || '',
+    clashPath: settings.clashPath || '',
     fallback: !!settings.fallback,
     debugMode: settings.debugMode || '',
     listenAddr: settings.listenAddr || ''
@@ -59,6 +60,7 @@ export function useSettings() {
 	    port: 5600,
 	    apiKey: '',
 	    proxyUrl: '',
+	    clashPath: '',
 	    fallback: false,
 	    debugMode: '',
 	    listenAddr: ''
@@ -153,6 +155,7 @@ export function useSettings() {
       await endpointApi.saveSettings({
         ...settingsForm.value,
         proxyUrl: String(settingsForm.value.proxyUrl || '').trim(),
+        clashPath: String(settingsForm.value.clashPath || '').trim(),
         port
       })
       await endpointApi.reloadConfig()

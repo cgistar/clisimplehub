@@ -9,6 +9,7 @@ function normalizeSettings(settings: SettingsPayload): SettingsPayload {
     port: settings.port || 5600,
     apiKey: settings.apiKey || '',
     fallback: !!settings.fallback,
+    clashPath: settings.clashPath || '',
     debugMode: settings.debugMode || '',
     listenAddr: settings.listenAddr || ''
   }
@@ -19,6 +20,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<SettingsPayload>({
     port: 5600,
     apiKey: '',
+    clashPath: '',
     fallback: false,
     debugMode: '',
     listenAddr: ''
