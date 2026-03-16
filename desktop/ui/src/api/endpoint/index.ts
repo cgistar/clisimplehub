@@ -10,6 +10,7 @@ import type {
   PingResult,
   InterfaceTypeStatsSummaryInfo,
   ProcessCodexConfigResult,
+  ProxyStatusPayload,
   RequestLogDetail,
   RequestLogInfo,
   SettingsPayload,
@@ -257,6 +258,14 @@ export const endpointApi = {
 
   async saveSettings(settings: SettingsPayload): Promise<void> {
     await App.SaveSettings(settings)
+  },
+
+  async getProxyStatus(): Promise<ProxyStatusPayload> {
+    return App.GetProxyStatus() as Promise<ProxyStatusPayload>
+  },
+
+  async startProxy(): Promise<void> {
+    await App.StartProxy()
   },
 
   async reloadConfig(): Promise<void> {

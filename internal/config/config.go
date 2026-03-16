@@ -301,19 +301,45 @@ func IsValidEndpoint(endpoint *EndpointConfig) bool {
 	return len(ValidateEndpoint(endpoint)) == 0
 }
 
-// IsPortAvailable 检查端口是否可用
-func IsPortAvailable(port int) error {
+func normalizeListenAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "0.0.0.0"
+	}
+	return addr
+}
+
+func listenNetwork(addr string) string {
+	switch normalizeListenAddr(addr) {
+	case "::", "::1":
+		return "tcp6"
+	default:
+		return "tcp4"
+	}
+}
+
+// IsListenAddrPortAvailable 检查指定监听地址上的端口是否可用
+func IsListenAddrPortAvailable(listenAddr string, port int) error {
 	if err := ValidatePort(port); err != nil {
 		return err
 	}
+	listenAddr = normalizeListenAddr(listenAddr)
+	if err := ValidateListenAddr(listenAddr); err != nil {
+		return err
+	}
 
-	addr := fmt.Sprintf(":%d", port)
-	listener, err := net.Listen("tcp", addr)
+	addr := net.JoinHostPort(listenAddr, strconv.Itoa(port))
+	listener, err := net.Listen(listenNetwork(listenAddr), addr)
 	if err != nil {
-		return fmt.Errorf("端口 %d 已被占用或无法使用: %w", port, err)
+		return fmt.Errorf("地址 %s 已被占用或无法使用: %w", addr, err)
 	}
 	listener.Close()
 	return nil
+}
+
+// IsPortAvailable 检查默认监听地址上的端口是否可用
+func IsPortAvailable(port int) error {
+	return IsListenAddrPortAvailable("0.0.0.0", port)
 }
 
 // ValidateListenAddr validates a listen address

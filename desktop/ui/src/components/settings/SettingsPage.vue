@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NInput, NInputGroup, NModal, NRadioButton, NRadioGroup, NSelect } from 'naive-ui'
+import { NAlert, NButton, NInput, NInputGroup, NModal, NRadioButton, NRadioGroup, NSelect } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { endpointApi } from '@/api/endpoint'
 import { useSettings } from '@/composables/useSettings'
 import { useFeedback } from '@/composables/useFeedback'
 import '@/styles/pages/settings.css'
-import type { BackupData, RestoreMode, ServerConfig, WebDAVBackupItem, WebDAVConfig } from '@/types/endpoint'
+import type { BackupData, ProxyStatusPayload, RestoreMode, ServerConfig, WebDAVBackupItem, WebDAVConfig } from '@/types/endpoint'
 
 const BACKUP_DIR = '/clisimplehub'
 
@@ -45,9 +45,17 @@ const pickingClashPath = ref(false)
 const generalAutoSaveReady = ref(false)
 const lastSavedGeneralSnapshot = ref('')
 let generalSaveTimer: ReturnType<typeof setTimeout> | null = null
+let offProxyStatusEvent: (() => void) | null = null
 
 const backups = ref<WebDAVBackupItem[]>([])
 const servers = ref<ServerConfig[]>([])
+const retryingProxyStart = ref(false)
+const proxyStatus = ref<ProxyStatusPayload>({
+  running: false,
+  port: 0,
+  listenAddr: '',
+  lastError: ''
+})
 const selectedServerIndex = ref<number>(-1)
 const serverFormVisible = ref(false)
 const editingServerIndex = ref<number>(-1)
@@ -71,6 +79,7 @@ const selectedServer = computed(() => {
 const serverFormTitle = computed(() =>
   editingServerIndex.value >= 0 ? t('serverSync.edit') : t('serverSync.add')
 )
+const proxyStartupError = computed(() => String(proxyStatus.value.lastError || '').trim())
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -226,6 +235,14 @@ async function loadPageData(): Promise<void> {
   }
 }
 
+async function refreshProxyStatus(): Promise<void> {
+  try {
+    proxyStatus.value = await endpointApi.getProxyStatus()
+  } catch (error) {
+    console.error('Failed to load proxy status:', error)
+  }
+}
+
 function formatBackupTime(raw?: string): string {
   if (!raw) return '-'
   const date = new Date(raw)
@@ -277,6 +294,7 @@ async function saveGeneralSettings(quiet = false): Promise<void> {
   savingGeneral.value = true
   try {
     const saved = await saveGeneralSettingsCore({ quiet })
+    await refreshProxyStatus()
     if (saved) {
       updateGeneralSnapshot()
     }
@@ -290,6 +308,21 @@ async function saveGeneralSettings(quiet = false): Promise<void> {
     ) {
       scheduleGeneralAutoSave()
     }
+  }
+}
+
+async function retryProxyStart(): Promise<void> {
+  if (retryingProxyStart.value) return
+
+  retryingProxyStart.value = true
+  try {
+    await endpointApi.startProxy()
+    await refreshProxyStatus()
+  } catch (error) {
+    feedback.error(t('settings.retryProxyStartFailed') + ': ' + toErrorMessage(error))
+    await refreshProxyStatus()
+  } finally {
+    retryingProxyStart.value = false
   }
 }
 
@@ -352,6 +385,8 @@ watch(
 
 onBeforeUnmount(() => {
   clearGeneralSaveTimer()
+  offProxyStatusEvent?.()
+  offProxyStatusEvent = null
 })
 
 async function backupToWebDAV(): Promise<void> {
@@ -656,6 +691,21 @@ async function copySelectedServerCurl(): Promise<void> {
 
 onMounted(() => {
   void loadPageData()
+  void refreshProxyStatus()
+
+  try {
+    const runtime = (window as Window & { runtime?: { EventsOn?: (event: string, callback: () => void) => (() => void) | void } }).runtime
+    if (runtime?.EventsOn) {
+      const off = runtime.EventsOn('proxy:status-changed', () => {
+        void refreshProxyStatus()
+      })
+      if (typeof off === 'function') {
+        offProxyStatusEvent = off
+      }
+    }
+  } catch {
+    // ignore
+  }
 })
 </script>
 
@@ -688,21 +738,37 @@ onMounted(() => {
             </n-radio-button>
           </n-radio-group>
 
-	          <label>{{ t('settings.port') }}</label>
-	          <div>
-	            <input v-model.number="settingsForm.port" type="number" min="1" max="65535" placeholder="5600">
-	            <small>{{ t('settings.portHelp') }}</small>
-	          </div>
+          <label>{{ t('settings.port') }}</label>
+          <div>
+            <n-alert
+              v-if="proxyStartupError"
+              type="error"
+              :title="t('settings.proxyStartFailedTitle')"
+              style="margin-bottom: 12px"
+            >
+              <div>{{ t('settings.proxyStartFailedHelp') }}</div>
+              <div style="margin-top: 6px; word-break: break-word;">
+                {{ proxyStartupError }}
+              </div>
+              <template #action>
+                <n-button size="small" :loading="retryingProxyStart" @click="retryProxyStart">
+                  {{ t('common.retry') }}
+                </n-button>
+              </template>
+            </n-alert>
+            <input v-model.number="settingsForm.port" type="number" min="1" max="65535" placeholder="5600">
+            <small>{{ t('settings.portHelp') }}</small>
+          </div>
 
-	          <label>{{ t('settings.listenAddr') }}</label>
-	          <div>
-	            <input
-	              v-model="settingsForm.listenAddr"
-	              type="text"
-	              :placeholder="t('settings.listenAddrPlaceholder')"
-	            >
-	            <small>{{ t('settings.listenAddrHelp') }}</small>
-	          </div>
+          <label>{{ t('settings.listenAddr') }}</label>
+          <div>
+            <input
+              v-model="settingsForm.listenAddr"
+              type="text"
+              :placeholder="t('settings.listenAddrPlaceholder')"
+            >
+            <small>{{ t('settings.listenAddrHelp') }}</small>
+          </div>
 
 	          <label>{{ t('settings.apiKey') }}</label>
 	          <div>

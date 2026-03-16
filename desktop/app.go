@@ -31,7 +31,10 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const configReloadedEventName = "config:reloaded"
+const (
+	configReloadedEventName     = "config:reloaded"
+	proxyStatusChangedEventName = "proxy:status-changed"
+)
 
 // Settings represents the application settings exposed to frontend
 type Settings struct {
@@ -84,6 +87,9 @@ type App struct {
 
 	reloadMu sync.Mutex
 
+	proxyStatusMu  sync.RWMutex
+	lastProxyError string
+
 	kiroSignServer  *http.Server
 	kiroSignMu      sync.Mutex
 	kiroSignTimeout *time.Timer
@@ -114,6 +120,87 @@ func (a *App) GoLogWriter() io.Writer {
 		return io.Discard
 	}
 	return a.logBridge
+}
+
+func normalizeProxyListenAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "0.0.0.0"
+	}
+	return addr
+}
+
+func (a *App) buildProxyStartError(listenAddr string, port int, cause error) error {
+	return fmt.Errorf("代理服务无法监听 %s:%d: %w", normalizeProxyListenAddr(listenAddr), port, cause)
+}
+
+func (a *App) getLastProxyError() string {
+	a.proxyStatusMu.RLock()
+	defer a.proxyStatusMu.RUnlock()
+	return a.lastProxyError
+}
+
+func (a *App) setLastProxyError(message string) {
+	message = strings.TrimSpace(message)
+
+	a.proxyStatusMu.Lock()
+	if a.lastProxyError == message {
+		a.proxyStatusMu.Unlock()
+		return
+	}
+	a.lastProxyError = message
+	a.proxyStatusMu.Unlock()
+
+	a.emitProxyStatusChanged()
+}
+
+func (a *App) clearLastProxyError() {
+	a.setLastProxyError("")
+}
+
+func (a *App) emitProxyStatusChanged() {
+	if a == nil || a.ctx == nil {
+		return
+	}
+	wailsRuntime.EventsEmit(a.ctx, proxyStatusChangedEventName, a.GetProxyStatus())
+}
+
+func (a *App) prepareProxyStart(port int, listenAddr string, checkPort bool) error {
+	if !checkPort {
+		a.clearLastProxyError()
+		return nil
+	}
+
+	if err := config.IsListenAddrPortAvailable(normalizeProxyListenAddr(listenAddr), port); err != nil {
+		wrapped := a.buildProxyStartError(listenAddr, port, err)
+		a.setLastProxyError(wrapped.Error())
+		return wrapped
+	}
+
+	a.clearLastProxyError()
+	return nil
+}
+
+func (a *App) launchProxyServerAsync(port int, listenAddr string) {
+	if a == nil || a.proxyServer == nil {
+		return
+	}
+
+	time.AfterFunc(150*time.Millisecond, func() {
+		a.emitProxyStatusChanged()
+	})
+
+	go func() {
+		if err := a.proxyServer.Start(); err != nil {
+			wrapped := a.buildProxyStartError(listenAddr, port, err)
+			fmt.Printf("Proxy server error: %v\n", wrapped)
+			a.setLastProxyError(wrapped.Error())
+			return
+		}
+
+		a.clearLastProxyError()
+		a.emitProxyStatusChanged()
+	}()
 }
 
 // SetStorage sets the storage instance for the app
@@ -242,6 +329,11 @@ func (a *App) SaveSettings(settings *Settings) error {
 	if err := config.ValidateListenAddr(normalizedListenAddr); err != nil {
 		return fmt.Errorf("invalid listen address: %w", err)
 	}
+	if oldPort != 0 && oldPort != settings.Port {
+		if err := a.prepareProxyStart(settings.Port, normalizedListenAddr, true); err != nil {
+			return err
+		}
+	}
 
 	// Save port to storage
 	if err := a.storage.SetConfig(ConfigKeyPort, strconv.Itoa(settings.Port)); err != nil {
@@ -321,6 +413,15 @@ func (a *App) SetPort(port int) error {
 	if a.proxyServer != nil {
 		oldPort = a.proxyServer.GetPort()
 	}
+	if oldPort != 0 && oldPort != port {
+		listenAddr := ""
+		if a.proxyServer != nil {
+			listenAddr = a.proxyServer.GetListenAddr()
+		}
+		if err := a.prepareProxyStart(port, listenAddr, true); err != nil {
+			return err
+		}
+	}
 
 	// Save to storage
 	// Requirements: 1.3
@@ -375,23 +476,28 @@ func (a *App) restartProxyServerAsync() {
 
 	go func() {
 		port := a.proxyServer.GetPort()
-		listenAddr := a.proxyServer.GetListenAddr()
+		listenAddr := normalizeProxyListenAddr(a.proxyServer.GetListenAddr())
 		fmt.Printf("Restarting proxy server on %s:%d...\n", listenAddr, port)
 
 		// 先停止旧服务器，等待其完全关闭
 		if err := a.proxyServer.Stop(); err != nil {
 			fmt.Printf("Failed to stop proxy server: %v\n", err)
+			a.setLastProxyError(err.Error())
 			return
 		}
+		a.emitProxyStatusChanged()
 
 		// 短暂延迟确保端口完全释放
 		time.Sleep(100 * time.Millisecond)
 
+		if err := a.prepareProxyStart(port, listenAddr, true); err != nil {
+			fmt.Printf("Failed to start proxy server: %v\n", err)
+			return
+		}
+
 		// 启动新服务器
 		fmt.Printf("Starting proxy server on %s:%d...\n", listenAddr, port)
-		if err := a.proxyServer.Start(); err != nil {
-			fmt.Printf("Failed to start proxy server: %v\n", err)
-		}
+		a.launchProxyServerAsync(port, listenAddr)
 	}()
 }
 
@@ -907,14 +1013,20 @@ func (a *App) StartProxy() error {
 	if a.proxyServer == nil {
 		return fmt.Errorf("proxy server not initialized")
 	}
+	if a.proxyServer.IsRunning() {
+		a.clearLastProxyError()
+		a.emitProxyStatusChanged()
+		return nil
+	}
+
+	port := a.proxyServer.GetPort()
+	listenAddr := normalizeProxyListenAddr(a.proxyServer.GetListenAddr())
+	if err := a.prepareProxyStart(port, listenAddr, true); err != nil {
+		return err
+	}
 
 	// Start in a goroutine since Start() blocks
-	go func() {
-		if err := a.proxyServer.Start(); err != nil {
-			// Log error - in production, this should be handled properly
-			fmt.Printf("Proxy server error: %v\n", err)
-		}
-	}()
+	a.launchProxyServerAsync(port, listenAddr)
 
 	return nil
 }
@@ -924,19 +1036,30 @@ func (a *App) StopProxy() error {
 	if a.proxyServer == nil {
 		return fmt.Errorf("proxy server not initialized")
 	}
-	return a.proxyServer.Stop()
+	if err := a.proxyServer.Stop(); err != nil {
+		return err
+	}
+	a.clearLastProxyError()
+	a.emitProxyStatusChanged()
+	return nil
 }
 
 // GetProxyStatus returns the current proxy status
 func (a *App) GetProxyStatus() map[string]interface{} {
 	status := map[string]interface{}{
-		"running": false,
-		"port":    0,
+		"running":    false,
+		"port":       0,
+		"listenAddr": "",
+		"lastError":  a.getLastProxyError(),
 	}
 
 	if a.proxyServer != nil {
 		status["port"] = a.proxyServer.GetPort()
 		status["running"] = a.proxyServer.IsRunning()
+		status["listenAddr"] = normalizeProxyListenAddr(a.proxyServer.GetListenAddr())
+		if a.proxyServer.IsRunning() {
+			status["lastError"] = ""
+		}
 	}
 
 	return status

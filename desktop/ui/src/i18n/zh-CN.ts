@@ -709,6 +709,10 @@ export default {
     saveFailed: '保存设置失败',
     autoSaveHint: '参数变更后自动保存',
     autoSaving: '正在自动保存...',
+    proxyStartFailedTitle: '代理服务未启动',
+    proxyStartFailedHelp: '当前端口可能已被占用。请修改代理端口或释放占用后重试。',
+    retryProxyStartFailed: '重试启动代理失败',
+    openSettingsAction: '打开设置',
   },
   manage: {
     title: '管理端点',
@@ -817,6 +821,7 @@ export default {
     copy: '复制',
     active: '活动',
     disabled: '禁用',
+    retry: '重试',
     ok: '确定',
     cancel: '取消',
     confirm: '确认',

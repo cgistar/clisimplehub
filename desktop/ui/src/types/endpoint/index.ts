@@ -87,6 +87,13 @@ export interface SettingsPayload {
   listenAddr?: string
 }
 
+export interface ProxyStatusPayload {
+  running: boolean
+  port: number
+  listenAddr?: string
+  lastError?: string
+}
+
 export interface CLIConfigDirsPayload {
   claudeConfigDir: string
   codexConfigDir: string

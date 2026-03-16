@@ -219,14 +219,12 @@ func main() {
 		proxyServer.SetFallbackEnabled(true)
 	}
 
-	// Start proxy server in background
+	// 启动代理服务，但不阻塞 UI 启动。
 	// Requirements: 5.1
-	go func() {
-		log.Printf("Starting proxy server on %s:%d...", listenAddr, port)
-		if err := proxyServer.Start(); err != nil {
-			log.Printf("Proxy server error: %v", err)
-		}
-	}()
+	log.Printf("Starting proxy server on %s:%d...", listenAddr, port)
+	if err := app.StartProxy(); err != nil {
+		log.Printf("Proxy server startup blocked: %v", err)
+	}
 
 	// Create Wails application with options
 	// Requirements: 10.1, 10.2

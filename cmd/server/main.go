@@ -83,11 +83,6 @@ func main() {
 		}
 	}
 
-	// 检查端口是否可用
-	if err := config.IsPortAvailable(port); err != nil {
-		log.Fatalf("启动失败: %v\n请检查端口是否被其他程序占用，或尝试使用其他端口", err)
-	}
-
 	// Load listen address configuration
 	// Default to 0.0.0.0 for security (localhost only)
 	listenAddr := "0.0.0.0"
@@ -105,6 +100,11 @@ func main() {
 			listenAddr = savedAddr
 			log.Printf("Using listen address from config: %s", listenAddr)
 		}
+	}
+
+	// 检查最终监听地址上的端口是否可用
+	if err := config.IsListenAddrPortAvailable(listenAddr, port); err != nil {
+		log.Fatalf("启动失败: %v\n请检查端口是否被其他程序占用，或尝试使用其他端口", err)
 	}
 
 	// Load endpoints from config.json

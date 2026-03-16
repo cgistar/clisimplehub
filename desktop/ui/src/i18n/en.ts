@@ -715,6 +715,10 @@ export default {
     saveFailed: 'Failed to save settings',
     autoSaveHint: 'Changes are saved automatically',
     autoSaving: 'Saving automatically...',
+    proxyStartFailedTitle: 'Proxy server is not running',
+    proxyStartFailedHelp: 'The configured port may be occupied. Change the port or free it, then retry.',
+    retryProxyStartFailed: 'Failed to retry proxy startup',
+    openSettingsAction: 'Open Settings',
   },
   manage: {
     title: 'Manage Endpoints',
@@ -823,6 +827,7 @@ export default {
     copy: 'Copy',
     active: 'Active',
     disabled: 'Disabled',
+    retry: 'Retry',
     ok: 'OK',
     cancel: 'Cancel',
     confirm: 'Confirm',

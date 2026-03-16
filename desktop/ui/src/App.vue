@@ -7,6 +7,7 @@ import javascript from 'highlight.js/lib/languages/javascript'
 import json from 'highlight.js/lib/languages/json'
 import AppHeader from './components/shell/AppHeader.vue'
 import ConsolePanel from './components/shell/ConsolePanel.vue'
+import GlobalProxyStatusNotifier from './components/shell/GlobalProxyStatusNotifier.vue'
 import CodexAccountsPage from './components/codex/CodexAccountsPage.vue'
 import HomePage from './components/home/HomePage.vue'
 import KiroAccountsPage from './components/kiro/KiroAccountsPage.vue'
@@ -50,6 +51,7 @@ onMounted(() => {
   <n-config-provider :theme-overrides="themeOverrides" :hljs="hljs">
     <n-message-provider>
       <n-dialog-provider>
+        <GlobalProxyStatusNotifier />
         <div class="app-shell">
           <AppHeader
             :active-tab="activeTab"
