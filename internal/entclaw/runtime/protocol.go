@@ -3,6 +3,7 @@ package entclawruntime
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type ToolCall struct {
@@ -63,6 +64,23 @@ func stringifyToolArguments(raw json.RawMessage) string {
 	return string(rawJSONObjectOrEmpty(raw))
 }
 
+func normalizeResponsesArguments(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`)
+	}
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return json.RawMessage(`{}`)
+		}
+		return json.RawMessage(trimmed)
+	}
+
+	return raw
+}
+
 func decodeToolPayload(raw json.RawMessage) any {
 	if len(raw) == 0 {
 		return ""
@@ -72,6 +90,19 @@ func decodeToolPayload(raw json.RawMessage) any {
 	if err := json.Unmarshal(raw, &value); err == nil {
 		return value
 	}
+	return string(raw)
+}
+
+func stringifyToolResultContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value
+	}
+
 	return string(raw)
 }
 

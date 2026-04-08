@@ -37,7 +37,7 @@ func (responsesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) 
 			calls = append(calls, ToolCall{
 				ID:        item.CallID,
 				Name:      item.Name,
-				Arguments: item.Arguments,
+				Arguments: normalizeResponsesArguments(item.Arguments),
 			})
 		}
 		if item.Type == "message" && finalText == "" && len(item.Content) > 0 {
@@ -66,7 +66,7 @@ func (responsesAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]by
 			raw = append(raw, map[string]any{
 				"type":    "function_call_output",
 				"call_id": round.Call.ID,
-				"output":  round.Result.Content,
+				"output":  stringifyToolResultContent(round.Result.Content),
 			})
 		}
 		payload["input"] = raw

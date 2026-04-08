@@ -49,6 +49,35 @@ func TestResponsesAdapterForcesStreamFlag(t *testing.T) {
 	}
 }
 
+func TestResponsesAdapterParseToolCallsUnquotesStringifiedArguments(t *testing.T) {
+	adapter := adapterForFormat(FormatResponses)
+	raw := []byte(`{"output":[{"type":"function_call","call_id":"call_1","name":"skill_list","arguments":"{\"limit\":1,\"filters\":{\"active\":true}}"}]}`)
+
+	calls, finalText, err := adapter.ParseToolCalls(raw)
+	if err != nil {
+		t.Fatalf("ParseToolCalls: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("len(calls) = %d, want 1", len(calls))
+	}
+	if finalText != "" {
+		t.Fatalf("finalText = %q, want empty", finalText)
+	}
+
+	var arguments struct {
+		Limit   int `json:"limit"`
+		Filters struct {
+			Active bool `json:"active"`
+		} `json:"filters"`
+	}
+	if err := json.Unmarshal(calls[0].Arguments, &arguments); err != nil {
+		t.Fatalf("json.Unmarshal(arguments): %v, raw=%s", err, calls[0].Arguments)
+	}
+	if arguments.Limit != 1 || !arguments.Filters.Active {
+		t.Fatalf("arguments = %+v, want decoded JSON object", arguments)
+	}
+}
+
 func TestMessagesAdapterAppendToolResultsAddsToolUseAndToolResultBlocks(t *testing.T) {
 	adapter := adapterForFormat(FormatMessages)
 	rounds := []ToolRound{
@@ -221,7 +250,7 @@ func TestResponsesAdapterAppendToolResultsPreservesStringInput(t *testing.T) {
 	if root.Get("input.3.call_id").String() != "call_1" {
 		t.Fatalf("first function call output id = %s", root.Get("input.3").Raw)
 	}
-	if root.Get("input.3.output.ok").Bool() != true {
+	if root.Get("input.3.output").String() != `{"ok":true}` {
 		t.Fatalf("first function call output content = %s", root.Get("input.3").Raw)
 	}
 	if root.Get("input.4.type").String() != "function_call_output" {
@@ -232,6 +261,29 @@ func TestResponsesAdapterAppendToolResultsPreservesStringInput(t *testing.T) {
 	}
 	if root.Get("input.4.output").String() != "done" {
 		t.Fatalf("second function call output content = %s", root.Get("input.4").Raw)
+	}
+}
+
+func TestResponsesAdapterAppendToolResultsStringifiesStructuredOutput(t *testing.T) {
+	adapter := adapterForFormat(FormatResponses)
+	rounds := []ToolRound{
+		testToolRound("call_1", "skill_list", `{"limit":1}`, `{"ok":true,"items":[1,2]}`, false),
+	}
+
+	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":[]}`), rounds)
+	if err != nil {
+		t.Fatalf("AppendToolResults: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if root.Get("input.1.type").String() != "function_call_output" {
+		t.Fatalf("function call output = %s", root.Get("input").Raw)
+	}
+	if root.Get("input.1.output").Type.String() != "String" {
+		t.Fatalf("function call output type = %s", root.Get("input.1").Raw)
+	}
+	if root.Get("input.1.output").String() != `{"ok":true,"items":[1,2]}` {
+		t.Fatalf("function call output content = %s", root.Get("input.1").Raw)
 	}
 }
 
