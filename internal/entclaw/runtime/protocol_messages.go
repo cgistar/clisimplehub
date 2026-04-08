@@ -1,6 +1,9 @@
 package entclawruntime
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type messagesAdapter struct{}
 
