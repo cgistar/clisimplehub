@@ -166,7 +166,6 @@ func assistantTurnPartsForLoopback(turn AssistantTurn, rounds []ToolRound) []Ass
 	}
 	return parts
 }
-
 func normalizeResponsesInput(input any) ([]any, error) {
 	switch value := input.(type) {
 	case nil:

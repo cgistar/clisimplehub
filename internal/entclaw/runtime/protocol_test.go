@@ -129,7 +129,6 @@ func TestResponsesAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
 		t.Fatalf("finalText = %q, want aggregated message text", finalText)
 	}
 }
-
 func TestMessagesAdapterAppendToolResultsAddsToolUseAndToolResultBlocks(t *testing.T) {
 	adapter := adapterForFormat(FormatMessages)
 	turn := testAssistantTurn(
