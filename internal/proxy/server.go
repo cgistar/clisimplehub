@@ -132,8 +132,8 @@ func (p *ProxyServer) Start() error {
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", listenAddr, p.port),
 		Handler:      router,
-		ReadTimeout:  600 * time.Second,
-		WriteTimeout: 600 * time.Second,
+		ReadTimeout:  3600 * time.Second,
+		WriteTimeout: 3600 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
