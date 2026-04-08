@@ -1,6 +1,9 @@
 package entclawruntime
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type responsesAdapter struct{}
 
@@ -31,7 +34,7 @@ func (responsesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) 
 	}
 
 	calls := make([]ToolCall, 0, len(payload.Output))
-	finalText := ""
+	var finalText strings.Builder
 	for _, item := range payload.Output {
 		if item.Type == "function_call" {
 			calls = append(calls, ToolCall{
@@ -40,12 +43,14 @@ func (responsesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) 
 				Arguments: normalizeResponsesArguments(item.Arguments),
 			})
 		}
-		if item.Type == "message" && finalText == "" && len(item.Content) > 0 {
-			finalText = item.Content[0].Text
+		if item.Type == "message" {
+			for _, block := range item.Content {
+				finalText.WriteString(block.Text)
+			}
 		}
 	}
 
-	return calls, finalText, nil
+	return calls, finalText.String(), nil
 }
 
 func (responsesAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byte, error) {

@@ -37,6 +37,22 @@ func TestChatAdapterParsesToolCalls(t *testing.T) {
 	}
 }
 
+func TestChatAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
+	adapter := adapterForFormat(FormatChatCompletions)
+	raw := []byte(`{"choices":[{"message":{"content":"first second third","tool_calls":[{"id":"call_1","type":"function","function":{"name":"skill_list","arguments":"{}"}}]}}]}`)
+
+	calls, finalText, err := adapter.ParseToolCalls(raw)
+	if err != nil {
+		t.Fatalf("ParseToolCalls: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("len(calls) = %d, want 1", len(calls))
+	}
+	if finalText != "first second third" {
+		t.Fatalf("finalText = %q, want aggregated content", finalText)
+	}
+}
+
 func TestResponsesAdapterForcesStreamFlag(t *testing.T) {
 	adapter := adapterForFormat(FormatResponses)
 
@@ -75,6 +91,22 @@ func TestResponsesAdapterParseToolCallsUnquotesStringifiedArguments(t *testing.T
 	}
 	if arguments.Limit != 1 || !arguments.Filters.Active {
 		t.Fatalf("arguments = %+v, want decoded JSON object", arguments)
+	}
+}
+
+func TestResponsesAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
+	adapter := adapterForFormat(FormatResponses)
+	raw := []byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"first "},{"type":"output_text","text":"second"},{"type":"output_text","text":" third"}]},{"type":"function_call","call_id":"call_1","name":"skill_list","arguments":"{}"}]}`)
+
+	calls, finalText, err := adapter.ParseToolCalls(raw)
+	if err != nil {
+		t.Fatalf("ParseToolCalls: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("len(calls) = %d, want 1", len(calls))
+	}
+	if finalText != "first second third" {
+		t.Fatalf("finalText = %q, want aggregated message text", finalText)
 	}
 }
 
@@ -127,7 +159,10 @@ func TestMessagesAdapterAppendToolResultsAddsToolUseAndToolResultBlocks(t *testi
 	if root.Get("messages.2.content.0.tool_use_id").String() != "call_1" {
 		t.Fatalf("tool result tool_use_id = %s", root.Get("messages.2.content.0").Raw)
 	}
-	if root.Get("messages.2.content.0.content.ok").Bool() != true {
+	if root.Get("messages.2.content.0.content").Type.String() != "String" {
+		t.Fatalf("tool result content type = %s", root.Get("messages.2.content.0").Raw)
+	}
+	if root.Get("messages.2.content.0.content").String() != `{"ok":true}` {
 		t.Fatalf("tool result content = %s", root.Get("messages.2.content.0").Raw)
 	}
 	if root.Get("messages.2.content.1.type").String() != "tool_result" {
@@ -141,6 +176,22 @@ func TestMessagesAdapterAppendToolResultsAddsToolUseAndToolResultBlocks(t *testi
 	}
 	if !root.Get("messages.2.content.1.is_error").Bool() {
 		t.Fatalf("second tool result is_error = %s", root.Get("messages.2.content.1").Raw)
+	}
+}
+
+func TestMessagesAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
+	adapter := adapterForFormat(FormatMessages)
+	raw := []byte(`{"content":[{"type":"text","text":"first "},{"type":"tool_use","id":"call_1","name":"skill_list","input":{"limit":1}},{"type":"text","text":"second"},{"type":"text","text":" third"}]}`)
+
+	calls, finalText, err := adapter.ParseToolCalls(raw)
+	if err != nil {
+		t.Fatalf("ParseToolCalls: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("len(calls) = %d, want 1", len(calls))
+	}
+	if finalText != "first second third" {
+		t.Fatalf("finalText = %q, want aggregated text blocks", finalText)
 	}
 }
 
@@ -193,7 +244,10 @@ func TestChatAdapterAppendToolResultsAddsAssistantAndToolMessages(t *testing.T) 
 	if root.Get("messages.3.tool_call_id").String() != "call_2" {
 		t.Fatalf("second tool call id = %s", root.Get("messages.3").Raw)
 	}
-	if !root.Get("messages.3.content.ok").Bool() {
+	if root.Get("messages.3.content").Type.String() != "String" {
+		t.Fatalf("second tool content type = %s", root.Get("messages.3").Raw)
+	}
+	if root.Get("messages.3.content").String() != `{"ok":true}` {
 		t.Fatalf("second tool content = %s", root.Get("messages.3").Raw)
 	}
 }

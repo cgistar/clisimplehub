@@ -1,6 +1,9 @@
 package entclawruntime
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type messagesAdapter struct{}
 
@@ -28,7 +31,7 @@ func (messagesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) {
 	}
 
 	calls := make([]ToolCall, 0, len(payload.Content))
-	finalText := ""
+	var finalText strings.Builder
 	for _, item := range payload.Content {
 		if item.Type == "tool_use" {
 			calls = append(calls, ToolCall{
@@ -37,12 +40,12 @@ func (messagesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) {
 				Arguments: item.Input,
 			})
 		}
-		if item.Type == "text" && finalText == "" {
-			finalText = item.Text
+		if item.Type == "text" {
+			finalText.WriteString(item.Text)
 		}
 	}
 
-	return calls, finalText, nil
+	return calls, finalText.String(), nil
 }
 
 func (messagesAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byte, error) {
@@ -62,7 +65,7 @@ func (messagesAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byt
 				item := map[string]any{
 					"type":        "tool_result",
 					"tool_use_id": round.Call.ID,
-					"content":     decodeToolPayload(round.Result.Content),
+					"content":     stringifyToolResultContent(round.Result.Content),
 				}
 				if round.Result.IsError {
 					item["is_error"] = true

@@ -71,7 +71,7 @@ func (chatAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byte, e
 			raw = append(raw, map[string]any{
 				"role":         "tool",
 				"tool_call_id": round.Call.ID,
-				"content":      round.Result.Content,
+				"content":      stringifyToolResultContent(round.Result.Content),
 			})
 		}
 		payload["messages"] = raw
