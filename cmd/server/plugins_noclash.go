@@ -4,5 +4,6 @@ package main
 
 import (
 	_ "clisimplehub/internal/codex/plugin" // activate Codex accounts plugin
+	_ "clisimplehub/internal/entclaw/plugin" // activate Entclaw plugin
 	_ "clisimplehub/internal/kiro/plugin"  // activate Kiro plugin
 )
