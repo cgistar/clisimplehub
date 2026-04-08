@@ -48,14 +48,25 @@ func (responsesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) 
 	return calls, finalText, nil
 }
 
-func (responsesAdapter) AppendToolResults(body []byte, results []ToolResult) ([]byte, error) {
+func (responsesAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byte, error) {
 	return mutateJSON(body, func(payload map[string]any) error {
-		raw, _ := payload["input"].([]any)
-		for _, result := range results {
+		raw, err := normalizeResponsesInput(payload["input"])
+		if err != nil {
+			return err
+		}
+		for _, round := range rounds {
+			raw = append(raw, map[string]any{
+				"type":      "function_call",
+				"call_id":   round.Call.ID,
+				"name":      round.Call.Name,
+				"arguments": stringifyToolArguments(round.Call.Arguments),
+			})
+		}
+		for _, round := range rounds {
 			raw = append(raw, map[string]any{
 				"type":    "function_call_output",
-				"call_id": result.ID,
-				"output":  result.Content,
+				"call_id": round.Call.ID,
+				"output":  round.Result.Content,
 			})
 		}
 		payload["input"] = raw

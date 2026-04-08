@@ -45,13 +45,39 @@ func (messagesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) {
 	return calls, finalText, nil
 }
 
-func (messagesAdapter) AppendToolResults(body []byte, results []ToolResult) ([]byte, error) {
+func (messagesAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byte, error) {
 	return mutateJSON(body, func(payload map[string]any) error {
 		raw, _ := payload["messages"].([]any)
-		raw = append(raw, map[string]any{
-			"role":    "user",
-			"content": results,
-		})
+		if len(rounds) > 0 {
+			assistantContent := make([]any, 0, len(rounds))
+			userContent := make([]any, 0, len(rounds))
+			for _, round := range rounds {
+				assistantContent = append(assistantContent, map[string]any{
+					"type":  "tool_use",
+					"id":    round.Call.ID,
+					"name":  round.Call.Name,
+					"input": rawJSONObjectOrEmpty(round.Call.Arguments),
+				})
+
+				item := map[string]any{
+					"type":        "tool_result",
+					"tool_use_id": round.Call.ID,
+					"content":     decodeToolPayload(round.Result.Content),
+				}
+				if round.Result.IsError {
+					item["is_error"] = true
+				}
+				userContent = append(userContent, item)
+			}
+			raw = append(raw, map[string]any{
+				"role":    "assistant",
+				"content": assistantContent,
+			})
+			raw = append(raw, map[string]any{
+				"role":    "user",
+				"content": userContent,
+			})
+		}
 		payload["messages"] = raw
 		return nil
 	})

@@ -47,14 +47,31 @@ func (chatAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) {
 	return calls, payload.Choices[0].Message.Content, nil
 }
 
-func (chatAdapter) AppendToolResults(body []byte, results []ToolResult) ([]byte, error) {
+func (chatAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byte, error) {
 	return mutateJSON(body, func(payload map[string]any) error {
 		raw, _ := payload["messages"].([]any)
-		for _, result := range results {
+		if len(rounds) > 0 {
+			toolCalls := make([]any, 0, len(rounds))
+			for _, round := range rounds {
+				toolCalls = append(toolCalls, map[string]any{
+					"id":   round.Call.ID,
+					"type": "function",
+					"function": map[string]any{
+						"name":      round.Call.Name,
+						"arguments": stringifyToolArguments(round.Call.Arguments),
+					},
+				})
+			}
+			raw = append(raw, map[string]any{
+				"role":       "assistant",
+				"tool_calls": toolCalls,
+			})
+		}
+		for _, round := range rounds {
 			raw = append(raw, map[string]any{
 				"role":         "tool",
-				"tool_call_id": result.ID,
-				"content":      result.Content,
+				"tool_call_id": round.Call.ID,
+				"content":      round.Result.Content,
 			})
 		}
 		payload["messages"] = raw

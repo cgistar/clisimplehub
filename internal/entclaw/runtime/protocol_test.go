@@ -1,6 +1,25 @@
 package entclawruntime
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/tidwall/gjson"
+)
+
+func testToolRound(id, name, arguments, result string, isError bool) ToolRound {
+	return ToolRound{
+		Call: ToolCall{
+			ID:        id,
+			Name:      name,
+			Arguments: json.RawMessage(arguments),
+		},
+		Result: ToolResult{
+			Content: json.RawMessage(result),
+			IsError: isError,
+		},
+	}
+}
 
 func TestChatAdapterParsesToolCalls(t *testing.T) {
 	adapter := adapterForFormat(FormatChatCompletions)
@@ -27,5 +46,217 @@ func TestResponsesAdapterForcesStreamFlag(t *testing.T) {
 	}
 	if string(body) != `{"model":"gpt-5.4","stream":true}` {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestMessagesAdapterAppendToolResultsAddsToolUseAndToolResultBlocks(t *testing.T) {
+	adapter := adapterForFormat(FormatMessages)
+	rounds := []ToolRound{
+		testToolRound("call_1", "skill_list", `{"limit":1}`, `{"ok":true}`, false),
+		testToolRound("call_2", "skill_run", `{"id":"job_1"}`, `"failed"`, true),
+	}
+
+	body, err := adapter.AppendToolResults([]byte(`{"messages":[{"role":"user","content":"hello"}]}`), rounds)
+	if err != nil {
+		t.Fatalf("AppendToolResults: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if root.Get("messages.1.role").String() != "assistant" {
+		t.Fatalf("assistant role = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.content.0.type").String() != "tool_use" {
+		t.Fatalf("assistant tool_use block = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.content.0.id").String() != "call_1" {
+		t.Fatalf("assistant tool_use id = %s", root.Get("messages.1.content.0").Raw)
+	}
+	if root.Get("messages.1.content.0.name").String() != "skill_list" {
+		t.Fatalf("assistant tool_use name = %s", root.Get("messages.1.content.0").Raw)
+	}
+	if root.Get("messages.1.content.0.input.limit").Int() != 1 {
+		t.Fatalf("assistant tool_use input = %s", root.Get("messages.1.content.0.input").Raw)
+	}
+	if root.Get("messages.1.content.1.type").String() != "tool_use" {
+		t.Fatalf("second assistant tool_use block = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.content.1.id").String() != "call_2" {
+		t.Fatalf("second assistant tool_use id = %s", root.Get("messages.1.content.1").Raw)
+	}
+	if root.Get("messages.1.content.1.name").String() != "skill_run" {
+		t.Fatalf("second assistant tool_use name = %s", root.Get("messages.1.content.1").Raw)
+	}
+	if root.Get("messages.1.content.1.input.id").String() != "job_1" {
+		t.Fatalf("second assistant tool_use input = %s", root.Get("messages.1.content.1.input").Raw)
+	}
+	if root.Get("messages.2.role").String() != "user" {
+		t.Fatalf("tool result role = %s", root.Get("messages.2").Raw)
+	}
+	if root.Get("messages.2.content.0.type").String() != "tool_result" {
+		t.Fatalf("tool result block = %s", root.Get("messages.2").Raw)
+	}
+	if root.Get("messages.2.content.0.tool_use_id").String() != "call_1" {
+		t.Fatalf("tool result tool_use_id = %s", root.Get("messages.2.content.0").Raw)
+	}
+	if root.Get("messages.2.content.0.content.ok").Bool() != true {
+		t.Fatalf("tool result content = %s", root.Get("messages.2.content.0").Raw)
+	}
+	if root.Get("messages.2.content.1.type").String() != "tool_result" {
+		t.Fatalf("second tool result block = %s", root.Get("messages.2").Raw)
+	}
+	if root.Get("messages.2.content.1.tool_use_id").String() != "call_2" {
+		t.Fatalf("second tool result tool_use_id = %s", root.Get("messages.2.content.1").Raw)
+	}
+	if root.Get("messages.2.content.1.content").String() != "failed" {
+		t.Fatalf("second tool result content = %s", root.Get("messages.2.content.1").Raw)
+	}
+	if !root.Get("messages.2.content.1.is_error").Bool() {
+		t.Fatalf("second tool result is_error = %s", root.Get("messages.2.content.1").Raw)
+	}
+}
+
+func TestChatAdapterAppendToolResultsAddsAssistantAndToolMessages(t *testing.T) {
+	adapter := adapterForFormat(FormatChatCompletions)
+	rounds := []ToolRound{
+		testToolRound("call_1", "skill_list", `{"limit":1}`, `"done"`, false),
+		testToolRound("call_2", "skill_run", `{"id":"job_1"}`, `{"ok":true}`, false),
+	}
+
+	body, err := adapter.AppendToolResults([]byte(`{"messages":[{"role":"user","content":"hello"}]}`), rounds)
+	if err != nil {
+		t.Fatalf("AppendToolResults: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if root.Get("messages.1.role").String() != "assistant" {
+		t.Fatalf("assistant role = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.tool_calls.0.id").String() != "call_1" {
+		t.Fatalf("assistant tool call id = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.tool_calls.0.function.name").String() != "skill_list" {
+		t.Fatalf("assistant tool call name = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.tool_calls.0.function.arguments").String() != `{"limit":1}` {
+		t.Fatalf("assistant tool call args = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.tool_calls.1.id").String() != "call_2" {
+		t.Fatalf("second assistant tool call id = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.tool_calls.1.function.name").String() != "skill_run" {
+		t.Fatalf("second assistant tool call name = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.tool_calls.1.function.arguments").String() != `{"id":"job_1"}` {
+		t.Fatalf("second assistant tool call args = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.2.role").String() != "tool" {
+		t.Fatalf("tool role = %s", root.Get("messages.2").Raw)
+	}
+	if root.Get("messages.2.tool_call_id").String() != "call_1" {
+		t.Fatalf("tool call id = %s", root.Get("messages.2").Raw)
+	}
+	if root.Get("messages.2.content").String() != "done" {
+		t.Fatalf("tool content = %s", root.Get("messages.2").Raw)
+	}
+	if root.Get("messages.3.role").String() != "tool" {
+		t.Fatalf("second tool role = %s", root.Get("messages.3").Raw)
+	}
+	if root.Get("messages.3.tool_call_id").String() != "call_2" {
+		t.Fatalf("second tool call id = %s", root.Get("messages.3").Raw)
+	}
+	if !root.Get("messages.3.content.ok").Bool() {
+		t.Fatalf("second tool content = %s", root.Get("messages.3").Raw)
+	}
+}
+
+func TestResponsesAdapterAppendToolResultsPreservesStringInput(t *testing.T) {
+	adapter := adapterForFormat(FormatResponses)
+	rounds := []ToolRound{
+		testToolRound("call_1", "skill_list", `{"limit":1}`, `{"ok":true}`, false),
+		testToolRound("call_2", "skill_run", `{"id":"job_1"}`, `"done"`, false),
+	}
+
+	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":"hello"}`), rounds)
+	if err != nil {
+		t.Fatalf("AppendToolResults: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if root.Get("input.0.type").String() != "message" {
+		t.Fatalf("string input not preserved as message: %s", root.Get("input").Raw)
+	}
+	if root.Get("input.0.role").String() != "user" {
+		t.Fatalf("string input role = %s", root.Get("input.0").Raw)
+	}
+	if root.Get("input.0.content").String() != "hello" {
+		t.Fatalf("string input content = %s", root.Get("input.0").Raw)
+	}
+	if root.Get("input.1.type").String() != "function_call" {
+		t.Fatalf("assistant function call = %s", root.Get("input.1").Raw)
+	}
+	if root.Get("input.1.call_id").String() != "call_1" {
+		t.Fatalf("assistant function call id = %s", root.Get("input.1").Raw)
+	}
+	if root.Get("input.1.name").String() != "skill_list" {
+		t.Fatalf("assistant function call name = %s", root.Get("input.1").Raw)
+	}
+	if root.Get("input.1.arguments").String() != `{"limit":1}` {
+		t.Fatalf("assistant function call args = %s", root.Get("input.1").Raw)
+	}
+	if root.Get("input.2.type").String() != "function_call" {
+		t.Fatalf("second assistant function call = %s", root.Get("input.2").Raw)
+	}
+	if root.Get("input.2.call_id").String() != "call_2" {
+		t.Fatalf("second assistant function call id = %s", root.Get("input.2").Raw)
+	}
+	if root.Get("input.2.name").String() != "skill_run" {
+		t.Fatalf("second assistant function call name = %s", root.Get("input.2").Raw)
+	}
+	if root.Get("input.2.arguments").String() != `{"id":"job_1"}` {
+		t.Fatalf("second assistant function call args = %s", root.Get("input.2").Raw)
+	}
+	if root.Get("input.3.type").String() != "function_call_output" {
+		t.Fatalf("first function call output = %s", root.Get("input.3").Raw)
+	}
+	if root.Get("input.3.call_id").String() != "call_1" {
+		t.Fatalf("first function call output id = %s", root.Get("input.3").Raw)
+	}
+	if root.Get("input.3.output.ok").Bool() != true {
+		t.Fatalf("first function call output content = %s", root.Get("input.3").Raw)
+	}
+	if root.Get("input.4.type").String() != "function_call_output" {
+		t.Fatalf("second function call output = %s", root.Get("input.4").Raw)
+	}
+	if root.Get("input.4.call_id").String() != "call_2" {
+		t.Fatalf("second function call output id = %s", root.Get("input.4").Raw)
+	}
+	if root.Get("input.4.output").String() != "done" {
+		t.Fatalf("second function call output content = %s", root.Get("input.4").Raw)
+	}
+}
+
+func TestResponsesAdapterAppendToolResultsPreservesArrayInput(t *testing.T) {
+	adapter := adapterForFormat(FormatResponses)
+	rounds := []ToolRound{
+		testToolRound("call_1", "skill_list", `{"limit":1}`, `"done"`, false),
+	}
+
+	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"hello"},{"type":"message","role":"assistant","content":"working"}]}`), rounds)
+	if err != nil {
+		t.Fatalf("AppendToolResults: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if root.Get("input.0.type").String() != "message" || root.Get("input.0.content").String() != "hello" {
+		t.Fatalf("existing array input changed: %s", root.Get("input").Raw)
+	}
+	if root.Get("input.1.type").String() != "message" || root.Get("input.1.content").String() != "working" {
+		t.Fatalf("existing assistant array item changed: %s", root.Get("input").Raw)
+	}
+	if root.Get("input.2.type").String() != "function_call" {
+		t.Fatalf("assistant function call = %s", root.Get("input").Raw)
+	}
+	if root.Get("input.3.type").String() != "function_call_output" {
+		t.Fatalf("function call output = %s", root.Get("input").Raw)
 	}
 }
