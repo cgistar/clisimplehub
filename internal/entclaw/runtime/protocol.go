@@ -22,11 +22,46 @@ type ToolRound struct {
 	Result ToolResult
 }
 
+const (
+	assistantTurnPartText     = "text"
+	assistantTurnPartToolCall = "tool_call"
+)
+
+type AssistantTurnPart struct {
+	Type string
+	Text string
+	Call ToolCall
+}
+
+type AssistantTurn struct {
+	Parts []AssistantTurnPart
+}
+
+func (turn AssistantTurn) FinalText() string {
+	var text strings.Builder
+	for _, part := range turn.Parts {
+		if part.Type == assistantTurnPartText {
+			text.WriteString(part.Text)
+		}
+	}
+	return text.String()
+}
+
+func (turn AssistantTurn) ToolCalls() []ToolCall {
+	calls := make([]ToolCall, 0, len(turn.Parts))
+	for _, part := range turn.Parts {
+		if part.Type == assistantTurnPartToolCall {
+			calls = append(calls, part.Call)
+		}
+	}
+	return calls
+}
+
 type ProtocolAdapter interface {
 	LoopbackPath() string
 	WithStreamFlag(body []byte, stream bool) ([]byte, error)
-	ParseToolCalls(body []byte) ([]ToolCall, string, error)
-	AppendToolResults(body []byte, rounds []ToolRound) ([]byte, error)
+	ParseToolCalls(body []byte) (AssistantTurn, error)
+	AppendToolResults(body []byte, turn AssistantTurn, rounds []ToolRound) ([]byte, error)
 }
 
 func adapterForFormat(format RequestFormat) ProtocolAdapter {
@@ -104,6 +139,32 @@ func stringifyToolResultContent(raw json.RawMessage) string {
 	}
 
 	return string(raw)
+}
+
+func assistantTextPart(text string) AssistantTurnPart {
+	return AssistantTurnPart{
+		Type: assistantTurnPartText,
+		Text: text,
+	}
+}
+
+func assistantToolCallPart(call ToolCall) AssistantTurnPart {
+	return AssistantTurnPart{
+		Type: assistantTurnPartToolCall,
+		Call: call,
+	}
+}
+
+func assistantTurnPartsForLoopback(turn AssistantTurn, rounds []ToolRound) []AssistantTurnPart {
+	if len(turn.Parts) > 0 {
+		return turn.Parts
+	}
+
+	parts := make([]AssistantTurnPart, 0, len(rounds))
+	for _, round := range rounds {
+		parts = append(parts, assistantToolCallPart(round.Call))
+	}
+	return parts
 }
 
 func normalizeResponsesInput(input any) ([]any, error) {

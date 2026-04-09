@@ -21,17 +21,31 @@ func testToolRound(id, name, arguments, result string, isError bool) ToolRound {
 	}
 }
 
+func testAssistantTurn(parts ...AssistantTurnPart) AssistantTurn {
+	return AssistantTurn{Parts: append([]AssistantTurnPart(nil), parts...)}
+}
+
+func testAssistantCallPart(id, name, arguments string) AssistantTurnPart {
+	return assistantToolCallPart(ToolCall{
+		ID:        id,
+		Name:      name,
+		Arguments: json.RawMessage(arguments),
+	})
+}
+
 func TestChatAdapterParsesToolCalls(t *testing.T) {
 	adapter := adapterForFormat(FormatChatCompletions)
 	raw := []byte(`{"choices":[{"message":{"content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"skill_list","arguments":"{}"}}]}}]}`)
 
-	calls, finalText, err := adapter.ParseToolCalls(raw)
+	turn, err := adapter.ParseToolCalls(raw)
 	if err != nil {
 		t.Fatalf("ParseToolCalls: %v", err)
 	}
+	calls := turn.ToolCalls()
 	if len(calls) != 1 {
 		t.Fatalf("len(calls) = %d, want 1", len(calls))
 	}
+	finalText := turn.FinalText()
 	if finalText != "" {
 		t.Fatalf("finalText = %q, want empty", finalText)
 	}
@@ -41,13 +55,15 @@ func TestChatAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
 	adapter := adapterForFormat(FormatChatCompletions)
 	raw := []byte(`{"choices":[{"message":{"content":"first second third","tool_calls":[{"id":"call_1","type":"function","function":{"name":"skill_list","arguments":"{}"}}]}}]}`)
 
-	calls, finalText, err := adapter.ParseToolCalls(raw)
+	turn, err := adapter.ParseToolCalls(raw)
 	if err != nil {
 		t.Fatalf("ParseToolCalls: %v", err)
 	}
+	calls := turn.ToolCalls()
 	if len(calls) != 1 {
 		t.Fatalf("len(calls) = %d, want 1", len(calls))
 	}
+	finalText := turn.FinalText()
 	if finalText != "first second third" {
 		t.Fatalf("finalText = %q, want aggregated content", finalText)
 	}
@@ -69,13 +85,15 @@ func TestResponsesAdapterParseToolCallsUnquotesStringifiedArguments(t *testing.T
 	adapter := adapterForFormat(FormatResponses)
 	raw := []byte(`{"output":[{"type":"function_call","call_id":"call_1","name":"skill_list","arguments":"{\"limit\":1,\"filters\":{\"active\":true}}"}]}`)
 
-	calls, finalText, err := adapter.ParseToolCalls(raw)
+	turn, err := adapter.ParseToolCalls(raw)
 	if err != nil {
 		t.Fatalf("ParseToolCalls: %v", err)
 	}
+	calls := turn.ToolCalls()
 	if len(calls) != 1 {
 		t.Fatalf("len(calls) = %d, want 1", len(calls))
 	}
+	finalText := turn.FinalText()
 	if finalText != "" {
 		t.Fatalf("finalText = %q, want empty", finalText)
 	}
@@ -98,13 +116,15 @@ func TestResponsesAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
 	adapter := adapterForFormat(FormatResponses)
 	raw := []byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"first "},{"type":"output_text","text":"second"},{"type":"output_text","text":" third"}]},{"type":"function_call","call_id":"call_1","name":"skill_list","arguments":"{}"}]}`)
 
-	calls, finalText, err := adapter.ParseToolCalls(raw)
+	turn, err := adapter.ParseToolCalls(raw)
 	if err != nil {
 		t.Fatalf("ParseToolCalls: %v", err)
 	}
+	calls := turn.ToolCalls()
 	if len(calls) != 1 {
 		t.Fatalf("len(calls) = %d, want 1", len(calls))
 	}
+	finalText := turn.FinalText()
 	if finalText != "first second third" {
 		t.Fatalf("finalText = %q, want aggregated message text", finalText)
 	}
@@ -112,12 +132,17 @@ func TestResponsesAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
 
 func TestMessagesAdapterAppendToolResultsAddsToolUseAndToolResultBlocks(t *testing.T) {
 	adapter := adapterForFormat(FormatMessages)
+	turn := testAssistantTurn(
+		assistantTextPart("working "),
+		testAssistantCallPart("call_1", "skill_list", `{"limit":1}`),
+		testAssistantCallPart("call_2", "skill_run", `{"id":"job_1"}`),
+	)
 	rounds := []ToolRound{
 		testToolRound("call_1", "skill_list", `{"limit":1}`, `{"ok":true}`, false),
 		testToolRound("call_2", "skill_run", `{"id":"job_1"}`, `"failed"`, true),
 	}
 
-	body, err := adapter.AppendToolResults([]byte(`{"messages":[{"role":"user","content":"hello"}]}`), rounds)
+	body, err := adapter.AppendToolResults([]byte(`{"messages":[{"role":"user","content":"hello"}]}`), turn, rounds)
 	if err != nil {
 		t.Fatalf("AppendToolResults: %v", err)
 	}
@@ -126,28 +151,34 @@ func TestMessagesAdapterAppendToolResultsAddsToolUseAndToolResultBlocks(t *testi
 	if root.Get("messages.1.role").String() != "assistant" {
 		t.Fatalf("assistant role = %s", root.Get("messages.1").Raw)
 	}
-	if root.Get("messages.1.content.0.type").String() != "tool_use" {
+	if root.Get("messages.1.content.0.type").String() != "text" {
 		t.Fatalf("assistant tool_use block = %s", root.Get("messages.1").Raw)
 	}
-	if root.Get("messages.1.content.0.id").String() != "call_1" {
-		t.Fatalf("assistant tool_use id = %s", root.Get("messages.1.content.0").Raw)
-	}
-	if root.Get("messages.1.content.0.name").String() != "skill_list" {
-		t.Fatalf("assistant tool_use name = %s", root.Get("messages.1.content.0").Raw)
-	}
-	if root.Get("messages.1.content.0.input.limit").Int() != 1 {
-		t.Fatalf("assistant tool_use input = %s", root.Get("messages.1.content.0.input").Raw)
+	if root.Get("messages.1.content.0.text").String() != "working " {
+		t.Fatalf("assistant text block = %s", root.Get("messages.1.content.0").Raw)
 	}
 	if root.Get("messages.1.content.1.type").String() != "tool_use" {
+		t.Fatalf("assistant first tool_use block = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.content.1.id").String() != "call_1" {
+		t.Fatalf("assistant tool_use id = %s", root.Get("messages.1.content.0").Raw)
+	}
+	if root.Get("messages.1.content.1.name").String() != "skill_list" {
+		t.Fatalf("assistant tool_use name = %s", root.Get("messages.1.content.0").Raw)
+	}
+	if root.Get("messages.1.content.1.input.limit").Int() != 1 {
+		t.Fatalf("assistant tool_use input = %s", root.Get("messages.1.content.0.input").Raw)
+	}
+	if root.Get("messages.1.content.2.type").String() != "tool_use" {
 		t.Fatalf("second assistant tool_use block = %s", root.Get("messages.1").Raw)
 	}
-	if root.Get("messages.1.content.1.id").String() != "call_2" {
+	if root.Get("messages.1.content.2.id").String() != "call_2" {
 		t.Fatalf("second assistant tool_use id = %s", root.Get("messages.1.content.1").Raw)
 	}
-	if root.Get("messages.1.content.1.name").String() != "skill_run" {
+	if root.Get("messages.1.content.2.name").String() != "skill_run" {
 		t.Fatalf("second assistant tool_use name = %s", root.Get("messages.1.content.1").Raw)
 	}
-	if root.Get("messages.1.content.1.input.id").String() != "job_1" {
+	if root.Get("messages.1.content.2.input.id").String() != "job_1" {
 		t.Fatalf("second assistant tool_use input = %s", root.Get("messages.1.content.1.input").Raw)
 	}
 	if root.Get("messages.2.role").String() != "user" {
@@ -183,13 +214,15 @@ func TestMessagesAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
 	adapter := adapterForFormat(FormatMessages)
 	raw := []byte(`{"content":[{"type":"text","text":"first "},{"type":"tool_use","id":"call_1","name":"skill_list","input":{"limit":1}},{"type":"text","text":"second"},{"type":"text","text":" third"}]}`)
 
-	calls, finalText, err := adapter.ParseToolCalls(raw)
+	turn, err := adapter.ParseToolCalls(raw)
 	if err != nil {
 		t.Fatalf("ParseToolCalls: %v", err)
 	}
+	calls := turn.ToolCalls()
 	if len(calls) != 1 {
 		t.Fatalf("len(calls) = %d, want 1", len(calls))
 	}
+	finalText := turn.FinalText()
 	if finalText != "first second third" {
 		t.Fatalf("finalText = %q, want aggregated text blocks", finalText)
 	}
@@ -197,12 +230,17 @@ func TestMessagesAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
 
 func TestChatAdapterAppendToolResultsAddsAssistantAndToolMessages(t *testing.T) {
 	adapter := adapterForFormat(FormatChatCompletions)
+	turn := testAssistantTurn(
+		assistantTextPart("working "),
+		testAssistantCallPart("call_1", "skill_list", `{"limit":1}`),
+		testAssistantCallPart("call_2", "skill_run", `{"id":"job_1"}`),
+	)
 	rounds := []ToolRound{
 		testToolRound("call_1", "skill_list", `{"limit":1}`, `"done"`, false),
 		testToolRound("call_2", "skill_run", `{"id":"job_1"}`, `{"ok":true}`, false),
 	}
 
-	body, err := adapter.AppendToolResults([]byte(`{"messages":[{"role":"user","content":"hello"}]}`), rounds)
+	body, err := adapter.AppendToolResults([]byte(`{"messages":[{"role":"user","content":"hello"}]}`), turn, rounds)
 	if err != nil {
 		t.Fatalf("AppendToolResults: %v", err)
 	}
@@ -210,6 +248,9 @@ func TestChatAdapterAppendToolResultsAddsAssistantAndToolMessages(t *testing.T) 
 	root := gjson.ParseBytes(body)
 	if root.Get("messages.1.role").String() != "assistant" {
 		t.Fatalf("assistant role = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.content").String() != "working " {
+		t.Fatalf("assistant content = %s", root.Get("messages.1").Raw)
 	}
 	if root.Get("messages.1.tool_calls.0.id").String() != "call_1" {
 		t.Fatalf("assistant tool call id = %s", root.Get("messages.1").Raw)
@@ -252,14 +293,52 @@ func TestChatAdapterAppendToolResultsAddsAssistantAndToolMessages(t *testing.T) 
 	}
 }
 
+func TestMessagesAdapterRoundTripsAssistantTextAndToolUseWhenAppendingResults(t *testing.T) {
+	adapter := adapterForFormat(FormatMessages)
+	assistantRaw := []byte(`{"content":[{"type":"text","text":"plan: "},{"type":"tool_use","id":"call_1","name":"skill_list","input":{"limit":1}},{"type":"text","text":" after"}]}`)
+
+	turn, err := adapter.ParseToolCalls(assistantRaw)
+	if err != nil {
+		t.Fatalf("ParseToolCalls: %v", err)
+	}
+	body, err := adapter.AppendToolResults([]byte(`{"messages":[{"role":"user","content":"hello"}]}`), turn, []ToolRound{
+		testToolRound("call_1", "skill_list", `{"limit":1}`, `{"ok":true}`, false),
+	})
+	if err != nil {
+		t.Fatalf("AppendToolResults: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if root.Get("messages.1.role").String() != "assistant" {
+		t.Fatalf("assistant role = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.content.0.type").String() != "text" || root.Get("messages.1.content.0.text").String() != "plan: " {
+		t.Fatalf("assistant first content block = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.content.1.type").String() != "tool_use" || root.Get("messages.1.content.1.id").String() != "call_1" {
+		t.Fatalf("assistant tool_use block = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.1.content.2.type").String() != "text" || root.Get("messages.1.content.2.text").String() != " after" {
+		t.Fatalf("assistant trailing text block = %s", root.Get("messages.1").Raw)
+	}
+	if root.Get("messages.2.content.0.content").String() != `{"ok":true}` {
+		t.Fatalf("tool result content = %s", root.Get("messages.2").Raw)
+	}
+}
+
 func TestResponsesAdapterAppendToolResultsPreservesStringInput(t *testing.T) {
 	adapter := adapterForFormat(FormatResponses)
+	turn := testAssistantTurn(
+		assistantTextPart("working "),
+		testAssistantCallPart("call_1", "skill_list", `{"limit":1}`),
+		testAssistantCallPart("call_2", "skill_run", `{"id":"job_1"}`),
+	)
 	rounds := []ToolRound{
 		testToolRound("call_1", "skill_list", `{"limit":1}`, `{"ok":true}`, false),
 		testToolRound("call_2", "skill_run", `{"id":"job_1"}`, `"done"`, false),
 	}
 
-	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":"hello"}`), rounds)
+	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":"hello"}`), turn, rounds)
 	if err != nil {
 		t.Fatalf("AppendToolResults: %v", err)
 	}
@@ -274,46 +353,52 @@ func TestResponsesAdapterAppendToolResultsPreservesStringInput(t *testing.T) {
 	if root.Get("input.0.content").String() != "hello" {
 		t.Fatalf("string input content = %s", root.Get("input.0").Raw)
 	}
-	if root.Get("input.1.type").String() != "function_call" {
+	if root.Get("input.1.type").String() != "message" {
 		t.Fatalf("assistant function call = %s", root.Get("input.1").Raw)
 	}
-	if root.Get("input.1.call_id").String() != "call_1" {
-		t.Fatalf("assistant function call id = %s", root.Get("input.1").Raw)
-	}
-	if root.Get("input.1.name").String() != "skill_list" {
-		t.Fatalf("assistant function call name = %s", root.Get("input.1").Raw)
-	}
-	if root.Get("input.1.arguments").String() != `{"limit":1}` {
-		t.Fatalf("assistant function call args = %s", root.Get("input.1").Raw)
+	if root.Get("input.1.role").String() != "assistant" || root.Get("input.1.content").String() != "working " {
+		t.Fatalf("assistant text item = %s", root.Get("input.1").Raw)
 	}
 	if root.Get("input.2.type").String() != "function_call" {
+		t.Fatalf("assistant function call = %s", root.Get("input.2").Raw)
+	}
+	if root.Get("input.2.call_id").String() != "call_1" {
+		t.Fatalf("assistant function call id = %s", root.Get("input.1").Raw)
+	}
+	if root.Get("input.2.name").String() != "skill_list" {
+		t.Fatalf("assistant function call name = %s", root.Get("input.1").Raw)
+	}
+	if root.Get("input.2.arguments").String() != `{"limit":1}` {
+		t.Fatalf("assistant function call args = %s", root.Get("input.1").Raw)
+	}
+	if root.Get("input.3.type").String() != "function_call" {
 		t.Fatalf("second assistant function call = %s", root.Get("input.2").Raw)
 	}
-	if root.Get("input.2.call_id").String() != "call_2" {
+	if root.Get("input.3.call_id").String() != "call_2" {
 		t.Fatalf("second assistant function call id = %s", root.Get("input.2").Raw)
 	}
-	if root.Get("input.2.name").String() != "skill_run" {
+	if root.Get("input.3.name").String() != "skill_run" {
 		t.Fatalf("second assistant function call name = %s", root.Get("input.2").Raw)
 	}
-	if root.Get("input.2.arguments").String() != `{"id":"job_1"}` {
+	if root.Get("input.3.arguments").String() != `{"id":"job_1"}` {
 		t.Fatalf("second assistant function call args = %s", root.Get("input.2").Raw)
 	}
-	if root.Get("input.3.type").String() != "function_call_output" {
+	if root.Get("input.4.type").String() != "function_call_output" {
 		t.Fatalf("first function call output = %s", root.Get("input.3").Raw)
 	}
-	if root.Get("input.3.call_id").String() != "call_1" {
+	if root.Get("input.4.call_id").String() != "call_1" {
 		t.Fatalf("first function call output id = %s", root.Get("input.3").Raw)
 	}
-	if root.Get("input.3.output").String() != `{"ok":true}` {
+	if root.Get("input.4.output").String() != `{"ok":true}` {
 		t.Fatalf("first function call output content = %s", root.Get("input.3").Raw)
 	}
-	if root.Get("input.4.type").String() != "function_call_output" {
+	if root.Get("input.5.type").String() != "function_call_output" {
 		t.Fatalf("second function call output = %s", root.Get("input.4").Raw)
 	}
-	if root.Get("input.4.call_id").String() != "call_2" {
+	if root.Get("input.5.call_id").String() != "call_2" {
 		t.Fatalf("second function call output id = %s", root.Get("input.4").Raw)
 	}
-	if root.Get("input.4.output").String() != "done" {
+	if root.Get("input.5.output").String() != "done" {
 		t.Fatalf("second function call output content = %s", root.Get("input.4").Raw)
 	}
 }
@@ -324,7 +409,7 @@ func TestResponsesAdapterAppendToolResultsStringifiesStructuredOutput(t *testing
 		testToolRound("call_1", "skill_list", `{"limit":1}`, `{"ok":true,"items":[1,2]}`, false),
 	}
 
-	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":[]}`), rounds)
+	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":[]}`), testAssistantTurn(testAssistantCallPart("call_1", "skill_list", `{"limit":1}`)), rounds)
 	if err != nil {
 		t.Fatalf("AppendToolResults: %v", err)
 	}
@@ -343,11 +428,12 @@ func TestResponsesAdapterAppendToolResultsStringifiesStructuredOutput(t *testing
 
 func TestResponsesAdapterAppendToolResultsPreservesArrayInput(t *testing.T) {
 	adapter := adapterForFormat(FormatResponses)
+	turn := testAssistantTurn(testAssistantCallPart("call_1", "skill_list", `{"limit":1}`))
 	rounds := []ToolRound{
 		testToolRound("call_1", "skill_list", `{"limit":1}`, `"done"`, false),
 	}
 
-	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"hello"},{"type":"message","role":"assistant","content":"working"}]}`), rounds)
+	body, err := adapter.AppendToolResults([]byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"hello"},{"type":"message","role":"assistant","content":"working"}]}`), turn, rounds)
 	if err != nil {
 		t.Fatalf("AppendToolResults: %v", err)
 	}

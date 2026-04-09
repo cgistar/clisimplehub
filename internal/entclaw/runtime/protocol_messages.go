@@ -1,9 +1,6 @@
 package entclawruntime
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "encoding/json"
 
 type messagesAdapter struct{}
 
@@ -16,7 +13,7 @@ func (messagesAdapter) WithStreamFlag(body []byte, stream bool) ([]byte, error) 
 	})
 }
 
-func (messagesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) {
+func (messagesAdapter) ParseToolCalls(body []byte) (AssistantTurn, error) {
 	var payload struct {
 		Content []struct {
 			Type  string          `json:"type"`
@@ -27,41 +24,58 @@ func (messagesAdapter) ParseToolCalls(body []byte) ([]ToolCall, string, error) {
 		} `json:"content"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, "", err
+		return AssistantTurn{}, err
 	}
 
-	calls := make([]ToolCall, 0, len(payload.Content))
-	var finalText strings.Builder
+	turn := AssistantTurn{
+		Parts: make([]AssistantTurnPart, 0, len(payload.Content)),
+	}
 	for _, item := range payload.Content {
 		if item.Type == "tool_use" {
-			calls = append(calls, ToolCall{
+			turn.Parts = append(turn.Parts, assistantToolCallPart(ToolCall{
 				ID:        item.ID,
 				Name:      item.Name,
 				Arguments: item.Input,
-			})
+			}))
 		}
 		if item.Type == "text" {
-			finalText.WriteString(item.Text)
+			turn.Parts = append(turn.Parts, assistantTextPart(item.Text))
 		}
 	}
 
-	return calls, finalText.String(), nil
+	return turn, nil
 }
 
-func (messagesAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byte, error) {
+func (messagesAdapter) AppendToolResults(body []byte, turn AssistantTurn, rounds []ToolRound) ([]byte, error) {
 	return mutateJSON(body, func(payload map[string]any) error {
 		raw, _ := payload["messages"].([]any)
+		parts := assistantTurnPartsForLoopback(turn, rounds)
+		if len(parts) > 0 {
+			assistantContent := make([]any, 0, len(parts))
+			for _, part := range parts {
+				switch part.Type {
+				case assistantTurnPartText:
+					assistantContent = append(assistantContent, map[string]any{
+						"type": "text",
+						"text": part.Text,
+					})
+				case assistantTurnPartToolCall:
+					assistantContent = append(assistantContent, map[string]any{
+						"type":  "tool_use",
+						"id":    part.Call.ID,
+						"name":  part.Call.Name,
+						"input": rawJSONObjectOrEmpty(part.Call.Arguments),
+					})
+				}
+			}
+			raw = append(raw, map[string]any{
+				"role":    "assistant",
+				"content": assistantContent,
+			})
+		}
 		if len(rounds) > 0 {
-			assistantContent := make([]any, 0, len(rounds))
 			userContent := make([]any, 0, len(rounds))
 			for _, round := range rounds {
-				assistantContent = append(assistantContent, map[string]any{
-					"type":  "tool_use",
-					"id":    round.Call.ID,
-					"name":  round.Call.Name,
-					"input": rawJSONObjectOrEmpty(round.Call.Arguments),
-				})
-
 				item := map[string]any{
 					"type":        "tool_result",
 					"tool_use_id": round.Call.ID,
@@ -72,10 +86,6 @@ func (messagesAdapter) AppendToolResults(body []byte, rounds []ToolRound) ([]byt
 				}
 				userContent = append(userContent, item)
 			}
-			raw = append(raw, map[string]any{
-				"role":    "assistant",
-				"content": assistantContent,
-			})
 			raw = append(raw, map[string]any{
 				"role":    "user",
 				"content": userContent,
