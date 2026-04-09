@@ -34,7 +34,8 @@ func (p *EntclawPlugin) Init(cfg plugin.InitConfig) error {
 	sessions := entclawruntime.NewSessionStore(dataDir)
 	skills := entclawruntime.NewSkillStore(dataDir)
 	mcp := entclawruntime.NewMCPStore(dataDir)
-	tools := entclawruntime.NewToolRuntime(dataDir, sessions, skills, mcp, nil, nil)
+	mcpCaller := entclawruntime.NewStdioMCPCaller(dataDir)
+	tools := entclawruntime.NewToolRuntime(dataDir, sessions, skills, mcp, mcpCaller, nil)
 	client := entclawruntime.HTTPClientLoopback{
 		Client: http.DefaultClient,
 	}

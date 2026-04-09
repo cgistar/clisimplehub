@@ -3,10 +3,13 @@ package entclawruntime
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 type stubLoopbackClient struct {
@@ -214,6 +217,150 @@ func TestOrchestratorReturnsErrorWhenFinalStreamFails(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Run error = nil, want final stream failure")
+	}
+}
+
+func TestOrchestratorUsesStreamingProbeForResponsesToolCalls(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	store := NewSessionStore(dataDir)
+	tools := NewToolRuntime(
+		dataDir,
+		store,
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+	client := &stubLoopbackClient{
+		responses: []*http.Response{
+			testHTTPResponse(strings.Join([]string{
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","item":{"type":"message","status":"completed","content":[{"type":"output_text","text":"checking skills"}]}}`,
+				"",
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","item":{"type":"function_call","status":"completed","call_id":"call_1","name":"skill_list","arguments":"{}"}}`,
+				"",
+			}, "\n"), "text/event-stream"),
+			testHTTPResponse(strings.Join([]string{
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","item":{"type":"message","status":"completed","content":[{"type":"output_text","text":"done"}]}}`,
+				"",
+				"event: response.output_text.done",
+				`data: {"type":"response.output_text.done","text":"done"}`,
+				"",
+			}, "\n"), "text/event-stream"),
+		},
+	}
+	orchestrator := Orchestrator{
+		client:   client,
+		tools:    tools,
+		sessions: store,
+	}
+
+	result, err := orchestrator.Run(context.Background(), testSourceRequest(), &TaskRequest{
+		SessionID: "session-1",
+		Channel:   ChannelCodex,
+		Format:    FormatResponses,
+		Model:     "gpt-5.4",
+		RawBody:   []byte(`{"model":"gpt-5.4","input":"hello"}`),
+		Path:      "/v1/entclaw/responses",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.Response == nil {
+		t.Fatal("expected final response")
+	}
+	if client.callCount != 2 {
+		t.Fatalf("callCount = %d, want 2", client.callCount)
+	}
+	if !bytes.Contains(client.bodies[0], []byte(`"stream":true`)) {
+		t.Fatalf("first loopback body should be stream=true: %s", client.bodies[0])
+	}
+	if !bytes.Contains(client.bodies[1], []byte(`"stream":true`)) {
+		t.Fatalf("second loopback body should be stream=true: %s", client.bodies[1])
+	}
+	if !bytes.Contains(client.bodies[1], []byte(`"function_call_output"`)) {
+		t.Fatalf("second loopback body missing tool result: %s", client.bodies[1])
+	}
+	streamBody, err := io.ReadAll(result.Response.Body)
+	if err != nil {
+		t.Fatalf("ReadAll(stream): %v", err)
+	}
+	if err := result.Response.Body.Close(); err != nil {
+		t.Fatalf("Close(stream): %v", err)
+	}
+	if !strings.Contains(string(streamBody), "done") {
+		t.Fatalf("stream body = %q, want final content", streamBody)
+	}
+}
+
+func TestOrchestratorBuildsResponsesLoopbackBodyFromEntclawTask(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	store := NewSessionStore(dataDir)
+	tools := NewToolRuntime(
+		dataDir,
+		store,
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+	client := &stubLoopbackClient{
+		responses: []*http.Response{
+			testHTTPResponse(strings.Join([]string{
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","item":{"type":"message","status":"completed","content":[{"type":"output_text","text":"done"}]}}`,
+				"",
+			}, "\n"), "text/event-stream"),
+		},
+	}
+	orchestrator := Orchestrator{
+		client:   client,
+		tools:    tools,
+		sessions: store,
+	}
+
+	_, err := orchestrator.Run(context.Background(), testSourceRequest(), &TaskRequest{
+		SessionID: "session-1",
+		Channel:   ChannelCodex,
+		Format:    FormatResponses,
+		Model:     "gpt-5.4",
+		InputRaw:  json.RawMessage(`"read demo skill"`),
+		RawBody:   []byte(`{"model":"gpt-5.4","input":"read demo skill","tools":[{"type":"function","name":"client_tool"}],"tool_choice":"required"}`),
+		Path:      "/v1/entclaw/responses",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if client.callCount != 1 {
+		t.Fatalf("callCount = %d, want 1", client.callCount)
+	}
+	if bytes.Contains(client.bodies[0], []byte(`client_tool`)) {
+		t.Fatalf("loopback body should not include client tool definitions: %s", client.bodies[0])
+	}
+	if !bytes.Contains(client.bodies[0], []byte(`"name":"skill_list"`)) {
+		t.Fatalf("loopback body missing built-in tools: %s", client.bodies[0])
+	}
+	root := gjson.ParseBytes(client.bodies[0])
+	if root.Get("instructions").String() == "" {
+		t.Fatalf("loopback body missing default instructions: %s", client.bodies[0])
+	}
+	if root.Get("tool_choice").String() != "required" {
+		t.Fatalf("tool_choice = %s, want required", root.Get("tool_choice").Raw)
+	}
+	if root.Get("input.0.type").String() != "message" {
+		t.Fatalf("input[0] type = %s", root.Get("input.0").Raw)
+	}
+	if root.Get("input.0.role").String() != "user" {
+		t.Fatalf("input[0] role = %s", root.Get("input.0").Raw)
+	}
+	if root.Get("input.0.content").String() != "read demo skill" {
+		t.Fatalf("input[0] content = %s", root.Get("input.0").Raw)
 	}
 }
 

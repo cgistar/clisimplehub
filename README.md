@@ -258,17 +258,66 @@ GitHub Actions 发布构建：
 - 账号池与轮换：`fixed`/`failover`/`loadbalance(WRR)`。
 - OAuth 登录：PKCE 本地回调（1455 端口）+ WebUI 登录链路。
 - 自动 token 刷新与账号状态维护（valid/banned/exhausted/reused）。
-- 转发策略：401 刷新重试，402/403/429 分类处理与冷却。
-- 使用率快照：从上游 headers 解析并写回账号。
-- 账号统计：按账号聚合请求与 token。
-- 同步支持：导出/导入（全局配置 + 全量账号，保留一致性校验）。
+
+### 6.3 Entclaw 插件（`entclaw`）
 
 对外路由：
 
-- `POST /codex/v1/responses`
-- `POST /codex/v1/responses/compact`
-- `GET /v0/management/codex-auth-url`
-- `POST /v0/management/oauth-callback`
+- `POST /v1/entclaw/messages`
+- `POST /v1/entclaw/chat/completions`
+- `POST /v1/entclaw/responses`
+- `GET /v1/entclaw/skills`
+- `POST /v1/entclaw/skills`
+- `PUT /v1/entclaw/skills/{name}`
+- `DELETE /v1/entclaw/skills/{name}`
+
+行为说明：
+
+- `POST /v1/entclaw/messages` 内部回环到标准 `/v1/messages`。
+- `POST /v1/entclaw/chat/completions` 内部回环到标准 `/v1/chat/completions`。
+- `POST /v1/entclaw/responses` 内部回环到标准 `/v1/responses`。
+- 路由后缀决定采用哪类上游协议；`entclaw` 会解析客户端请求并自行构造对应的上游请求，而不是透传客户端原始 body。
+- Entclaw 推理入口始终只向客户端返回最终一次上游调用的流式响应；即使客户端未显式传入 `stream=true`，返回仍为流式。
+- 中间的工具调用轮次仅在插件内部回环执行，不对外暴露。
+- `/v1/entclaw/responses` 会自动注入内建工具定义（如 `skill_list`、`skill_write`、`fs_read`、`mcp_call`、`command_exec`）；客户端无需显式传入 `tools`。
+- `skills` 接口用于管理本地 `entclaw/skills` 目录下的技能文件。
+- `mcp_call` 使用数据目录下的 `entclaw/mcp/<name>.json` 配置启动一个短生命周期的 `stdio` MCP server，并在单次调用内完成 `initialize` 与目标 MCP 方法执行。
+
+`mcp_call` 参数约定：
+
+```json
+{
+  "name": "github",
+  "arguments": {
+    "method": "tools/call",
+    "params": {
+      "name": "search_repositories",
+      "arguments": {
+        "query": "openclaw"
+      }
+    }
+  }
+}
+```
+
+MCP 配置文件约定（`<data-dir>/entclaw/mcp/<name>.json`）：
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-github"],
+  "env": {
+    "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
+  },
+  "cwd": ".",
+  "startup_timeout_ms": 10000,
+  "call_timeout_ms": 30000,
+  "disabled": false,
+  "description": "GitHub MCP server"
+}
+```
+
+GitHub MCP 参考来源：官方 MCP reference servers 仓库给出的客户端配置示例使用 `npx -y @modelcontextprotocol/server-github`，并通过 `GITHUB_PERSONAL_ACCESS_TOKEN` 提供认证。
 
 ### 6.3 科学上网 插件
 

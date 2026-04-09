@@ -1,6 +1,7 @@
 package entclawruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -73,11 +74,15 @@ func (o Orchestrator) Run(ctx context.Context, source *http.Request, task *TaskR
 		return nil, err
 	}
 
-	currentBody := append([]byte(nil), task.RawBody...)
+	currentBody, err := buildInitialLoopbackBody(task, o.tools)
+	if err != nil {
+		return nil, fmt.Errorf("build initial loopback body: %w", err)
+	}
 	path := adapter.LoopbackPath()
+	streamProbe := task.Format == FormatResponses
 
 	for round := 0; round < maxLoopbackProbeRounds; round++ {
-		probeBody, err := adapter.WithStreamFlag(currentBody, false)
+		probeBody, err := adapter.WithStreamFlag(currentBody, streamProbe)
 		if err != nil {
 			return nil, fmt.Errorf("set probe stream flag: %w", err)
 		}
@@ -106,6 +111,13 @@ func (o Orchestrator) Run(ctx context.Context, source *http.Request, task *TaskR
 
 		calls := turn.ToolCalls()
 		if len(calls) == 0 {
+			if streamProbe {
+				return &RunResult{
+					Response: rebuildLoopbackResponse(probeResponse, raw),
+					Session:  session,
+				}, nil
+			}
+
 			streamBody, err := adapter.WithStreamFlag(currentBody, true)
 			if err != nil {
 				return nil, fmt.Errorf("set final stream flag: %w", err)
@@ -164,6 +176,18 @@ func (o Orchestrator) Run(ctx context.Context, source *http.Request, task *TaskR
 	}
 
 	return nil, fmt.Errorf("exceeded maximum loopback probe rounds (%d)", maxLoopbackProbeRounds)
+}
+
+func rebuildLoopbackResponse(response *http.Response, body []byte) *http.Response {
+	if response == nil {
+		return nil
+	}
+
+	cloned := *response
+	cloned.Header = response.Header.Clone()
+	cloned.Body = io.NopCloser(bytes.NewReader(body))
+	cloned.ContentLength = int64(len(body))
+	return &cloned
 }
 
 func readLoopbackBody(response *http.Response) ([]byte, error) {

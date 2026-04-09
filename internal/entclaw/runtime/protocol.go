@@ -34,7 +34,8 @@ type AssistantTurnPart struct {
 }
 
 type AssistantTurn struct {
-	Parts []AssistantTurnPart
+	ResponseID string
+	Parts      []AssistantTurnPart
 }
 
 func (turn AssistantTurn) FinalText() string {

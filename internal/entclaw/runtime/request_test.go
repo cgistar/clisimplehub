@@ -2,6 +2,7 @@ package entclawruntime
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"testing"
 )
@@ -76,5 +77,29 @@ func TestNormalizeRequestMapsResponsesRoute(t *testing.T) {
 	}
 	if !task.Stream {
 		t.Fatal("expected stream mode to be forced on")
+	}
+}
+
+func TestNormalizeRequestKeepsInternalSessionIDButStripsRawSessionID(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","session_id":"demo-session","input":"hello"}`)
+	req, err := http.NewRequest(http.MethodPost, "/v1/entclaw/responses", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	task, err := NormalizeRequest(req, body)
+	if err != nil {
+		t.Fatalf("NormalizeRequest: %v", err)
+	}
+	if task.SessionID != "demo-session" {
+		t.Fatalf("session_id = %q, want %q", task.SessionID, "demo-session")
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(task.RawBody, &raw); err != nil {
+		t.Fatalf("decode raw body: %v", err)
+	}
+	if _, ok := raw["session_id"]; ok {
+		t.Fatalf("expected raw body to strip session_id, got %s", string(task.RawBody))
 	}
 }

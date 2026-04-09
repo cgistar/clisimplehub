@@ -25,6 +25,7 @@ type TaskRequest struct {
 	Channel   Channel
 	Format    RequestFormat
 	Model     string
+	InputRaw  json.RawMessage
 	Stream    bool
 	RawBody   []byte
 	Headers   http.Header
@@ -40,6 +41,7 @@ func NormalizeRequest(r *http.Request, body []byte) (*TaskRequest, error) {
 	var payload struct {
 		SessionID string `json:"session_id"`
 		Model     string `json:"model"`
+		Input     json.RawMessage `json:"input"`
 	}
 	if len(body) > 0 {
 		if err := json.Unmarshal(body, &payload); err != nil {
@@ -47,16 +49,35 @@ func NormalizeRequest(r *http.Request, body []byte) (*TaskRequest, error) {
 		}
 	}
 
+	rawBody := append([]byte(nil), body...)
+	if sanitized, err := stripSessionIDFromBody(body); err == nil {
+		rawBody = sanitized
+	}
+
 	return &TaskRequest{
 		SessionID: strings.TrimSpace(payload.SessionID),
 		Channel:   channel,
 		Format:    format,
 		Model:     strings.TrimSpace(payload.Model),
+		InputRaw:  append(json.RawMessage(nil), payload.Input...),
 		Stream:    true,
-		RawBody:   append([]byte(nil), body...),
+		RawBody:   rawBody,
 		Headers:   r.Header.Clone(),
 		Path:      r.URL.Path,
 	}, nil
+}
+
+func stripSessionIDFromBody(body []byte) ([]byte, error) {
+	if len(body) == 0 {
+		return []byte{}, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	delete(payload, "session_id")
+	return json.Marshal(payload)
 }
 
 func mapEntclawPath(path string) (Channel, RequestFormat, error) {

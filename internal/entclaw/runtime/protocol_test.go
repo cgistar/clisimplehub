@@ -129,6 +129,51 @@ func TestResponsesAdapterParseToolCallsAggregatesFinalText(t *testing.T) {
 		t.Fatalf("finalText = %q, want aggregated message text", finalText)
 	}
 }
+
+func TestResponsesAdapterParseToolCallsFromStreamingEvents(t *testing.T) {
+	adapter := adapterForFormat(FormatResponses)
+	raw := []byte("event: response.output_item.added\n" +
+		"data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_1\",\"name\":\"skill_list\",\"arguments\":\"\"}}\n\n" +
+		"event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"checking skills\"}]}}\n\n" +
+		"event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"skill_list\",\"arguments\":\"{}\"}}\n\n")
+
+	turn, err := adapter.ParseToolCalls(raw)
+	if err != nil {
+		t.Fatalf("ParseToolCalls: %v", err)
+	}
+	if turn.FinalText() != "checking skills" {
+		t.Fatalf("finalText = %q, want %q", turn.FinalText(), "checking skills")
+	}
+	calls := turn.ToolCalls()
+	if len(calls) != 1 {
+		t.Fatalf("len(calls) = %d, want 1", len(calls))
+	}
+	if calls[0].Name != "skill_list" {
+		t.Fatalf("call name = %q, want %q", calls[0].Name, "skill_list")
+	}
+	if string(calls[0].Arguments) != "{}" {
+		t.Fatalf("arguments = %s, want {}", calls[0].Arguments)
+	}
+}
+
+func TestResponsesAdapterParseToolCallsCapturesResponseIDFromStreamingEvents(t *testing.T) {
+	adapter := adapterForFormat(FormatResponses)
+	raw := []byte("event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"skill_list\",\"arguments\":\"{}\"}}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_123\",\"status\":\"completed\"}}\n\n")
+
+	turn, err := adapter.ParseToolCalls(raw)
+	if err != nil {
+		t.Fatalf("ParseToolCalls: %v", err)
+	}
+	if turn.ResponseID != "resp_123" {
+		t.Fatalf("turn.ResponseID = %q, want %q", turn.ResponseID, "resp_123")
+	}
+}
+
 func TestMessagesAdapterAppendToolResultsAddsToolUseAndToolResultBlocks(t *testing.T) {
 	adapter := adapterForFormat(FormatMessages)
 	turn := testAssistantTurn(
@@ -325,13 +370,16 @@ func TestMessagesAdapterRoundTripsAssistantTextAndToolUseWhenAppendingResults(t 
 	}
 }
 
-func TestResponsesAdapterAppendToolResultsPreservesStringInput(t *testing.T) {
+func TestResponsesAdapterAppendToolResultsReplaysInputWithoutAssistantText(t *testing.T) {
 	adapter := adapterForFormat(FormatResponses)
-	turn := testAssistantTurn(
-		assistantTextPart("working "),
+	turn, err := adapter.ParseToolCalls([]byte(`{"id":"resp_123","output":[{"type":"message","content":[{"type":"output_text","text":"working "}]}]}`))
+	if err != nil {
+		t.Fatalf("ParseToolCalls: %v", err)
+	}
+	turn.Parts = []AssistantTurnPart{
 		testAssistantCallPart("call_1", "skill_list", `{"limit":1}`),
 		testAssistantCallPart("call_2", "skill_run", `{"id":"job_1"}`),
-	)
+	}
 	rounds := []ToolRound{
 		testToolRound("call_1", "skill_list", `{"limit":1}`, `{"ok":true}`, false),
 		testToolRound("call_2", "skill_run", `{"id":"job_1"}`, `"done"`, false),
@@ -343,62 +391,38 @@ func TestResponsesAdapterAppendToolResultsPreservesStringInput(t *testing.T) {
 	}
 
 	root := gjson.ParseBytes(body)
-	if root.Get("input.0.type").String() != "message" {
-		t.Fatalf("string input not preserved as message: %s", root.Get("input").Raw)
+	if root.Get("previous_response_id").Exists() {
+		t.Fatalf("previous_response_id should not be sent for replay continuation: %s", root.Raw)
 	}
-	if root.Get("input.0.role").String() != "user" {
-		t.Fatalf("string input role = %s", root.Get("input.0").Raw)
+	if root.Get("input.#").Int() != 5 {
+		t.Fatalf("input length = %d, want original user item + function calls + outputs", root.Get("input.#").Int())
+	}
+	if root.Get("input.0.type").String() != "message" {
+		t.Fatalf("first input type = %s", root.Get("input.0").Raw)
 	}
 	if root.Get("input.0.content").String() != "hello" {
-		t.Fatalf("string input content = %s", root.Get("input.0").Raw)
+		t.Fatalf("original user input should be preserved: %s", root.Get("input.0").Raw)
 	}
-	if root.Get("input.1.type").String() != "message" {
-		t.Fatalf("assistant function call = %s", root.Get("input.1").Raw)
+	if root.Get("input.1.type").String() != "function_call" {
+		t.Fatalf("first replayed function_call = %s", root.Get("input.1").Raw)
 	}
-	if root.Get("input.1.role").String() != "assistant" || root.Get("input.1.content").String() != "working " {
-		t.Fatalf("assistant text item = %s", root.Get("input.1").Raw)
+	if root.Get("input.1.call_id").String() != "call_1" {
+		t.Fatalf("first replayed call_id = %s", root.Get("input.1").Raw)
 	}
 	if root.Get("input.2.type").String() != "function_call" {
-		t.Fatalf("assistant function call = %s", root.Get("input.2").Raw)
+		t.Fatalf("second replayed function_call = %s", root.Get("input.2").Raw)
 	}
-	if root.Get("input.2.call_id").String() != "call_1" {
-		t.Fatalf("assistant function call id = %s", root.Get("input.1").Raw)
+	if root.Get("input.3.type").String() != "function_call_output" {
+		t.Fatalf("first output body = %s", root.Get("input.3").Raw)
 	}
-	if root.Get("input.2.name").String() != "skill_list" {
-		t.Fatalf("assistant function call name = %s", root.Get("input.1").Raw)
-	}
-	if root.Get("input.2.arguments").String() != `{"limit":1}` {
-		t.Fatalf("assistant function call args = %s", root.Get("input.1").Raw)
-	}
-	if root.Get("input.3.type").String() != "function_call" {
-		t.Fatalf("second assistant function call = %s", root.Get("input.2").Raw)
-	}
-	if root.Get("input.3.call_id").String() != "call_2" {
-		t.Fatalf("second assistant function call id = %s", root.Get("input.2").Raw)
-	}
-	if root.Get("input.3.name").String() != "skill_run" {
-		t.Fatalf("second assistant function call name = %s", root.Get("input.2").Raw)
-	}
-	if root.Get("input.3.arguments").String() != `{"id":"job_1"}` {
-		t.Fatalf("second assistant function call args = %s", root.Get("input.2").Raw)
+	if root.Get("input.3.output").String() != `{"ok":true}` {
+		t.Fatalf("first output payload = %s", root.Get("input.3").Raw)
 	}
 	if root.Get("input.4.type").String() != "function_call_output" {
-		t.Fatalf("first function call output = %s", root.Get("input.3").Raw)
+		t.Fatalf("second output body = %s", root.Get("input.4").Raw)
 	}
-	if root.Get("input.4.call_id").String() != "call_1" {
-		t.Fatalf("first function call output id = %s", root.Get("input.3").Raw)
-	}
-	if root.Get("input.4.output").String() != `{"ok":true}` {
-		t.Fatalf("first function call output content = %s", root.Get("input.3").Raw)
-	}
-	if root.Get("input.5.type").String() != "function_call_output" {
-		t.Fatalf("second function call output = %s", root.Get("input.4").Raw)
-	}
-	if root.Get("input.5.call_id").String() != "call_2" {
-		t.Fatalf("second function call output id = %s", root.Get("input.4").Raw)
-	}
-	if root.Get("input.5.output").String() != "done" {
-		t.Fatalf("second function call output content = %s", root.Get("input.4").Raw)
+	if root.Get("input.4.output").String() != "done" {
+		t.Fatalf("second output payload = %s", root.Get("input.4").Raw)
 	}
 }
 
@@ -414,6 +438,9 @@ func TestResponsesAdapterAppendToolResultsStringifiesStructuredOutput(t *testing
 	}
 
 	root := gjson.ParseBytes(body)
+	if root.Get("input.0.type").String() != "function_call" {
+		t.Fatalf("replayed function call = %s", root.Get("input").Raw)
+	}
 	if root.Get("input.1.type").String() != "function_call_output" {
 		t.Fatalf("function call output = %s", root.Get("input").Raw)
 	}
@@ -425,7 +452,7 @@ func TestResponsesAdapterAppendToolResultsStringifiesStructuredOutput(t *testing
 	}
 }
 
-func TestResponsesAdapterAppendToolResultsPreservesArrayInput(t *testing.T) {
+func TestResponsesAdapterAppendToolResultsDoesNotReplayPriorMessages(t *testing.T) {
 	adapter := adapterForFormat(FormatResponses)
 	turn := testAssistantTurn(testAssistantCallPart("call_1", "skill_list", `{"limit":1}`))
 	rounds := []ToolRound{
@@ -438,14 +465,17 @@ func TestResponsesAdapterAppendToolResultsPreservesArrayInput(t *testing.T) {
 	}
 
 	root := gjson.ParseBytes(body)
+	if root.Get("input.#").Int() != 4 {
+		t.Fatalf("input length = %d, want original messages + function call + output", root.Get("input.#").Int())
+	}
 	if root.Get("input.0.type").String() != "message" || root.Get("input.0.content").String() != "hello" {
-		t.Fatalf("existing array input changed: %s", root.Get("input").Raw)
+		t.Fatalf("original user message = %s", root.Get("input.0").Raw)
 	}
 	if root.Get("input.1.type").String() != "message" || root.Get("input.1.content").String() != "working" {
-		t.Fatalf("existing assistant array item changed: %s", root.Get("input").Raw)
+		t.Fatalf("original assistant message = %s", root.Get("input.1").Raw)
 	}
 	if root.Get("input.2.type").String() != "function_call" {
-		t.Fatalf("assistant function call = %s", root.Get("input").Raw)
+		t.Fatalf("replayed function call = %s", root.Get("input.2").Raw)
 	}
 	if root.Get("input.3.type").String() != "function_call_output" {
 		t.Fatalf("function call output = %s", root.Get("input").Raw)
