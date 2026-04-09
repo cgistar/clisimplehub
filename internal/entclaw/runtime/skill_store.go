@@ -99,10 +99,84 @@ func (s SkillStore) skillPath(name string) (string, error) {
 	return filepath.Join(dir, "SKILL.md"), nil
 }
 
+func (s SkillStore) SkillPath(name string) (string, error) {
+	return s.skillPath(name)
+}
+
+func (s SkillStore) ScriptDir(name string) (string, error) {
+	dir, err := s.skillDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "scripts"), nil
+}
+
+func (s SkillStore) ResolveScriptPath(name, script string) (string, string, error) {
+	skillDir, err := s.resolveExistingSkillDir(name)
+	if err != nil {
+		return "", "", err
+	}
+
+	scriptName := strings.TrimSpace(script)
+	if scriptName == "" || scriptName == "." {
+		return "", "", fmt.Errorf("script is required")
+	}
+
+	scriptDir := filepath.Join(skillDir, "scripts")
+	candidate := filepath.Clean(filepath.Join(scriptDir, scriptName))
+	relative, err := filepath.Rel(scriptDir, candidate)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve relative path: %w", err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("path escapes guarded root")
+	}
+
+	info, err := os.Stat(candidate)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", fmt.Errorf("script %q not found for skill %q", scriptName, strings.TrimSpace(name))
+		}
+		return "", "", fmt.Errorf("stat script file: %w", err)
+	}
+	if info.IsDir() {
+		return "", "", fmt.Errorf("script %q not found for skill %q", scriptName, strings.TrimSpace(name))
+	}
+
+	resolved, err := NewPathGuard(scriptDir).Resolve(scriptName)
+	if err != nil {
+		return "", "", err
+	}
+	return resolved, skillDir, nil
+}
+
+func (s SkillStore) resolveExistingSkillDir(name string) (string, error) {
+	skillDir, err := s.skillDir(name)
+	if err != nil {
+		return "", err
+	}
+
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	info, err := os.Stat(skillPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("skill %q not found", strings.TrimSpace(name))
+		}
+		return "", fmt.Errorf("stat skill file: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("skill %q not found", strings.TrimSpace(name))
+	}
+	return skillDir, nil
+}
+
 func (s SkillStore) skillDir(name string) (string, error) {
 	skillName := strings.TrimSpace(name)
 	if skillName == "" {
 		return "", fmt.Errorf("skill name is required")
+	}
+	if skillName == "." || skillName == ".." {
+		return "", fmt.Errorf("invalid skill name %q", name)
 	}
 	if filepath.Base(skillName) != skillName {
 		return "", fmt.Errorf("invalid skill name %q", name)

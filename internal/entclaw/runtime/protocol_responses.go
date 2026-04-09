@@ -2,6 +2,7 @@ package entclawruntime
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -31,10 +32,29 @@ func (responsesAdapter) ParseToolCalls(body []byte) (AssistantTurn, error) {
 		} `json:"output"`
 	}
 	if err := json.Unmarshal(body, &payload); err == nil {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err == nil {
+			if !isResponsesJSONPayload(raw) {
+				return AssistantTurn{}, fmt.Errorf("unexpected responses payload")
+			}
+		}
 		return buildResponsesAssistantTurn(payload.ID, payload.Output), nil
 	}
 
 	return parseResponsesSSEToolCalls(body)
+}
+
+func isResponsesJSONPayload(payload map[string]json.RawMessage) bool {
+	if payload == nil {
+		return false
+	}
+	if _, ok := payload["output"]; ok {
+		return true
+	}
+	if _, ok := payload["id"]; ok {
+		return true
+	}
+	return false
 }
 
 func buildResponsesAssistantTurn(responseID string, output []struct {
@@ -94,7 +114,7 @@ func parseResponsesSSEToolCalls(body []byte) (AssistantTurn, error) {
 		}
 
 		var event struct {
-			Type string `json:"type"`
+			Type     string `json:"type"`
 			Response struct {
 				ID string `json:"id"`
 			} `json:"response"`
@@ -142,6 +162,57 @@ func parseResponsesSSEToolCalls(body []byte) (AssistantTurn, error) {
 	}
 
 	return turn, nil
+}
+
+func responsesSSEFailure(body []byte) (string, error) {
+	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
+	chunks := strings.Split(normalized, "\n\n")
+
+	for _, chunk := range chunks {
+		chunk = strings.TrimSpace(chunk)
+		if chunk == "" {
+			continue
+		}
+
+		var dataLines []string
+		for _, line := range strings.Split(chunk, "\n") {
+			if strings.HasPrefix(line, "data:") {
+				dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			}
+		}
+		if len(dataLines) == 0 {
+			continue
+		}
+
+		var event struct {
+			Type     string `json:"type"`
+			Response struct {
+				ID string `json:"id"`
+			} `json:"response"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(strings.Join(dataLines, "\n")), &event); err != nil {
+			continue
+		}
+		if event.Type != "response.failed" {
+			continue
+		}
+
+		responseID := strings.TrimSpace(event.Response.ID)
+		message := strings.TrimSpace(event.Error.Message)
+		if message == "" {
+			if responseID != "" {
+				message = fmt.Sprintf("responses stream failed for %s", responseID)
+			} else {
+				message = "responses stream failed"
+			}
+		}
+		return responseID, fmt.Errorf("%s", message)
+	}
+
+	return "", nil
 }
 
 func (responsesAdapter) AppendToolResults(body []byte, turn AssistantTurn, rounds []ToolRound) ([]byte, error) {

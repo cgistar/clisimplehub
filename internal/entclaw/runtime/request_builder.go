@@ -96,6 +96,21 @@ func builtinToolDefinitions() []map[string]any {
 		},
 		{
 			"type":        "function",
+			"name":        "skill_read",
+			"description": "Read the SKILL.md instructions for a local entclaw skill.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type": "string",
+					},
+				},
+				"required":             []string{"name"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
 			"name":        "memory_append",
 			"description": "Append a tool round into the current entclaw session memory.",
 			"parameters": map[string]any{

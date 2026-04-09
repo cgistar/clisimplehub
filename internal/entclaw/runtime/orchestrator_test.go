@@ -195,6 +195,7 @@ func TestOrchestratorReturnsErrorWhenFinalStreamFails(t *testing.T) {
 			testHTTPResponse(`{"choices":[{"message":{"content":"done","tool_calls":[]}}]}`, "application/json"),
 			{
 				StatusCode: http.StatusBadGateway,
+				Status:     "502 Bad Gateway",
 				Header: http.Header{
 					"Content-Type": []string{"application/json"},
 				},
@@ -361,6 +362,352 @@ func TestOrchestratorBuildsResponsesLoopbackBodyFromEntclawTask(t *testing.T) {
 	}
 	if root.Get("input.0.content").String() != "read demo skill" {
 		t.Fatalf("input[0] content = %s", root.Get("input.0").Raw)
+	}
+}
+
+func TestOrchestratorEmitsResponsesProgressEventsForToolRound(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	store := NewSessionStore(dataDir)
+	tools := NewToolRuntime(
+		dataDir,
+		store,
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	client := &stubLoopbackClient{
+		responses: []*http.Response{
+			testHTTPResponse(`{"output":[{"type":"message","content":[{"type":"output_text","text":"checking skills"}]},{"type":"function_call","call_id":"call_1","name":"skill_list","arguments":"{}"}]}`, "application/json"),
+			{
+				StatusCode: http.StatusOK,
+				Header: http.Header{
+					"Content-Type": []string{"text/event-stream"},
+				},
+				Body: io.NopCloser(strings.NewReader(
+					"event: response.output_item.done\n" +
+						"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"final\"}]}}\n\n" +
+						"event: response.completed\n" +
+						"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_final\",\"status\":\"completed\"}}\n\n",
+				)),
+			},
+		},
+	}
+
+	var seen []OrchestrationEvent
+	orchestrator := Orchestrator{
+		client:   client,
+		tools:    tools,
+		sessions: store,
+		OnEvent: func(event OrchestrationEvent) {
+			seen = append(seen, event)
+		},
+	}
+
+	_, err := orchestrator.Run(context.Background(), testSourceRequest(), &TaskRequest{
+		SessionID: "session-1",
+		Channel:   ChannelCodex,
+		Format:    FormatResponses,
+		Model:     "gpt-5.4",
+		InputRaw:  json.RawMessage(`"run demo"`),
+		RawBody:   []byte(`{"model":"gpt-5.4","input":"run demo"}`),
+		Path:      "/v1/entclaw/responses",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(seen) != 6 {
+		t.Fatalf("len(seen) = %d, want 6 (%+v)", len(seen), seen)
+	}
+	if seen[0].Type != OrchestrationAssistantMessage || seen[0].Text != "checking skills" {
+		t.Fatalf("seen[0] = %+v, want assistant text event", seen[0])
+	}
+	if seen[1].Type != OrchestrationAssistantToolCall || seen[1].CallID != "call_1" || seen[1].Name != "skill_list" {
+		t.Fatalf("seen[1] = %+v, want assistant tool call event", seen[1])
+	}
+	if seen[2].Type != OrchestrationToolStarted || seen[2].CallID != "call_1" {
+		t.Fatalf("seen[2] = %+v, want tool started event", seen[2])
+	}
+	if seen[3].Type != OrchestrationToolCompleted || seen[3].CallID != "call_1" || seen[3].IsError {
+		t.Fatalf("seen[3] = %+v, want successful tool completed event", seen[3])
+	}
+	if seen[4].Type != OrchestrationAssistantMessage || seen[4].Text != "final" {
+		t.Fatalf("seen[4] = %+v, want final assistant text event", seen[4])
+	}
+	if seen[5].Type != OrchestrationCompleted {
+		t.Fatalf("seen[5] = %+v, want completion event", seen[5])
+	}
+}
+
+func TestOrchestratorEmitsFailureEventForHardToolExecutionError(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	store := NewSessionStore(dataDir)
+	tools := NewToolRuntime(
+		dataDir,
+		store,
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+	client := &stubLoopbackClient{
+		responses: []*http.Response{
+			testHTTPResponse(`{"output":[{"type":"function_call","call_id":"call_1","name":"skill_read","arguments":"[]"}]}`, "application/json"),
+		},
+	}
+
+	var seen []OrchestrationEvent
+	orchestrator := Orchestrator{
+		client:   client,
+		tools:    tools,
+		sessions: store,
+		OnEvent: func(event OrchestrationEvent) {
+			seen = append(seen, event)
+		},
+	}
+
+	_, err := orchestrator.Run(context.Background(), testSourceRequest(), &TaskRequest{
+		SessionID: "session-1",
+		Channel:   ChannelCodex,
+		Format:    FormatResponses,
+		Model:     "gpt-5.4",
+		InputRaw:  json.RawMessage(`"broken tool args"`),
+		RawBody:   []byte(`{"model":"gpt-5.4","input":"broken tool args"}`),
+		Path:      "/v1/entclaw/responses",
+	})
+	if err == nil {
+		t.Fatal("Run error = nil, want hard tool execution failure")
+	}
+	if client.callCount != 1 {
+		t.Fatalf("callCount = %d, want 1", client.callCount)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("len(seen) = %d, want 3 (%+v)", len(seen), seen)
+	}
+	if seen[0].Type != OrchestrationAssistantToolCall || seen[0].CallID != "call_1" || seen[0].Name != "skill_read" {
+		t.Fatalf("seen[0] = %+v, want assistant tool call event", seen[0])
+	}
+	if seen[1].Type != OrchestrationToolStarted || seen[1].CallID != "call_1" {
+		t.Fatalf("seen[1] = %+v, want tool started event", seen[1])
+	}
+	if seen[2].Type != OrchestrationFailed || seen[2].CallID != "call_1" || !seen[2].IsError {
+		t.Fatalf("seen[2] = %+v, want failed terminal event", seen[2])
+	}
+	if !bytes.Contains(seen[2].Output, []byte(`"error":"execute tool \"skill_read\"`)) {
+		t.Fatalf("seen[2].Output = %s, want wrapped execution error", seen[2].Output)
+	}
+	for _, event := range seen {
+		if event.Type == OrchestrationCompleted {
+			t.Fatalf("unexpected completion event after hard failure: %+v", seen)
+		}
+	}
+}
+
+func TestOrchestratorEmitsFailureEventForResponsesProbeFailure(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	store := NewSessionStore(dataDir)
+	tools := NewToolRuntime(
+		dataDir,
+		store,
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+	client := &stubLoopbackClient{
+		responses: []*http.Response{
+			testHTTPResponse(strings.Join([]string{
+				"event: response.failed",
+				`data: {"type":"response.failed","response":{"id":"resp_failed","status":"failed"},"error":{"message":"probe failed"}}`,
+				"",
+			}, "\n"), "text/event-stream"),
+		},
+	}
+
+	var seen []OrchestrationEvent
+	orchestrator := Orchestrator{
+		client:   client,
+		tools:    tools,
+		sessions: store,
+		OnEvent: func(event OrchestrationEvent) {
+			seen = append(seen, event)
+		},
+	}
+
+	result, err := orchestrator.Run(context.Background(), testSourceRequest(), &TaskRequest{
+		SessionID: "session-1",
+		Channel:   ChannelCodex,
+		Format:    FormatResponses,
+		Model:     "gpt-5.4",
+		InputRaw:  json.RawMessage(`"probe failure"`),
+		RawBody:   []byte(`{"model":"gpt-5.4","input":"probe failure"}`),
+		Path:      "/v1/entclaw/responses",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.Response == nil {
+		t.Fatal("expected loopback response")
+	}
+	if len(seen) != 1 {
+		t.Fatalf("len(seen) = %d, want 1 (%+v)", len(seen), seen)
+	}
+	if seen[0].Type != OrchestrationFailed || seen[0].CallID != "" || !seen[0].IsError {
+		t.Fatalf("seen[0] = %+v, want failed terminal event", seen[0])
+	}
+	if !bytes.Contains(seen[0].Output, []byte(`probe failed`)) {
+		t.Fatalf("seen[0].Output = %s, want probe failure details", seen[0].Output)
+	}
+	for _, event := range seen {
+		if event.Type == OrchestrationCompleted {
+			t.Fatalf("unexpected completion event after failed probe: %+v", seen)
+		}
+	}
+}
+
+func TestOrchestratorDoesNotExecuteToolCallsFromFailedResponsesProbe(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	store := NewSessionStore(dataDir)
+	ranTools := 0
+	tools := NewToolRuntime(
+		dataDir,
+		store,
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		func(context.Context, CommandRequest) (CommandResult, error) {
+			ranTools++
+			return CommandResult{}, nil
+		},
+	)
+	client := &stubLoopbackClient{
+		responses: []*http.Response{
+			testHTTPResponse(strings.Join([]string{
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","item":{"type":"function_call","status":"completed","call_id":"call_1","name":"skill_list","arguments":"{}"}}`,
+				"",
+				"event: response.failed",
+				`data: {"type":"response.failed","response":{"id":"resp_failed","status":"failed"},"error":{"message":"probe failed after tool call"}}`,
+				"",
+			}, "\n"), "text/event-stream"),
+		},
+	}
+
+	var seen []OrchestrationEvent
+	orchestrator := Orchestrator{
+		client:   client,
+		tools:    tools,
+		sessions: store,
+		OnEvent: func(event OrchestrationEvent) {
+			seen = append(seen, event)
+		},
+	}
+
+	result, err := orchestrator.Run(context.Background(), testSourceRequest(), &TaskRequest{
+		SessionID: "session-1",
+		Channel:   ChannelCodex,
+		Format:    FormatResponses,
+		Model:     "gpt-5.4",
+		InputRaw:  json.RawMessage(`"probe failure after tool call"`),
+		RawBody:   []byte(`{"model":"gpt-5.4","input":"probe failure after tool call"}`),
+		Path:      "/v1/entclaw/responses",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.Response == nil {
+		t.Fatal("expected loopback response")
+	}
+	if ranTools != 0 {
+		t.Fatalf("ranTools = %d, want 0", ranTools)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("len(seen) = %d, want 2 (%+v)", len(seen), seen)
+	}
+	if seen[0].Type != OrchestrationAssistantToolCall || seen[0].CallID != "call_1" {
+		t.Fatalf("seen[0] = %+v, want assistant tool call event", seen[0])
+	}
+	if seen[1].Type != OrchestrationFailed || seen[1].CallID != "" || !seen[1].IsError {
+		t.Fatalf("seen[1] = %+v, want response-level failed event", seen[1])
+	}
+	if !bytes.Contains(seen[1].Output, []byte(`probe failed after tool call`)) {
+		t.Fatalf("seen[1].Output = %s, want probe failure details", seen[1].Output)
+	}
+}
+
+func TestOrchestratorEmitsFailureEventForFinalStreamStatusAfterProgress(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	store := NewSessionStore(dataDir)
+	tools := NewToolRuntime(
+		dataDir,
+		store,
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+	client := &stubLoopbackClient{
+		responses: []*http.Response{
+			testHTTPResponse(`{"choices":[{"message":{"content":"almost there","tool_calls":[]}}]}`, "application/json"),
+			{
+				StatusCode: http.StatusBadGateway,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body: io.NopCloser(strings.NewReader(`{"error":"upstream stream failed"}`)),
+			},
+		},
+	}
+
+	var seen []OrchestrationEvent
+	orchestrator := Orchestrator{
+		client:   client,
+		tools:    tools,
+		sessions: store,
+		OnEvent: func(event OrchestrationEvent) {
+			seen = append(seen, event)
+		},
+	}
+
+	_, err := orchestrator.Run(context.Background(), testSourceRequest(), &TaskRequest{
+		SessionID: "session-1",
+		Channel:   ChannelCodex,
+		Format:    FormatChatCompletions,
+		Model:     "gpt-5.4",
+		InputRaw:  json.RawMessage(`[]`),
+		RawBody:   []byte(`{"model":"gpt-5.4","messages":[]}`),
+		Path:      "/v1/entclaw/chat/completions",
+	})
+	if err == nil {
+		t.Fatal("Run error = nil, want final stream failure")
+	}
+	if client.callCount != 2 {
+		t.Fatalf("callCount = %d, want 2", client.callCount)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("len(seen) = %d, want 2 (%+v)", len(seen), seen)
+	}
+	if seen[0].Type != OrchestrationAssistantMessage || seen[0].Text != "almost there" {
+		t.Fatalf("seen[0] = %+v, want assistant message event", seen[0])
+	}
+	if seen[1].Type != OrchestrationFailed || seen[1].CallID != "" || !seen[1].IsError {
+		t.Fatalf("seen[1] = %+v, want terminal failed event", seen[1])
+	}
+	if !bytes.Contains(seen[1].Output, []byte(`final stream loopback returned`)) ||
+		!bytes.Contains(seen[1].Output, []byte(`upstream stream failed`)) {
+		t.Fatalf("seen[1].Output = %s, want final stream failure details", seen[1].Output)
 	}
 }
 

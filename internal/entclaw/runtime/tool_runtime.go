@@ -69,6 +69,18 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			names = []string{}
 		}
 		return marshalToolPayload(map[string]any{"skills": names}, err)
+	case "skill_read":
+		var input struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(rawJSONObjectOrEmpty(call.Arguments), &input); err != nil {
+			return ToolResult{}, err
+		}
+		content, err := r.skills.Read(ctx, input.Name)
+		return marshalToolPayload(map[string]any{
+			"name":    strings.TrimSpace(input.Name),
+			"content": content,
+		}, err)
 	case "skill_write":
 		var input struct {
 			Name    string `json:"name"`
@@ -81,6 +93,45 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"name":    strings.TrimSpace(input.Name),
 			"written": true,
 		}, r.skills.Write(ctx, input.Name, input.Content))
+	case "skill_run":
+		var input struct {
+			Name   string   `json:"name"`
+			Script string   `json:"script"`
+			Args   []string `json:"args"`
+		}
+		if err := json.Unmarshal(rawJSONObjectOrEmpty(call.Arguments), &input); err != nil {
+			return ToolResult{}, err
+		}
+
+		scriptPath, workDir, err := r.skills.ResolveScriptPath(input.Name, input.Script)
+		if err != nil {
+			return errorToolResult(err), nil
+		}
+
+		result, err := r.commands(ctx, CommandRequest{
+			WorkDir: workDir,
+			Args:    append([]string{scriptPath}, append([]string(nil), input.Args...)...),
+		})
+
+		payload := map[string]any{
+			"skill":    strings.TrimSpace(input.Name),
+			"script":   strings.TrimSpace(input.Script),
+			"stdout":   result.Stdout,
+			"stderr":   result.Stderr,
+			"exitCode": result.ExitCode,
+		}
+		if err != nil {
+			payload["error"] = err.Error()
+		}
+
+		body, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			return ToolResult{}, marshalErr
+		}
+		return ToolResult{
+			Content: body,
+			IsError: err != nil || result.ExitCode != 0,
+		}, nil
 	case "memory_append":
 		var input struct {
 			Round ToolRound `json:"round"`

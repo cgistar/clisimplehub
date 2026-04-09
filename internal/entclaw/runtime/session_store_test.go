@@ -142,6 +142,68 @@ func TestSkillStoreWriteAndRead(t *testing.T) {
 	}
 }
 
+func TestSkillStoreScriptDirReturnsSkillScriptsPath(t *testing.T) {
+	dataDir := t.TempDir()
+	store := NewSkillStore(dataDir)
+
+	dir, err := store.ScriptDir("demo")
+	if err != nil {
+		t.Fatalf("ScriptDir(demo): %v", err)
+	}
+
+	want := filepath.Join(dataDir, "entclaw", "skills", "demo", "scripts")
+	if dir != want {
+		t.Fatalf("dir = %q, want %q", dir, want)
+	}
+}
+
+func TestSkillStorePublicHelpersRejectInvalidSkillNames(t *testing.T) {
+	store := NewSkillStore(t.TempDir())
+
+	tests := []struct {
+		name   string
+		call   func() (string, error)
+		target string
+	}{
+		{
+			name:   "SkillPath dot",
+			target: ".",
+			call: func() (string, error) {
+				return store.SkillPath(".")
+			},
+		},
+		{
+			name:   "SkillPath dotdot",
+			target: "..",
+			call: func() (string, error) {
+				return store.SkillPath("..")
+			},
+		},
+		{
+			name:   "ScriptDir dot",
+			target: ".",
+			call: func() (string, error) {
+				return store.ScriptDir(".")
+			},
+		},
+		{
+			name:   "ScriptDir dotdot",
+			target: "..",
+			call: func() (string, error) {
+				return store.ScriptDir("..")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.call(); err == nil {
+				t.Fatalf("helper accepted invalid skill name %q", tt.target)
+			}
+		})
+	}
+}
+
 func TestSessionStoreLoadOrCreateReadsExistingSessionFile(t *testing.T) {
 	dataDir := t.TempDir()
 	store := NewSessionStore(dataDir)

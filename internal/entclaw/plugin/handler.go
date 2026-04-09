@@ -36,6 +36,13 @@ func (p *EntclawPlugin) handleInference(w http.ResponseWriter, r *http.Request) 
 
 	result, err := p.orchestrator.Run(r.Context(), r, task)
 	if err != nil {
+		if task.Format == entclawruntime.FormatResponses && result != nil && len(result.Events) > 0 {
+			if result.Response != nil {
+				defer result.Response.Body.Close()
+			}
+			writeResponsesProgress(w, result)
+			return
+		}
 		status := http.StatusInternalServerError
 		var loopbackErr *entclawruntime.LoopbackStatusError
 		if errors.As(err, &loopbackErr) && loopbackErr.StatusCode > 0 {
@@ -50,9 +57,53 @@ func (p *EntclawPlugin) handleInference(w http.ResponseWriter, r *http.Request) 
 	}
 
 	defer result.Response.Body.Close()
+	if task.Format == entclawruntime.FormatResponses {
+		writeResponsesProgress(w, result)
+		return
+	}
+
+	if task.Format == entclawruntime.FormatChatCompletions || task.Format == entclawruntime.FormatMessages {
+		finalBody, err := io.ReadAll(result.Response.Body)
+		if err != nil {
+			writeProtocolError(w, r.URL.Path, http.StatusInternalServerError, "failed to read final stream body")
+			return
+		}
+		copyHeaders(w.Header(), result.Response.Header)
+		status := result.Response.StatusCode
+		if status <= 0 {
+			status = http.StatusOK
+		}
+		w.WriteHeader(status)
+		if task.Format == entclawruntime.FormatChatCompletions {
+			_, _ = io.WriteString(w, entclawruntime.BuildChatProgressStream(result.Events, finalBody))
+			return
+		}
+		_, _ = io.WriteString(w, entclawruntime.BuildMessagesProgressStream(result.Events, finalBody))
+		return
+	}
+
 	copyHeaders(w.Header(), result.Response.Header)
 	w.WriteHeader(result.Response.StatusCode)
 	_, _ = io.Copy(w, result.Response.Body)
+}
+
+func writeResponsesProgress(w http.ResponseWriter, result *entclawruntime.RunResult) {
+	if w == nil || result == nil {
+		return
+	}
+	if result.Response != nil {
+		copyHeaders(w.Header(), result.Response.Header)
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	if strings.TrimSpace(w.Header().Get("Cache-Control")) == "" {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	status := http.StatusOK
+	if result.Response != nil && result.Response.StatusCode > 0 {
+		status = result.Response.StatusCode
+	}
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, entclawruntime.BuildResponsesProgressStream(result.ResponseID, result.Events))
 }
 
 func (p *EntclawPlugin) handleSkills(w http.ResponseWriter, r *http.Request) {

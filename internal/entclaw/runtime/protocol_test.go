@@ -2,6 +2,7 @@ package entclawruntime
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -480,4 +481,244 @@ func TestResponsesAdapterAppendToolResultsDoesNotReplayPriorMessages(t *testing.
 	if root.Get("input.3.type").String() != "function_call_output" {
 		t.Fatalf("function call output = %s", root.Get("input").Raw)
 	}
+}
+
+func TestResponsesAdapterParseToolCallsRejectsUnexpectedJSONPayload(t *testing.T) {
+	adapter := adapterForFormat(FormatResponses)
+
+	_, err := adapter.ParseToolCalls([]byte(`{"error":"schema drift"}`))
+	if err == nil {
+		t.Fatal("ParseToolCalls error = nil, want unexpected responses payload")
+	}
+	if !strings.Contains(err.Error(), "unexpected responses payload") {
+		t.Fatalf("err = %v, want unexpected responses payload", err)
+	}
+}
+
+func TestEncodeResponsesProgressStreamIncludesToolCallAndOutput(t *testing.T) {
+	events := []OrchestrationEvent{
+		NewAssistantToolCallEvent("call_1", "skill_run", json.RawMessage(`{"name":"demo","script":"run.sh"}`)),
+		NewToolStartedEvent("call_1"),
+		NewToolCompletedEvent("call_1", json.RawMessage(`{"stdout":"done","stderr":"","exitCode":0}`), false),
+		NewCompletionEvent(),
+	}
+
+	body := BuildResponsesProgressStream("resp_entclaw", events)
+	if !strings.Contains(body, "\"type\":\"function_call\"") {
+		t.Fatalf("body = %s, want function_call item", body)
+	}
+	if !strings.Contains(body, "\"type\":\"function_call_output\"") {
+		t.Fatalf("body = %s, want function_call_output item", body)
+	}
+	if !strings.Contains(body, "\"type\":\"response.completed\"") {
+		t.Fatalf("body = %s, want response.completed event", body)
+	}
+}
+
+func TestEncodeResponsesProgressStreamAssociatesFunctionOutputCompletionByCallID(t *testing.T) {
+	events := []OrchestrationEvent{
+		NewAssistantToolCallEvent("call_1", "skill_list", json.RawMessage(`{}`)),
+		NewAssistantToolCallEvent("call_2", "skill_read", json.RawMessage(`{"name":"demo"}`)),
+		NewToolStartedEvent("call_1"),
+		NewToolStartedEvent("call_2"),
+		NewToolCompletedEvent("call_1", json.RawMessage(`"first"`), false),
+		NewToolCompletedEvent("call_2", json.RawMessage(`"second"`), false),
+		NewCompletionEvent(),
+	}
+
+	eventsByChunk := parseResponsesSSEForTest(t, BuildResponsesProgressStream("resp_entclaw", events))
+	startIndexes := make(map[string]int)
+	doneIndexes := make(map[string]int)
+
+	for _, event := range eventsByChunk {
+		if event.data.Get("item.type").String() != "function_call_output" {
+			continue
+		}
+
+		callID := event.data.Get("item.call_id").String()
+		switch event.event {
+		case "response.output_item.added":
+			startIndexes[callID] = int(event.data.Get("output_index").Int())
+		case "response.output_item.done":
+			doneIndexes[callID] = int(event.data.Get("output_index").Int())
+		}
+	}
+
+	if startIndexes["call_1"] != 2 {
+		t.Fatalf("startIndexes[call_1] = %d, want 2", startIndexes["call_1"])
+	}
+	if startIndexes["call_2"] != 3 {
+		t.Fatalf("startIndexes[call_2] = %d, want 3", startIndexes["call_2"])
+	}
+	if doneIndexes["call_1"] != startIndexes["call_1"] {
+		t.Fatalf("doneIndexes[call_1] = %d, want %d", doneIndexes["call_1"], startIndexes["call_1"])
+	}
+	if doneIndexes["call_2"] != startIndexes["call_2"] {
+		t.Fatalf("doneIndexes[call_2] = %d, want %d", doneIndexes["call_2"], startIndexes["call_2"])
+	}
+}
+
+func TestEncodeResponsesProgressStreamClosesPendingToolOutputOnFailure(t *testing.T) {
+	events := []OrchestrationEvent{
+		NewAssistantToolCallEvent("call_1", "skill_read", json.RawMessage(`[]`)),
+		NewToolStartedEvent("call_1"),
+		NewFailureEvent("call_1", testResponsesProgressError(`execute tool "skill_read": json: cannot unmarshal array into Go value of type struct { Name string "json:\"name\"" }`)),
+	}
+
+	eventsByChunk := parseResponsesSSEForTest(t, BuildResponsesProgressStream("resp_entclaw", events))
+	var outputDone gjson.Result
+	var failedResponse gjson.Result
+
+	for _, event := range eventsByChunk {
+		if event.event == "response.output_item.done" && event.data.Get("item.type").String() == "function_call_output" {
+			outputDone = event.data
+		}
+		if event.event == "response.failed" {
+			failedResponse = event.data
+		}
+		if event.event == "response.completed" {
+			t.Fatalf("unexpected response.completed event in failure stream: %s", event.data.Raw)
+		}
+	}
+
+	if !outputDone.Exists() {
+		t.Fatalf("missing function_call_output done event: %+v", eventsByChunk)
+	}
+	if outputDone.Get("output_index").Int() != 1 {
+		t.Fatalf("output_index = %d, want 1", outputDone.Get("output_index").Int())
+	}
+	if outputDone.Get("item.call_id").String() != "call_1" {
+		t.Fatalf("call_id = %q, want call_1", outputDone.Get("item.call_id").String())
+	}
+	if outputDone.Get("item.status").String() != "failed" {
+		t.Fatalf("item.status = %q, want failed", outputDone.Get("item.status").String())
+	}
+	if !outputDone.Get("item.is_error").Bool() {
+		t.Fatalf("item.is_error = %s, want true", outputDone.Get("item.is_error").Raw)
+	}
+	outputPayload := gjson.Parse(outputDone.Get("item.output").String())
+	if !strings.Contains(outputPayload.Get("error").String(), `execute tool "skill_read"`) {
+		t.Fatalf("item.output = %q, want hard execution error", outputDone.Get("item.output").String())
+	}
+	if !failedResponse.Exists() {
+		t.Fatalf("missing response.failed event: %+v", eventsByChunk)
+	}
+	if failedResponse.Get("response.status").String() != "failed" {
+		t.Fatalf("response.status = %q, want failed", failedResponse.Get("response.status").String())
+	}
+}
+
+func TestEncodeResponsesProgressStreamDoesNotInventToolOutputForResponseLevelFailure(t *testing.T) {
+	events := []OrchestrationEvent{
+		NewFailureEvent("", testResponsesProgressError("probe failed")),
+	}
+
+	eventsByChunk := parseResponsesSSEForTest(t, BuildResponsesProgressStream("resp_entclaw", events))
+	for _, event := range eventsByChunk {
+		if event.data.Get("item.type").String() == "function_call_output" {
+			t.Fatalf("unexpected synthetic function_call_output for response-level failure: %s", event.data.Raw)
+		}
+	}
+
+	var failedResponse gjson.Result
+	for _, event := range eventsByChunk {
+		if event.event == "response.failed" {
+			failedResponse = event.data
+			break
+		}
+	}
+	if !failedResponse.Exists() {
+		t.Fatalf("missing response.failed event: %+v", eventsByChunk)
+	}
+	if failedResponse.Get("response.status").String() != "failed" {
+		t.Fatalf("response.status = %q, want failed", failedResponse.Get("response.status").String())
+	}
+	if failedResponse.Get("error.message").String() != "probe failed" {
+		t.Fatalf("error.message = %q, want probe failed", failedResponse.Get("error.message").String())
+	}
+}
+
+func TestBuildChatProgressStreamIncludesSimplifiedProgressText(t *testing.T) {
+	stream := BuildChatProgressStream([]OrchestrationEvent{
+		NewAssistantToolCallEvent("call_1", "skill_read", json.RawMessage(`{"name":"demo"}`)),
+		NewToolCompletedEvent("call_1", json.RawMessage(`{"content":"done"}`), false),
+	}, []byte("data: final\n\n"))
+
+	if !strings.Contains(stream, "Reading skill instructions") {
+		t.Fatalf("stream = %s, want skill_read progress text", stream)
+	}
+	if !strings.Contains(stream, "Tool finished.") {
+		t.Fatalf("stream = %s, want tool completion text", stream)
+	}
+	if !strings.Contains(stream, "data: final") {
+		t.Fatalf("stream = %s, want final body", stream)
+	}
+}
+
+func TestBuildMessagesProgressStreamIncludesSimplifiedProgressText(t *testing.T) {
+	stream := BuildMessagesProgressStream([]OrchestrationEvent{
+		NewAssistantToolCallEvent("call_1", "skill_run", json.RawMessage(`{"name":"demo","script":"run.sh"}`)),
+	}, []byte("event: done\n\n"))
+
+	if !strings.Contains(stream, "Running skill script") {
+		t.Fatalf("stream = %s, want skill_run progress text", stream)
+	}
+	if !strings.Contains(stream, "event: content_block_delta") {
+		t.Fatalf("stream = %s, want Anthropic-style delta event", stream)
+	}
+	if !strings.Contains(stream, "event: done") {
+		t.Fatalf("stream = %s, want final body", stream)
+	}
+}
+
+type testResponsesSSEEvent struct {
+	event string
+	data  gjson.Result
+}
+
+func parseResponsesSSEForTest(t *testing.T, body string) []testResponsesSSEEvent {
+	t.Helper()
+
+	chunks := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n\n")
+	events := make([]testResponsesSSEEvent, 0, len(chunks))
+	for _, chunk := range chunks {
+		chunk = strings.TrimSpace(chunk)
+		if chunk == "" {
+			continue
+		}
+
+		var eventName string
+		var dataLines []string
+		for _, line := range strings.Split(chunk, "\n") {
+			switch {
+			case strings.HasPrefix(line, "event:"):
+				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			}
+		}
+		if eventName == "" {
+			t.Fatalf("missing event name in chunk %q", chunk)
+		}
+		raw := strings.Join(dataLines, "\n")
+		if !gjson.Valid(raw) {
+			t.Fatalf("invalid SSE json payload %q", raw)
+		}
+		events = append(events, testResponsesSSEEvent{
+			event: eventName,
+			data:  gjson.Parse(raw),
+		})
+	}
+
+	return events
+}
+
+func testResponsesProgressError(message string) error {
+	return testResponsesProgressFailure(message)
+}
+
+type testResponsesProgressFailure string
+
+func (e testResponsesProgressFailure) Error() string {
+	return string(e)
 }

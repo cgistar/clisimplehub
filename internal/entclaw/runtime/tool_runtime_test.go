@@ -79,6 +79,277 @@ func TestToolRuntimeExecutesSkillList(t *testing.T) {
 	}
 }
 
+func TestToolRuntimeSkillReadReturnsSkillMarkdown(t *testing.T) {
+	dataDir := t.TempDir()
+	store := NewSkillStore(dataDir)
+	want := "# Demo\n\nUse scripts/run.sh\n"
+	if err := store.Write(context.Background(), "demo", want); err != nil {
+		t.Fatalf("Write(demo): %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		store,
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "skill_read",
+		Arguments: json.RawMessage(`{"name":"demo"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(skill_read): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Name != "demo" {
+		t.Fatalf("payload.Name = %q, want demo", payload.Name)
+	}
+	if payload.Content != want {
+		t.Fatalf("payload.Content = %q, want %q", payload.Content, want)
+	}
+}
+
+func TestToolRuntimeSkillRunUsesResolvedScriptPathAndSkillWorkDir(t *testing.T) {
+	dataDir := t.TempDir()
+	store := NewSkillStore(dataDir)
+	if err := store.Write(context.Background(), "demo", "# Demo\n"); err != nil {
+		t.Fatalf("Write(demo): %v", err)
+	}
+
+	scriptDir := filepath.Join(dataDir, "entclaw", "skills", "demo", "scripts")
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(scriptDir): %v", err)
+	}
+	scriptPath := filepath.Join(scriptDir, "echo.sh")
+	if err := os.WriteFile(scriptPath, []byte("placeholder"), 0o644); err != nil {
+		t.Fatalf("WriteFile(echo.sh): %v", err)
+	}
+
+	var gotRequest CommandRequest
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		store,
+		NewMCPStore(dataDir),
+		nil,
+		func(_ context.Context, request CommandRequest) (CommandResult, error) {
+			gotRequest = request
+			return CommandResult{
+				Stdout:   "ok",
+				ExitCode: 0,
+			}, nil
+		},
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "skill_run",
+		Arguments: json.RawMessage(`{"name":"demo","script":"echo.sh","args":["ok","again"]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(skill_run): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Skill    string `json:"skill"`
+		Script   string `json:"script"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+		ExitCode int    `json:"exitCode"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Skill != "demo" || payload.Script != "echo.sh" {
+		t.Fatalf("payload = %+v, want skill/script set", payload)
+	}
+	if payload.ExitCode != 0 {
+		t.Fatalf("payload.ExitCode = %d, want 0", payload.ExitCode)
+	}
+	if payload.Stdout != "ok" {
+		t.Fatalf("payload.Stdout = %q, want ok", payload.Stdout)
+	}
+	if payload.Stderr != "" {
+		t.Fatalf("payload.Stderr = %q, want empty", payload.Stderr)
+	}
+	if gotRequest.WorkDir != filepath.Join(dataDir, "entclaw", "skills", "demo") {
+		t.Fatalf("gotRequest.WorkDir = %q, want %q", gotRequest.WorkDir, filepath.Join(dataDir, "entclaw", "skills", "demo"))
+	}
+	if len(gotRequest.Args) != 3 {
+		t.Fatalf("len(gotRequest.Args) = %d, want 3 with script path and forwarded args", len(gotRequest.Args))
+	}
+	if gotRequest.Args[0] != scriptPath {
+		t.Fatalf("gotRequest.Args[0] = %q, want %q", gotRequest.Args[0], scriptPath)
+	}
+	if gotRequest.Args[1] != "ok" || gotRequest.Args[2] != "again" {
+		t.Fatalf("gotRequest.Args = %#v, want script path plus forwarded args", gotRequest.Args)
+	}
+}
+
+func TestToolRuntimeSkillRunRejectsMissingSkillBeforeExec(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		func(context.Context, CommandRequest) (CommandResult, error) {
+			t.Fatal("command runner called for missing skill")
+			return CommandResult{}, nil
+		},
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "skill_run",
+		Arguments: json.RawMessage(`{"name":"missing","script":"echo.sh"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(skill_run): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Error != `skill "missing" not found` {
+		t.Fatalf("payload.Error = %q, want %q", payload.Error, `skill "missing" not found`)
+	}
+}
+
+func TestToolRuntimeSkillRunRejectsMissingScriptBeforeExec(t *testing.T) {
+	dataDir := t.TempDir()
+	store := NewSkillStore(dataDir)
+	if err := store.Write(context.Background(), "demo", "# Demo\n"); err != nil {
+		t.Fatalf("Write(demo): %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		store,
+		NewMCPStore(dataDir),
+		nil,
+		func(context.Context, CommandRequest) (CommandResult, error) {
+			t.Fatal("command runner called for missing script")
+			return CommandResult{}, nil
+		},
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "skill_run",
+		Arguments: json.RawMessage(`{"name":"demo","script":"missing.sh"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(skill_run): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Error != `script "missing.sh" not found for skill "demo"` {
+		t.Fatalf("payload.Error = %q, want %q", payload.Error, `script "missing.sh" not found for skill "demo"`)
+	}
+}
+
+func TestToolRuntimeSkillRunRejectsTraversal(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "skill_run",
+		Arguments: json.RawMessage(`{"name":"demo","script":"../escape.sh"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(skill_run): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+}
+
+func TestToolRuntimeSkillRunRejectsSymlinkEscape(t *testing.T) {
+	dataDir := t.TempDir()
+	store := NewSkillStore(dataDir)
+	if err := store.Write(context.Background(), "demo", "# Demo\n"); err != nil {
+		t.Fatalf("Write(demo): %v", err)
+	}
+
+	outside := t.TempDir()
+	target := filepath.Join(outside, "outside.sh")
+	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(outside.sh): %v", err)
+	}
+
+	scriptDir := filepath.Join(dataDir, "entclaw", "skills", "demo", "scripts")
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(scriptDir): %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(scriptDir, "linked.sh")); err != nil {
+		t.Skipf("os.Symlink(linked.sh): %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		store,
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "skill_run",
+		Arguments: json.RawMessage(`{"name":"demo","script":"linked.sh"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(skill_run): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+}
+
 func TestToolRuntimeMemoryAppendEncodesSessionErrors(t *testing.T) {
 	dataDir := t.TempDir()
 	runtime := NewToolRuntime(
