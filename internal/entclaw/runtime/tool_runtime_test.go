@@ -738,7 +738,7 @@ func TestToolRuntimeEditRejectsEmptyOldTextAndMissingNewText(t *testing.T) {
 		arguments string
 		wantError string
 	}{
-		{name: "empty oldText", arguments: `{"path":"skills/demo/note.txt","edits":[{"oldText":"   ","newText":""}]}`, wantError: "edits[0].oldText is required"},
+		{name: "empty oldText", arguments: `{"path":"skills/demo/note.txt","edits":[{"oldText":"","newText":""}]}`, wantError: "edits[0].oldText is required"},
 		{name: "missing newText", arguments: `{"path":"skills/demo/note.txt","edits":[{"oldText":"hello"}]}`, wantError: "edits[0].newText is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -764,6 +764,102 @@ func TestToolRuntimeEditRejectsEmptyOldTextAndMissingNewText(t *testing.T) {
 				t.Fatalf("payload.Error = %q, want %q", payload.Error, tc.wantError)
 			}
 		})
+	}
+}
+
+func TestToolRuntimeEditAllowsWhitespaceOnlyOldTextReplacement(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	filePath := filepath.Join(root, "skills", "demo", "note.txt")
+	if err := os.WriteFile(filePath, []byte("keep  spaces"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	runtime := NewToolRuntime(dataDir, NewSessionStore(dataDir), NewSkillStore(dataDir), NewMCPStore(dataDir), nil, nil)
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "edit",
+		Arguments: json.RawMessage(`{"path":"skills/demo/note.txt","edits":[{"oldText":"  ","newText":"--"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(edit): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+	body, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(note.txt): %v", err)
+	}
+	if string(body) != "keep--spaces" {
+		t.Fatalf("string(body) = %q, want %q", string(body), "keep--spaces")
+	}
+}
+
+func TestToolRuntimeEditAllowsEmptyNewTextDeletion(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	filePath := filepath.Join(root, "skills", "demo", "note.txt")
+	if err := os.WriteFile(filePath, []byte("hello world"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	runtime := NewToolRuntime(dataDir, NewSessionStore(dataDir), NewSkillStore(dataDir), NewMCPStore(dataDir), nil, nil)
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "edit",
+		Arguments: json.RawMessage(`{"path":"skills/demo/note.txt","edits":[{"oldText":" world","newText":""}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(edit): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+	body, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(note.txt): %v", err)
+	}
+	if string(body) != "hello" {
+		t.Fatalf("string(body) = %q, want %q", string(body), "hello")
+	}
+}
+
+func TestToolRuntimeEditPreservesOriginalFileMode(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	filePath := filepath.Join(root, "skills", "demo", "note.txt")
+	if err := os.WriteFile(filePath, []byte("hello world"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	runtime := NewToolRuntime(dataDir, NewSessionStore(dataDir), NewSkillStore(dataDir), NewMCPStore(dataDir), nil, nil)
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "edit",
+		Arguments: json.RawMessage(`{"path":"skills/demo/note.txt","edits":[{"oldText":"world","newText":"entclaw"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(edit): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("os.Stat(note.txt): %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("info.Mode().Perm() = %#o, want %#o", info.Mode().Perm(), os.FileMode(0o600))
 	}
 }
 

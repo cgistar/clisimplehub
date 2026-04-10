@@ -44,7 +44,7 @@ func decodeEditRequest(raw json.RawMessage) (editRequest, error) {
 		Edits: make([]EditReplacement, 0, len(input.Edits)),
 	}
 	for i, edit := range input.Edits {
-		if edit.OldText == nil || strings.TrimSpace(*edit.OldText) == "" {
+		if edit.OldText == nil || *edit.OldText == "" {
 			return editRequest{}, fmt.Errorf("edits[%d].oldText is required", i)
 		}
 		if edit.NewText == nil {
@@ -61,7 +61,7 @@ func decodeEditRequest(raw json.RawMessage) (editRequest, error) {
 func applyEdits(content string, edits []EditReplacement) (string, error) {
 	updated := content
 	for _, edit := range edits {
-		if strings.TrimSpace(edit.OldText) == "" {
+		if edit.OldText == "" {
 			return "", fmt.Errorf("oldText is required")
 		}
 		if !strings.Contains(updated, edit.OldText) {

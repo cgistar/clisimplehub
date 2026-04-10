@@ -207,6 +207,10 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 		if err != nil {
 			return errorToolResult(err), nil
 		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return errorToolResult(err), nil
+		}
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return errorToolResult(err), nil
@@ -215,7 +219,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 		if err != nil {
 			return errorToolResult(err), nil
 		}
-		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
 			return errorToolResult(err), nil
 		}
 		return marshalToolPayload(map[string]any{

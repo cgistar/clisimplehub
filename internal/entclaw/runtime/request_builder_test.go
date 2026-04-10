@@ -152,7 +152,7 @@ func TestBuiltinToolDefinitionsIncludeCanonicalNames(t *testing.T) {
 	if !root.Get(`tools.#(name="skill_run")`).Exists() {
 		t.Fatalf("tools = %s, want skill_run", root.Get("tools").Raw)
 	}
-	for _, name := range []string{toolNameRead, toolNameWrite, toolNameExec} {
+	for _, name := range []string{toolNameRead, toolNameWrite, "edit", toolNameExec} {
 		if !root.Get(`tools.#(name="` + name + `")`).Exists() {
 			t.Fatalf("tools = %s, want %s", root.Get("tools").Raw, name)
 		}
@@ -218,6 +218,41 @@ func TestBuiltinToolDefinitionsExposeReadPaginationSchemaWithoutChangingWriteSch
 	}
 	if writeTool.Get(`parameters.properties.limit`).Exists() {
 		t.Fatalf("write schema = %s, should not expose limit", writeTool.Get("parameters.properties").Raw)
+	}
+}
+
+func TestBuiltinToolDefinitionsExposeEditSchema(t *testing.T) {
+	t.Parallel()
+
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatResponses,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","input":"hello"}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	editTool := root.Get(`tools.#(name="edit")`)
+	if !editTool.Exists() {
+		t.Fatalf("tools = %s, want edit", root.Get("tools").Raw)
+	}
+	if !editTool.Get(`parameters.required.#(=="path")`).Exists() || !editTool.Get(`parameters.required.#(=="edits")`).Exists() {
+		t.Fatalf("edit required = %s, want path/edits required", editTool.Get("parameters.required").Raw)
+	}
+	item := editTool.Get(`parameters.properties.edits.items`)
+	if item.Get(`type`).String() != "object" {
+		t.Fatalf("edit item schema = %s, want object", item.Raw)
+	}
+	if item.Get(`properties.oldText.type`).String() != "string" {
+		t.Fatalf("edit oldText schema = %s, want string", item.Get("properties.oldText").Raw)
+	}
+	if item.Get(`properties.newText.type`).String() != "string" {
+		t.Fatalf("edit newText schema = %s, want string", item.Get("properties.newText").Raw)
+	}
+	if !item.Get(`required.#(=="oldText")`).Exists() || !item.Get(`required.#(=="newText")`).Exists() {
+		t.Fatalf("edit item required = %s, want oldText/newText required", item.Get("required").Raw)
 	}
 }
 
