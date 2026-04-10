@@ -166,6 +166,33 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"path":    input.Path,
 			"content": string(body),
 		}, err)
+	case "fs_write":
+		var input struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal(rawJSONObjectOrEmpty(call.Arguments), &input); err != nil {
+			return ToolResult{}, err
+		}
+
+		if err := os.MkdirAll(r.guard.root, 0o755); err != nil {
+			return errorToolResult(fmt.Errorf("create entclaw root: %w", err)), nil
+		}
+		path, err := r.guard.Resolve(input.Path)
+		if err != nil {
+			return errorToolResult(err), nil
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return errorToolResult(fmt.Errorf("create parent directory: %w", err)), nil
+		}
+		if err := os.WriteFile(path, []byte(input.Content), 0o644); err != nil {
+			return errorToolResult(err), nil
+		}
+		return marshalToolPayload(map[string]any{
+			"path":    input.Path,
+			"written": true,
+			"bytes":   len(input.Content),
+		}, nil)
 	case "mcp_call":
 		var input struct {
 			Name      string          `json:"name"`

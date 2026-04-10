@@ -422,6 +422,80 @@ func TestToolRuntimeMemoryAppendEncodesSessionErrors(t *testing.T) {
 	}
 }
 
+func TestToolRuntimeFSWriteCreatesParentDirectoriesAndWritesContent(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "fs_write",
+		Arguments: json.RawMessage(`{"path":"skills/generated-demo/output.txt","content":"hello entclaw"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(fs_write): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Path    string `json:"path"`
+		Written bool   `json:"written"`
+		Bytes   int    `json:"bytes"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Path != "skills/generated-demo/output.txt" {
+		t.Fatalf("payload.Path = %q, want %q", payload.Path, "skills/generated-demo/output.txt")
+	}
+	if !payload.Written {
+		t.Fatalf("payload.Written = false, want true")
+	}
+	if payload.Bytes != len("hello entclaw") {
+		t.Fatalf("payload.Bytes = %d, want %d", payload.Bytes, len("hello entclaw"))
+	}
+
+	body, err := os.ReadFile(filepath.Join(dataDir, "entclaw", "skills", "generated-demo", "output.txt"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(written file): %v", err)
+	}
+	if string(body) != "hello entclaw" {
+		t.Fatalf("string(body) = %q, want %q", string(body), "hello entclaw")
+	}
+}
+
+func TestToolRuntimeFSWriteRejectsTraversal(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "fs_write",
+		Arguments: json.RawMessage(`{"path":"../escape.txt","content":"nope"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(fs_write): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+}
+
 func TestToolRuntimeCommandExecPreservesFailurePayload(t *testing.T) {
 	dataDir := t.TempDir()
 	runtime := NewToolRuntime(

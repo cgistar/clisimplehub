@@ -152,6 +152,9 @@ func TestBuiltinToolDefinitionsIncludeSkillRun(t *testing.T) {
 	if !root.Get(`tools.#(name="skill_run")`).Exists() {
 		t.Fatalf("tools = %s, want skill_run", root.Get("tools").Raw)
 	}
+	if !root.Get(`tools.#(name="fs_write")`).Exists() {
+		t.Fatalf("tools = %s, want fs_write", root.Get("tools").Raw)
+	}
 }
 
 func runtimeWithSkillCatalogFixture(t *testing.T) *ToolRuntime {

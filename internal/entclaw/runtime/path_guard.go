@@ -76,11 +76,8 @@ func resolveGuardPath(path string) (string, error) {
 	if parent == path {
 		return path, nil
 	}
-	resolvedParent, parentErr := filepath.EvalSymlinks(parent)
+	resolvedParent, parentErr := resolveGuardPath(parent)
 	if parentErr != nil {
-		if os.IsNotExist(parentErr) {
-			return path, nil
-		}
 		return "", parentErr
 	}
 	return filepath.Join(resolvedParent, filepath.Base(path)), nil

@@ -80,7 +80,7 @@ func buildSkillDiscoveryInstructions(tools *ToolRuntime) string {
 	var out strings.Builder
 	out.WriteString("Before replying, scan <available_skills> descriptions.\n")
 	out.WriteString("If exactly one skill clearly matches the task, call skill_read(name) first.\n")
-	out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call fs_read, mcp_call, or skill_run.\n")
+	out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call fs_read, fs_write, mcp_call, command_exec, or skill_run.\n")
 	out.WriteString("Do not call skill_run unless the selected SKILL.md indicates a script should be executed.\n\n")
 	out.WriteString("<available_skills>\n")
 	for _, entry := range entries {
@@ -247,6 +247,24 @@ func builtinToolDefinitions() []map[string]any {
 					},
 				},
 				"required":             []string{"path"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "fs_write",
+			"description": "Write a file under the entclaw data root, including skills and mcp config files.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{
+						"type": "string",
+					},
+					"content": map[string]any{
+						"type": "string",
+					},
+				},
+				"required":             []string{"path", "content"},
 				"additionalProperties": false,
 			},
 		},
