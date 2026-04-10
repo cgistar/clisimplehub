@@ -472,6 +472,56 @@ func TestToolRuntimeFSWriteCreatesParentDirectoriesAndWritesContent(t *testing.T
 	}
 }
 
+func TestToolRuntimeWriteCanonicalNameCreatesParentDirectoriesAndWritesContent(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "write",
+		Arguments: json.RawMessage(`{"path":"skills/generated-demo/output.txt","content":"hello entclaw"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(write): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Path    string `json:"path"`
+		Written bool   `json:"written"`
+		Bytes   int    `json:"bytes"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Path != "skills/generated-demo/output.txt" {
+		t.Fatalf("payload.Path = %q, want %q", payload.Path, "skills/generated-demo/output.txt")
+	}
+	if !payload.Written {
+		t.Fatalf("payload.Written = false, want true")
+	}
+	if payload.Bytes != len("hello entclaw") {
+		t.Fatalf("payload.Bytes = %d, want %d", payload.Bytes, len("hello entclaw"))
+	}
+
+	body, err := os.ReadFile(filepath.Join(dataDir, "entclaw", "skills", "generated-demo", "output.txt"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(written file): %v", err)
+	}
+	if string(body) != "hello entclaw" {
+		t.Fatalf("string(body) = %q, want %q", string(body), "hello entclaw")
+	}
+}
+
 func TestToolRuntimeFSWriteRejectsTraversal(t *testing.T) {
 	dataDir := t.TempDir()
 	runtime := NewToolRuntime(
@@ -542,6 +592,52 @@ func TestToolRuntimeCommandExecPreservesFailurePayload(t *testing.T) {
 	}
 }
 
+func TestToolRuntimeExecCanonicalNamePreservesFailurePayload(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		func(context.Context, CommandRequest) (CommandResult, error) {
+			return CommandResult{
+				Stdout:   "partial stdout",
+				Stderr:   "boom",
+				ExitCode: 17,
+			}, errors.New("command failed")
+		},
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "exec",
+		Arguments: json.RawMessage(`{"command":"sh","args":["-c","exit 17"]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(exec): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+		ExitCode int    `json:"exitCode"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Stdout != "partial stdout" || payload.Stderr != "boom" || payload.ExitCode != 17 {
+		t.Fatalf("payload = %+v, want stdout/stderr/exitCode preserved", payload)
+	}
+	if payload.Error != "command failed" {
+		t.Fatalf("payload.Error = %q, want command failed", payload.Error)
+	}
+}
+
 func TestToolRuntimeCommandExecCreatesWorkingDirectory(t *testing.T) {
 	dataDir := t.TempDir()
 	runtime := NewToolRuntime(
@@ -578,6 +674,52 @@ func TestToolRuntimeCommandExecCreatesWorkingDirectory(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+}
+
+func TestToolRuntimeReadCanonicalNameReturnsFileContent(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "skills", "demo", "note.txt"), []byte("hello read"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "read",
+		Arguments: json.RawMessage(`{"path":"skills/demo/note.txt"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(read): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Path != "skills/demo/note.txt" {
+		t.Fatalf("payload.Path = %q, want %q", payload.Path, "skills/demo/note.txt")
+	}
+	if payload.Content != "hello read" {
+		t.Fatalf("payload.Content = %q, want %q", payload.Content, "hello read")
 	}
 }
 

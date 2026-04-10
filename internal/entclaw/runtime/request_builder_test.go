@@ -136,7 +136,7 @@ func TestBuildInitialLoopbackBodyMessagesAppendsSystemSkillCatalog(t *testing.T)
 	}
 }
 
-func TestBuiltinToolDefinitionsIncludeSkillRun(t *testing.T) {
+func TestBuiltinToolDefinitionsIncludeCanonicalNames(t *testing.T) {
 	t.Parallel()
 
 	body, err := buildInitialLoopbackBody(&TaskRequest{
@@ -152,8 +152,17 @@ func TestBuiltinToolDefinitionsIncludeSkillRun(t *testing.T) {
 	if !root.Get(`tools.#(name="skill_run")`).Exists() {
 		t.Fatalf("tools = %s, want skill_run", root.Get("tools").Raw)
 	}
-	if !root.Get(`tools.#(name="fs_write")`).Exists() {
-		t.Fatalf("tools = %s, want fs_write", root.Get("tools").Raw)
+	if !root.Get(`tools.#(name="read")`).Exists() {
+		t.Fatalf("tools = %s, want read", root.Get("tools").Raw)
+	}
+	if !root.Get(`tools.#(name="write")`).Exists() {
+		t.Fatalf("tools = %s, want write", root.Get("tools").Raw)
+	}
+	if !root.Get(`tools.#(name="exec")`).Exists() {
+		t.Fatalf("tools = %s, want exec", root.Get("tools").Raw)
+	}
+	if root.Get(`tools.#(name="fs_write")`).Exists() {
+		t.Fatalf("tools = %s, should not expose legacy fs_write", root.Get("tools").Raw)
 	}
 }
 

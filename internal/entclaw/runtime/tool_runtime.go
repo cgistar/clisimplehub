@@ -62,7 +62,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 		return ToolResult{}, err
 	}
 
-	switch strings.TrimSpace(call.Name) {
+	switch normalizeToolName(call.Name) {
 	case "skill_list":
 		names, err := r.skills.List(ctx)
 		if names == nil {
@@ -149,7 +149,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"appended": true,
 			"count":    len(session.ToolHistory),
 		}, r.sessions.Save(ctx, session))
-	case "fs_read":
+	case "read":
 		var input struct {
 			Path string `json:"path"`
 		}
@@ -166,7 +166,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"path":    input.Path,
 			"content": string(body),
 		}, err)
-	case "fs_write":
+	case "write":
 		var input struct {
 			Path    string `json:"path"`
 			Content string `json:"content"`
@@ -219,7 +219,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"name":   strings.TrimSpace(input.Name),
 			"output": json.RawMessage(rawJSONObjectOrEmpty(output)),
 		}, err)
-	case "command_exec":
+	case "exec":
 		var input struct {
 			Command string   `json:"command"`
 			Args    []string `json:"args"`
