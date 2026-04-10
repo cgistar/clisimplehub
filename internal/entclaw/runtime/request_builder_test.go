@@ -85,6 +85,9 @@ func TestBuildInitialLoopbackBodyResponsesInjectsSkillCatalog(t *testing.T) {
 	if !strings.Contains(instructions, "github-search") {
 		t.Fatalf("instructions = %q, want skill name", instructions)
 	}
+	if !strings.Contains(instructions, "<location>skills/github-search/SKILL.md</location>") {
+		t.Fatalf("instructions = %q, want skills-relative location", instructions)
+	}
 	if !strings.Contains(instructions, "be concise") {
 		t.Fatalf("instructions should preserve user content: %q", instructions)
 	}

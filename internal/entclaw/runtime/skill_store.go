@@ -148,7 +148,7 @@ func (s SkillStore) readCatalogEntry(dirName string) (SkillCatalogEntry, bool) {
 	return SkillCatalogEntry{
 		Name:        name,
 		Description: description,
-		Location:    filepath.ToSlash(filepath.Join("entclaw", "skills", dirName, "SKILL.md")),
+		Location:    filepath.ToSlash(filepath.Join("skills", dirName, "SKILL.md")),
 		HasScripts:  len(scripts) > 0,
 		Scripts:     scripts,
 	}, true
@@ -226,6 +226,7 @@ func (s SkillStore) ResolveScriptPath(name, script string) (string, string, erro
 	}
 
 	scriptDir := filepath.Join(skillDir, "scripts")
+	scriptName = normalizeSkillScriptReference(scriptName)
 	candidate := filepath.Clean(filepath.Join(scriptDir, scriptName))
 	relative, err := filepath.Rel(scriptDir, candidate)
 	if err != nil {
@@ -251,6 +252,21 @@ func (s SkillStore) ResolveScriptPath(name, script string) (string, string, erro
 		return "", "", err
 	}
 	return resolved, skillDir, nil
+}
+
+func normalizeSkillScriptReference(script string) string {
+	script = filepath.Clean(strings.TrimSpace(script))
+	if script == "." {
+		return ""
+	}
+	prefix := "scripts" + string(filepath.Separator)
+	if script == "scripts" {
+		return ""
+	}
+	if strings.HasPrefix(script, prefix) {
+		return strings.TrimPrefix(script, prefix)
+	}
+	return script
 }
 
 func (s SkillStore) resolveExistingSkillDir(name string) (string, error) {
