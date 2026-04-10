@@ -197,6 +197,32 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"written": true,
 			"bytes":   len(input.Content),
 		}, nil)
+	case "edit":
+		var input editRequest
+		if err := json.Unmarshal(rawJSONObjectOrEmpty(call.Arguments), &input); err != nil {
+			return ToolResult{}, err
+		}
+
+		path, err := r.guard.Resolve(input.Path)
+		if err != nil {
+			return errorToolResult(err), nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return errorToolResult(err), nil
+		}
+		updated, err := applyEdits(string(body), input.Edits)
+		if err != nil {
+			return errorToolResult(err), nil
+		}
+		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+			return errorToolResult(err), nil
+		}
+		return marshalToolPayload(map[string]any{
+			"path":    input.Path,
+			"written": true,
+			"bytes":   len(updated),
+		}, nil)
 	case "mcp_call":
 		var input struct {
 			Name      string          `json:"name"`

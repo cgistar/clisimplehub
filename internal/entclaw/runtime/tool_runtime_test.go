@@ -522,6 +522,118 @@ func TestToolRuntimeWriteCanonicalNameCreatesParentDirectoriesAndWritesContent(t
 	}
 }
 
+func TestToolRuntimeEditCanonicalNameAppliesSequentialExactReplacements(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	const original = "hello world\nhello again\n"
+	if err := os.WriteFile(filepath.Join(root, "skills", "demo", "note.txt"), []byte(original), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "edit",
+		Arguments: json.RawMessage(`{"path":"skills/demo/note.txt","edits":[{"oldText":"hello world","newText":"goodbye world"},{"oldText":"hello again","newText":"goodbye again"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(edit): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Path    string `json:"path"`
+		Written bool   `json:"written"`
+		Bytes   int    `json:"bytes"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Path != "skills/demo/note.txt" {
+		t.Fatalf("payload.Path = %q, want %q", payload.Path, "skills/demo/note.txt")
+	}
+	if !payload.Written {
+		t.Fatalf("payload.Written = false, want true")
+	}
+	want := "goodbye world\ngoodbye again\n"
+	if payload.Bytes != len(want) {
+		t.Fatalf("payload.Bytes = %d, want %d", payload.Bytes, len(want))
+	}
+
+	body, err := os.ReadFile(filepath.Join(root, "skills", "demo", "note.txt"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(edited file): %v", err)
+	}
+	if string(body) != want {
+		t.Fatalf("string(body) = %q, want %q", string(body), want)
+	}
+}
+
+func TestToolRuntimeEditReturnsErrorWhenExactTextNotFound(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	const original = "hello world\n"
+	filePath := filepath.Join(root, "skills", "demo", "note.txt")
+	if err := os.WriteFile(filePath, []byte(original), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "edit",
+		Arguments: json.RawMessage(`{"path":"skills/demo/note.txt","edits":[{"oldText":"missing text","newText":"goodbye world"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(edit): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Error != "could not find exact text in file" {
+		t.Fatalf("payload.Error = %q, want %q", payload.Error, "could not find exact text in file")
+	}
+
+	body, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(note.txt): %v", err)
+	}
+	if string(body) != original {
+		t.Fatalf("string(body) = %q, want %q", string(body), original)
+	}
+}
+
 func TestToolRuntimeFSWriteRejectsTraversal(t *testing.T) {
 	dataDir := t.TempDir()
 	runtime := NewToolRuntime(
