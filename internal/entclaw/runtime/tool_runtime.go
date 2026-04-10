@@ -149,7 +149,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"appended": true,
 			"count":    len(session.ToolHistory),
 		}, r.sessions.Save(ctx, session))
-	case "read":
+	case toolNameRead:
 		var input struct {
 			Path string `json:"path"`
 		}
@@ -166,7 +166,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"path":    input.Path,
 			"content": string(body),
 		}, err)
-	case "write":
+	case toolNameWrite:
 		var input struct {
 			Path    string `json:"path"`
 			Content string `json:"content"`
@@ -219,7 +219,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"name":   strings.TrimSpace(input.Name),
 			"output": json.RawMessage(rawJSONObjectOrEmpty(output)),
 		}, err)
-	case "exec":
+	case toolNameExec:
 		var input struct {
 			Command string   `json:"command"`
 			Args    []string `json:"args"`
