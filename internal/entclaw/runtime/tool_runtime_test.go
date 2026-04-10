@@ -769,6 +769,62 @@ func TestToolRuntimeReadCanonicalNameSupportsLinePagination(t *testing.T) {
 	}
 }
 
+func TestSliceReadContentBoundaryCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		body   string
+		offset int
+		limit  int
+		want   string
+	}{
+		{
+			name:   "offset less than or equal to zero starts at first line",
+			body:   "line1\nline2\nline3",
+			offset: 0,
+			limit:  2,
+			want:   "line1\nline2",
+		},
+		{
+			name:   "non-positive limit returns remaining lines",
+			body:   "line1\nline2\nline3",
+			offset: 2,
+			limit:  0,
+			want:   "line2\nline3",
+		},
+		{
+			name:   "offset beyond available lines returns empty string",
+			body:   "line1\nline2",
+			offset: 5,
+			limit:  1,
+			want:   "",
+		},
+		{
+			name:   "trailing newline is preserved when reading remaining lines",
+			body:   "line1\n",
+			offset: 1,
+			limit:  0,
+			want:   "line1\n",
+		},
+		{
+			name:   "empty content stays empty",
+			body:   "",
+			offset: 1,
+			limit:  1,
+			want:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sliceReadContent(tt.body, tt.offset, tt.limit); got != tt.want {
+				t.Fatalf("sliceReadContent(%q, %d, %d) = %q, want %q", tt.body, tt.offset, tt.limit, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestToolRuntimeFSReadLegacyAliasReturnsFileContent(t *testing.T) {
 	dataDir := t.TempDir()
 	root := filepath.Join(dataDir, "entclaw")

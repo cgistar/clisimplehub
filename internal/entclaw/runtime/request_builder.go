@@ -238,7 +238,7 @@ func builtinToolDefinitions() []map[string]any {
 		{
 			"type":        "function",
 			"name":        toolNameRead,
-			"description": "Read a file under the entclaw data root, including skills and mcp config files.",
+			"description": "Read a file under the entclaw data root, including skills and mcp config files. Optional offset is a 1-based line number, and optional limit is the number of lines to return.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

@@ -164,6 +164,63 @@ func TestBuiltinToolDefinitionsIncludeCanonicalNames(t *testing.T) {
 	}
 }
 
+func TestBuiltinToolDefinitionsExposeReadPaginationSchemaWithoutChangingWriteSchema(t *testing.T) {
+	t.Parallel()
+
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatResponses,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","input":"hello"}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	readTool := root.Get(`tools.#(name="` + toolNameRead + `")`)
+	if !readTool.Exists() {
+		t.Fatalf("tools = %s, want %s", root.Get("tools").Raw, toolNameRead)
+	}
+	if !readTool.Get(`parameters.required.#(=="path")`).Exists() {
+		t.Fatalf("read required = %s, want path required", readTool.Get("parameters.required").Raw)
+	}
+	if readTool.Get(`parameters.properties.path.type`).String() != "string" {
+		t.Fatalf("read path schema = %s, want string", readTool.Get("parameters.properties.path").Raw)
+	}
+	if readTool.Get(`parameters.properties.offset.type`).String() != "integer" {
+		t.Fatalf("read offset schema = %s, want integer", readTool.Get("parameters.properties.offset").Raw)
+	}
+	if readTool.Get(`parameters.properties.limit.type`).String() != "integer" {
+		t.Fatalf("read limit schema = %s, want integer", readTool.Get("parameters.properties.limit").Raw)
+	}
+	if !strings.Contains(readTool.Get("description").String(), "1-based line") {
+		t.Fatalf("read description = %q, want 1-based line semantics", readTool.Get("description").String())
+	}
+
+	writeTool := root.Get(`tools.#(name="` + toolNameWrite + `")`)
+	if !writeTool.Exists() {
+		t.Fatalf("tools = %s, want %s", root.Get("tools").Raw, toolNameWrite)
+	}
+	if !writeTool.Get(`parameters.required.#(=="path")`).Exists() || !writeTool.Get(`parameters.required.#(=="content")`).Exists() {
+		t.Fatalf("write required = %s, want path/content required", writeTool.Get("parameters.required").Raw)
+	}
+	if writeTool.Get(`parameters.required.#`).Int() != 2 {
+		t.Fatalf("write required count = %d, want 2", writeTool.Get(`parameters.required.#`).Int())
+	}
+	if writeTool.Get(`parameters.properties.path.type`).String() != "string" {
+		t.Fatalf("write path schema = %s, want string", writeTool.Get("parameters.properties.path").Raw)
+	}
+	if writeTool.Get(`parameters.properties.content.type`).String() != "string" {
+		t.Fatalf("write content schema = %s, want string", writeTool.Get("parameters.properties.content").Raw)
+	}
+	if writeTool.Get(`parameters.properties.offset`).Exists() {
+		t.Fatalf("write schema = %s, should not expose offset", writeTool.Get("parameters.properties").Raw)
+	}
+	if writeTool.Get(`parameters.properties.limit`).Exists() {
+		t.Fatalf("write schema = %s, should not expose limit", writeTool.Get("parameters.properties").Raw)
+	}
+}
+
 func runtimeWithSkillCatalogFixture(t *testing.T) *ToolRuntime {
 	t.Helper()
 
