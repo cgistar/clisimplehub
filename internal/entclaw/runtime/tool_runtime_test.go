@@ -634,6 +634,139 @@ func TestToolRuntimeEditReturnsErrorWhenExactTextNotFound(t *testing.T) {
 	}
 }
 
+func TestToolRuntimeEditRejectsMissingOrBlankPath(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	for _, tc := range []struct {
+		name      string
+		arguments string
+	}{
+		{name: "missing", arguments: `{"edits":[{"oldText":"hello","newText":""}]}`},
+		{name: "blank", arguments: `{"path":"   ","edits":[{"oldText":"hello","newText":""}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+				ID:        "call_1",
+				Name:      "edit",
+				Arguments: json.RawMessage(tc.arguments),
+			})
+			if err != nil {
+				t.Fatalf("Execute(edit): %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+			}
+
+			var payload struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(result.Content, &payload); err != nil {
+				t.Fatalf("json.Unmarshal(result.Content): %v", err)
+			}
+			if payload.Error != "path is required" {
+				t.Fatalf("payload.Error = %q, want %q", payload.Error, "path is required")
+			}
+		})
+	}
+}
+
+func TestToolRuntimeEditRejectsMissingOrEmptyEdits(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	for _, tc := range []struct {
+		name      string
+		arguments string
+	}{
+		{name: "missing", arguments: `{"path":"skills/demo/note.txt"}`},
+		{name: "empty", arguments: `{"path":"skills/demo/note.txt","edits":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+				ID:        "call_1",
+				Name:      "edit",
+				Arguments: json.RawMessage(tc.arguments),
+			})
+			if err != nil {
+				t.Fatalf("Execute(edit): %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+			}
+
+			var payload struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(result.Content, &payload); err != nil {
+				t.Fatalf("json.Unmarshal(result.Content): %v", err)
+			}
+			if payload.Error != "edits is required" {
+				t.Fatalf("payload.Error = %q, want %q", payload.Error, "edits is required")
+			}
+		})
+	}
+}
+
+func TestToolRuntimeEditRejectsEmptyOldTextAndMissingNewText(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	for _, tc := range []struct {
+		name      string
+		arguments string
+		wantError string
+	}{
+		{name: "empty oldText", arguments: `{"path":"skills/demo/note.txt","edits":[{"oldText":"   ","newText":""}]}`, wantError: "edits[0].oldText is required"},
+		{name: "missing newText", arguments: `{"path":"skills/demo/note.txt","edits":[{"oldText":"hello"}]}`, wantError: "edits[0].newText is required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+				ID:        "call_1",
+				Name:      "edit",
+				Arguments: json.RawMessage(tc.arguments),
+			})
+			if err != nil {
+				t.Fatalf("Execute(edit): %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+			}
+
+			var payload struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(result.Content, &payload); err != nil {
+				t.Fatalf("json.Unmarshal(result.Content): %v", err)
+			}
+			if payload.Error != tc.wantError {
+				t.Fatalf("payload.Error = %q, want %q", payload.Error, tc.wantError)
+			}
+		})
+	}
+}
+
 func TestToolRuntimeFSWriteRejectsTraversal(t *testing.T) {
 	dataDir := t.TempDir()
 	runtime := NewToolRuntime(

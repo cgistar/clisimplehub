@@ -198,9 +198,9 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"bytes":   len(input.Content),
 		}, nil)
 	case "edit":
-		var input editRequest
-		if err := json.Unmarshal(rawJSONObjectOrEmpty(call.Arguments), &input); err != nil {
-			return ToolResult{}, err
+		input, err := decodeEditRequest(call.Arguments)
+		if err != nil {
+			return errorToolResult(err), nil
 		}
 
 		path, err := r.guard.Resolve(input.Path)
