@@ -245,6 +245,12 @@ func builtinToolDefinitions() []map[string]any {
 					"path": map[string]any{
 						"type": "string",
 					},
+					"offset": map[string]any{
+						"type": "integer",
+					},
+					"limit": map[string]any{
+						"type": "integer",
+					},
 				},
 				"required":             []string{"path"},
 				"additionalProperties": false,

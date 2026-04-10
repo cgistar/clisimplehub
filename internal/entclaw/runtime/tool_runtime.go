@@ -27,6 +27,12 @@ type CommandResult struct {
 
 type CommandRunner func(ctx context.Context, request CommandRequest) (CommandResult, error)
 
+type readRequest struct {
+	Path   string `json:"path"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+}
+
 type ToolRuntime struct {
 	root     string
 	sessions SessionStore
@@ -150,9 +156,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"count":    len(session.ToolHistory),
 		}, r.sessions.Save(ctx, session))
 	case toolNameRead:
-		var input struct {
-			Path string `json:"path"`
-		}
+		var input readRequest
 		if err := json.Unmarshal(rawJSONObjectOrEmpty(call.Arguments), &input); err != nil {
 			return ToolResult{}, err
 		}
@@ -164,7 +168,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 		body, err := os.ReadFile(path)
 		return marshalToolPayload(map[string]any{
 			"path":    input.Path,
-			"content": string(body),
+			"content": sliceReadContent(string(body), input.Offset, input.Limit),
 		}, err)
 	case toolNameWrite:
 		var input struct {
@@ -277,6 +281,24 @@ func defaultCommandRunner(ctx context.Context, request CommandRequest) (CommandR
 	}
 	result.ExitCode = -1
 	return result, err
+}
+
+func sliceReadContent(body string, offset, limit int) string {
+	lines := strings.Split(body, "\n")
+	start := 0
+	if offset > 1 {
+		start = offset - 1
+	}
+	if start > len(lines) {
+		start = len(lines)
+	}
+
+	end := len(lines)
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+
+	return strings.Join(lines[start:end], "\n")
 }
 
 func marshalToolPayload(payload any, runErr error) (ToolResult, error) {

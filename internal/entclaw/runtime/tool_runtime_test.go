@@ -723,6 +723,52 @@ func TestToolRuntimeReadCanonicalNameReturnsFileContent(t *testing.T) {
 	}
 }
 
+func TestToolRuntimeReadCanonicalNameSupportsLinePagination(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "skills", "demo", "note.txt"), []byte("line1\nline2\nline3\nline4"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "read",
+		Arguments: json.RawMessage(`{"path":"skills/demo/note.txt","offset":2,"limit":2}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(read): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Path != "skills/demo/note.txt" {
+		t.Fatalf("payload.Path = %q, want %q", payload.Path, "skills/demo/note.txt")
+	}
+	if payload.Content != "line2\nline3" {
+		t.Fatalf("payload.Content = %q, want %q", payload.Content, "line2\nline3")
+	}
+}
+
 func TestToolRuntimeFSReadLegacyAliasReturnsFileContent(t *testing.T) {
 	dataDir := t.TempDir()
 	root := filepath.Join(dataDir, "entclaw")
