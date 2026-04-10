@@ -9,6 +9,14 @@ import (
 	"strings"
 )
 
+type SkillCatalogEntry struct {
+	Name        string
+	Description string
+	Location    string
+	HasScripts  bool
+	Scripts     []string
+}
+
 type SkillStore struct {
 	root string
 }
@@ -76,6 +84,40 @@ func (s SkillStore) List(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
+func (s SkillStore) Catalog(ctx context.Context) ([]SkillCatalogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("catalog skills: %w", err)
+	}
+
+	out := make([]SkillCatalogEntry, 0, len(entries))
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !entry.IsDir() {
+			continue
+		}
+
+		item, ok := s.readCatalogEntry(entry.Name())
+		if !ok {
+			continue
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
 func (s SkillStore) Delete(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -89,6 +131,67 @@ func (s SkillStore) Delete(ctx context.Context, name string) error {
 		return fmt.Errorf("delete skill directory: %w", err)
 	}
 	return nil
+}
+
+func (s SkillStore) readCatalogEntry(dirName string) (SkillCatalogEntry, bool) {
+	skillPath := filepath.Join(s.root, dirName, "SKILL.md")
+	body, err := os.ReadFile(skillPath)
+	if err != nil {
+		return SkillCatalogEntry{}, false
+	}
+
+	name, description := parseSkillFrontmatter(string(body))
+	if strings.TrimSpace(name) == "" {
+		name = dirName
+	}
+	scripts := listSkillScripts(filepath.Join(s.root, dirName, "scripts"))
+	return SkillCatalogEntry{
+		Name:        name,
+		Description: description,
+		Location:    filepath.ToSlash(filepath.Join("entclaw", "skills", dirName, "SKILL.md")),
+		HasScripts:  len(scripts) > 0,
+		Scripts:     scripts,
+	}, true
+}
+
+func parseSkillFrontmatter(body string) (string, string) {
+	lines := strings.Split(body, "\n")
+	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
+		return "", ""
+	}
+
+	var name string
+	var description string
+	for i := 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "---" {
+			break
+		}
+		if strings.HasPrefix(line, "name:") {
+			name = strings.TrimSpace(strings.Trim(strings.TrimPrefix(line, "name:"), `"'`))
+		}
+		if strings.HasPrefix(line, "description:") {
+			description = strings.TrimSpace(strings.Trim(strings.TrimPrefix(line, "description:"), `"'`))
+		}
+	}
+	return name, description
+}
+
+func listSkillScripts(scriptDir string) []string {
+	entries, err := os.ReadDir(scriptDir)
+	if err != nil {
+		return nil
+	}
+
+	scripts := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		scripts = append(scripts, entry.Name())
+	}
+	sort.Strings(scripts)
+	return scripts
 }
 
 func (s SkillStore) skillPath(name string) (string, error) {

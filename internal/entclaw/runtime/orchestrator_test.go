@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -440,6 +442,127 @@ func TestOrchestratorEmitsResponsesProgressEventsForToolRound(t *testing.T) {
 	}
 	if seen[5].Type != OrchestrationCompleted {
 		t.Fatalf("seen[5] = %+v, want completion event", seen[5])
+	}
+}
+
+func TestOrchestratorAutoDiscoversSkillFromInjectedCatalog(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	store := NewSessionStore(dataDir)
+	skillStore := NewSkillStore(dataDir)
+	skillDir := filepath.Join(dataDir, "entclaw", "skills", "github-search")
+	if err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: github-search
+description: Search GitHub repositories and similar projects.
+---
+
+Run scripts/search.sh when repository search is required.
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(SKILL.md): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "scripts", "search.sh"), []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(search.sh): %v", err)
+	}
+
+	tools := NewToolRuntime(
+		dataDir,
+		store,
+		skillStore,
+		NewMCPStore(dataDir),
+		nil,
+		func(_ context.Context, request CommandRequest) (CommandResult, error) {
+			return CommandResult{
+				Stdout:   "search ok\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
+	client := &stubLoopbackClient{
+		responses: []*http.Response{
+			testHTTPResponse(strings.Join([]string{
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","item":{"type":"function_call","status":"completed","call_id":"call_1","name":"skill_read","arguments":"{\"name\":\"github-search\"}"}}`,
+				"",
+			}, "\n"), "text/event-stream"),
+			testHTTPResponse(strings.Join([]string{
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","item":{"type":"function_call","status":"completed","call_id":"call_2","name":"skill_run","arguments":"{\"name\":\"github-search\",\"script\":\"search.sh\"}"}}`,
+				"",
+			}, "\n"), "text/event-stream"),
+			testHTTPResponse(strings.Join([]string{
+				"event: response.output_text.done",
+				`data: {"type":"response.output_text.done","text":"found similar repositories"}`,
+				"",
+			}, "\n"), "text/event-stream"),
+		},
+	}
+	orchestrator := Orchestrator{
+		client:   client,
+		tools:    tools,
+		sessions: store,
+	}
+
+	result, err := orchestrator.Run(context.Background(), testSourceRequest(), &TaskRequest{
+		SessionID: "session-1",
+		Channel:   ChannelCodex,
+		Format:    FormatResponses,
+		Model:     "gpt-5.4",
+		RawBody:   []byte(`{"model":"gpt-5.4","input":"search github for openclaw alternatives"}`),
+		Path:      "/v1/entclaw/responses",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.Response == nil || result.Session == nil {
+		t.Fatal("expected response and session")
+	}
+	if client.callCount != 3 {
+		t.Fatalf("callCount = %d, want 3", client.callCount)
+	}
+
+	firstBody := gjson.ParseBytes(client.bodies[0])
+	instructions := firstBody.Get("instructions").String()
+	if !strings.Contains(instructions, "<available_skills>") {
+		t.Fatalf("instructions = %q, want available_skills", instructions)
+	}
+	if !strings.Contains(instructions, "github-search") {
+		t.Fatalf("instructions = %q, want github-search", instructions)
+	}
+	if !strings.Contains(instructions, "Search GitHub repositories and similar projects.") {
+		t.Fatalf("instructions = %q, want skill description", instructions)
+	}
+
+	secondBody := gjson.ParseBytes(client.bodies[1])
+	if secondBody.Get("input.2.type").String() != "function_call_output" {
+		t.Fatalf("second body input = %s, want function_call_output replay", secondBody.Get("input").Raw)
+	}
+	if !strings.Contains(secondBody.Get("input.2.output").String(), "github-search") {
+		t.Fatalf("second body output = %s, want skill_read result", secondBody.Get("input.2").Raw)
+	}
+
+	streamBody, err := io.ReadAll(result.Response.Body)
+	if err != nil {
+		t.Fatalf("ReadAll(stream): %v", err)
+	}
+	if err := result.Response.Body.Close(); err != nil {
+		t.Fatalf("Close(stream): %v", err)
+	}
+	if !strings.Contains(string(streamBody), "found similar repositories") {
+		t.Fatalf("stream body = %q, want final content", streamBody)
+	}
+	if len(result.Session.ToolHistory) != 2 {
+		t.Fatalf("len(result.Session.ToolHistory) = %d, want 2", len(result.Session.ToolHistory))
+	}
+	if result.Session.ToolHistory[0].Call.Name != "skill_read" {
+		t.Fatalf("first tool = %q, want skill_read", result.Session.ToolHistory[0].Call.Name)
+	}
+	if result.Session.ToolHistory[1].Call.Name != "skill_run" {
+		t.Fatalf("second tool = %q, want skill_run", result.Session.ToolHistory[1].Call.Name)
 	}
 }
 

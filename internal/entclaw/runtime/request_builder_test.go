@@ -1,6 +1,9 @@
 package entclawruntime
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -60,4 +63,110 @@ func TestBuildInitialLoopbackBodyResponsesAddsDefaultInstructionsWhenMissing(t *
 	if root.Get("input.0.type").String() != "message" {
 		t.Fatalf("input[0] type = %s", root.Get("input.0").Raw)
 	}
+}
+
+func TestBuildInitialLoopbackBodyResponsesInjectsSkillCatalog(t *testing.T) {
+	t.Parallel()
+
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatResponses,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","instructions":"be concise","input":"hello"}`),
+	}, runtimeWithSkillCatalogFixture(t))
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	instructions := root.Get("instructions").String()
+	if !strings.Contains(instructions, "<available_skills>") {
+		t.Fatalf("instructions = %q, want available_skills", instructions)
+	}
+	if !strings.Contains(instructions, "github-search") {
+		t.Fatalf("instructions = %q, want skill name", instructions)
+	}
+	if !strings.Contains(instructions, "be concise") {
+		t.Fatalf("instructions should preserve user content: %q", instructions)
+	}
+}
+
+func TestBuildInitialLoopbackBodyChatPrependsSystemSkillCatalog(t *testing.T) {
+	t.Parallel()
+
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatChatCompletions,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}]}`),
+	}, runtimeWithSkillCatalogFixture(t))
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if root.Get("messages.0.role").String() != "system" {
+		t.Fatalf("messages[0] = %s, want system prompt", root.Get("messages.0").Raw)
+	}
+	if !strings.Contains(root.Get("messages.0.content").String(), "<available_skills>") {
+		t.Fatalf("messages[0] content = %q", root.Get("messages.0.content").String())
+	}
+}
+
+func TestBuildInitialLoopbackBodyMessagesAppendsSystemSkillCatalog(t *testing.T) {
+	t.Parallel()
+
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatMessages,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","system":"be concise","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`),
+	}, runtimeWithSkillCatalogFixture(t))
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	systemText := root.Get("system").String()
+	if !strings.Contains(systemText, "<available_skills>") {
+		t.Fatalf("system = %q, want skill catalog", systemText)
+	}
+	if !strings.Contains(systemText, "be concise") {
+		t.Fatalf("system should preserve user content: %q", systemText)
+	}
+}
+
+func TestBuiltinToolDefinitionsIncludeSkillRun(t *testing.T) {
+	t.Parallel()
+
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatResponses,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","input":"hello"}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if !root.Get(`tools.#(name="skill_run")`).Exists() {
+		t.Fatalf("tools = %s, want skill_run", root.Get("tools").Raw)
+	}
+}
+
+func runtimeWithSkillCatalogFixture(t *testing.T) *ToolRuntime {
+	t.Helper()
+
+	dataDir := t.TempDir()
+	store := NewSkillStore(dataDir)
+	skillDir := filepath.Join(dataDir, "entclaw", "skills", "github-search")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: github-search
+description: Search GitHub repositories and similar projects.
+---
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(SKILL.md): %v", err)
+	}
+
+	return NewToolRuntime(dataDir, NewSessionStore(t.TempDir()), store, NewMCPStore(dataDir), nil, nil)
 }
