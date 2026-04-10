@@ -113,6 +113,24 @@ func TestStdioMCPCallerSupportsResourcesAndPrompts(t *testing.T) {
 	}
 }
 
+func TestStdioMCPCallerListsTools(t *testing.T) {
+	dataDir := t.TempDir()
+	serverPath := writeStubMCPServer(t, dataDir)
+	caller := NewStdioMCPCaller(dataDir)
+
+	result, err := caller(context.Background(), "github", mustMarshalJSON(t, map[string]any{
+		"command": serverPath,
+	}), mustMarshalJSON(t, map[string]any{
+		"method": "tools/list",
+	}))
+	if err != nil {
+		t.Fatalf("caller(...): %v", err)
+	}
+	if !containsJSONSubstring(string(result), `"name":"search_repositories"`) {
+		t.Fatalf("result = %s, want search_repositories tool", result)
+	}
+}
+
 func TestStdioMCPCallerRejectsDisabledConfig(t *testing.T) {
 	dataDir := t.TempDir()
 	caller := NewStdioMCPCaller(dataDir)
@@ -142,6 +160,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"tools/call"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"tool:search_repositories:openclaw"}],"isError":false}}'
+      ;;
+    *'"method":"tools/list"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search_repositories","description":"Search repositories","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]}}'
       ;;
     *'"method":"resources/list"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"resources":[{"uri":"resource://repo/openclaw","name":"openclaw"}]}}'

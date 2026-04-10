@@ -1,6 +1,7 @@
 package entclawruntime
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -316,6 +317,28 @@ func TestBuiltinToolDefinitionsIncludeWebTools(t *testing.T) {
 	}
 }
 
+func TestBuildInitialLoopbackBodyIncludesMaterializedMCPTools(t *testing.T) {
+	t.Parallel()
+
+	runtime := runtimeWithMaterializedMCPFixture(t)
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatResponses,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","input":"hello"}`),
+	}, runtime)
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	if !root.Get(`tools.#(name="github__search_repositories")`).Exists() {
+		t.Fatalf("tools = %s, want github__search_repositories", root.Get("tools").Raw)
+	}
+	if root.Get(`tools.#(name="mcp_call")`).Exists() {
+		t.Fatalf("tools = %s, should hide mcp_call when materialized MCP tools exist", root.Get("tools").Raw)
+	}
+}
+
 func runtimeWithSkillCatalogFixture(t *testing.T) *ToolRuntime {
 	t.Helper()
 
@@ -334,4 +357,18 @@ description: Search GitHub repositories and similar projects.
 	}
 
 	return NewToolRuntime(dataDir, NewSessionStore(t.TempDir()), store, NewMCPStore(dataDir), nil, nil)
+}
+
+func runtimeWithMaterializedMCPFixture(t *testing.T) *ToolRuntime {
+	t.Helper()
+
+	dataDir := t.TempDir()
+	serverPath := writeStubMCPServer(t, dataDir)
+	store := NewMCPStore(dataDir)
+	if err := store.Write(context.Background(), "github", mustMarshalJSON(t, map[string]any{
+		"command": serverPath,
+	})); err != nil {
+		t.Fatalf("store.Write(github): %v", err)
+	}
+	return NewToolRuntime(dataDir, NewSessionStore(dataDir), NewSkillStore(dataDir), store, NewStdioMCPCaller(dataDir), nil)
 }

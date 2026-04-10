@@ -1583,6 +1583,52 @@ func TestToolRuntimeWebSearchReturnsNotConfiguredError(t *testing.T) {
 	}
 }
 
+func TestToolRuntimeExecutesMaterializedMCPTool(t *testing.T) {
+	dataDir := t.TempDir()
+	serverPath := writeStubMCPServer(t, dataDir)
+	store := NewMCPStore(dataDir)
+	if err := store.Write(context.Background(), "github", mustMarshalJSON(t, map[string]any{
+		"command": serverPath,
+	})); err != nil {
+		t.Fatalf("store.Write(github): %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		store,
+		NewStdioMCPCaller(dataDir),
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "github__search_repositories",
+		Arguments: json.RawMessage(`{"query":"openclaw"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(github__search_repositories): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Name   string          `json:"name"`
+		Output json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Name != "github__search_repositories" {
+		t.Fatalf("payload.Name = %q, want %q", payload.Name, "github__search_repositories")
+	}
+	if !containsJSONSubstring(string(payload.Output), `"tool:search_repositories:openclaw"`) {
+		t.Fatalf("payload.Output = %s, want MCP tool call output", payload.Output)
+	}
+}
+
 func TestToolRuntimeReadCanonicalNameReturnsFileContent(t *testing.T) {
 	dataDir := t.TempDir()
 	root := filepath.Join(dataDir, "entclaw")

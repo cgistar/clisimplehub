@@ -27,7 +27,7 @@ func buildInitialLoopbackBody(task *TaskRequest, tools *ToolRuntime) ([]byte, er
 			case FormatMessages:
 				payload["system"] = mergePromptText(skillPrompt, stringFromAny(payload["system"]))
 			}
-			payload["tools"] = builtinToolDefinitions()
+			payload["tools"] = builtinToolDefinitionsForRuntime(tools)
 			return nil
 		})
 	}
@@ -47,7 +47,7 @@ func buildInitialLoopbackBody(task *TaskRequest, tools *ToolRuntime) ([]byte, er
 			"model":        task.Model,
 			"instructions": mergeResponseInstructions(skillPrompt, ""),
 			"input":        rawInput,
-			"tools":        builtinToolDefinitions(),
+			"tools":        builtinToolDefinitionsForRuntime(tools),
 		}
 		return json.Marshal(payload)
 	}
@@ -62,7 +62,7 @@ func buildInitialLoopbackBody(task *TaskRequest, tools *ToolRuntime) ([]byte, er
 		if strings.TrimSpace(stringFromAny(payload["model"])) == "" && strings.TrimSpace(task.Model) != "" {
 			payload["model"] = task.Model
 		}
-		payload["tools"] = builtinToolDefinitions()
+		payload["tools"] = builtinToolDefinitionsForRuntime(tools)
 		return nil
 	})
 }
@@ -78,9 +78,17 @@ func buildSkillDiscoveryInstructions(tools *ToolRuntime) string {
 	}
 
 	var out strings.Builder
+	hasMaterializedMCP := false
+	if tools != nil {
+		hasMaterializedMCP = len(tools.materializedMCPTools(context.Background())) > 0
+	}
 	out.WriteString("Before replying, scan <available_skills> descriptions.\n")
 	out.WriteString("If exactly one skill clearly matches the task, call skill_read(name) first.\n")
-	out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call " + toolNameRead + ", " + toolNameWrite + ", edit, apply_patch, web_search, web_fetch, mcp_call, " + toolNameExec + ", or skill_run.\n")
+	if hasMaterializedMCP {
+		out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call " + toolNameRead + ", " + toolNameWrite + ", edit, apply_patch, web_search, web_fetch, any relevant MCP tool, " + toolNameExec + ", or skill_run.\n")
+	} else {
+		out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call " + toolNameRead + ", " + toolNameWrite + ", edit, apply_patch, web_search, web_fetch, mcp_call, " + toolNameExec + ", or skill_run.\n")
+	}
 	out.WriteString("Do not call skill_run unless the selected SKILL.md indicates a script should be executed.\n\n")
 	out.WriteString("<available_skills>\n")
 	for _, entry := range entries {
@@ -152,7 +160,23 @@ func escapePromptText(text string) string {
 }
 
 func builtinToolDefinitions() []map[string]any {
-	return []map[string]any{
+	return baseBuiltinToolDefinitions(true)
+}
+
+func builtinToolDefinitionsForRuntime(tools *ToolRuntime) []map[string]any {
+	materialized := []MaterializedMCPTool(nil)
+	if tools != nil {
+		materialized = tools.materializedMCPTools(context.Background())
+	}
+	definitions := baseBuiltinToolDefinitions(len(materialized) == 0)
+	for _, tool := range materialized {
+		definitions = append(definitions, tool.definition())
+	}
+	return definitions
+}
+
+func baseBuiltinToolDefinitions(includeMCPCall bool) []map[string]any {
+	definitions := []map[string]any{
 		{
 			"type":        "function",
 			"name":        "skill_list",
@@ -322,24 +346,6 @@ func builtinToolDefinitions() []map[string]any {
 		},
 		{
 			"type":        "function",
-			"name":        "mcp_call",
-			"description": "Call a configured entclaw MCP server by name with JSON arguments.",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"name": map[string]any{
-						"type": "string",
-					},
-					"arguments": map[string]any{
-						"type": "object",
-					},
-				},
-				"required":             []string{"name"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
 			"name":        "web_search",
 			"description": "Search the web for a query. Returns a clear error until a search backend is configured.",
 			"parameters": map[string]any{
@@ -450,4 +456,29 @@ func builtinToolDefinitions() []map[string]any {
 			},
 		},
 	}
+
+	if includeMCPCall {
+		definitions = append(definitions[:6], append([]map[string]any{
+			{
+				"type":        "function",
+				"name":        "mcp_call",
+				"description": "Call a configured entclaw MCP server by name with JSON arguments.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{
+							"type": "string",
+						},
+						"arguments": map[string]any{
+							"type": "object",
+						},
+					},
+					"required":             []string{"name"},
+					"additionalProperties": false,
+				},
+			},
+		}, definitions[6:]...)...)
+	}
+
+	return definitions
 }

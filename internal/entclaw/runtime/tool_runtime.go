@@ -331,6 +331,9 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 		result, err := r.commands(ctx, request)
 		return marshalCommandResult(result, err, warnings)
 	default:
+		if result, handled, err := r.executeMaterializedMCP(ctx, call); handled || err != nil {
+			return result, err
+		}
 		return errorToolResult(fmt.Errorf("unsupported tool %q", call.Name)), nil
 	}
 }
