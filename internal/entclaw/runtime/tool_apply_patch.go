@@ -179,18 +179,17 @@ func (r *ToolRuntime) applyPatchOperations(ops []applyPatchOperation) (ApplyPatc
 		return ApplyPatchSummary{}, fmt.Errorf("create entclaw root: %w", err)
 	}
 
-	planned := make(map[string]applyPatchPlannedFile, len(ops))
-	seenPaths := make(map[string]struct{}, len(ops))
-	for _, op := range ops {
-		if _, exists := seenPaths[op.Path]; exists {
-			return ApplyPatchSummary{}, fmt.Errorf("apply_patch multiple operations on the same path are unsupported in v1")
-		}
-		seenPaths[op.Path] = struct{}{}
-
+	planned := make([]applyPatchPlannedFile, len(ops))
+	seenTargets := make(map[string]struct{}, len(ops))
+	for i, op := range ops {
 		file, err := r.loadApplyPatchFile(op.Path)
 		if err != nil {
 			return ApplyPatchSummary{}, err
 		}
+		if _, exists := seenTargets[file.AbsPath]; exists {
+			return ApplyPatchSummary{}, fmt.Errorf("apply_patch multiple operations on the same path are unsupported in v1")
+		}
+		seenTargets[file.AbsPath] = struct{}{}
 
 		switch op.Kind {
 		case applyPatchKindAdd:
@@ -212,7 +211,7 @@ func (r *ToolRuntime) applyPatchOperations(ops []applyPatchOperation) (ApplyPatc
 			return ApplyPatchSummary{}, fmt.Errorf("apply_patch contains unsupported operation %q", op.Kind)
 		}
 
-		planned[op.Path] = file
+		planned[i] = file
 	}
 
 	summary := ApplyPatchSummary{
@@ -220,8 +219,8 @@ func (r *ToolRuntime) applyPatchOperations(ops []applyPatchOperation) (ApplyPatc
 		Modified: make([]string, 0),
 		Deleted:  make([]string, 0),
 	}
-	for _, op := range ops {
-		file := planned[op.Path]
+	for i, op := range ops {
+		file := planned[i]
 		switch op.Kind {
 		case applyPatchKindAdd:
 			if err := os.MkdirAll(filepath.Dir(file.AbsPath), 0o755); err != nil {

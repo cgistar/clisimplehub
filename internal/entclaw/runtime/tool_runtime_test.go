@@ -763,6 +763,43 @@ func TestToolRuntimeApplyPatchRejectsUnsupportedPartialUpdate(t *testing.T) {
 	}
 }
 
+func TestToolRuntimeApplyPatchRejectsDuplicateNormalizedTargetPaths(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(dataDir, NewSessionStore(dataDir), NewSkillStore(dataDir), NewMCPStore(dataDir), nil, nil)
+
+	patch := "*** Begin Patch\n" +
+		"*** Add File: nested/../same.txt\n" +
+		"+first\n" +
+		"*** Add File: same.txt\n" +
+		"+second\n" +
+		"*** End Patch\n"
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "apply_patch",
+		Arguments: json.RawMessage(fmt.Sprintf(`{"input":%q}`, patch)),
+	})
+	if err != nil {
+		t.Fatalf("Execute(apply_patch): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Error != "apply_patch multiple operations on the same path are unsupported in v1" {
+		t.Fatalf("payload.Error = %q, want %q", payload.Error, "apply_patch multiple operations on the same path are unsupported in v1")
+	}
+
+	if _, err := os.Stat(filepath.Join(dataDir, "entclaw", "same.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(same.txt) err = %v, want not exists", err)
+	}
+}
+
 func TestToolRuntimeEditReturnsErrorWhenExactTextNotFound(t *testing.T) {
 	dataDir := t.TempDir()
 	root := filepath.Join(dataDir, "entclaw")
