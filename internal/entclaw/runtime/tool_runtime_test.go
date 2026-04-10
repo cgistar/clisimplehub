@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 func TestPathGuardRejectsTraversal(t *testing.T) {
@@ -398,6 +401,34 @@ func TestToolRuntimeSkillRunRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestBuiltinToolDefinitionsExposeApplyPatchSchema(t *testing.T) {
+	t.Parallel()
+
+	tools := builtinToolDefinitions()
+	body, err := json.Marshal(map[string]any{"tools": tools})
+	if err != nil {
+		t.Fatalf("json.Marshal(tools): %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	tool := root.Get(`tools.#(name="apply_patch")`)
+	if !tool.Exists() {
+		t.Fatalf("tools = %s, want apply_patch", root.Get("tools").Raw)
+	}
+	if !tool.Get(`parameters.required.#(=="input")`).Exists() {
+		t.Fatalf("apply_patch required = %s, want input required", tool.Get("parameters.required").Raw)
+	}
+	if tool.Get(`parameters.required.#`).Int() != 1 {
+		t.Fatalf("apply_patch required count = %d, want 1", tool.Get(`parameters.required.#`).Int())
+	}
+	if tool.Get(`parameters.properties.input.type`).String() != "string" {
+		t.Fatalf("apply_patch input schema = %s, want string", tool.Get("parameters.properties.input").Raw)
+	}
+	if tool.Get(`parameters.properties.path`).Exists() || tool.Get(`parameters.properties.content`).Exists() {
+		t.Fatalf("apply_patch schema = %s, should expose only input", tool.Get("parameters.properties").Raw)
+	}
+}
+
 func TestToolRuntimeMemoryAppendEncodesSessionErrors(t *testing.T) {
 	dataDir := t.TempDir()
 	runtime := NewToolRuntime(
@@ -579,6 +610,156 @@ func TestToolRuntimeEditCanonicalNameAppliesSequentialExactReplacements(t *testi
 	}
 	if string(body) != want {
 		t.Fatalf("string(body) = %q, want %q", string(body), want)
+	}
+}
+
+func TestToolRuntimeApplyPatchAddsFile(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(dataDir, NewSessionStore(dataDir), NewSkillStore(dataDir), NewMCPStore(dataDir), nil, nil)
+
+	patch := "*** Begin Patch\n*** Add File: hello.txt\n+hello\n*** End Patch\n"
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "apply_patch",
+		Arguments: json.RawMessage(fmt.Sprintf(`{"input":%q}`, patch)),
+	})
+	if err != nil {
+		t.Fatalf("Execute(apply_patch): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Added    []string `json:"added"`
+		Modified []string `json:"modified"`
+		Deleted  []string `json:"deleted"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if len(payload.Added) != 1 || payload.Added[0] != "hello.txt" {
+		t.Fatalf("payload.Added = %#v, want [hello.txt]", payload.Added)
+	}
+
+	body, err := os.ReadFile(filepath.Join(dataDir, "entclaw", "hello.txt"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(hello.txt): %v", err)
+	}
+	if string(body) != "hello\n" {
+		t.Fatalf("string(body) = %q, want %q", string(body), "hello\n")
+	}
+}
+
+func TestToolRuntimeApplyPatchUpdatesAndDeletesFiles(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "dir"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dir", "note.txt"), []byte("old line\n"), 0o640); err != nil {
+		t.Fatalf("os.WriteFile(note.txt): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dir", "delete.txt"), []byte("delete me\n"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(delete.txt): %v", err)
+	}
+
+	runtime := NewToolRuntime(dataDir, NewSessionStore(dataDir), NewSkillStore(dataDir), NewMCPStore(dataDir), nil, nil)
+	patch := "*** Begin Patch\n" +
+		"*** Update File: dir/note.txt\n" +
+		"@@\n" +
+		"-old line\n" +
+		"+new line\n" +
+		"*** Delete File: dir/delete.txt\n" +
+		"*** End Patch\n"
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "apply_patch",
+		Arguments: json.RawMessage(fmt.Sprintf(`{"input":%q}`, patch)),
+	})
+	if err != nil {
+		t.Fatalf("Execute(apply_patch): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Added    []string `json:"added"`
+		Modified []string `json:"modified"`
+		Deleted  []string `json:"deleted"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if len(payload.Modified) != 1 || payload.Modified[0] != "dir/note.txt" {
+		t.Fatalf("payload.Modified = %#v, want [dir/note.txt]", payload.Modified)
+	}
+	if len(payload.Deleted) != 1 || payload.Deleted[0] != "dir/delete.txt" {
+		t.Fatalf("payload.Deleted = %#v, want [dir/delete.txt]", payload.Deleted)
+	}
+
+	body, err := os.ReadFile(filepath.Join(root, "dir", "note.txt"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(note.txt): %v", err)
+	}
+	if string(body) != "new line\n" {
+		t.Fatalf("string(body) = %q, want %q", string(body), "new line\n")
+	}
+	if _, err := os.Stat(filepath.Join(root, "dir", "delete.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(delete.txt) err = %v, want not exists", err)
+	}
+}
+
+func TestToolRuntimeApplyPatchRejectsUnsupportedPartialUpdate(t *testing.T) {
+	dataDir := t.TempDir()
+	root := filepath.Join(dataDir, "entclaw")
+	if err := os.MkdirAll(filepath.Join(root, "dir"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	filePath := filepath.Join(root, "dir", "note.txt")
+	original := "keep top\nold line\nkeep bottom\n"
+	if err := os.WriteFile(filePath, []byte(original), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(note.txt): %v", err)
+	}
+
+	runtime := NewToolRuntime(dataDir, NewSessionStore(dataDir), NewSkillStore(dataDir), NewMCPStore(dataDir), nil, nil)
+	patch := "*** Begin Patch\n" +
+		"*** Update File: dir/note.txt\n" +
+		"@@\n" +
+		" keep top\n" +
+		"-old line\n" +
+		"+new line\n" +
+		" keep bottom\n" +
+		"*** End Patch\n"
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "apply_patch",
+		Arguments: json.RawMessage(fmt.Sprintf(`{"input":%q}`, patch)),
+	})
+	if err != nil {
+		t.Fatalf("Execute(apply_patch): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Error != "apply_patch update hunks only support full-file replacement in v1" {
+		t.Fatalf("payload.Error = %q, want %q", payload.Error, "apply_patch update hunks only support full-file replacement in v1")
+	}
+
+	body, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(note.txt): %v", err)
+	}
+	if string(body) != original {
+		t.Fatalf("string(body) = %q, want %q", string(body), original)
 	}
 }
 

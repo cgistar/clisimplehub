@@ -80,7 +80,7 @@ func buildSkillDiscoveryInstructions(tools *ToolRuntime) string {
 	var out strings.Builder
 	out.WriteString("Before replying, scan <available_skills> descriptions.\n")
 	out.WriteString("If exactly one skill clearly matches the task, call skill_read(name) first.\n")
-	out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call " + toolNameRead + ", " + toolNameWrite + ", edit, mcp_call, " + toolNameExec + ", or skill_run.\n")
+	out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call " + toolNameRead + ", " + toolNameWrite + ", edit, apply_patch, mcp_call, " + toolNameExec + ", or skill_run.\n")
 	out.WriteString("Do not call skill_run unless the selected SKILL.md indicates a script should be executed.\n\n")
 	out.WriteString("<available_skills>\n")
 	for _, entry := range entries {
@@ -302,6 +302,21 @@ func builtinToolDefinitions() []map[string]any {
 					},
 				},
 				"required":             []string{"path", "edits"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "apply_patch",
+			"description": "Apply a narrow, deterministic patch document to files under the entclaw data root.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"input": map[string]any{
+						"type": "string",
+					},
+				},
+				"required":             []string{"input"},
 				"additionalProperties": false,
 			},
 		},

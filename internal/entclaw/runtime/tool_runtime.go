@@ -227,6 +227,8 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"written": true,
 			"bytes":   len(updated),
 		}, nil)
+	case "apply_patch":
+		return r.executeApplyPatch(call.Arguments)
 	case "mcp_call":
 		var input struct {
 			Name      string          `json:"name"`
