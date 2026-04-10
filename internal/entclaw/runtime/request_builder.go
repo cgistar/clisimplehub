@@ -80,7 +80,7 @@ func buildSkillDiscoveryInstructions(tools *ToolRuntime) string {
 	var out strings.Builder
 	out.WriteString("Before replying, scan <available_skills> descriptions.\n")
 	out.WriteString("If exactly one skill clearly matches the task, call skill_read(name) first.\n")
-	out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call " + toolNameRead + ", " + toolNameWrite + ", edit, apply_patch, mcp_call, " + toolNameExec + ", or skill_run.\n")
+	out.WriteString("After reading SKILL.md, follow its guidance and decide whether to call " + toolNameRead + ", " + toolNameWrite + ", edit, apply_patch, web_search, web_fetch, mcp_call, " + toolNameExec + ", or skill_run.\n")
 	out.WriteString("Do not call skill_run unless the selected SKILL.md indicates a script should be executed.\n\n")
 	out.WriteString("<available_skills>\n")
 	for _, entry := range entries {
@@ -335,6 +335,39 @@ func builtinToolDefinitions() []map[string]any {
 					},
 				},
 				"required":             []string{"name"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "web_search",
+			"description": "Search the web for a query. Returns a clear error until a search backend is configured.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type": "string",
+					},
+				},
+				"required":             []string{"query"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "web_fetch",
+			"description": "Fetch a web page over HTTP(S) and return plain text content, optionally truncated to maxChars.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"url": map[string]any{
+						"type": "string",
+					},
+					"maxChars": map[string]any{
+						"type": "integer",
+					},
+				},
+				"required":             []string{"url"},
 				"additionalProperties": false,
 			},
 		},

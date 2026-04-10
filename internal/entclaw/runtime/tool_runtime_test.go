@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -1489,6 +1491,95 @@ func TestToolRuntimeProcessKillStopsRunningSession(t *testing.T) {
 	}
 	if killPayload.SessionID != started.SessionID || !killPayload.Killed {
 		t.Fatalf("killPayload = %+v, want killed session", killPayload)
+	}
+}
+
+func TestToolRuntimeWebFetchReturnsHTTPBodyAndRespectsMaxChars(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("r.Method = %q, want GET", r.Method)
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("hello world"))
+	}))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "web_fetch",
+		Arguments: json.RawMessage(fmt.Sprintf(`{"url":%q,"maxChars":5}`, server.URL)),
+	})
+	if err != nil {
+		t.Fatalf("Execute(web_fetch): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		URL        string `json:"url"`
+		StatusCode int    `json:"statusCode"`
+		Content    string `json:"content"`
+		Truncated  bool   `json:"truncated"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.URL != server.URL {
+		t.Fatalf("payload.URL = %q, want %q", payload.URL, server.URL)
+	}
+	if payload.StatusCode != http.StatusOK {
+		t.Fatalf("payload.StatusCode = %d, want %d", payload.StatusCode, http.StatusOK)
+	}
+	if payload.Content != "hello" {
+		t.Fatalf("payload.Content = %q, want %q", payload.Content, "hello")
+	}
+	if !payload.Truncated {
+		t.Fatalf("payload.Truncated = false, want true")
+	}
+}
+
+func TestToolRuntimeWebSearchReturnsNotConfiguredError(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "web_search",
+		Arguments: json.RawMessage(`{"query":"openclaw"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(web_search): %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("result.IsError = false, want true with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Error != "web_search is not configured in entclaw runtime v1" {
+		t.Fatalf("payload.Error = %q, want %q", payload.Error, "web_search is not configured in entclaw runtime v1")
 	}
 }
 

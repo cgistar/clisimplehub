@@ -296,6 +296,26 @@ func TestBuiltinToolDefinitionsExposeExecAndProcessSchemas(t *testing.T) {
 	}
 }
 
+func TestBuiltinToolDefinitionsIncludeWebTools(t *testing.T) {
+	t.Parallel()
+
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatResponses,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","input":"hello"}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	for _, name := range []string{"web_search", "web_fetch"} {
+		if !root.Get(`tools.#(name="` + name + `")`).Exists() {
+			t.Fatalf("tools = %s, want %s", root.Get("tools").Raw, name)
+		}
+	}
+}
+
 func runtimeWithSkillCatalogFixture(t *testing.T) *ToolRuntime {
 	t.Helper()
 
