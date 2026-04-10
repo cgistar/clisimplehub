@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
+	"time"
 )
 
 type MCPCaller func(ctx context.Context, name string, config json.RawMessage, arguments json.RawMessage) (json.RawMessage, error)
@@ -17,6 +19,8 @@ type MCPCaller func(ctx context.Context, name string, config json.RawMessage, ar
 type CommandRequest struct {
 	WorkDir string
 	Args    []string
+	Env     map[string]string
+	Timeout time.Duration
 }
 
 type CommandResult struct {
@@ -33,6 +37,22 @@ type readRequest struct {
 	Limit  int    `json:"limit"`
 }
 
+type execRequestInput struct {
+	Command    *string           `json:"command"`
+	Args       []string          `json:"args"`
+	WorkDir    string            `json:"workdir"`
+	Env        map[string]string `json:"env"`
+	YieldMs    *int              `json:"yieldMs"`
+	Background bool              `json:"background"`
+	Timeout    int               `json:"timeout"`
+	Pty        *bool             `json:"pty"`
+	Elevated   json.RawMessage   `json:"elevated"`
+	Host       json.RawMessage   `json:"host"`
+	Security   json.RawMessage   `json:"security"`
+	Ask        json.RawMessage   `json:"ask"`
+	Node       json.RawMessage   `json:"node"`
+}
+
 type ToolRuntime struct {
 	root     string
 	sessions SessionStore
@@ -41,6 +61,7 @@ type ToolRuntime struct {
 	guard    PathGuard
 	mcpCall  MCPCaller
 	commands CommandRunner
+	process  *ProcessStore
 }
 
 func NewToolRuntime(dataRoot string, sessions SessionStore, skills SkillStore, mcp MCPStore, caller MCPCaller, commands CommandRunner) *ToolRuntime {
@@ -57,6 +78,7 @@ func NewToolRuntime(dataRoot string, sessions SessionStore, skills SkillStore, m
 		guard:    NewPathGuard(entclawRoot),
 		mcpCall:  caller,
 		commands: commands,
+		process:  NewProcessStore(),
 	}
 }
 
@@ -255,29 +277,55 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"name":   strings.TrimSpace(input.Name),
 			"output": json.RawMessage(rawJSONObjectOrEmpty(output)),
 		}, err)
+	case "process":
+		return r.executeProcess(call.Arguments)
 	case toolNameExec:
-		var input struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-		}
+		var input execRequestInput
 		if err := json.Unmarshal(rawJSONObjectOrEmpty(call.Arguments), &input); err != nil {
 			return ToolResult{}, err
 		}
-
-		args := append([]string(nil), input.Args...)
-		if strings.TrimSpace(input.Command) != "" {
-			args = append([]string{input.Command}, args...)
+		if input.Command == nil || strings.TrimSpace(*input.Command) == "" {
+			return errorToolResult(fmt.Errorf("command is required")), nil
 		}
-		workDir := filepath.Join(r.root, "entclaw")
-		if err := os.MkdirAll(workDir, 0o755); err != nil {
+		if err := os.MkdirAll(r.guard.root, 0o755); err != nil {
+			return errorToolResult(fmt.Errorf("create entclaw root: %w", err)), nil
+		}
+		workDir, err := r.guard.Resolve(input.WorkDir)
+		if err != nil {
 			return errorToolResult(err), nil
 		}
+		if err := os.MkdirAll(workDir, 0o755); err != nil {
+			return errorToolResult(fmt.Errorf("create exec working directory: %w", err)), nil
+		}
 
-		result, err := r.commands(ctx, CommandRequest{
+		command := strings.TrimSpace(*input.Command)
+		args := buildExecArgs(command, input.Args)
+		request := CommandRequest{
 			WorkDir: workDir,
 			Args:    args,
-		})
-		return marshalCommandResult(result, err)
+			Env:     cloneStringMap(input.Env),
+			Timeout: durationFromMillis(input.Timeout),
+		}
+		warnings := collectExecWarnings(input)
+		if input.Background {
+			started, err := r.process.Start(command, request)
+			if err != nil {
+				return errorToolResult(err), nil
+			}
+			payload := map[string]any{
+				"sessionId":  started.SessionID,
+				"background": true,
+				"running":    started.Running,
+				"command":    started.Command,
+			}
+			if len(warnings) > 0 {
+				payload["warnings"] = warnings
+			}
+			return marshalToolPayload(payload, nil)
+		}
+
+		result, err := r.commands(ctx, request)
+		return marshalCommandResult(result, err, warnings)
 	default:
 		return errorToolResult(fmt.Errorf("unsupported tool %q", call.Name)), nil
 	}
@@ -288,8 +336,17 @@ func defaultCommandRunner(ctx context.Context, request CommandRequest) (CommandR
 		return CommandResult{ExitCode: -1}, fmt.Errorf("command args are required")
 	}
 
+	if request.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, request.Timeout)
+		defer cancel()
+	}
+
 	cmd := exec.CommandContext(ctx, request.Args[0], request.Args[1:]...)
 	cmd.Dir = request.WorkDir
+	if len(request.Env) > 0 {
+		cmd.Env = mergeCommandEnv(request.Env)
+	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -313,6 +370,84 @@ func defaultCommandRunner(ctx context.Context, request CommandRequest) (CommandR
 	}
 	result.ExitCode = -1
 	return result, err
+}
+
+func buildExecArgs(command string, extraArgs []string) []string {
+	args := append([]string(nil), extraArgs...)
+	if len(args) > 0 {
+		return append([]string{command}, args...)
+	}
+	if goruntime.GOOS == "windows" {
+		return []string{"cmd.exe", "/C", command}
+	}
+	return []string{"sh", "-lc", command}
+}
+
+func collectExecWarnings(input execRequestInput) []string {
+	warnings := make([]string, 0, 7)
+	if input.YieldMs != nil {
+		warnings = append(warnings, "yieldMs is not supported in v1")
+	}
+	if input.Pty != nil && *input.Pty {
+		warnings = append(warnings, "pty is not supported in v1")
+	}
+	for _, unsupported := range []struct {
+		Name  string
+		Value json.RawMessage
+	}{
+		{Name: "elevated", Value: input.Elevated},
+		{Name: "host", Value: input.Host},
+		{Name: "security", Value: input.Security},
+		{Name: "ask", Value: input.Ask},
+		{Name: "node", Value: input.Node},
+	} {
+		if len(unsupported.Value) == 0 {
+			continue
+		}
+		warnings = append(warnings, unsupported.Name+" is not supported in v1")
+	}
+	return warnings
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(input))
+	for key, value := range input {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func durationFromMillis(value int) time.Duration {
+	if value <= 0 {
+		return 0
+	}
+	return time.Duration(value) * time.Millisecond
+}
+
+func mergeCommandEnv(overrides map[string]string) []string {
+	merged := make([]string, 0, len(os.Environ())+len(overrides))
+	index := make(map[string]int, len(overrides))
+	for _, entry := range os.Environ() {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			merged = append(merged, entry)
+			continue
+		}
+		index[name] = len(merged)
+		merged = append(merged, entry)
+	}
+	for name, value := range overrides {
+		entry := name + "=" + value
+		if idx, ok := index[name]; ok {
+			merged[idx] = entry
+			continue
+		}
+		merged = append(merged, entry)
+	}
+	return merged
 }
 
 func sliceReadContent(body string, offset, limit int) string {
@@ -361,11 +496,14 @@ func errorToolResult(err error) ToolResult {
 	}
 }
 
-func marshalCommandResult(result CommandResult, runErr error) (ToolResult, error) {
+func marshalCommandResult(result CommandResult, runErr error, warnings []string) (ToolResult, error) {
 	payload := map[string]any{
 		"stdout":   result.Stdout,
 		"stderr":   result.Stderr,
 		"exitCode": result.ExitCode,
+	}
+	if len(warnings) > 0 {
+		payload["warnings"] = warnings
 	}
 	if runErr != nil {
 		payload["error"] = runErr.Error()

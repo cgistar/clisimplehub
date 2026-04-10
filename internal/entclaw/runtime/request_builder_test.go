@@ -256,6 +256,46 @@ func TestBuiltinToolDefinitionsExposeEditSchema(t *testing.T) {
 	}
 }
 
+func TestBuiltinToolDefinitionsExposeExecAndProcessSchemas(t *testing.T) {
+	t.Parallel()
+
+	body, err := buildInitialLoopbackBody(&TaskRequest{
+		Format:  FormatResponses,
+		Model:   "gpt-5.4",
+		RawBody: []byte(`{"model":"gpt-5.4","input":"hello"}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildInitialLoopbackBody: %v", err)
+	}
+
+	root := gjson.ParseBytes(body)
+	execTool := root.Get(`tools.#(name="` + toolNameExec + `")`)
+	if !execTool.Exists() {
+		t.Fatalf("tools = %s, want %s", root.Get("tools").Raw, toolNameExec)
+	}
+	if !execTool.Get(`parameters.required.#(=="command")`).Exists() {
+		t.Fatalf("exec required = %s, want command required", execTool.Get("parameters.required").Raw)
+	}
+	for _, name := range []string{"workdir", "env", "yieldMs", "background", "timeout", "pty", "elevated", "host", "security", "ask", "node"} {
+		if !execTool.Get(`parameters.properties.` + name).Exists() {
+			t.Fatalf("exec schema = %s, want property %s", execTool.Get("parameters.properties").Raw, name)
+		}
+	}
+
+	processTool := root.Get(`tools.#(name="process")`)
+	if !processTool.Exists() {
+		t.Fatalf("tools = %s, want process", root.Get("tools").Raw)
+	}
+	if !processTool.Get(`parameters.required.#(=="action")`).Exists() {
+		t.Fatalf("process required = %s, want action required", processTool.Get("parameters.required").Raw)
+	}
+	for _, name := range []string{"sessionId", "data", "offset", "limit", "timeout"} {
+		if !processTool.Get(`parameters.properties.` + name).Exists() {
+			t.Fatalf("process schema = %s, want property %s", processTool.Get("parameters.properties").Raw, name)
+		}
+	}
+}
+
 func runtimeWithSkillCatalogFixture(t *testing.T) *ToolRuntime {
 	t.Helper()
 

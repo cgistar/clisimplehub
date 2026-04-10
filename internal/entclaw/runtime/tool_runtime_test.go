@@ -1236,6 +1236,262 @@ func TestToolRuntimeCommandExecCreatesWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestToolRuntimeExecAcceptsCommandStringAndWorkdir(t *testing.T) {
+	dataDir := t.TempDir()
+	var gotRequest CommandRequest
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		func(_ context.Context, request CommandRequest) (CommandResult, error) {
+			gotRequest = request
+			return CommandResult{
+				Stdout:   "ok",
+				ExitCode: 0,
+			}, nil
+		},
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:   "call_1",
+		Name: "exec",
+		Arguments: json.RawMessage(`{
+			"command":"pwd",
+			"workdir":"skills",
+			"env":{"DEMO":"1"},
+			"yieldMs":25,
+			"pty":true,
+			"elevated":true
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(exec): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+	if gotRequest.WorkDir != filepath.Join(dataDir, "entclaw", "skills") {
+		t.Fatalf("gotRequest.WorkDir = %q, want %q", gotRequest.WorkDir, filepath.Join(dataDir, "entclaw", "skills"))
+	}
+	if len(gotRequest.Args) == 0 {
+		t.Fatalf("gotRequest.Args = %#v, want shell or command args", gotRequest.Args)
+	}
+	if gotRequest.Env["DEMO"] != "1" {
+		t.Fatalf("gotRequest.Env = %#v, want DEMO=1", gotRequest.Env)
+	}
+
+	var payload struct {
+		Stdout   string   `json:"stdout"`
+		ExitCode int      `json:"exitCode"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Stdout != "ok" || payload.ExitCode != 0 {
+		t.Fatalf("payload = %+v, want ok/0", payload)
+	}
+	if !containsString(payload.Warnings, "yieldMs is not supported in v1") {
+		t.Fatalf("payload.Warnings = %#v, want yieldMs warning", payload.Warnings)
+	}
+	if !containsString(payload.Warnings, "pty is not supported in v1") {
+		t.Fatalf("payload.Warnings = %#v, want pty warning", payload.Warnings)
+	}
+	if !containsString(payload.Warnings, "elevated is not supported in v1") {
+		t.Fatalf("payload.Warnings = %#v, want elevated warning", payload.Warnings)
+	}
+}
+
+func TestToolRuntimeProcessTracksBackgroundExecLifecycle(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	startResult, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:   "call_1",
+		Name: "exec",
+		Arguments: json.RawMessage(`{
+			"command":"printf 'first\n'; sleep 0.1; printf 'second\n'",
+			"background":true
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(exec background): %v", err)
+	}
+	if startResult.IsError {
+		t.Fatalf("startResult.IsError = true, want false with content %s", string(startResult.Content))
+	}
+
+	var started struct {
+		SessionID  string `json:"sessionId"`
+		Background bool   `json:"background"`
+		Running    bool   `json:"running"`
+	}
+	if err := json.Unmarshal(startResult.Content, &started); err != nil {
+		t.Fatalf("json.Unmarshal(startResult.Content): %v", err)
+	}
+	if started.SessionID == "" {
+		t.Fatalf("started = %+v, want sessionId", started)
+	}
+	if !started.Background || !started.Running {
+		t.Fatalf("started = %+v, want background/running true", started)
+	}
+
+	listResult, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_2",
+		Name:      "process",
+		Arguments: json.RawMessage(`{"action":"list"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(process list): %v", err)
+	}
+	if listResult.IsError {
+		t.Fatalf("listResult.IsError = true, want false with content %s", string(listResult.Content))
+	}
+
+	var listPayload struct {
+		Processes []struct {
+			SessionID string `json:"sessionId"`
+		} `json:"processes"`
+	}
+	if err := json.Unmarshal(listResult.Content, &listPayload); err != nil {
+		t.Fatalf("json.Unmarshal(listResult.Content): %v", err)
+	}
+	if len(listPayload.Processes) == 0 || listPayload.Processes[0].SessionID == "" {
+		t.Fatalf("listPayload = %+v, want listed session", listPayload)
+	}
+
+	pollResult, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:   "call_3",
+		Name: "process",
+		Arguments: json.RawMessage(fmt.Sprintf(`{
+			"action":"poll",
+			"sessionId":"%s",
+			"timeout":1000
+		}`, started.SessionID)),
+	})
+	if err != nil {
+		t.Fatalf("Execute(process poll): %v", err)
+	}
+	if pollResult.IsError {
+		t.Fatalf("pollResult.IsError = true, want false with content %s", string(pollResult.Content))
+	}
+
+	var pollPayload struct {
+		SessionID string `json:"sessionId"`
+		Running   bool   `json:"running"`
+		ExitCode  int    `json:"exitCode"`
+	}
+	if err := json.Unmarshal(pollResult.Content, &pollPayload); err != nil {
+		t.Fatalf("json.Unmarshal(pollResult.Content): %v", err)
+	}
+	if pollPayload.SessionID != started.SessionID {
+		t.Fatalf("pollPayload.SessionID = %q, want %q", pollPayload.SessionID, started.SessionID)
+	}
+	if pollPayload.Running {
+		t.Fatalf("pollPayload = %+v, want completed process", pollPayload)
+	}
+	if pollPayload.ExitCode != 0 {
+		t.Fatalf("pollPayload.ExitCode = %d, want 0", pollPayload.ExitCode)
+	}
+
+	logResult, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:   "call_4",
+		Name: "process",
+		Arguments: json.RawMessage(fmt.Sprintf(`{
+			"action":"log",
+			"sessionId":"%s"
+		}`, started.SessionID)),
+	})
+	if err != nil {
+		t.Fatalf("Execute(process log): %v", err)
+	}
+	if logResult.IsError {
+		t.Fatalf("logResult.IsError = true, want false with content %s", string(logResult.Content))
+	}
+
+	var logPayload struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(logResult.Content, &logPayload); err != nil {
+		t.Fatalf("json.Unmarshal(logResult.Content): %v", err)
+	}
+	if logPayload.Content != "first\nsecond\n" {
+		t.Fatalf("logPayload.Content = %q, want %q", logPayload.Content, "first\nsecond\n")
+	}
+}
+
+func TestToolRuntimeProcessKillStopsRunningSession(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		NewMCPStore(dataDir),
+		nil,
+		nil,
+	)
+
+	startResult, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:   "call_1",
+		Name: "exec",
+		Arguments: json.RawMessage(`{
+			"command":"sleep 5",
+			"background":true
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(exec background): %v", err)
+	}
+	if startResult.IsError {
+		t.Fatalf("startResult.IsError = true, want false with content %s", string(startResult.Content))
+	}
+
+	var started struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(startResult.Content, &started); err != nil {
+		t.Fatalf("json.Unmarshal(startResult.Content): %v", err)
+	}
+	if started.SessionID == "" {
+		t.Fatalf("started = %+v, want sessionId", started)
+	}
+
+	killResult, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:   "call_2",
+		Name: "process",
+		Arguments: json.RawMessage(fmt.Sprintf(`{
+			"action":"kill",
+			"sessionId":"%s"
+		}`, started.SessionID)),
+	})
+	if err != nil {
+		t.Fatalf("Execute(process kill): %v", err)
+	}
+	if killResult.IsError {
+		t.Fatalf("killResult.IsError = true, want false with content %s", string(killResult.Content))
+	}
+
+	var killPayload struct {
+		SessionID string `json:"sessionId"`
+		Killed    bool   `json:"killed"`
+	}
+	if err := json.Unmarshal(killResult.Content, &killPayload); err != nil {
+		t.Fatalf("json.Unmarshal(killResult.Content): %v", err)
+	}
+	if killPayload.SessionID != started.SessionID || !killPayload.Killed {
+		t.Fatalf("killPayload = %+v, want killed session", killPayload)
+	}
+}
+
 func TestToolRuntimeReadCanonicalNameReturnsFileContent(t *testing.T) {
 	dataDir := t.TempDir()
 	root := filepath.Join(dataDir, "entclaw")
@@ -1280,6 +1536,15 @@ func TestToolRuntimeReadCanonicalNameReturnsFileContent(t *testing.T) {
 	if payload.Content != "hello read" {
 		t.Fatalf("payload.Content = %q, want %q", payload.Content, "hello read")
 	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestToolRuntimeReadCanonicalNameSupportsLinePagination(t *testing.T) {

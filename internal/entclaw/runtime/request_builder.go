@@ -348,14 +348,71 @@ func builtinToolDefinitions() []map[string]any {
 					"command": map[string]any{
 						"type": "string",
 					},
-					"args": map[string]any{
-						"type": "array",
-						"items": map[string]any{
-							"type": "string",
-						},
+					"workdir": map[string]any{
+						"type": "string",
+					},
+					"env": map[string]any{
+						"type": "object",
+					},
+					"yieldMs": map[string]any{
+						"type": "integer",
+					},
+					"background": map[string]any{
+						"type": "boolean",
+					},
+					"timeout": map[string]any{
+						"type": "integer",
+					},
+					"pty": map[string]any{
+						"type": "boolean",
+					},
+					"elevated": map[string]any{
+						"type": "boolean",
+					},
+					"host": map[string]any{
+						"type": "string",
+					},
+					"security": map[string]any{
+						"type": "string",
+					},
+					"ask": map[string]any{
+						"type": "string",
+					},
+					"node": map[string]any{
+						"type": "string",
 					},
 				},
 				"required":             []string{"command"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "process",
+			"description": "Inspect or control background commands started by exec(background=true).",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"action": map[string]any{
+						"type": "string",
+					},
+					"sessionId": map[string]any{
+						"type": "string",
+					},
+					"data": map[string]any{
+						"type": "string",
+					},
+					"offset": map[string]any{
+						"type": "integer",
+					},
+					"limit": map[string]any{
+						"type": "integer",
+					},
+					"timeout": map[string]any{
+						"type": "integer",
+					},
+				},
+				"required":             []string{"action"},
 				"additionalProperties": false,
 			},
 		},
