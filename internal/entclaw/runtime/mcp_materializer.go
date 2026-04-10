@@ -105,25 +105,7 @@ func (r *ToolRuntime) executeMaterializedMCP(ctx context.Context, call ToolCall)
 		if normalizeToolName(call.Name) != tool.Name {
 			continue
 		}
-
-		config, err := r.mcp.Read(ctx, tool.ServerName)
-		if err != nil {
-			return errorToolResult(err), true, nil
-		}
-
-		arguments := rawJSONObjectOrEmpty(call.Arguments)
-		payload, err := json.Marshal(map[string]any{
-			"method": "tools/call",
-			"params": map[string]any{
-				"name":      tool.ToolName,
-				"arguments": decodeRawJSON(arguments),
-			},
-		})
-		if err != nil {
-			return ToolResult{}, true, err
-		}
-
-		output, err := r.mcpCall(ctx, tool.ServerName, config, payload)
+		output, err := r.invokeMaterializedMCPTool(ctx, tool, call.Arguments)
 		result, marshalErr := marshalToolPayload(map[string]any{
 			"name":   tool.Name,
 			"output": json.RawMessage(rawJSONObjectOrEmpty(output)),
@@ -132,6 +114,40 @@ func (r *ToolRuntime) executeMaterializedMCP(ctx context.Context, call ToolCall)
 	}
 
 	return ToolResult{}, false, nil
+}
+
+func (r *ToolRuntime) invokeMaterializedMCPTool(ctx context.Context, tool MaterializedMCPTool, arguments json.RawMessage) (json.RawMessage, error) {
+	config, err := r.mcp.Read(ctx, tool.ServerName)
+	if err != nil {
+		return nil, err
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"method": "tools/call",
+		"params": map[string]any{
+			"name":      tool.ToolName,
+			"arguments": decodeRawJSON(rawJSONObjectOrEmpty(arguments)),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return r.mcpCall(ctx, tool.ServerName, config, payload)
+}
+
+func (r *ToolRuntime) findMaterializedMCPToolsByToolName(ctx context.Context, toolName string) []MaterializedMCPTool {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		return nil
+	}
+
+	matches := make([]MaterializedMCPTool, 0)
+	for _, tool := range r.materializedMCPTools(ctx) {
+		if strings.TrimSpace(tool.ToolName) == name {
+			matches = append(matches, tool)
+		}
+	}
+	return matches
 }
 
 type mcpConfigEntry struct {

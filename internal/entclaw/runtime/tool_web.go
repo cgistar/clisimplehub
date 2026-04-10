@@ -25,7 +25,7 @@ type WebFetchRequest struct {
 	MaxChars int    `json:"maxChars"`
 }
 
-func executeWebSearch(raw json.RawMessage) (ToolResult, error) {
+func (r *ToolRuntime) executeWebSearch(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
 	var input WebSearchRequest
 	if err := json.Unmarshal(rawJSONObjectOrEmpty(raw), &input); err != nil {
 		return ToolResult{}, err
@@ -33,7 +33,18 @@ func executeWebSearch(raw json.RawMessage) (ToolResult, error) {
 	if strings.TrimSpace(input.Query) == "" {
 		return errorToolResult(fmt.Errorf("query is required")), nil
 	}
-	return errorToolResult(fmt.Errorf("web_search is not configured in entclaw runtime v1")), nil
+
+	providers := r.findMaterializedMCPToolsByToolName(ctx, "web_search")
+	if len(providers) == 0 {
+		return errorToolResult(fmt.Errorf("web_search is enabled but no provider is currently available.")), nil
+	}
+
+	output, err := r.invokeMaterializedMCPTool(ctx, providers[0], raw)
+	return marshalToolPayload(map[string]any{
+		"provider": providers[0].ServerName,
+		"query":    strings.TrimSpace(input.Query),
+		"output":   json.RawMessage(rawJSONObjectOrEmpty(output)),
+	}, err)
 }
 
 func executeWebFetch(ctx context.Context, raw json.RawMessage) (ToolResult, error) {

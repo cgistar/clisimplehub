@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -1578,8 +1579,67 @@ func TestToolRuntimeWebSearchReturnsNotConfiguredError(t *testing.T) {
 	if err := json.Unmarshal(result.Content, &payload); err != nil {
 		t.Fatalf("json.Unmarshal(result.Content): %v", err)
 	}
-	if payload.Error != "web_search is not configured in entclaw runtime v1" {
-		t.Fatalf("payload.Error = %q, want %q", payload.Error, "web_search is not configured in entclaw runtime v1")
+	if payload.Error != "web_search is enabled but no provider is currently available." {
+		t.Fatalf("payload.Error = %q, want %q", payload.Error, "web_search is enabled but no provider is currently available.")
+	}
+}
+
+func TestToolRuntimeWebSearchUsesMaterializedMCPProvider(t *testing.T) {
+	dataDir := t.TempDir()
+	serverPath := writeStubMCPServer(t, dataDir)
+	store := NewMCPStore(dataDir)
+	if err := store.Write(context.Background(), "search", mustMarshalJSON(t, map[string]any{
+		"command": serverPath,
+	})); err != nil {
+		t.Fatalf("store.Write(search): %v", err)
+	}
+
+	runtime := NewToolRuntime(
+		dataDir,
+		NewSessionStore(dataDir),
+		NewSkillStore(dataDir),
+		store,
+		NewStdioMCPCaller(dataDir),
+		nil,
+	)
+
+	result, err := runtime.Execute(context.Background(), "session-1", ToolCall{
+		ID:        "call_1",
+		Name:      "web_search",
+		Arguments: json.RawMessage(`{"query":"openclaw"}`),
+	})
+	if err != nil {
+		t.Fatalf("Execute(web_search): %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("result.IsError = true, want false with content %s", string(result.Content))
+	}
+
+	var payload struct {
+		Provider string          `json:"provider"`
+		Query    string          `json:"query"`
+		Output   json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(result.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(result.Content): %v", err)
+	}
+	if payload.Provider != "search" {
+		t.Fatalf("payload.Provider = %q, want %q", payload.Provider, "search")
+	}
+	if payload.Query != "openclaw" {
+		t.Fatalf("payload.Query = %q, want %q", payload.Query, "openclaw")
+	}
+
+	var output struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(payload.Output, &output); err != nil {
+		t.Fatalf("json.Unmarshal(payload.Output): %v", err)
+	}
+	if len(output.Content) == 0 || !strings.Contains(output.Content[0].Text, `"title":"OpenClaw"`) {
+		t.Fatalf("output.Content = %+v, want web_search MCP output", output.Content)
 	}
 }
 

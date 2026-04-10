@@ -278,7 +278,7 @@ func (r *ToolRuntime) Execute(ctx context.Context, sessionID string, call ToolCa
 			"output": json.RawMessage(rawJSONObjectOrEmpty(output)),
 		}, err)
 	case "web_search":
-		return executeWebSearch(call.Arguments)
+		return r.executeWebSearch(ctx, call.Arguments)
 	case "web_fetch":
 		return executeWebFetch(ctx, call.Arguments)
 	case "process":

@@ -158,11 +158,14 @@ while IFS= read -r line; do
       ;;
     *'"method":"notifications/initialized"'*)
       ;;
+    *'"method":"tools/call"'*'"name":"web_search"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"{\"results\":[{\"title\":\"OpenClaw\",\"url\":\"https://github.com/example/openclaw\",\"snippet\":\"openclaw repo\"}]}"}],"isError":false}}'
+      ;;
     *'"method":"tools/call"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"tool:search_repositories:openclaw"}],"isError":false}}'
       ;;
     *'"method":"tools/list"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search_repositories","description":"Search repositories","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search_repositories","description":"Search repositories","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}},{"name":"web_search","description":"Search the web","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]}}'
       ;;
     *'"method":"resources/list"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"resources":[{"uri":"resource://repo/openclaw","name":"openclaw"}]}}'
