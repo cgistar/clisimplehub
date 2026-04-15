@@ -162,7 +162,7 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
 	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
-	var usageUpdatedAt sql.NullTime
+	var usageUpdatedAt any
 	if a.CodexUsage != nil {
 		usagePrimPct = a.CodexUsage.PrimaryUsedPercent
 		usagePrimReset = a.CodexUsage.PrimaryResetAfterSeconds
@@ -172,7 +172,7 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 		usageSecWin = a.CodexUsage.SecondaryWindowMinutes
 		usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
 		if !a.CodexUsage.UpdatedAt.IsZero() {
-			usageUpdatedAt = sql.NullTime{Time: a.CodexUsage.UpdatedAt, Valid: true}
+			usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
 		}
 	}
 
@@ -193,7 +193,7 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 		usagePrimPct, usagePrimReset, usagePrimWin,
 		usageSecPct, usageSecReset, usageSecWin,
 		usagePriOverSec, usageUpdatedAt,
-		a.CreatedAt, a.UpdatedAt,
+		sqliteTime(a.CreatedAt), sqliteTime(a.UpdatedAt),
 	)
 	return err
 }
@@ -206,7 +206,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
 	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
-	var usageUpdatedAt sql.NullTime
+	var usageUpdatedAt any
 	if a.CodexUsage != nil {
 		usagePrimPct = a.CodexUsage.PrimaryUsedPercent
 		usagePrimReset = a.CodexUsage.PrimaryResetAfterSeconds
@@ -216,7 +216,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 		usageSecWin = a.CodexUsage.SecondaryWindowMinutes
 		usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
 		if !a.CodexUsage.UpdatedAt.IsZero() {
-			usageUpdatedAt = sql.NullTime{Time: a.CodexUsage.UpdatedAt, Valid: true}
+			usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
 		}
 	}
 
@@ -238,7 +238,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 		usagePrimPct, usagePrimReset, usagePrimWin,
 		usageSecPct, usageSecReset, usageSecWin,
 		usagePriOverSec, usageUpdatedAt,
-		a.UpdatedAt,
+		sqliteTime(a.UpdatedAt),
 		a.AccountID,
 	)
 	return err
@@ -316,7 +316,7 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 
 			var usagePrimPct, usageSecPct, usagePriOverSec float64
 			var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
-			var usageUpdatedAt sql.NullTime
+			var usageUpdatedAt any
 			if a.CodexUsage != nil {
 				usagePrimPct = a.CodexUsage.PrimaryUsedPercent
 				usagePrimReset = a.CodexUsage.PrimaryResetAfterSeconds
@@ -326,7 +326,7 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 				usageSecWin = a.CodexUsage.SecondaryWindowMinutes
 				usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
 				if !a.CodexUsage.UpdatedAt.IsZero() {
-					usageUpdatedAt = sql.NullTime{Time: a.CodexUsage.UpdatedAt, Valid: true}
+					usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
 				}
 			}
 
@@ -347,7 +347,7 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 				usagePrimPct, usagePrimReset, usagePrimWin,
 				usageSecPct, usageSecReset, usageSecWin,
 				usagePriOverSec, usageUpdatedAt,
-				a.CreatedAt, a.UpdatedAt,
+				sqliteTime(a.CreatedAt), sqliteTime(a.UpdatedAt),
 			); err != nil {
 				return fmt.Errorf("insert account %q: %w", a.AccountID, err)
 			}
@@ -378,7 +378,7 @@ func (s *SQLiteCodexAccountStore) UpdateTokens(ctx context.Context, accountID, a
 		UPDATE codex_accounts SET
 			access_token = ?, id_token = ?, refresh_token = ?, expires_at = ?, updated_at = ?
 		WHERE account_id = ?`,
-		accessToken, idToken, refreshToken, nullTime(expiresAt), time.Now(), accountID)
+		accessToken, idToken, refreshToken, nullTime(expiresAt), sqliteTime(time.Now()), accountID)
 	if err != nil {
 		return err
 	}
@@ -396,14 +396,14 @@ func (s *SQLiteCodexAccountStore) UpdateTokens(ctx context.Context, accountID, a
 func (s *SQLiteCodexAccountStore) UpdateStatus(ctx context.Context, accountID string, status CodexAccountStatus) error {
 	_, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET status = ?, updated_at = ? WHERE account_id = ?`,
-		string(status), time.Now(), accountID)
+		string(status), sqliteTime(time.Now()), accountID)
 	return err
 }
 
 func (s *SQLiteCodexAccountStore) UpdateCooldown(ctx context.Context, accountID string, until time.Time, reason string) error {
 	_, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET cooldown_until = ?, cooldown_reason = ?, updated_at = ? WHERE account_id = ?`,
-		nullTime(until), reason, time.Now(), accountID)
+		nullTime(until), reason, sqliteTime(time.Now()), accountID)
 	return err
 }
 
@@ -421,7 +421,7 @@ func (s *SQLiteCodexAccountStore) UpdateUsageSnapshot(ctx context.Context, accou
 		snapshot.PrimaryUsedPercent, snapshot.PrimaryResetAfterSeconds, snapshot.PrimaryWindowMinutes,
 		snapshot.SecondaryUsedPercent, snapshot.SecondaryResetAfterSeconds, snapshot.SecondaryWindowMinutes,
 		snapshot.PrimaryOverSecondaryPercent, nullTime(snapshot.UpdatedAt),
-		time.Now(), accountID)
+		sqliteTime(time.Now()), accountID)
 	return err
 }
 
@@ -594,11 +594,15 @@ func (s *SQLiteCodexAccountStore) DeleteStats(ctx context.Context, accountID str
 
 // --- Helpers ---
 
-func nullTime(t time.Time) sql.NullTime {
+func sqliteTime(t time.Time) string {
+	return t.Format(time.RFC3339Nano)
+}
+
+func nullTime(t time.Time) any {
 	if t.IsZero() {
-		return sql.NullTime{}
+		return nil
 	}
-	return sql.NullTime{Time: t, Valid: true}
+	return sqliteTime(t)
 }
 
 type rowScanner interface {
@@ -607,7 +611,7 @@ type rowScanner interface {
 
 func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 	var a CodexAccount
-	var expiresAt, cooldownUntil, usageUpdatedAt sql.NullTime
+	var expiresAt, cooldownUntil, usageUpdatedAt, createdAt, updatedAt any
 	var status string
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
 	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
@@ -620,20 +624,27 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 		&usagePrimPct, &usagePrimReset, &usagePrimWin,
 		&usageSecPct, &usageSecReset, &usageSecWin,
 		&usagePriOverSec, &usageUpdatedAt,
-		&a.CreatedAt, &a.UpdatedAt,
+		&createdAt, &updatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	a.Status = CodexAccountStatus(status)
-	if expiresAt.Valid {
-		a.ExpiresAt = expiresAt.Time
+	if t, ok := parseSQLiteTime(expiresAt); ok {
+		a.ExpiresAt = t
 	}
-	if cooldownUntil.Valid {
-		a.CooldownUntil = cooldownUntil.Time
+	if t, ok := parseSQLiteTime(cooldownUntil); ok {
+		a.CooldownUntil = t
 	}
-	if usageUpdatedAt.Valid || usagePrimPct > 0 || usageSecPct > 0 {
+	if t, ok := parseSQLiteTime(createdAt); ok {
+		a.CreatedAt = t
+	}
+	if t, ok := parseSQLiteTime(updatedAt); ok {
+		a.UpdatedAt = t
+	}
+	usageUpdatedAtTime, hasUsageUpdatedAt := parseSQLiteTime(usageUpdatedAt)
+	if hasUsageUpdatedAt || usagePrimPct > 0 || usageSecPct > 0 {
 		a.CodexUsage = &CodexUsageSnapshot{
 			PrimaryUsedPercent:          usagePrimPct,
 			PrimaryResetAfterSeconds:    usagePrimReset,
@@ -643,11 +654,53 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 			SecondaryWindowMinutes:      usageSecWin,
 			PrimaryOverSecondaryPercent: usagePriOverSec,
 		}
-		if usageUpdatedAt.Valid {
-			a.CodexUsage.UpdatedAt = usageUpdatedAt.Time
+		if hasUsageUpdatedAt {
+			a.CodexUsage.UpdatedAt = usageUpdatedAtTime
 		}
 	}
 	return &a, nil
+}
+
+func parseSQLiteTime(value any) (time.Time, bool) {
+	switch v := value.(type) {
+	case nil:
+		return time.Time{}, false
+	case time.Time:
+		return v, !v.IsZero()
+	case string:
+		return parseSQLiteTimeString(v)
+	case []byte:
+		return parseSQLiteTimeString(string(v))
+	default:
+		return time.Time{}, false
+	}
+}
+
+func parseSQLiteTimeString(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02T15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05.999999999 -0700 -0700",
+		"2006-01-02 15:04:05 -0700 -0700",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02 15:04",
+		"2006-01-02T15:04",
+		"2006-01-02",
+	}
+	for _, format := range formats {
+		if t, err := time.Parse(format, value); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func scanAccount(rows *sql.Rows) (*CodexAccount, error) {
