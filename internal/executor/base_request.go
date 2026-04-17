@@ -209,11 +209,10 @@ func applyModelMapping(body []byte, endpoint *EndpointConfig) []byte {
 
 func copyRequestHeaders(dst *http.Request, src http.Header) {
 	skipHeaders := map[string]bool{
-		"host":            true,
-		"accept-encoding": true,
-		"content-length":  true,
-		"authorization":   true,
-		"x-api-key":       true,
+		"host":           true,
+		"content-length": true,
+		"authorization":  true,
+		"x-api-key":      true,
 	}
 
 	for key, values := range src {

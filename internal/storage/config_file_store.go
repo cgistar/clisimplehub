@@ -668,22 +668,23 @@ func flattenEndpoints(cfg *config.AppConfig) []*Endpoint {
 		}
 
 		out = append(out, &Endpoint{
-			ID:            ep.ID,
-			Name:          ep.Name,
-			APIURL:        ep.APIURL,
-			APIKey:        ep.APIKey,
-			Active:        ep.Active,
-			Enabled:       ep.Enabled,
-			InterfaceType: ep.InterfaceType,
-			Transformer:   ep.Transformer,
-			ProviderName:  ep.ProviderName,
-			Model:         ep.Model,
-			Remark:        ep.Remark,
-			Priority:      ep.Priority,
-			ProxyURL:      ep.ProxyURL,
-			Routes:        ep.Routes,
-			Models:        models,
-			Headers:       ep.Headers,
+			ID:             ep.ID,
+			Name:           ep.Name,
+			APIURL:         ep.APIURL,
+			APIKey:         ep.APIKey,
+			Active:         ep.Active,
+			Enabled:        ep.Enabled,
+			InterfaceType:  ep.InterfaceType,
+			Transformer:    ep.Transformer,
+			ProviderName:   ep.ProviderName,
+			Model:          ep.Model,
+			Remark:         ep.Remark,
+			Priority:       ep.Priority,
+			ProxyURL:       ep.ProxyURL,
+			Routes:         ep.Routes,
+			Models:         models,
+			Headers:        ep.Headers,
+			ClaudeMessages: ep.ClaudeMessages,
 		})
 	}
 	return out
@@ -701,22 +702,23 @@ func addEndpointToConfig(cfg *config.AppConfig, endpoint *Endpoint) error {
 
 	// 添加到顶层 endpoints
 	cfg.Endpoints = append(cfg.Endpoints, config.EndpointConfig{
-		ID:            endpoint.ID,
-		Name:          endpoint.Name,
-		APIURL:        endpoint.APIURL,
-		APIKey:        endpoint.APIKey,
-		Active:        endpoint.Active,
-		Enabled:       endpoint.Enabled,
-		InterfaceType: endpoint.InterfaceType,
-		Transformer:   endpoint.Transformer,
-		Model:         endpoint.Model,
-		Remark:        endpoint.Remark,
-		Priority:      endpoint.Priority,
-		ProxyURL:      endpoint.ProxyURL,
-		Routes:        endpoint.Routes,
-		Models:        models,
-		Headers:       endpoint.Headers,
-		ProviderName:  endpoint.ProviderName,
+		ID:             endpoint.ID,
+		Name:           endpoint.Name,
+		APIURL:         endpoint.APIURL,
+		APIKey:         endpoint.APIKey,
+		Active:         endpoint.Active,
+		Enabled:        endpoint.Enabled,
+		InterfaceType:  endpoint.InterfaceType,
+		Transformer:    endpoint.Transformer,
+		Model:          endpoint.Model,
+		Remark:         endpoint.Remark,
+		Priority:       endpoint.Priority,
+		ProxyURL:       endpoint.ProxyURL,
+		Routes:         endpoint.Routes,
+		Models:         models,
+		Headers:        endpoint.Headers,
+		ProviderName:   endpoint.ProviderName,
+		ClaudeMessages: endpoint.ClaudeMessages,
 	})
 	return nil
 }
@@ -754,6 +756,7 @@ func updateEndpointByID(cfg *config.AppConfig, endpoint *Endpoint) (bool, error)
 		cfg.Endpoints[i].Models = models
 		cfg.Endpoints[i].Headers = endpoint.Headers
 		cfg.Endpoints[i].ProviderName = endpoint.ProviderName
+		cfg.Endpoints[i].ClaudeMessages = endpoint.ClaudeMessages
 		return true, nil
 	}
 

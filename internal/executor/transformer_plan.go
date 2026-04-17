@@ -68,10 +68,11 @@ func (c *ExecutionContext) buildStandardTransformationPlan(ctx context.Context, 
 		"upstream_model": upstreamModel,
 	}
 	if shouldNormalizeClaudeMessagesRequest(tr.TargetInterfaceType(), targetPath) {
-		normalizedBody, targetHeaders, rawQuery := appmiddleware.NormalizeClaudeMessagesRequest(transformedBody, req.Headers, normalizedRawQuery)
+		normalizedBody, targetHeaders, rawQuery := appmiddleware.NormalizeClaudeMessagesRequestForEndpoint(transformedBody, req.Headers, normalizedRawQuery, endpoint)
 		transformedBody = normalizedBody
 		normalizedRawQuery = rawQuery
 		metadata["target_headers"] = targetHeaders
+		metadata["claude_messages_oauth_tools"] = strings.EqualFold(appmiddleware.ResolveClaudeMessagesAuthModeForEndpoint(endpoint), "oauth")
 	}
 
 	if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
@@ -125,10 +126,11 @@ func (c *ExecutionContext) buildKiroChatTransformationPlan(ctx context.Context, 
 		"response_transform_on_success_only": true,
 	}
 	if shouldNormalizeClaudeMessagesRequest(tr.TargetInterfaceType(), targetPath) {
-		normalizedBody, targetHeaders, rawQuery := appmiddleware.NormalizeClaudeMessagesRequest(transformedBody, req.Headers, normalizedRawQuery)
+		normalizedBody, targetHeaders, rawQuery := appmiddleware.NormalizeClaudeMessagesRequestForEndpoint(transformedBody, req.Headers, normalizedRawQuery, endpoint)
 		transformedBody = normalizedBody
 		normalizedRawQuery = rawQuery
 		metadata["target_headers"] = targetHeaders
+		metadata["claude_messages_oauth_tools"] = strings.EqualFold(appmiddleware.ResolveClaudeMessagesAuthModeForEndpoint(endpoint), "oauth")
 	}
 
 	if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {

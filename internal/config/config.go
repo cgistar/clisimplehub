@@ -42,24 +42,36 @@ type VendorConfig struct {
 	Remark  string `json:"remark,omitempty"`
 }
 
+// ClaudeMessagesCloakConfig 表示 Anthropic /v1/messages 强伪装配置。
+type ClaudeMessagesCloakConfig struct {
+	Mode                   string   `json:"mode,omitempty"`
+	StrictMode             bool     `json:"strictMode,omitempty"`
+	AuthMode               string   `json:"authMode,omitempty"`
+	CacheUserID            *bool    `json:"cacheUserId,omitempty"`
+	CacheSessionID         *bool    `json:"cacheSessionId,omitempty"`
+	SensitiveWords         []string `json:"sensitiveWords,omitempty"`
+	ExperimentalCCHSigning bool     `json:"experimentalCchSigning,omitempty"`
+}
+
 // EndpointConfig represents endpoint configuration in JSON
 type EndpointConfig struct {
-	ID            int64             `json:"id,omitempty"`
-	Name          string            `json:"name"`
-	ProviderName  string            `json:"providerName,omitempty"`
-	APIURL        string            `json:"apiUrl"`
-	APIKey        string            `json:"apiKey"`
-	Active        bool              `json:"active"`
-	Enabled       bool              `json:"enabled"`
-	InterfaceType string            `json:"interfaceType"`
-	Transformer   string            `json:"transformer,omitempty"`
-	Model         string            `json:"model,omitempty"`
-	Remark        string            `json:"remark,omitempty"`
-	Priority      int               `json:"priority,omitempty"`
-	ProxyURL      string            `json:"proxyUrl,omitempty"`
-	Routes        []string          `json:"routes,omitempty"`
-	Models        []ModelMapping    `json:"models,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
+	ID             int64                      `json:"id,omitempty"`
+	Name           string                     `json:"name"`
+	ProviderName   string                     `json:"providerName,omitempty"`
+	APIURL         string                     `json:"apiUrl"`
+	APIKey         string                     `json:"apiKey"`
+	Active         bool                       `json:"active"`
+	Enabled        bool                       `json:"enabled"`
+	InterfaceType  string                     `json:"interfaceType"`
+	Transformer    string                     `json:"transformer,omitempty"`
+	Model          string                     `json:"model,omitempty"`
+	Remark         string                     `json:"remark,omitempty"`
+	Priority       int                        `json:"priority,omitempty"`
+	ProxyURL       string                     `json:"proxyUrl,omitempty"`
+	Routes         []string                   `json:"routes,omitempty"`
+	Models         []ModelMapping             `json:"models,omitempty"`
+	Headers        map[string]string          `json:"headers,omitempty"`
+	ClaudeMessages *ClaudeMessagesCloakConfig `json:"claudeMessages,omitempty"`
 }
 
 // ModelMapping represents a model name mapping configuration

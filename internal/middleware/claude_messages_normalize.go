@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strings"
 
+	"clisimplehub/internal/storage"
+
 	"github.com/tidwall/gjson"
 )
 
@@ -12,18 +14,35 @@ import (
 // used by the /v1/messages gateway middleware to an already-transformed Claude
 // Messages request.
 func NormalizeClaudeMessagesRequest(body []byte, headers http.Header, rawQuery string) ([]byte, http.Header, string) {
+	return NormalizeClaudeMessagesRequestForEndpoint(body, headers, rawQuery, nil)
+}
+
+// NormalizeClaudeMessagesRequestForEndpoint 针对目标端点执行 /v1/messages 规范化。
+func NormalizeClaudeMessagesRequestForEndpoint(body []byte, headers http.Header, rawQuery string, endpoint *storage.Endpoint) ([]byte, http.Header, string) {
 	clonedHeaders := cloneHTTPHeader(headers)
 	original := append([]byte(nil), body...)
 	isStream := detectStreamFromInputs(clonedHeaders, rawQuery, body)
-	userAgent := clonedHeaders.Get("User-Agent")
+	cfg := resolveClaudeMessagesConfig(endpoint)
 
-	body, _ = normalizeModel(body)
-	body = applyCloaking(body, userAgent)
+	body, modelSuffix := normalizeModel(body)
+	body = applyCloaking(body, clonedHeaders.Get("User-Agent"), endpoint, cfg)
+	body = applyClaudeThinkingConfig(body, modelSuffix)
+	body = fixClaudeMessages(body)
 	body = disableThinkingIfToolChoiceForced(body)
+	body = normalizeClaudeTemperatureForThinking(body)
 	body = ensureCacheControl(body)
 	body = enforceCacheControlLimit(body, 4)
 	body = normalizeCacheControlTTL(body)
 	extraBetas, body := extractAndRemoveBetas(body)
+	if modelSuffix.OneMillionContext {
+		extraBetas = append(extraBetas, "context-1m-2025-08-07")
+	}
+	if shouldRemapClaudeMessagesOAuthTools(endpoint, cfg) {
+		body, _ = remapClaudeMessagesOAuthToolNames(body)
+	}
+	if shouldSignClaudeMessagesBody(endpoint, cfg) {
+		body = signClaudeMessagesBody(body)
+	}
 
 	if body == nil {
 		body = original
@@ -33,7 +52,7 @@ func NormalizeClaudeMessagesRequest(body []byte, headers http.Header, rawQuery s
 		Header: clonedHeaders,
 		URL:    &url.URL{RawQuery: rawQuery},
 	}
-	applyClaudeHeaders(req, extraBetas, isStream)
+	applyClaudeHeaders(req, endpoint, cfg, extraBetas, isStream)
 	appendBetaQueryParam(req)
 
 	return body, req.Header.Clone(), req.URL.RawQuery
