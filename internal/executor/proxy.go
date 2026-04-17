@@ -16,7 +16,7 @@ import (
 )
 
 // DefaultHTTPTimeout 默认 HTTP 超时时间
-const DefaultHTTPTimeout = 300 * time.Second
+const DefaultHTTPTimeout = 3600 * time.Second
 
 const (
 	// DisableHTTPClientTimeout disables http.Client-level total timeout.

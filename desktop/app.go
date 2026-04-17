@@ -2478,11 +2478,11 @@ skills = true
 parallel = true
 unified_exec = true
 shell_snapshot = true
-collab = true
+multi_agent = true
 steer = true
 
 [model_providers.local]
-name = 'local'
+name = 'OpenAI'
 base_url = '%s'
 requires_openai_auth = true
 wire_api = 'responses'`, proxyURL)
