@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/usage"
 )
 
@@ -120,7 +121,7 @@ func (c *ExecutionContext) standardTransformerRoundTrip(ctx context.Context, req
 		}
 
 		applyTransformerTargetHeaders(proxyReq, req.Headers, req.TargetInterfaceType, req.TargetPath, req.IsStreaming)
-		ApplyAuthForInterfaceType(proxyReq, req.Endpoint.APIKey, req.TargetInterfaceType, req.IsStreaming)
+		ApplyAuthForEndpoint(proxyReq, req.Endpoint, req.IsStreaming)
 		ApplyEndpointHeaders(proxyReq, req.Endpoint)
 		return proxyReq, nil
 	}
@@ -266,6 +267,9 @@ readLoop:
 		}
 
 		line := scanner.Bytes()
+		if plan.Transformer == nil && shouldReverseClaudeMessagesOAuthTools(plan) {
+			line = appmiddleware.ReverseClaudeMessagesOAuthToolNamesFromStreamLineForExecutor(line)
+		}
 		rawCapture.Write(line)
 		rawCapture.WriteByte('\n')
 		if shouldCaptureUpstreamResponseBody(ctx) {
@@ -459,6 +463,9 @@ func handleTransformedNonStreamingResponse(ctx context.Context, upstream *Upstre
 	}
 
 	if plan.Transformer == nil || !shouldTransformResponse(plan, result.StatusCode) {
+		if plan.Transformer == nil && shouldReverseClaudeMessagesOAuthTools(plan) {
+			body = appmiddleware.ReverseClaudeMessagesOAuthToolNamesForExecutor(body)
+		}
 		result.Body = body
 		if result.Tokens == nil {
 			result.Tokens = usageTokens(body)
@@ -506,6 +513,14 @@ func shouldSkipResponseTransform(plan *TransformationPlan) bool {
 	}
 	skip, _ := plan.Context.Metadata["skip_response_transform"].(bool)
 	return skip
+}
+
+func shouldReverseClaudeMessagesOAuthTools(plan *TransformationPlan) bool {
+	if plan == nil || plan.Context == nil || plan.Context.Metadata == nil {
+		return false
+	}
+	enabled, _ := plan.Context.Metadata["claude_messages_oauth_tools"].(bool)
+	return enabled
 }
 
 func readUpstreamBody(upstream *UpstreamRoundTripResult) ([]byte, error) {

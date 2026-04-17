@@ -2,7 +2,11 @@
 // All data is stored in config.json file.
 package storage
 
-import "time"
+import (
+	"time"
+
+	"clisimplehub/internal/config"
+)
 
 // Vendor represents an API vendor/provider
 type Vendor struct {
@@ -17,24 +21,25 @@ type Vendor struct {
 
 // Endpoint represents an API endpoint configuration
 type Endpoint struct {
-	ID            int64             `json:"id"`
-	Name          string            `json:"name"`
-	APIURL        string            `json:"apiUrl"`
-	APIKey        string            `json:"apiKey"`
-	Active        bool              `json:"active"`
-	Enabled       bool              `json:"enabled"`
-	InterfaceType string            `json:"interfaceType"`
-	Transformer   string            `json:"transformer,omitempty"`
-	ProviderName  string            `json:"providerName,omitempty"`
-	Model         string            `json:"model,omitempty"`
-	Remark        string            `json:"remark,omitempty"`
-	Priority      int               `json:"priority,omitempty"`
-	ProxyURL      string            `json:"proxyUrl,omitempty"`
-	Routes        []string          `json:"routes,omitempty"`
-	Models        []ModelMapping    `json:"models,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	CreateTime    time.Time         `json:"createTime,omitempty"`
-	UpdateTime    time.Time         `json:"updateTime,omitempty"`
+	ID             int64                             `json:"id"`
+	Name           string                            `json:"name"`
+	APIURL         string                            `json:"apiUrl"`
+	APIKey         string                            `json:"apiKey"`
+	Active         bool                              `json:"active"`
+	Enabled        bool                              `json:"enabled"`
+	InterfaceType  string                            `json:"interfaceType"`
+	Transformer    string                            `json:"transformer,omitempty"`
+	ProviderName   string                            `json:"providerName,omitempty"`
+	Model          string                            `json:"model,omitempty"`
+	Remark         string                            `json:"remark,omitempty"`
+	Priority       int                               `json:"priority,omitempty"`
+	ProxyURL       string                            `json:"proxyUrl,omitempty"`
+	Routes         []string                          `json:"routes,omitempty"`
+	Models         []ModelMapping                    `json:"models,omitempty"`
+	Headers        map[string]string                 `json:"headers,omitempty"`
+	ClaudeMessages *config.ClaudeMessagesCloakConfig `json:"claudeMessages,omitempty"`
+	CreateTime     time.Time                         `json:"createTime,omitempty"`
+	UpdateTime     time.Time                         `json:"updateTime,omitempty"`
 }
 
 // ModelMapping represents a model name mapping configuration
