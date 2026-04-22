@@ -51,6 +51,9 @@ go run ./cmd/server
 常见自定义：
 
 ```bash
+npm --prefix web/ui run build && rm -rf web/ui/node_modules
+PORT=5611 go run ./cmd/server
+
 PORT=5600 \
 LISTEN_ADDR=0.0.0.0 \
 CONFIG_PATH=/path/to/config.json \

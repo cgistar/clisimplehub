@@ -36,6 +36,7 @@ function Fail([string]$msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red; ex
 
 if ([string]::IsNullOrWhiteSpace($Version)) { $Version = 'dev' }
 $OutputDir = "dist"
+$script:WebUIBuilt = $false
 
 function Get-TagDisplay([string]$tags) {
   if ([string]::IsNullOrWhiteSpace($tags)) { return 'none' }
@@ -118,6 +119,32 @@ function Install-Deps() {
   } finally {
     Pop-Location
   }
+}
+
+function Install-WebUIDeps() {
+  Info "Installing web UI dependencies..."
+  Push-Location "web/ui"
+  try {
+    npm install
+  } finally {
+    Pop-Location
+  }
+}
+
+function Build-WebUI() {
+  if ($script:WebUIBuilt) { return }
+
+  if (-not $NoDeps) { Install-WebUIDeps }
+
+  Info "Building web UI..."
+  Push-Location "web/ui"
+  try {
+    npm run build
+  } finally {
+    Pop-Location
+  }
+
+  $script:WebUIBuilt = $true
 }
 
 function Package-Desktop([string]$os, [string]$arch, [string]$variantName) {
@@ -239,6 +266,7 @@ function Clean() {
   Info "Cleaning build artifacts..."
   if (Test-Path $OutputDir) { Remove-Item -Force -Recurse $OutputDir }
   if (Test-Path "desktop/build/bin") { Remove-Item -Force -Recurse "desktop/build/bin" }
+  if (Test-Path "internal/proxy/webui/dist") { Remove-Item -Force -Recurse "internal/proxy/webui/dist" }
   Info "Clean complete"
 }
 
@@ -254,6 +282,7 @@ foreach ($p in $platforms) {
     Build-Desktop $os $arch
   }
   if ($Target -eq 'server' -or $Target -eq 'both') {
+    Build-WebUI
     $defaultTags = Remove-Tag $BuildTags 'proxy'
     $proxyTags = Append-Tags $defaultTags 'proxy'
     Package-Server $os $arch 'cliSimpleHub-server' $defaultTags

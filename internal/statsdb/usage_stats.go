@@ -41,6 +41,7 @@ type UsageStat struct {
 // UsageStatsStore 使用统计存储接口
 type UsageStatsStore interface {
 	InsertUsageStat(ctx context.Context, stat UsageStat) error
+	GetTodayStatsByEndpoints(ctx context.Context) (map[string]*EndpointDailyStats, error)
 	Close() error
 }
 

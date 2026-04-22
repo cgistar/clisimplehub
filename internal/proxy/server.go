@@ -46,6 +46,7 @@ type ProxyServer struct {
 	forwardMW         []namedForwardMiddleware
 	pluginRoutes      map[string]map[string]struct{}
 	transformerOwners map[string]string
+	webUISessions     map[string]webUISession
 }
 
 type namedForwardMiddleware struct {
@@ -64,6 +65,7 @@ func NewProxyServer(port int, router Router) *ProxyServer {
 		stats:             NewStatsManager(),
 		pluginRoutes:      make(map[string]map[string]struct{}),
 		transformerOwners: make(map[string]string),
+		webUISessions:     make(map[string]webUISession),
 	}
 }
 
@@ -80,6 +82,7 @@ func NewProxyServerWithSSEHub(port int, router Router, sseHub *SSEHub) *ProxySer
 		sseHub:            sseHub,
 		pluginRoutes:      make(map[string]map[string]struct{}),
 		transformerOwners: make(map[string]string),
+		webUISessions:     make(map[string]webUISession),
 	}
 }
 
@@ -195,6 +198,7 @@ func (p *ProxyServer) registerCoreRoutes(r chi.Router) {
 	r.HandleFunc("/endpoint", p.requireAuth(p.handleEndpoint))
 	r.HandleFunc("/sync/config", p.requireAuth(p.handleSyncConfig))
 	r.Get("/v1/models", p.requireAuth(p.handleUnifiedModelsRoute))
+	p.registerWebUIRoutes(r)
 }
 
 func (p *ProxyServer) registerPluginRoutes(r chi.Router) {

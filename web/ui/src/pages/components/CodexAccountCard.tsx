@@ -1,0 +1,124 @@
+import type { CodexAccount } from '@/types'
+import { formatTokenCount, numberOrDash } from '@/lib/format'
+import { getCodexPlanLabel, getCodexStatus, getExpireInfo } from '@/lib/codex'
+import { ActivityIcon, CopyIcon, EditIcon, PowerIcon, RefreshIcon, TrashIcon } from '@/components/icons'
+import CodexUsageBar from './CodexUsageBar'
+
+interface CodexAccountCardProps {
+  account: CodexAccount
+  busyAction: string
+  onActivate: (accountId: string) => void
+  onRefreshToken: (accountId: string) => void
+  onFetchUsage: (accountId: string) => void
+  onCopy: (account: CodexAccount) => void
+  onEdit: (account: CodexAccount) => void
+  onDelete: (accountId: string) => void
+}
+
+export default function CodexAccountCard({
+  account,
+  busyAction,
+  onActivate,
+  onRefreshToken,
+  onFetchUsage,
+  onCopy,
+  onEdit,
+  onDelete,
+}: CodexAccountCardProps) {
+  const status = getCodexStatus(account)
+  const expireInfo = getExpireInfo(account)
+  const displayName = account.email || account.accountId || '(未命名账号)'
+  const planLabel = getCodexPlanLabel(account.planType)
+  const accountId = account.accountId || ''
+  const canActivate = Boolean(accountId) && !account.isActive && account.status !== 'banned' && account.status !== 'reused'
+  const activateBusy = busyAction === `codex:activate:${accountId}`
+  const refreshBusy = busyAction === `codex:refresh:${accountId}`
+  const usageBusy = busyAction === `codex:usage:${accountId}`
+  const deleteBusy = busyAction === `codex:delete:${accountId}`
+  const actionBusy = activateBusy || refreshBusy || usageBusy || deleteBusy
+
+  return (
+    <article className={`codex-account-card${account.isActive ? ' active' : ''}`}>
+      <div className="codex-account-card-header">
+        <div className="codex-header-main">
+          <h3 className="list-item-title no-margin codex-card-title" title={displayName}>
+            {displayName}
+          </h3>
+          <span className={`badge ${status.variant}`}>{status.label}</span>
+        </div>
+
+        <div className="codex-card-tags">
+          {planLabel ? <span className="badge info">{planLabel}</span> : null}
+          {!account.refreshToken ? <span className="badge warning">临时 Token</span> : null}
+          {account.isActive ? <span className="badge success">正在使用</span> : null}
+        </div>
+      </div>
+
+      <div className="codex-account-card-body">
+        <CodexUsageBar label="5 小时限" usage={account.codexUsage?.primary} />
+        <CodexUsageBar label="周限" usage={account.codexUsage?.secondary} />
+
+        <div className="codex-account-meta-grid">
+          <div className="meta-pill">今日请求：{numberOrDash(account.todayRequests)}</div>
+          <div className="meta-pill">今日 Tokens：{formatTokenCount(account.todayTotalTokens)}</div>
+          {account.proxyUrl ? <div className="meta-pill codex-full-span">代理：{account.proxyUrl}</div> : null}
+        </div>
+      </div>
+
+      <div className="codex-account-card-footer">
+        <div className={`codex-expire-text${expireInfo.expired ? ' danger-text' : ''}`}>{expireInfo.text}</div>
+
+        <div className="codex-card-actions">
+          {canActivate ? (
+            <button
+              className="codex-action-btn codex-action-primary"
+              title={activateBusy ? '激活中...' : '激活'}
+              aria-label="激活"
+              disabled={actionBusy}
+              onClick={() => onActivate(accountId)}
+            >
+              <PowerIcon />
+            </button>
+          ) : null}
+          <button
+            className="codex-action-btn"
+            title={refreshBusy ? '刷新 Token 中...' : '刷新 Token'}
+            aria-label="刷新 Token"
+            disabled={actionBusy || !account.refreshToken}
+            onClick={() => onRefreshToken(accountId)}
+          >
+            <RefreshIcon />
+          </button>
+          <button
+            className="codex-action-btn"
+            title={usageBusy ? '获取用量中...' : '获取用量'}
+            aria-label="获取用量"
+            disabled={actionBusy}
+            onClick={() => onFetchUsage(accountId)}
+          >
+            <ActivityIcon />
+          </button>
+          <button className="codex-action-btn" title="复制" aria-label="复制" disabled={actionBusy} onClick={() => onCopy(account)}>
+            <CopyIcon />
+          </button>
+          <button className="codex-action-btn" title="编辑" aria-label="编辑" disabled={actionBusy} onClick={() => onEdit(account)}>
+            <EditIcon />
+          </button>
+          <button
+            className="codex-action-btn codex-action-danger"
+            disabled={actionBusy}
+            title={deleteBusy ? '删除中...' : '删除'}
+            aria-label="删除"
+            onClick={() => {
+              if (window.confirm(`确定删除账号 ${displayName} 吗？`)) {
+                onDelete(accountId)
+              }
+            }}
+          >
+            <TrashIcon />
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+}

@@ -13,6 +13,7 @@ VERSION="${VERSION:-}"
 OUTPUT_DIR="dist"
 BUILD_TAGS=""
 SKIP_DEPS=0
+WEB_UI_BUILT=0
 
 # Apple signing configuration (from .env or environment variables)
 APPLE_SIGN_IDENTITY="${APPLE_SIGN_IDENTITY:-}"
@@ -171,6 +172,30 @@ install_deps() {
     cd ../..
 }
 
+install_webui_deps() {
+    print_info "Installing web UI dependencies..."
+    cd web/ui
+    npm install
+    cd ../..
+}
+
+build_webui() {
+    if [ "$WEB_UI_BUILT" -eq 1 ]; then
+        return 0
+    fi
+
+    if [ "$SKIP_DEPS" -ne 1 ]; then
+        install_webui_deps
+    fi
+
+    print_info "Building web UI..."
+    cd web/ui
+    npm run build
+    cd ../..
+
+    WEB_UI_BUILT=1
+}
+
 # Check if port 5600 is in use
 check_port_5600() {
     if ! command -v lsof &> /dev/null; then
@@ -226,6 +251,8 @@ package_desktop() {
                 zip -r "../../../${archive_path}" "${app_name}"
                 cd ../../..
                 print_info "Created: ${archive_path}"
+                rm -rf "desktop/build/bin/${app_name}"
+                print_info "Removed original: desktop/build/bin/${app_name}"
             else
                 print_warn "desktop/build/bin/${app_name} not found, skipping packaging"
             fi
@@ -238,6 +265,8 @@ package_desktop() {
             if [ -f "desktop/build/bin/${bin_name}" ]; then
                 tar -czf "${OUTPUT_DIR}/${variant_name}${VERSION}-${platform}-${arch}.tar.gz" -C desktop/build/bin "${bin_name}"
                 print_info "Created: ${OUTPUT_DIR}/${variant_name}${VERSION}-${platform}-${arch}.tar.gz"
+                rm -f "desktop/build/bin/${bin_name}"
+                print_info "Removed original: desktop/build/bin/${bin_name}"
             else
                 print_warn "desktop/build/bin/${bin_name} not found, skipping packaging"
             fi
@@ -252,6 +281,8 @@ package_desktop() {
                 rm -f "${archive_path}"
                 zip -j "${archive_path}" "desktop/build/bin/${exe_name}"
                 print_info "Created: ${archive_path}"
+                rm -f "desktop/build/bin/${exe_name}"
+                print_info "Removed original: desktop/build/bin/${exe_name}"
             else
                 print_warn "desktop/build/bin/${exe_name} not found, skipping packaging"
             fi
@@ -343,6 +374,8 @@ build_server_platform() {
     local default_tags
     local proxy_tags
 
+    build_webui
+
     default_tags="$(remove_build_tag "$BUILD_TAGS" "proxy")"
     proxy_tags="$(append_build_tags "$default_tags" "proxy")"
 
@@ -366,7 +399,7 @@ usage() {
     echo "  -v, --version VERSION    Set version string (default: dev)"
     echo "  --tags TAG,LIST          Additional Go build tags (comma-separated)"
     echo "  --platform OS/ARCH       Build a specific platform (repeatable)"
-    echo "  --no-deps                Skip npm install (desktop only)"
+    echo "  --no-deps                Skip npm install (desktop/web UI only)"
     echo ""
     echo "Environment variables for macOS signing:"
     echo "  APPLE_SIGN_IDENTITY      Code signing identity (e.g., 'Developer ID Application: Name (TEAM_ID)')"
@@ -386,6 +419,7 @@ clean() {
     print_info "Cleaning build artifacts..."
     rm -rf "${OUTPUT_DIR}"
     rm -rf desktop/build/bin
+    rm -rf internal/proxy/webui/dist
     print_info "Clean complete"
 }
 

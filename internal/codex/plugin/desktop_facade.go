@@ -52,6 +52,24 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 		activeID = mc.ActiveAccountID
 	}
 
+	statsByAccount := map[string]codexShared.CodexAccountStatsSummary{}
+	if len(accounts) > 0 {
+		accountIDs := make([]string, 0, len(accounts))
+		for i := range accounts {
+			accountIDs = append(accountIDs, accounts[i].AccountID)
+		}
+		if statsMap, err := store.GetStatsSummaryMap(context.Background(), accountIDs, "today"); err == nil && statsMap != nil {
+			statsByAccount = statsMap
+		}
+	}
+
+	for i := range accounts {
+		if summary, ok := statsByAccount[accounts[i].AccountID]; ok {
+			accounts[i].TodayRequests = summary.RequestCount
+			accounts[i].TodayTokens = summary.TotalTokens
+		}
+	}
+
 	return codexShared.MarshalAccountsResponse(activeID, accounts)
 }
 

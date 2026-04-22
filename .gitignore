@@ -4,6 +4,7 @@ Thumbs.db
 
 # Node
 node_modules/
+**/*.tsbuildinfo
 
 # Rust
 **/target/
