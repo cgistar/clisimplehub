@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { formatDateTime, numberOrDash } from '@/lib/format'
 import type { EndpointGroup, EndpointInfo, HomePageData, RequestLogItem } from '@/types'
 
@@ -7,7 +7,6 @@ interface HomePageProps {
   loading: boolean
   busyAction: string
   onActivateEndpoint: (interfaceType: string, endpointId: number) => void
-  onRefreshHome: () => Promise<void>
 }
 
 function getInterfaceLabel(interfaceType: string): string {
@@ -100,7 +99,7 @@ function formatRuntime(value?: number): string {
   return `${runtime}ms`
 }
 
-export default function HomePage({ data, loading, busyAction, onActivateEndpoint, onRefreshHome }: HomePageProps) {
+export default function HomePage({ data, loading, busyAction, onActivateEndpoint }: HomePageProps) {
   const [activeTab, setActiveTab] = useState<string>('')
   const [selectedEndpointId, setSelectedEndpointId] = useState<string>('')
   const [realtimeLogs, setRealtimeLogs] = useState<RequestLogItem[]>([])
@@ -121,12 +120,6 @@ export default function HomePage({ data, loading, busyAction, onActivateEndpoint
   )
   const selectedEndpoint = currentGroup?.endpoints.find((endpoint) => String(endpoint.id) === selectedEndpointId)
   const switchBusy = selectedEndpoint ? busyAction === `endpoint:${selectedEndpoint.id}` : false
-  const refreshTimerRef = useRef<number | null>(null)
-  const refreshHomeRef = useRef(onRefreshHome)
-
-  useEffect(() => {
-    refreshHomeRef.current = onRefreshHome
-  }, [onRefreshHome])
 
   useEffect(() => {
     if (groupedEndpoints.length === 0) {
@@ -162,14 +155,6 @@ export default function HomePage({ data, loading, busyAction, onActivateEndpoint
       return
     }
 
-    const scheduleRefresh = (): void => {
-      if (refreshTimerRef.current !== null) return
-        refreshTimerRef.current = window.setTimeout(() => {
-          refreshTimerRef.current = null
-          void refreshHomeRef.current()
-        }, 1200)
-      }
-
     const source = new window.EventSource('/web/sse')
 
     source.onopen = () => {
@@ -193,23 +178,14 @@ export default function HomePage({ data, loading, busyAction, onActivateEndpoint
 
         setRealtimeLogs((current) => current.filter((item) => String(item.id || '') !== String(payload.id)))
         setHistoryLogs((current) => upsertLog(current, payload, 10))
-        scheduleRefresh()
       } catch {
         // 忽略单条事件解析失败，避免中断整体连接
       }
     })
 
-    source.addEventListener('token_stats', () => {
-      scheduleRefresh()
-    })
-
     return () => {
       setStreamConnected(false)
       source.close()
-      if (refreshTimerRef.current !== null) {
-        window.clearTimeout(refreshTimerRef.current)
-        refreshTimerRef.current = null
-      }
     }
   }, [])
 

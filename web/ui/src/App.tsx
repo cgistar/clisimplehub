@@ -376,7 +376,6 @@ export default function App() {
             loading={pageLoading}
             busyAction={busyAction}
             onActivateEndpoint={handleActivateEndpoint}
-            onRefreshHome={() => refreshCurrentPage('home')}
           />
         ) : route === 'codex' ? (
           <CodexPage
