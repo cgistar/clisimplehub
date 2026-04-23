@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	codexShared "clisimplehub/internal/codex/shared"
 )
 
-const DefaultCodexUserAgent = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+const DefaultCodexUserAgent = codexShared.DefaultCodexUserAgent
 
 var codexCliPattern = regexp.MustCompile(`(?i)^(codex_vscode|codex_cli_rs|codex_exec)/[\d.]+`)
 

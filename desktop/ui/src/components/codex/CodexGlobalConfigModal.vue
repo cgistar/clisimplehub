@@ -79,8 +79,6 @@ import { codexApi } from '@/api/codex'
 import type { CodexGlobalConfig } from '@/types/codex'
 
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
-const DEFAULT_CLIENT_VERSION = '0.101.0'
-const DEFAULT_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464'
 const DEFAULT_ORIGINATOR = 'codex_cli_rs'
 
 const { t } = useI18n()
@@ -107,8 +105,8 @@ const form = reactive<CodexGlobalConfig>({
   rotationMode: 'fixed',
   proxyUrl: '',
   baseURL: DEFAULT_BASE_URL,
-  clientVersion: DEFAULT_CLIENT_VERSION,
-  userAgent: DEFAULT_USER_AGENT,
+  clientVersion: '',
+  userAgent: '',
   originator: DEFAULT_ORIGINATOR
 })
 
@@ -122,8 +120,8 @@ function fillForm(config: CodexGlobalConfig): void {
   form.rotationMode = config.rotationMode || 'fixed'
   form.proxyUrl = config.proxyUrl || ''
   form.baseURL = config.baseURL || DEFAULT_BASE_URL
-  form.clientVersion = config.clientVersion || DEFAULT_CLIENT_VERSION
-  form.userAgent = config.userAgent || DEFAULT_USER_AGENT
+  form.clientVersion = config.clientVersion || ''
+  form.userAgent = config.userAgent || ''
   form.originator = config.originator || DEFAULT_ORIGINATOR
 }
 

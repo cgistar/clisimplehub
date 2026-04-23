@@ -5,8 +5,8 @@ export const DEFAULT_CODEX_CONFIG: CodexConfigForm = {
   rotationMode: 'fixed',
   proxyUrl: '',
   baseURL: 'https://chatgpt.com/backend-api/codex',
-  clientVersion: '0.101.0',
-  userAgent: 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464',
+  clientVersion: '',
+  userAgent: '',
   originator: 'codex_cli_rs',
 }
 

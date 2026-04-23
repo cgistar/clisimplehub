@@ -5,12 +5,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/google/uuid"
-)
+	codexShared "clisimplehub/internal/codex/shared"
 
-const (
-	defaultCodexVersionHeader   = "0.101.0"
-	defaultCodexUserAgentHeader = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+	"github.com/google/uuid"
 )
 
 func normalizeTransformerRawQuery(targetInterfaceType, targetPath, rawQuery string) string {
@@ -55,7 +52,7 @@ func stripQueryParam(rawQuery, key string) string {
 func applyCodexResponsesHeaders(req *http.Request, src http.Header, isStreaming bool) {
 	req.Header = make(http.Header)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Version", headerValueOrDefault(src, "Version", defaultCodexVersionHeader))
+	req.Header.Set("Version", headerValueOrDefault(src, "Version", codexShared.DefaultCodexClientVersion))
 
 	sessionID := strings.TrimSpace(src.Get("Session_id"))
 	if sessionID == "" {
@@ -67,7 +64,7 @@ func applyCodexResponsesHeaders(req *http.Request, src http.Header, isStreaming 
 		req.Header.Set("Openai-Beta", openAIBeta)
 	}
 
-	req.Header.Set("User-Agent", defaultCodexUserAgentHeader)
+	req.Header.Set("User-Agent", codexShared.DefaultCodexUserAgent)
 	req.Header.Set("Connection", "close")
 	if isStreaming {
 		req.Header.Set("Accept", "text/event-stream")

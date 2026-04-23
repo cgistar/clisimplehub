@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent } from 'react'
 import { toast } from 'sonner'
-import { CloseIcon } from '@/components/icons'
 import { webApi } from '@/api/web'
 import type { ApiError } from '@/api/client'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { buildCodexImportDTOs, parseCodexJsonFile } from '@/lib/codexImport'
 import type { CodexAccountInput } from '@/types'
 
@@ -129,57 +129,58 @@ export default function CodexImportDialog({ open, onClose, onSuccess }: CodexImp
   }
 
   return (
-    <div className="dialog-backdrop" onClick={() => !importing && onClose()}>
-      <div className="dialog-card" onClick={(event) => event.stopPropagation()}>
-        <div className="card-header">
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen && !importing) onClose()
+    }}>
+      <DialogContent closeDisabled={importing}>
+        <DialogHeader>
           <div>
-            <h2 className="card-title">导入 Codex 账号 (JSON)</h2>
-            <div className="card-subtitle">支持上传桌面版导出的单账号 JSON，或直接粘贴账号数组 JSON</div>
+            <DialogTitle>导入 Codex 账号 (JSON)</DialogTitle>
+            <DialogDescription>支持上传桌面版导出的单账号 JSON，或直接粘贴账号数组 JSON</DialogDescription>
           </div>
-          <button className="btn dialog-close-btn" type="button" aria-label="关闭" title="关闭" onClick={onClose} disabled={importing}>
-            <CloseIcon />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="field">
-          <label className="field-label" htmlFor={fileInputId}>选择 JSON 文件</label>
-          <div className="actions">
-            <input
-              id={fileInputId}
-              ref={fileInputRef}
-              type="file"
-              accept=".json,application/json"
-              multiple
-              hidden
-              onChange={(event) => void handleFileChange(event)}
+        <DialogBody>
+          <div className="field">
+            <label className="field-label" htmlFor={fileInputId}>选择 JSON 文件</label>
+            <div className="actions">
+              <input
+                id={fileInputId}
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                multiple
+                hidden
+                onChange={(event) => void handleFileChange(event)}
+              />
+              <button className="btn" type="button" onClick={() => fileInputRef.current?.click()} disabled={importing}>
+                选择文件
+              </button>
+              {fileCount > 0 ? <span className="muted small">已载入 {fileCount} 个账号到编辑区</span> : null}
+            </div>
+          </div>
+
+          <div className="field mt-14">
+            <label className="field-label">粘贴 JSON</label>
+            <textarea
+              className="textarea"
+              rows={14}
+              value={jsonText}
+              onChange={(event) => setJsonText(event.target.value)}
+              placeholder={'支持以下格式：\n1. 单个账号对象\n2. 账号数组\n3. { "accounts": [...] }'}
             />
-            <button className="btn" type="button" onClick={() => fileInputRef.current?.click()} disabled={importing}>
-              选择文件
-            </button>
-            {fileCount > 0 ? <span className="muted small">已载入 {fileCount} 个账号到编辑区</span> : null}
           </div>
-        </div>
+        </DialogBody>
 
-        <div className="field mt-14">
-          <label className="field-label">粘贴 JSON</label>
-          <textarea
-            className="textarea"
-            rows={14}
-            value={jsonText}
-            onChange={(event) => setJsonText(event.target.value)}
-            placeholder={'支持以下格式：\n1. 单个账号对象\n2. 账号数组\n3. { "accounts": [...] }'}
-          />
-        </div>
-
-        <div className="actions mt-18 dialog-actions">
+        <DialogFooter>
           <button type="button" className="btn" onClick={onClose} disabled={importing}>
             取消
           </button>
           <button type="button" className="btn primary" onClick={() => void handleImport()} disabled={importing}>
             {importing ? '导入中...' : '导入'}
           </button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

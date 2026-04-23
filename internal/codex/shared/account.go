@@ -22,6 +22,13 @@ const (
 	RotationLoadBalance = "loadbalance"
 )
 
+const (
+	DefaultCodexBaseURL       = "https://chatgpt.com/backend-api/codex"
+	DefaultCodexClientVersion = "0.122.0"
+	DefaultCodexOriginator    = "codex_cli_rs"
+	DefaultCodexUserAgent     = DefaultCodexOriginator + "/" + DefaultCodexClientVersion + " (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+)
+
 type CodexUsageSnapshot struct {
 	PrimaryUsedPercent          float64   `json:"primaryUsedPercent,omitempty"`
 	PrimaryResetAfterSeconds    int       `json:"primaryResetAfterSeconds,omitempty"`
@@ -79,6 +86,29 @@ type CodexConfig struct {
 	Originator    string `json:"originator,omitempty"`    // Originator header value
 }
 
+func DefaultCodexConfig() CodexConfig {
+	return CodexConfig{
+		BaseURL:       DefaultCodexBaseURL,
+		ClientVersion: DefaultCodexClientVersion,
+		UserAgent:     DefaultCodexUserAgent,
+		Originator:    DefaultCodexOriginator,
+	}
+}
+
+func NormalizeCodexConfigForStorage(config CodexConfig) CodexConfig {
+	config.BaseURL = strings.TrimSpace(config.BaseURL)
+	config.ClientVersion = strings.TrimSpace(config.ClientVersion)
+	config.UserAgent = strings.TrimSpace(config.UserAgent)
+	config.Originator = strings.TrimSpace(config.Originator)
+	if config.ClientVersion == DefaultCodexClientVersion {
+		config.ClientVersion = ""
+	}
+	if config.UserAgent == DefaultCodexUserAgent {
+		config.UserAgent = ""
+	}
+	return config
+}
+
 func (a *CodexAccount) EffectiveWeight() int {
 	if a == nil || a.Weight <= 0 {
 		return 1
@@ -120,7 +150,7 @@ func (c *CodexMultiConfig) GetRotationMode() string {
 // GetBaseURL returns the configured base URL or default
 func (c *CodexMultiConfig) GetBaseURL() string {
 	if c == nil || strings.TrimSpace(c.Config.BaseURL) == "" {
-		return "https://chatgpt.com/backend-api/codex"
+		return DefaultCodexBaseURL
 	}
 	return strings.TrimSpace(c.Config.BaseURL)
 }
@@ -128,7 +158,7 @@ func (c *CodexMultiConfig) GetBaseURL() string {
 // GetClientVersion returns the configured client version or default
 func (c *CodexMultiConfig) GetClientVersion() string {
 	if c == nil || strings.TrimSpace(c.Config.ClientVersion) == "" {
-		return "0.101.0"
+		return DefaultCodexClientVersion
 	}
 	return strings.TrimSpace(c.Config.ClientVersion)
 }
@@ -136,7 +166,7 @@ func (c *CodexMultiConfig) GetClientVersion() string {
 // GetUserAgent returns the configured user agent or default
 func (c *CodexMultiConfig) GetUserAgent() string {
 	if c == nil || strings.TrimSpace(c.Config.UserAgent) == "" {
-		return "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+		return DefaultCodexUserAgent
 	}
 	return strings.TrimSpace(c.Config.UserAgent)
 }
@@ -144,7 +174,7 @@ func (c *CodexMultiConfig) GetUserAgent() string {
 // GetOriginator returns the configured originator or default
 func (c *CodexMultiConfig) GetOriginator() string {
 	if c == nil || strings.TrimSpace(c.Config.Originator) == "" {
-		return "codex_cli_rs"
+		return DefaultCodexOriginator
 	}
 	return strings.TrimSpace(c.Config.Originator)
 }

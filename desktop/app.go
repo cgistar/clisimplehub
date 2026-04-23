@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/proxy"
@@ -1704,9 +1705,9 @@ func (a *App) doTestEndpoint(apiURL, apiKey, interfaceType, model, reasoning str
 		req.Header.Set("content-type", "application/json")
 		req.Header.Set("conversation_id", sessionID)
 		req.Header.Set("openai-beta", "responses=experimental")
-		req.Header.Set("originator", "codex_cli_rs")
+		req.Header.Set("originator", codexShared.DefaultCodexOriginator)
 		req.Header.Set("session_id", sessionID)
-		req.Header.Set("user-agent", "codex_cli_rs/0.42.0 (Mac OS 26.0.0; arm64) Apple_Terminal/464")
+		req.Header.Set("user-agent", codexShared.DefaultCodexUserAgent)
 	}
 	requestHeaders := sanitizeRequestHeadersForTestLog(req)
 

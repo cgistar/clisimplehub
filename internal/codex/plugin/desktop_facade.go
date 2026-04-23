@@ -435,10 +435,10 @@ func (d *desktopFacade) GetCodexGlobalConfig(configPath string) (json.RawMessage
 	return json.Marshal(map[string]string{
 		"rotationMode":  mc.GetRotationMode(),
 		"proxyUrl":      mc.ProxyUrl,
-		"baseURL":       mc.Config.BaseURL,
-		"clientVersion": mc.Config.ClientVersion,
-		"userAgent":     mc.Config.UserAgent,
-		"originator":    mc.Config.Originator,
+		"baseURL":       mc.GetBaseURL(),
+		"clientVersion": mc.GetClientVersion(),
+		"userAgent":     mc.GetUserAgent(),
+		"originator":    mc.GetOriginator(),
 	})
 }
 
@@ -462,10 +462,12 @@ func (d *desktopFacade) SaveCodexGlobalConfig(configPath string, dtoJSON json.Ra
 
 	mc.RotationMode = dto.RotationMode
 	mc.ProxyUrl = dto.ProxyUrl
-	mc.Config.BaseURL = dto.BaseURL
-	mc.Config.ClientVersion = dto.ClientVersion
-	mc.Config.UserAgent = dto.UserAgent
-	mc.Config.Originator = dto.Originator
+	mc.Config = codexShared.NormalizeCodexConfigForStorage(codexShared.CodexConfig{
+		BaseURL:       dto.BaseURL,
+		ClientVersion: dto.ClientVersion,
+		UserAgent:     dto.UserAgent,
+		Originator:    dto.Originator,
+	})
 
 	if err := codexShared.SaveCodexMultiConfig(configPath, mc); err != nil {
 		return err

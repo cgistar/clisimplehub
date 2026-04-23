@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
-import { CloseIcon } from '@/components/icons'
 import MetaRow from '@/components/MetaRow'
 import { webApi } from '@/api/web'
 import type { ApiError } from '@/api/client'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { copyToClipboard, maskSecret } from '@/lib/format'
 import type { BackupData, RestoreMode, ServerConfig, SettingsData, SettingsForm, WebDAVBackupItem, WebDAVConfig } from '@/types'
 
@@ -642,63 +642,65 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
       </div>
 
       {serverDialogOpen ? (
-        <div className="dialog-backdrop" onClick={() => !savingServer && setServerDialogOpen(false)}>
-          <div className="dialog-card dialog-card-narrow" onClick={(event) => event.stopPropagation()}>
-            <div className="card-header">
+        <Dialog open={serverDialogOpen} onOpenChange={(nextOpen) => {
+          if (!nextOpen && !savingServer) setServerDialogOpen(false)
+        }}>
+          <DialogContent className="dialog-card-narrow" closeDisabled={savingServer}>
+            <DialogHeader>
               <div>
-                <h2 className="card-title">{serverDialogTitle}</h2>
-                <div className="card-subtitle">用于 /sync/config 的远端服务器信息</div>
+                <DialogTitle>{serverDialogTitle}</DialogTitle>
+                <DialogDescription>用于 /sync/config 的远端服务器信息</DialogDescription>
               </div>
-              <button type="button" className="btn dialog-close-btn" aria-label="关闭" title="关闭" disabled={savingServer} onClick={() => setServerDialogOpen(false)}>
-                <CloseIcon />
-              </button>
-            </div>
+            </DialogHeader>
 
-            <div className="field">
-              <label className="field-label">名称</label>
-              <input className="input" value={serverForm.name || ''} onChange={(event) => setServerForm((current) => ({ ...current, name: event.target.value }))} placeholder="可选：机器名 / 环境名" />
-            </div>
+            <DialogBody>
+              <div className="field">
+                <label className="field-label">名称</label>
+                <input className="input" value={serverForm.name || ''} onChange={(event) => setServerForm((current) => ({ ...current, name: event.target.value }))} placeholder="可选：机器名 / 环境名" />
+              </div>
 
-            <div className="field mt-14">
-              <label className="field-label">URL</label>
-              <input className="input" value={serverForm.url} onChange={(event) => setServerForm((current) => ({ ...current, url: event.target.value }))} placeholder="http://127.0.0.1:5600" />
-            </div>
+              <div className="field mt-14">
+                <label className="field-label">URL</label>
+                <input className="input" value={serverForm.url} onChange={(event) => setServerForm((current) => ({ ...current, url: event.target.value }))} placeholder="http://127.0.0.1:5600" />
+              </div>
 
-            <div className="field mt-14">
-              <label className="field-label">API Key</label>
-              <input className="input" type="password" value={serverForm.apiKey || ''} onChange={(event) => setServerForm((current) => ({ ...current, apiKey: event.target.value }))} placeholder="可选：远端服务鉴权 Key" />
-            </div>
+              <div className="field mt-14">
+                <label className="field-label">API Key</label>
+                <input className="input" type="password" value={serverForm.apiKey || ''} onChange={(event) => setServerForm((current) => ({ ...current, apiKey: event.target.value }))} placeholder="可选：远端服务鉴权 Key" />
+              </div>
+            </DialogBody>
 
-            <div className="actions mt-18 dialog-actions">
+            <DialogFooter>
               <button type="button" className="btn" disabled={savingServer} onClick={() => setServerDialogOpen(false)}>
                 取消
               </button>
               <button type="button" className="btn primary" disabled={savingServer} onClick={() => void handleSaveServer()}>
                 {savingServer ? '保存中...' : '保存'}
               </button>
-            </div>
-          </div>
-        </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       ) : null}
 
       {restoreTarget ? (
-        <div className="dialog-backdrop" onClick={() => !restoringFilename && setRestoreTarget(null)}>
-          <div className="dialog-card dialog-card-narrow" onClick={(event) => event.stopPropagation()}>
-            <div className="card-header">
+        <Dialog open={Boolean(restoreTarget)} onOpenChange={(nextOpen) => {
+          if (!nextOpen && !restoringFilename) setRestoreTarget(null)
+        }}>
+          <DialogContent className="dialog-card-narrow" closeDisabled={!!restoringFilename}>
+            <DialogHeader>
               <div>
-                <h2 className="card-title">恢复备份</h2>
-                <div className="card-subtitle">选择恢复模式：merge 保留本地数据，replace 以备份覆盖本地</div>
+                <DialogTitle>恢复备份</DialogTitle>
+                <DialogDescription>选择恢复模式：merge 保留本地数据，replace 以备份覆盖本地</DialogDescription>
               </div>
-              <button type="button" className="btn dialog-close-btn" aria-label="关闭" title="关闭" disabled={!!restoringFilename} onClick={() => setRestoreTarget(null)}>
-                <CloseIcon />
-              </button>
-            </div>
+            </DialogHeader>
 
-            <div className="notice">
-              目标备份：<strong>{restoreTarget.filename}</strong>
-            </div>
+            <DialogBody>
+              <div className="notice">
+                目标备份：<strong>{restoreTarget.filename}</strong>
+              </div>
+            </DialogBody>
 
-            <div className="actions mt-18 dialog-actions">
+            <DialogFooter>
               <button type="button" className="btn" disabled={!!restoringFilename} onClick={() => setRestoreTarget(null)}>
                 取消
               </button>
@@ -708,9 +710,9 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
               <button type="button" className="btn danger" disabled={!!restoringFilename} onClick={() => void confirmRestoreBackup('replace')}>
                 {restoringFilename ? '恢复中...' : '替换恢复'}
               </button>
-            </div>
-          </div>
-        </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       ) : null}
     </>
   )

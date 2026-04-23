@@ -16,8 +16,6 @@ import type {
 } from '@/types/codex'
 
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
-const DEFAULT_CLIENT_VERSION = '0.101.0'
-const DEFAULT_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464'
 const DEFAULT_ORIGINATOR = 'codex_cli_rs'
 
 function toUsageWindow(raw: unknown): CodexUsageWindow | undefined {
@@ -115,8 +113,8 @@ export const codexApi = {
       rotationMode: config?.rotationMode || 'fixed',
       proxyUrl: config?.proxyUrl || '',
       baseURL: config?.baseURL || DEFAULT_BASE_URL,
-      clientVersion: config?.clientVersion || DEFAULT_CLIENT_VERSION,
-      userAgent: config?.userAgent || DEFAULT_USER_AGENT,
+      clientVersion: config?.clientVersion || '',
+      userAgent: config?.userAgent || '',
       originator: config?.originator || DEFAULT_ORIGINATOR
     }
   },

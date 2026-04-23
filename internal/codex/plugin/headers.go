@@ -15,9 +15,9 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	// Get config values with defaults
-	clientVersion := "0.101.0"
-	userAgent := "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
-	originator := "codex_cli_rs"
+	clientVersion := codexShared.DefaultCodexClientVersion
+	userAgent := codexShared.DefaultCodexUserAgent
+	originator := codexShared.DefaultCodexOriginator
 	if config != nil {
 		clientVersion = config.GetClientVersion()
 		userAgent = config.GetUserAgent()
@@ -72,7 +72,7 @@ func isCompactResponsesPath(requestPath string) bool {
 
 // getCodexUpstreamURL constructs the upstream URL based on config and request path.
 func getCodexUpstreamURL(config *codexShared.CodexMultiConfig, requestPath string) string {
-	baseURL := "https://chatgpt.com/backend-api/codex"
+	baseURL := codexShared.DefaultCodexBaseURL
 	if config != nil {
 		if cfgBaseURL := strings.TrimSpace(config.GetBaseURL()); cfgBaseURL != "" {
 			baseURL = cfgBaseURL

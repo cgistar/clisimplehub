@@ -3,6 +3,8 @@ package auth
 import (
 	"net/http"
 	"strings"
+
+	codexShared "clisimplehub/internal/codex/shared"
 )
 
 // HeaderBuilder provides a reusable way to build common Codex API request headers
@@ -17,7 +19,7 @@ func NewHeaderBuilder(accessToken, accountID string) *HeaderBuilder {
 	return &HeaderBuilder{
 		accessToken: strings.TrimSpace(accessToken),
 		accountID:   strings.TrimSpace(accountID),
-		userAgent:   "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
+		userAgent:   codexShared.DefaultCodexUserAgent,
 	}
 }
 
