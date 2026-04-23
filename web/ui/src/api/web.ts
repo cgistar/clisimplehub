@@ -10,6 +10,7 @@ import type {
   CodexEditForm,
   CodexPageData,
   HomePageData,
+  PathPickerData,
   RestoreMode,
   ServerConfig,
   SettingsData,
@@ -77,8 +78,11 @@ export const webApi = {
         debugMode: payload.debugMode,
         listenAddr: payload.listenAddr,
         proxyUrl: payload.proxyUrl,
+        clashPath: payload.clashPath,
       }),
     }),
+  getClashPathPicker: (path?: string) =>
+    apiFetch<PathPickerData>(`/web/api/settings/clash/path-picker${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   getWebDAVConfig: () => apiFetch<WebDAVConfig>('/web/api/settings/webdav'),
   saveWebDAVConfig: (config: WebDAVConfig) =>
     apiFetch<ActionResponse & { config?: WebDAVConfig }>('/web/api/settings/webdav', {

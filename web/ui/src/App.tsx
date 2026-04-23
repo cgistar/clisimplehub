@@ -76,6 +76,7 @@ export default function App() {
       debugMode: settingsData.debugMode || '',
       listenAddr: settingsData.listenAddr || '0.0.0.0',
       proxyUrl: settingsData.proxyUrl || '',
+      clashPath: settingsData.clashPath || '',
     })
   }, [settingsData])
 

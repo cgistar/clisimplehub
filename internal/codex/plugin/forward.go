@@ -697,16 +697,10 @@ func (s *CodexService) streamResponse(ctx context.Context, resp *http.Response, 
 		eventCount++
 		totalBytes += int64(len(line)) + 1
 
-		if bytes.HasPrefix(line, []byte("data: ")) {
-			data := bytes.TrimPrefix(line, []byte("data: "))
-			if bytes.Contains(data, []byte(`"type":"response.completed"`)) {
-				in, out := parseCodexUsage(data)
-				if in > 0 || out > 0 {
-					capturedInput, capturedOutput = in, out
-					if debugLogger != nil {
-						debugLogger.Log("Token 使用: input=%d, output=%d", in, out)
-					}
-				}
+		if tokens := tokensFromCodexStreamLine(line); tokens != nil {
+			capturedInput, capturedOutput = tokens.InputTokens, tokens.OutputTokens
+			if debugLogger != nil {
+				debugLogger.Log("Token 使用: input=%d, output=%d", tokens.InputTokens, tokens.OutputTokens)
 			}
 		}
 	}
@@ -831,23 +825,6 @@ func maskToken(token string) string {
 		return "***"
 	}
 	return token[:4] + "..." + token[len(token)-4:]
-}
-
-// parseCodexUsage extracts token usage from a response.completed SSE event
-func parseCodexUsage(data []byte) (inputTokens, outputTokens int64) {
-	var event struct {
-		Type     string `json:"type"`
-		Response struct {
-			Usage struct {
-				InputTokens  int64 `json:"input_tokens"`
-				OutputTokens int64 `json:"output_tokens"`
-			} `json:"usage"`
-		} `json:"response"`
-	}
-	if err := json.Unmarshal(data, &event); err != nil {
-		return 0, 0
-	}
-	return event.Response.Usage.InputTokens, event.Response.Usage.OutputTokens
 }
 
 // parseCodexBodyUsage extracts token usage from a non-streaming response body

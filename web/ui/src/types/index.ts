@@ -145,6 +145,7 @@ export interface SettingsData {
   debugMode?: string
   listenAddr?: string
   proxyUrl?: string
+  clashPath?: string
   configPath?: string
 }
 
@@ -155,6 +156,24 @@ export interface SettingsForm {
   debugMode: string
   listenAddr: string
   proxyUrl: string
+  clashPath: string
+}
+
+export interface PathPickerEntry {
+  name: string
+  path: string
+  isDir: boolean
+  isFile: boolean
+  executable: boolean
+}
+
+export interface PathPickerData {
+  currentPath: string
+  parentPath?: string
+  homePath?: string
+  separator: string
+  roots?: string[]
+  entries: PathPickerEntry[]
 }
 
 export interface WebDAVConfig {

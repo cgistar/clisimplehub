@@ -294,6 +294,7 @@ func (p *ProxyServer) createWebUIBackupData() (*webUIBackupDataResponse, error) 
 		"debugMode":  settings.DebugMode,
 		"listenAddr": settings.ListenAddr,
 		"proxyUrl":   settings.ProxyURL,
+		"clashPath":  settings.ClashPath,
 	}
 
 	vendorConfigs := make([]config.VendorConfig, len(vendors))
@@ -569,6 +570,11 @@ func (p *ProxyServer) applyWebUIBackupAppConfig(appConfig map[string]interface{}
 	}
 	if proxyURL, ok := appConfig["proxyUrl"].(string); ok {
 		if err := p.store.SetConfig("proxyUrl", strings.TrimSpace(proxyURL)); err != nil {
+			return err
+		}
+	}
+	if clashPath, ok := appConfig["clashPath"].(string); ok {
+		if err := p.store.SetConfig("clashPath", strings.TrimSpace(clashPath)); err != nil {
 			return err
 		}
 	}

@@ -5,7 +5,7 @@ import { webApi } from '@/api/web'
 import type { ApiError } from '@/api/client'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { copyToClipboard, maskSecret } from '@/lib/format'
-import type { BackupData, RestoreMode, ServerConfig, SettingsData, SettingsForm, WebDAVBackupItem, WebDAVConfig } from '@/types'
+import type { BackupData, PathPickerData, PathPickerEntry, RestoreMode, ServerConfig, SettingsData, SettingsForm, WebDAVBackupItem, WebDAVConfig } from '@/types'
 
 const BACKUP_DIR = '/clisimplehub'
 
@@ -89,6 +89,10 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
   const [editingServerIndex, setEditingServerIndex] = useState<number>(-1)
   const [serverForm, setServerForm] = useState<ServerConfig>({ name: '', url: '', apiKey: '' })
   const [restoreTarget, setRestoreTarget] = useState<WebDAVBackupItem | null>(null)
+  const [pathPickerOpen, setPathPickerOpen] = useState<boolean>(false)
+  const [pathPickerLoading, setPathPickerLoading] = useState<boolean>(false)
+  const [pathPickerData, setPathPickerData] = useState<PathPickerData | null>(null)
+  const [pathPickerPath, setPathPickerPath] = useState<string>('')
 
   useEffect(() => {
     if (!data) return
@@ -449,6 +453,39 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
     }
   }
 
+  async function loadClashPathPicker(path?: string): Promise<void> {
+    setPathPickerLoading(true)
+    try {
+      const result = await webApi.getClashPathPicker(path)
+      setPathPickerData(result)
+      setPathPickerPath(result.currentPath || '')
+    } catch (error) {
+      toast.error(`加载路径选择器失败：${toErrorMessage(error)}`)
+    } finally {
+      setPathPickerLoading(false)
+    }
+  }
+
+  async function openClashPathPicker(): Promise<void> {
+    setPathPickerOpen(true)
+    await loadClashPathPicker(form?.clashPath || '')
+  }
+
+  function selectClashPath(path: string): void {
+    const normalizedPath = path.trim()
+    if (!form || !normalizedPath) return
+    onChange({ ...form, clashPath: normalizedPath })
+    setPathPickerOpen(false)
+  }
+
+  function handlePathPickerEntry(entry: PathPickerEntry): void {
+    if (entry.isDir) {
+      void loadClashPathPicker(entry.path)
+      return
+    }
+    selectClashPath(entry.path)
+  }
+
   if (busyGeneral && !form) return <div className="card empty-state">正在加载设置...</div>
   if (!data || !form) return <div className="card empty-state">暂无设置数据</div>
 
@@ -487,6 +524,19 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
               <div className="field">
                 <label className="field-label">Proxy URL</label>
                 <input className="input" value={form.proxyUrl} onChange={(event) => updateField('proxyUrl', event.target.value)} placeholder="例如：socks5://127.0.0.1:1080" />
+              </div>
+            </div>
+
+            <div className="field-row mt-14">
+              <div className="field field-span-2">
+                <label className="field-label">外部 Clash 路径</label>
+                <div className="inline-field-action">
+                  <input className="input" value={form.clashPath} onChange={(event) => updateField('clashPath', event.target.value)} placeholder="例如：/path/to/mihomo" />
+                  <button type="button" className="btn" disabled={pathPickerLoading} onClick={() => void openClashPathPicker()}>
+                    {pathPickerLoading ? '加载中...' : '选择'}
+                  </button>
+                </div>
+                <div className="muted small">默认版仅在此路径已配置且文件存在时显示 Clash 页签</div>
               </div>
             </div>
 
@@ -676,6 +726,76 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
               </button>
               <button type="button" className="btn primary" disabled={savingServer} onClick={() => void handleSaveServer()}>
                 {savingServer ? '保存中...' : '保存'}
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+
+      {pathPickerOpen ? (
+        <Dialog open={pathPickerOpen} onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPathPickerOpen(false)
+        }}>
+          <DialogContent closeDisabled={pathPickerLoading}>
+            <DialogHeader>
+              <div>
+                <DialogTitle>选择外部 Clash 路径</DialogTitle>
+                <DialogDescription>浏览运行 Web 服务的本机文件系统，选择 Clash / Mihomo 可执行文件</DialogDescription>
+              </div>
+            </DialogHeader>
+
+            <DialogBody>
+              <div className="path-picker-toolbar">
+                <input className="input" value={pathPickerPath} onChange={(event) => setPathPickerPath(event.target.value)} placeholder="输入目录路径后打开" />
+                <button type="button" className="btn" disabled={pathPickerLoading || !pathPickerPath.trim()} onClick={() => void loadClashPathPicker(pathPickerPath)}>
+                  打开
+                </button>
+              </div>
+
+              <div className="path-picker-shortcuts mt-12">
+                {pathPickerData?.parentPath ? (
+                  <button type="button" className="btn" disabled={pathPickerLoading} onClick={() => void loadClashPathPicker(pathPickerData.parentPath)}>
+                    上级目录
+                  </button>
+                ) : null}
+                {pathPickerData?.homePath ? (
+                  <button type="button" className="btn" disabled={pathPickerLoading} onClick={() => void loadClashPathPicker(pathPickerData.homePath)}>
+                    Home
+                  </button>
+                ) : null}
+                {(pathPickerData?.roots || []).map((root) => (
+                  <button type="button" className="btn" key={root} disabled={pathPickerLoading} onClick={() => void loadClashPathPicker(root)}>
+                    {root}
+                  </button>
+                ))}
+              </div>
+
+              <div className="muted small mt-12">当前目录：{pathPickerData?.currentPath || '-'}</div>
+
+              <div className="path-picker-list mt-12">
+                {pathPickerLoading ? <div className="empty-state">正在加载目录...</div> : null}
+                {!pathPickerLoading && !pathPickerData?.entries?.length ? <div className="empty-state">当前目录为空或没有可展示文件</div> : null}
+                {!pathPickerLoading && pathPickerData?.entries?.map((entry) => (
+                  <button type="button" className="path-picker-entry" key={entry.path} onClick={() => handlePathPickerEntry(entry)}>
+                    <span className="path-picker-entry-main">
+                      <span className="path-picker-entry-icon">{entry.isDir ? 'DIR' : 'FILE'}</span>
+                      <span className="path-picker-entry-name">{entry.name}</span>
+                    </span>
+                    <span className="path-picker-entry-actions">
+                      {entry.executable ? <span className="badge success">可执行</span> : null}
+                      <span className="muted small">{entry.isDir ? '打开' : '选择'}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </DialogBody>
+
+            <DialogFooter>
+              <button type="button" className="btn" disabled={pathPickerLoading} onClick={() => setPathPickerOpen(false)}>
+                取消
+              </button>
+              <button type="button" className="btn primary" disabled={pathPickerLoading || !pathPickerPath.trim()} onClick={() => selectClashPath(pathPickerPath)}>
+                使用输入路径
               </button>
             </DialogFooter>
           </DialogContent>

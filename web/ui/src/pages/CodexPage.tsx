@@ -67,10 +67,10 @@ export default function CodexPage({
         </div>
 
         <div className="list-item-meta mt-16">
-          <span className="meta-pill">rotationMode: {globalConfig.rotationMode}</span>
-          <span className="meta-pill">baseURL: {globalConfig.baseURL || '-'}</span>
-          <span className="meta-pill">proxyUrl: {globalConfig.proxyUrl || '-'}</span>
-          <span className="meta-pill">todayTokens: {formatTokenCount(totalTodayTokens)}</span>
+          <span className="meta-pill">轮询模式: {globalConfig.rotationMode}</span>
+          <span className="meta-pill">Codex URL: {globalConfig.baseURL || '-'}</span>
+          <span className="meta-pill">代理URL: {globalConfig.proxyUrl || '-'}</span>
+          <span className="meta-pill">今日Token: {formatTokenCount(totalTodayTokens)}</span>
         </div>
       </section>
 

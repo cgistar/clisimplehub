@@ -636,19 +636,10 @@ func (s *CodexService) streamResponseToWriter(ctx context.Context, resp *http.Re
 		totalBytes += int64(len(line)) + 1
 
 		// Parse usage info for logging
-		if bytes.HasPrefix(line, []byte("data: ")) {
-			data := bytes.TrimPrefix(line, []byte("data: "))
-			if bytes.Contains(data, []byte(`"type":"response.completed"`)) {
-				inputTokens, outputTokens := parseCodexUsage(data)
-				if inputTokens > 0 || outputTokens > 0 {
-					tokens = &executor.TokenUsage{
-						InputTokens:  inputTokens,
-						OutputTokens: outputTokens,
-					}
-					if debugLogger != nil {
-						debugLogger.Log("Token 使用: input=%d, output=%d", inputTokens, outputTokens)
-					}
-				}
+		if streamTokens := tokensFromCodexStreamLine(line); streamTokens != nil {
+			tokens = streamTokens
+			if debugLogger != nil {
+				debugLogger.Log("Token 使用: input=%d, output=%d", streamTokens.InputTokens, streamTokens.OutputTokens)
 			}
 		}
 	}

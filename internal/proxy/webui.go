@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,7 +46,25 @@ type webUISettings struct {
 	DebugMode  string `json:"debugMode,omitempty"`
 	ListenAddr string `json:"listenAddr,omitempty"`
 	ProxyURL   string `json:"proxyUrl,omitempty"`
+	ClashPath  string `json:"clashPath,omitempty"`
 	ConfigPath string `json:"configPath,omitempty"`
+}
+
+type webUIPathPickerEntry struct {
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	IsDir      bool   `json:"isDir"`
+	IsFile     bool   `json:"isFile"`
+	Executable bool   `json:"executable"`
+}
+
+type webUIPathPickerResponse struct {
+	CurrentPath string                 `json:"currentPath"`
+	ParentPath  string                 `json:"parentPath,omitempty"`
+	HomePath    string                 `json:"homePath,omitempty"`
+	Separator   string                 `json:"separator"`
+	Roots       []string               `json:"roots,omitempty"`
+	Entries     []webUIPathPickerEntry `json:"entries"`
 }
 
 type webUIEndpointInfo struct {
@@ -105,6 +124,7 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Delete("/web/api/codex/accounts/{accountId}", p.requireWebUISession(p.handleWebUIDeleteCodexAccount))
 	r.Get("/web/api/settings", p.requireWebUISession(p.handleWebUISettings))
 	r.Post("/web/api/settings", p.requireWebUISession(p.handleWebUISaveSettings))
+	r.Get("/web/api/settings/clash/path-picker", p.requireWebUISession(p.handleWebUIClashPathPicker))
 	r.Get("/web/api/settings/webdav", p.requireWebUISession(p.handleWebUIGetWebDAVConfig))
 	r.Post("/web/api/settings/webdav", p.requireWebUISession(p.handleWebUISaveWebDAVConfig))
 	r.Post("/web/api/settings/webdav/test", p.requireWebUISession(p.handleWebUITestWebDAVConnection))
@@ -882,6 +902,7 @@ func (p *ProxyServer) handleWebUISaveSettings(w http.ResponseWriter, r *http.Req
 	newAPIKey := strings.TrimSpace(req.APIKey)
 	debugMode := strings.TrimSpace(req.DebugMode)
 	proxyURL := strings.TrimSpace(req.ProxyURL)
+	clashPath := strings.TrimSpace(req.ClashPath)
 
 	if err := p.store.SetConfig("port", strconv.Itoa(req.Port)); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
@@ -914,6 +935,12 @@ func (p *ProxyServer) handleWebUISaveSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := p.store.SetConfig("proxyUrl", proxyURL); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+	if err := p.store.SetConfig("clashPath", clashPath); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
 		})
@@ -961,6 +988,7 @@ func (p *ProxyServer) loadWebUISettings() (*webUISettings, error) {
 		DebugMode:  "",
 		ListenAddr: "0.0.0.0",
 		ProxyURL:   "",
+		ClashPath:  "",
 		ConfigPath: p.getConfigPath(),
 	}
 
@@ -984,7 +1012,126 @@ func (p *ProxyServer) loadWebUISettings() (*webUISettings, error) {
 	if proxyURL, err := p.store.GetConfig("proxyUrl"); err == nil {
 		settings.ProxyURL = strings.TrimSpace(proxyURL)
 	}
+	if clashPath, err := p.store.GetConfig("clashPath"); err == nil {
+		settings.ClashPath = strings.TrimSpace(clashPath)
+	}
 	return settings, nil
+}
+
+func (p *ProxyServer) handleWebUIClashPathPicker(w http.ResponseWriter, r *http.Request) {
+	currentPath, err := p.resolveWebUIPathPickerDir(r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	items, err := os.ReadDir(currentPath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	entries := make([]webUIPathPickerEntry, 0, len(items))
+	for _, item := range items {
+		info, err := item.Info()
+		if err != nil {
+			continue
+		}
+		fullPath := filepath.Join(currentPath, item.Name())
+		entries = append(entries, webUIPathPickerEntry{
+			Name:       item.Name(),
+			Path:       fullPath,
+			IsDir:      info.IsDir(),
+			IsFile:     info.Mode().IsRegular(),
+			Executable: isWebUIExecutableFile(fullPath, info),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
+
+	parentPath := ""
+	if parent := filepath.Dir(currentPath); parent != currentPath {
+		parentPath = parent
+	}
+	homePath, _ := os.UserHomeDir()
+	writeJSON(w, http.StatusOK, webUIPathPickerResponse{
+		CurrentPath: currentPath,
+		ParentPath:  parentPath,
+		HomePath:    strings.TrimSpace(homePath),
+		Separator:   string(os.PathSeparator),
+		Roots:       webUIPathRoots(),
+		Entries:     entries,
+	})
+}
+
+func (p *ProxyServer) resolveWebUIPathPickerDir(rawPath string) (string, error) {
+	target := strings.TrimSpace(rawPath)
+	if target == "" && p != nil && p.store != nil {
+		if clashPath, err := p.store.GetConfig("clashPath"); err == nil {
+			target = strings.TrimSpace(clashPath)
+		}
+	}
+	if target == "" {
+		if homePath, err := os.UserHomeDir(); err == nil {
+			target = homePath
+		}
+	}
+	if target == "" && p != nil {
+		target = filepath.Dir(strings.TrimSpace(p.getConfigPath()))
+	}
+	if target == "" {
+		target = "."
+	}
+
+	absPath, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		parent := filepath.Dir(absPath)
+		if parentInfo, parentErr := os.Stat(parent); parentErr == nil && parentInfo.IsDir() {
+			return filepath.Clean(parent), nil
+		}
+		return "", err
+	}
+	if !info.IsDir() {
+		absPath = filepath.Dir(absPath)
+	}
+	return filepath.Clean(absPath), nil
+}
+
+func isWebUIExecutableFile(path string, info os.FileInfo) bool {
+	if info == nil || !info.Mode().IsRegular() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".exe", ".bat", ".cmd", ".ps1", ".com":
+			return true
+		default:
+			return false
+		}
+	}
+	return info.Mode().Perm()&0111 != 0
+}
+
+func webUIPathRoots() []string {
+	if runtime.GOOS != "windows" {
+		return []string{string(os.PathSeparator)}
+	}
+	roots := make([]string, 0, 4)
+	for ch := 'A'; ch <= 'Z'; ch++ {
+		root := fmt.Sprintf("%c:%c", ch, os.PathSeparator)
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			roots = append(roots, root)
+		}
+	}
+	return roots
 }
 
 func (p *ProxyServer) resolvePreferredAuthKey(configKey string) string {

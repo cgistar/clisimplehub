@@ -764,6 +764,81 @@ code {
   flex: 1;
 }
 
+.path-picker-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.path-picker-toolbar .input {
+  flex: 1;
+}
+
+.path-picker-shortcuts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.path-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(420px, 48vh);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.path-picker-entry {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid #e6edf4;
+  border-radius: 12px;
+  background: #f8fbff;
+  color: var(--text);
+  text-align: left;
+  transition: 160ms ease;
+}
+
+.path-picker-entry:hover {
+  border-color: rgba(2, 132, 199, 0.3);
+  background: rgba(2, 132, 199, 0.06);
+}
+
+.path-picker-entry-main,
+.path-picker-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.path-picker-entry-main {
+  flex: 1;
+}
+
+.path-picker-entry-icon {
+  flex: 0 0 auto;
+  min-width: 42px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: #eef3f8;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.path-picker-entry-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -1208,6 +1283,8 @@ code {
 
   .inline-field-action,
   .backup-item,
+  .path-picker-toolbar,
+  .path-picker-entry,
   .server-toolbar {
     flex-direction: column;
     align-items: stretch;

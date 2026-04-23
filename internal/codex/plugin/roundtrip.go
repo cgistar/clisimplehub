@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	codex "clisimplehub/internal/codex"
@@ -64,11 +65,12 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 			stat.OutputTokens = ret.Tokens.OutputTokens
 			stat.TotalTokens = ret.Tokens.InputTokens + ret.Tokens.OutputTokens
 		}
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = store.InsertStat(ctx, stat)
-		}()
+		if ret.Stream != nil {
+			// 流式响应的 token 只能在下游读取到 completed 事件后确定。
+			ret.Stream = newCodexStatsReadCloser(ret.Stream, store, stat)
+			return
+		}
+		insertCodexAccountStatAsync(store, stat)
 	}()
 
 	if req == nil {
@@ -464,6 +466,106 @@ func cloneHTTPHeader(headers http.Header) http.Header {
 		return http.Header{}
 	}
 	return headers.Clone()
+}
+
+type codexStatsReadCloser struct {
+	upstream io.ReadCloser
+	store    codexShared.CodexAccountStore
+	stat     *codexShared.CodexAccountStat
+
+	lineBuf []byte
+	latest  *executor.TokenUsage
+	once    sync.Once
+}
+
+func newCodexStatsReadCloser(upstream io.ReadCloser, store codexShared.CodexAccountStore, stat *codexShared.CodexAccountStat) io.ReadCloser {
+	if upstream == nil || store == nil || stat == nil {
+		return upstream
+	}
+	statCopy := *stat
+	return &codexStatsReadCloser{
+		upstream: upstream,
+		store:    store,
+		stat:     &statCopy,
+	}
+}
+
+func (r *codexStatsReadCloser) Read(p []byte) (int, error) {
+	n, err := r.upstream.Read(p)
+	if n > 0 {
+		r.feed(p[:n])
+	}
+	if err != nil {
+		r.finish(err)
+	}
+	return n, err
+}
+
+func (r *codexStatsReadCloser) Close() error {
+	err := r.upstream.Close()
+	r.finish(err)
+	return err
+}
+
+func (r *codexStatsReadCloser) feed(chunk []byte) {
+	r.lineBuf = append(r.lineBuf, chunk...)
+	for {
+		idx := bytes.IndexByte(r.lineBuf, '\n')
+		if idx < 0 {
+			return
+		}
+		line := append([]byte(nil), r.lineBuf[:idx]...)
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		r.lineBuf = r.lineBuf[idx+1:]
+		if tokens := tokensFromCodexStreamLine(line); tokens != nil {
+			r.latest = tokens
+		}
+	}
+}
+
+func (r *codexStatsReadCloser) finish(readErr error) {
+	r.once.Do(func() {
+		if len(r.lineBuf) > 0 {
+			if tokens := tokensFromCodexStreamLine(r.lineBuf); tokens != nil {
+				r.latest = tokens
+			}
+		}
+		if readErr != nil && readErr != io.EOF {
+			r.stat.Status = "error"
+			r.stat.ErrorType = readErr.Error()
+		}
+		if r.latest != nil {
+			r.stat.InputTokens = r.latest.InputTokens
+			r.stat.OutputTokens = r.latest.OutputTokens
+			r.stat.TotalTokens = r.latest.InputTokens + r.latest.OutputTokens
+		}
+		insertCodexAccountStatAsync(r.store, r.stat)
+	})
+}
+
+func tokensFromCodexStreamLine(line []byte) *executor.TokenUsage {
+	payload := bytes.TrimSpace(line)
+	if bytes.HasPrefix(payload, []byte("data:")) {
+		payload = bytes.TrimSpace(payload[len("data:"):])
+	}
+	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+		return nil
+	}
+	return extractTokensFromBody(payload)
+}
+
+func insertCodexAccountStatAsync(store codexShared.CodexAccountStore, stat *codexShared.CodexAccountStat) {
+	if store == nil || stat == nil {
+		return
+	}
+	statCopy := *stat
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = store.InsertStat(ctx, &statCopy)
+	}()
 }
 
 func formatHeaderMap(headers map[string]string) string {
