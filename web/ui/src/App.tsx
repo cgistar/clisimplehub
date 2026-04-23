@@ -14,6 +14,7 @@ import CodexPage from '@/pages/CodexPage'
 import SettingsPage from '@/pages/SettingsPage'
 import CodexConfigDialog from '@/pages/components/CodexConfigDialog'
 import CodexEditDialog from '@/pages/components/CodexEditDialog'
+import CodexImportDialog from '@/pages/components/CodexImportDialog'
 import { Toaster } from '@/components/ui/sonner'
 
 export default function App() {
@@ -37,6 +38,7 @@ export default function App() {
   const [codexEditDialogOpen, setCodexEditDialogOpen] = useState<boolean>(false)
   const [codexEditForm, setCodexEditForm] = useState<CodexEditForm>(createCodexEditForm())
   const [codexEditSaving, setCodexEditSaving] = useState<boolean>(false)
+  const [codexImportDialogOpen, setCodexImportDialogOpen] = useState<boolean>(false)
 
   useEffect(() => {
     const onPopState = () => setRoute(routeFromPath(window.location.pathname))
@@ -145,6 +147,7 @@ export default function App() {
     setSettingsData(null)
     setSettingsForm(null)
     setCodexConfigDialogOpen(false)
+    setCodexImportDialogOpen(false)
   }
 
   async function handleActivateEndpoint(interfaceType: string, endpointId: number): Promise<void> {
@@ -211,6 +214,11 @@ export default function App() {
       if (account.email) copyData.email = account.email
       if (account.accountId) copyData.accountId = account.accountId
       if (account.planType) copyData.planType = account.planType
+      if (account.accessToken) copyData.accessToken = account.accessToken
+      if (account.idToken) copyData.idToken = account.idToken
+      if (account.password) copyData.password = account.password
+      if (account.mfaCode) copyData.mfaCode = account.mfaCode
+      if (account.expiresAt) copyData.expiresAt = account.expiresAt
       if (account.proxyUrl) copyData.proxyUrl = account.proxyUrl
       if (typeof account.weight === 'number') copyData.weight = account.weight
 
@@ -239,6 +247,14 @@ export default function App() {
   function handleCloseCodexEdit(): void {
     if (codexEditSaving) return
     setCodexEditDialogOpen(false)
+  }
+
+  function handleOpenCodexImport(): void {
+    setCodexImportDialogOpen(true)
+  }
+
+  function handleCloseCodexImport(): void {
+    setCodexImportDialogOpen(false)
   }
 
   async function handleSaveCodexConfig(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -351,7 +367,7 @@ export default function App() {
       <Topbar route={route} onNavigate={navigate} onLogout={handleLogout} />
 
       <main className="page">
-        <PageHeader title={pageTitle} description={pageDescription} loading={pageLoading} onRefresh={() => void refreshCurrentPage(route)} />
+        <PageHeader title={pageTitle} description={pageDescription} loading={pageLoading} onRefresh={() => void refreshCurrentPage(route)} showRefresh={route !== 'codex'} />
 
         {route === 'home' ? (
           <HomePage
@@ -367,6 +383,8 @@ export default function App() {
             loading={pageLoading}
             busyAction={busyAction}
             onOpenConfig={handleOpenCodexConfig}
+            onOpenImport={handleOpenCodexImport}
+            onRefreshCodex={() => refreshCurrentPage('codex')}
             onActivateAccount={handleActivateAccount}
             onRefreshToken={handleRefreshCodexToken}
             onFetchUsage={handleFetchCodexUsage}
@@ -389,6 +407,7 @@ export default function App() {
 
       <CodexConfigDialog open={codexConfigDialogOpen} form={codexConfigForm} saving={codexConfigSaving} onClose={handleCloseCodexConfig} onChange={setCodexConfigForm} onSubmit={handleSaveCodexConfig} />
       <CodexEditDialog open={codexEditDialogOpen} form={codexEditForm} saving={codexEditSaving} onClose={handleCloseCodexEdit} onChange={setCodexEditForm} onSubmit={handleSaveCodexEdit} />
+      <CodexImportDialog open={codexImportDialogOpen} onClose={handleCloseCodexImport} onSuccess={() => refreshCurrentPage('codex')} />
     </div>
   )
 }

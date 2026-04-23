@@ -885,6 +885,15 @@ code {
   gap: 16px;
 }
 
+.codex-account-section-header {
+  align-items: flex-start;
+}
+
+.codex-account-section-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
 .codex-account-card {
   display: flex;
   flex-direction: column;
@@ -1095,6 +1104,22 @@ code {
   justify-content: flex-end;
 }
 
+.dialog-close-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dialog-close-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 .mt-12 { margin-top: 12px; }
 .mt-14 { margin-top: 14px; }
 .mt-16 { margin-top: 16px; }
@@ -1241,6 +1266,14 @@ code {
   .request-section-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .codex-account-section-header {
+    flex-direction: row;
+  }
+
+  .codex-account-section-actions {
+    flex-shrink: 0;
   }
 
   .home-endpoint-tabs {

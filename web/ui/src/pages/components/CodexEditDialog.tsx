@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react'
+import { CloseIcon } from '@/components/icons'
 import type { CodexEditForm } from '@/types'
 
 interface CodexEditDialogProps {
@@ -23,8 +24,8 @@ export default function CodexEditDialog({ open, form, saving, onClose, onChange,
             <h2 className="card-title">编辑 Codex 账号</h2>
             <div className="card-subtitle">与桌面版一致：仅编辑本地账号附加字段，不改账号主身份</div>
           </div>
-          <button className="btn" type="button" onClick={onClose} disabled={saving}>
-            关闭
+          <button className="btn dialog-close-btn" type="button" aria-label="关闭" title="关闭" onClick={onClose} disabled={saving}>
+            <CloseIcon />
           </button>
         </div>
 

@@ -1,6 +1,8 @@
 import { apiFetch } from './client'
 import type {
   ActionResponse,
+  CodexAccount,
+  CodexAccountInput,
   AuthSessionResponse,
   BackupData,
   BackupDataResponse,
@@ -46,6 +48,11 @@ export const webApi = {
     apiFetch<ActionResponse>('/web/api/codex/usage', {
       method: 'POST',
       body: JSON.stringify({ accountId }),
+    }),
+  addCodexAccount: (payload: CodexAccountInput) =>
+    apiFetch<CodexAccount & ActionResponse>('/web/api/codex/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
   updateCodexAccount: (payload: CodexEditForm) =>
     apiFetch<ActionResponse>('/web/api/codex/accounts/update', {

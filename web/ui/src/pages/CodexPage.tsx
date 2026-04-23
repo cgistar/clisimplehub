@@ -9,6 +9,8 @@ interface CodexPageProps {
   loading: boolean
   busyAction: string
   onOpenConfig: () => void
+  onOpenImport: () => void
+  onRefreshCodex: () => void | Promise<void>
   onActivateAccount: (accountId: string) => void
   onRefreshToken: (accountId: string) => void
   onFetchUsage: (accountId: string) => void
@@ -22,6 +24,8 @@ export default function CodexPage({
   loading,
   busyAction,
   onOpenConfig,
+  onOpenImport,
+  onRefreshCodex,
   onActivateAccount,
   onRefreshToken,
   onFetchUsage,
@@ -55,19 +59,6 @@ export default function CodexPage({
   return (
     <div className="grid">
       <section className="col-12 card">
-        <div className="card-header">
-          <div>
-            <h2 className="card-title">Codex 账号池</h2>
-            <div className="card-subtitle">当前活跃账号：{data.activeAccountId || '未设置'} · {accounts.length} 个账号</div>
-          </div>
-
-          <div className="actions">
-            <button className="btn" type="button" onClick={onOpenConfig}>
-              配置
-            </button>
-          </div>
-        </div>
-
         <div className="kpis codex-kpis">
           <KpiCard label="账号总数" value={accounts.length} />
           <KpiCard label="正常账号" value={validCount} />
@@ -84,10 +75,22 @@ export default function CodexPage({
       </section>
 
       <section className="col-12 card">
-        <div className="card-header">
+        <div className="card-header codex-account-section-header">
           <div>
             <h2 className="card-title">账号卡片</h2>
             <div className="card-subtitle">支持激活、刷新 Token、获取用量、复制、删除</div>
+          </div>
+
+          <div className="actions codex-account-section-actions">
+            <button className="btn" type="button" onClick={onRefreshCodex} disabled={loading}>
+              {loading ? '刷新中...' : '刷新'}
+            </button>
+            <button className="btn" type="button" onClick={onOpenImport}>
+              导入
+            </button>
+            <button className="btn" type="button" onClick={onOpenConfig}>
+              配置
+            </button>
           </div>
         </div>
 

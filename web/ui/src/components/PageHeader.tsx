@@ -3,9 +3,10 @@ interface PageHeaderProps {
   description: string
   loading: boolean
   onRefresh: () => void
+  showRefresh?: boolean
 }
 
-export default function PageHeader({ title, description, loading, onRefresh }: PageHeaderProps) {
+export default function PageHeader({ title, description, loading, onRefresh, showRefresh = true }: PageHeaderProps) {
   return (
     <div className="page-header">
       <div>
@@ -13,11 +14,13 @@ export default function PageHeader({ title, description, loading, onRefresh }: P
         <p className="page-desc">{description}</p>
       </div>
 
-      <div className="actions">
-        <button className="btn" onClick={onRefresh} disabled={loading}>
-          {loading ? '刷新中...' : '刷新'}
-        </button>
-      </div>
+      {showRefresh ? (
+        <div className="actions">
+          <button className="btn" onClick={onRefresh} disabled={loading}>
+            {loading ? '刷新中...' : '刷新'}
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

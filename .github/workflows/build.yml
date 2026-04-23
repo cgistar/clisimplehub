@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 env:
-  WAILS_VERSION: 2.11.0
+  WAILS_VERSION: 2.12.0
 
 jobs:
   build:

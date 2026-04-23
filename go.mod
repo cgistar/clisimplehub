@@ -11,7 +11,7 @@ require (
 	github.com/metacubex/mihomo v1.19.20
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
-	github.com/wailsapp/wails/v2 v2.11.0
+	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/net v0.50.0
 	golang.org/x/sys v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -20,6 +20,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
+	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
 	github.com/Yawning/aez v0.0.0-20211027044916-e49e68abd344 // indirect
 	github.com/ajg/form v1.5.1 // indirect
@@ -156,4 +157,4 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-// replace github.com/wailsapp/wails/v2 v2.11.0 => /Users/daiqing/go/pkg/mod
+// replace github.com/wailsapp/wails/v2 v2.12.0 => /Users/daiqing/go/pkg/mod

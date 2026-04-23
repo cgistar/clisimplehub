@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
+import { CloseIcon } from '@/components/icons'
 import MetaRow from '@/components/MetaRow'
 import { webApi } from '@/api/web'
 import type { ApiError } from '@/api/client'
@@ -648,8 +649,8 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
                 <h2 className="card-title">{serverDialogTitle}</h2>
                 <div className="card-subtitle">用于 /sync/config 的远端服务器信息</div>
               </div>
-              <button type="button" className="btn" disabled={savingServer} onClick={() => setServerDialogOpen(false)}>
-                关闭
+              <button type="button" className="btn dialog-close-btn" aria-label="关闭" title="关闭" disabled={savingServer} onClick={() => setServerDialogOpen(false)}>
+                <CloseIcon />
               </button>
             </div>
 
@@ -688,8 +689,8 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
                 <h2 className="card-title">恢复备份</h2>
                 <div className="card-subtitle">选择恢复模式：merge 保留本地数据，replace 以备份覆盖本地</div>
               </div>
-              <button type="button" className="btn" disabled={!!restoringFilename} onClick={() => setRestoreTarget(null)}>
-                关闭
+              <button type="button" className="btn dialog-close-btn" aria-label="关闭" title="关闭" disabled={!!restoringFilename} onClick={() => setRestoreTarget(null)}>
+                <CloseIcon />
               </button>
             </div>
 

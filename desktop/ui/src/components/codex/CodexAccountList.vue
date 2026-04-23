@@ -162,6 +162,11 @@ async function handleCopy(account: CodexAccount): Promise<void> {
     if (account.email) copyData.email = account.email
     if (account.accountId) copyData.accountId = account.accountId
     if (account.planType) copyData.planType = account.planType
+    if (account.accessToken) copyData.accessToken = account.accessToken
+    if (account.idToken) copyData.idToken = account.idToken
+    if (account.password) copyData.password = account.password
+    if (account.mfaCode) copyData.mfaCode = account.mfaCode
+    if (account.expiresAt) copyData.expiresAt = account.expiresAt
     if (account.proxyUrl) copyData.proxyUrl = account.proxyUrl
     if (typeof account.weight === 'number') copyData.weight = account.weight
 

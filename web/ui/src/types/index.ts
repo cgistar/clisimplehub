@@ -77,6 +77,8 @@ export interface CodexAccount {
   refreshToken?: string
   email?: string
   planType?: string
+  accessToken?: string
+  idToken?: string
   accountId?: string
   status?: string
   weight?: number
@@ -100,6 +102,22 @@ export interface CodexPageData {
   activeAccountId?: string
   accounts?: CodexAccount[]
   globalConfig?: Partial<CodexConfigForm>
+}
+
+export interface CodexAccountInput {
+  refreshToken?: string
+  email?: string
+  planType?: string
+  accessToken?: string
+  idToken?: string
+  accountId?: string
+  status?: string
+  weight?: number
+  proxyUrl?: string
+  password?: string
+  mfaCode?: string
+  isActive?: boolean
+  expiresAt?: string
 }
 
 export interface CodexConfigForm {

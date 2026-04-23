@@ -160,6 +160,8 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 	}
 	m := map[string]interface{}{
 		"refreshToken":     a.RefreshToken,
+		"accessToken":      a.AccessToken,
+		"idToken":          a.IDToken,
 		"email":            a.Email,
 		"planType":         a.PlanType,
 		"accountId":        a.AccountID,

@@ -100,6 +100,7 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Post("/web/api/codex/refresh-token", p.requireWebUISession(p.handleWebUIRefreshCodexToken))
 	r.Post("/web/api/codex/usage", p.requireWebUISession(p.handleWebUIFetchCodexUsage))
 	r.Post("/web/api/codex/config", p.requireWebUISession(p.handleWebUISaveCodexConfig))
+	r.Post("/web/api/codex/accounts", p.requireWebUISession(p.handleWebUIAddCodexAccount))
 	r.Post("/web/api/codex/accounts/update", p.requireWebUISession(p.handleWebUIUpdateCodexAccount))
 	r.Delete("/web/api/codex/accounts/{accountId}", p.requireWebUISession(p.handleWebUIDeleteCodexAccount))
 	r.Get("/web/api/settings", p.requireWebUISession(p.handleWebUISettings))
@@ -681,6 +682,74 @@ func (p *ProxyServer) handleWebUISaveCodexConfig(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message": "codex config saved",
 	})
+}
+
+func (p *ProxyServer) handleWebUIAddCodexAccount(w http.ResponseWriter, r *http.Request) {
+	provider := plugin.GetCodexDesktopProviderCached()
+	if provider == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "codex-accounts 插件不可用",
+		})
+		return
+	}
+
+	var req map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "请求体格式无效",
+		})
+		return
+	}
+
+	accountID := strings.TrimSpace(fmt.Sprint(req["accountId"]))
+	if accountID == "" || accountID == "<nil>" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "accountId 必填",
+		})
+		return
+	}
+
+	refreshToken := strings.TrimSpace(fmt.Sprint(req["refreshToken"]))
+	if refreshToken == "<nil>" {
+		refreshToken = ""
+	}
+	accessToken := strings.TrimSpace(fmt.Sprint(req["accessToken"]))
+	if accessToken == "<nil>" {
+		accessToken = ""
+	}
+	if refreshToken == "" && accessToken == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "refreshToken 或 accessToken 至少需要一个",
+		})
+		return
+	}
+
+	dto, err := json.Marshal(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "账号数据格式无效",
+		})
+		return
+	}
+
+	codexPath := resolveWebUICodexConfigPath(provider, p.getConfigPath())
+	raw, err := provider.AddAccount(codexPath, dto)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "failed to parse codex account payload",
+		})
+		return
+	}
+	payload["message"] = "codex account added"
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (p *ProxyServer) handleWebUIDeleteCodexAccount(w http.ResponseWriter, r *http.Request) {

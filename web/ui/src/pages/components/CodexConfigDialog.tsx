@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react'
+import { CloseIcon } from '@/components/icons'
 import { DEFAULT_CODEX_CONFIG } from '@/lib/codex'
 import type { CodexConfigForm } from '@/types'
 
@@ -24,8 +25,8 @@ export default function CodexConfigDialog({ open, form, saving, onClose, onChang
             <h2 className="card-title">Codex 全局配置</h2>
             <div className="card-subtitle">保存后立即写入 codex 多账号配置，并实时刷新账号池</div>
           </div>
-          <button className="btn" type="button" onClick={onClose} disabled={saving}>
-            关闭
+          <button className="btn dialog-close-btn" type="button" aria-label="关闭" title="关闭" onClick={onClose} disabled={saving}>
+            <CloseIcon />
           </button>
         </div>
 
