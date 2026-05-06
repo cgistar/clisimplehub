@@ -50,6 +50,8 @@ export default function CodexAccountCard({
         <div className="codex-card-tags">
           {planLabel ? <span className="badge info">{planLabel}</span> : null}
           {!account.refreshToken ? <span className="badge warning">临时 Token</span> : null}
+          {account.enabled === false ? <span className="badge danger">已禁用</span> : null}
+          {account.websockets ? <span className="badge success">WS</span> : null}
           {account.isActive ? <span className="badge success">正在使用</span> : null}
         </div>
       </div>

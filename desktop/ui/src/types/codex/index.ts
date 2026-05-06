@@ -30,6 +30,8 @@ export interface CodexAccountInput {
   accessToken?: string
   idToken?: string
   accountId?: string
+  enabled?: boolean
+  websockets?: boolean
   status?: CodexAccountStatus
   weight?: number
   proxyUrl?: string

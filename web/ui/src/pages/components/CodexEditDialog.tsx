@@ -61,6 +61,18 @@ export default function CodexEditDialog({ open, form, saving, onClose, onChange,
                 onChange={(event) => updateField('weight', Number(event.target.value || 0))}
               />
             </div>
+
+            <div className="field mt-14">
+              <label className="field-label">能力开关</label>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={form.enabled} onChange={(event) => updateField('enabled', event.target.checked)} />
+                启用账号
+              </label>
+              <label className="checkbox-row mt-8">
+                <input type="checkbox" checked={form.websockets} onChange={(event) => updateField('websockets', event.target.checked)} />
+                Responses WebSockets
+              </label>
+            </div>
           </DialogBody>
 
           <DialogFooter>

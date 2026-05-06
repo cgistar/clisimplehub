@@ -80,6 +80,8 @@ export interface CodexAccount {
   accessToken?: string
   idToken?: string
   accountId?: string
+  enabled?: boolean
+  websockets?: boolean
   status?: string
   weight?: number
   proxyUrl?: string
@@ -111,6 +113,8 @@ export interface CodexAccountInput {
   accessToken?: string
   idToken?: string
   accountId?: string
+  enabled?: boolean
+  websockets?: boolean
   status?: string
   weight?: number
   proxyUrl?: string
@@ -136,6 +140,8 @@ export interface CodexEditForm {
   mfaCode: string
   proxyUrl: string
   weight: number
+  enabled: boolean
+  websockets: boolean
 }
 
 export interface SettingsData {

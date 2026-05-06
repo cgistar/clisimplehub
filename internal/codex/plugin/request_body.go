@@ -36,6 +36,7 @@ func adaptConvertedResponsesBody(body []byte, userAgent string) []byte {
 	if err := json.Unmarshal(body, &reqBody); err != nil {
 		return body
 	}
+	appmiddleware.RemoveFieldsForCodexUpstream(reqBody)
 	appmiddleware.AdaptResponsesPayloadForNonCLI(reqBody)
 	adapted, err := json.Marshal(reqBody)
 	if err != nil {

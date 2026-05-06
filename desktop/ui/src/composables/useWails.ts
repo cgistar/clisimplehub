@@ -83,6 +83,7 @@ interface WailsFacade {
       testAccount(accountId: string): Promise<CodexTestResult>
       getAccountUsage(accountId: string): Promise<CodexUsageResult>
       startLoginWithURL(): Promise<string>
+      submitLoginCallbackURL(callbackURL: string): Promise<void>
       waitForLoginCallback(): Promise<CodexLoginResult>
       cancelLogin(): Promise<void>
     }
@@ -152,6 +153,7 @@ export function useWails(): WailsFacade {
         testAccount: (accountId: string) => codexApi.testAccount(accountId),
         getAccountUsage: (accountId: string) => codexApi.getAccountUsage(accountId),
         startLoginWithURL: () => codexApi.startLoginWithURL(),
+        submitLoginCallbackURL: (callbackURL: string) => codexApi.submitLoginCallbackURL(callbackURL),
         waitForLoginCallback: () => codexApi.waitForLoginCallback(),
         cancelLogin: () => codexApi.cancelLogin()
       },

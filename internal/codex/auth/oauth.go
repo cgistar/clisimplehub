@@ -76,7 +76,7 @@ func StartCodexLogin(ctx context.Context, proxyURL string) (*CodexLoginResult, e
 	}
 
 	resultCh := make(chan *OAuthResult, 1)
-	server, err := startOAuthServer(resultCh)
+	server, err := startOAuthServer(state, resultCh)
 	if err != nil {
 		return nil, fmt.Errorf("start callback server: %w", err)
 	}
@@ -123,7 +123,7 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 	}
 
 	resultCh := make(chan *OAuthResult, 1)
-	server, err := startOAuthServer(resultCh)
+	server, err := startOAuthServer(state, resultCh)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("start callback server: %w", err)
 	}
@@ -243,7 +243,48 @@ func ExchangeCodeForTokens(ctx context.Context, code string, pkce *PKCECodes, pr
 
 // --- OAuth callback server ---
 
-func startOAuthServer(resultCh chan<- *OAuthResult) (*http.Server, error) {
+func SubmitCallbackURL(ctx context.Context, callbackURL string) error {
+	callbackURL = strings.TrimSpace(callbackURL)
+	if callbackURL == "" {
+		return fmt.Errorf("callback URL is required")
+	}
+
+	u, err := url.Parse(callbackURL)
+	if err != nil || u == nil {
+		return fmt.Errorf("invalid callback URL")
+	}
+	if u.Scheme != "http" {
+		return fmt.Errorf("callback URL must use http")
+	}
+	if u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" {
+		return fmt.Errorf("callback URL must target localhost")
+	}
+	if u.Port() != fmt.Sprintf("%d", OAuthPort) {
+		return fmt.Errorf("callback URL must target port %d", OAuthPort)
+	}
+	if u.Path != "/auth/callback" {
+		return fmt.Errorf("callback URL must target /auth/callback")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("submit callback URL: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("callback rejected (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func startOAuthServer(expectedState string, resultCh chan<- *OAuthResult) (*http.Server, error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", OAuthPort)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -254,10 +295,21 @@ func startOAuthServer(resultCh chan<- *OAuthResult) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
+		state := q.Get("state")
+		if state == "" || state != expectedState {
+			http.Error(w, "OAuth state mismatch; please use the latest login link", http.StatusBadRequest)
+			return
+		}
+		code := q.Get("code")
+		errorParam := q.Get("error")
+		if code == "" && errorParam == "" {
+			http.Error(w, "No authorization code received", http.StatusBadRequest)
+			return
+		}
 		result := &OAuthResult{
-			Code:  q.Get("code"),
-			State: q.Get("state"),
-			Error: q.Get("error"),
+			Code:  code,
+			State: state,
+			Error: errorParam,
 		}
 		once.Do(func() {
 			select {

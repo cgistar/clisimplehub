@@ -94,6 +94,34 @@ func (p *CodexAccountPool) Store() shared.CodexAccountStore {
 }
 
 func (p *CodexAccountPool) Select() *shared.CodexAccount {
+	return p.selectMatching(func(*shared.CodexAccount) bool { return true })
+}
+
+func (p *CodexAccountPool) SelectExcluding(excluded map[string]bool) *shared.CodexAccount {
+	return p.selectMatching(func(a *shared.CodexAccount) bool {
+		if a == nil || len(excluded) == 0 {
+			return true
+		}
+		return !excluded[strings.TrimSpace(a.AccountID)]
+	})
+}
+
+func (p *CodexAccountPool) SelectWebsocket() *shared.CodexAccount {
+	return p.selectMatching(func(a *shared.CodexAccount) bool {
+		return a != nil && a.Websockets
+	})
+}
+
+func (p *CodexAccountPool) SelectWebsocketExcluding(excluded map[string]bool) *shared.CodexAccount {
+	return p.selectMatching(func(a *shared.CodexAccount) bool {
+		if a == nil || !a.Websockets {
+			return false
+		}
+		return !excluded[strings.TrimSpace(a.AccountID)]
+	})
+}
+
+func (p *CodexAccountPool) selectMatching(match func(*shared.CodexAccount) bool) *shared.CodexAccount {
 	if p == nil {
 		return nil
 	}
@@ -107,13 +135,13 @@ func (p *CodexAccountPool) Select() *shared.CodexAccount {
 	mode := p.config.GetRotationMode()
 	switch mode {
 	case shared.RotationFixed:
-		return p.selectFixed()
+		return p.selectFixed(match)
 	case shared.RotationFailover:
-		return p.selectFailover()
+		return p.selectFailover(match)
 	case shared.RotationLoadBalance:
-		return p.selectLoadBalance()
+		return p.selectLoadBalance(match)
 	default:
-		return p.selectFixed()
+		return p.selectFixed(match)
 	}
 }
 
@@ -172,7 +200,7 @@ func (p *CodexAccountPool) MarkFailed(accountId string, status shared.CodexAccou
 	mode := p.config.GetRotationMode()
 	if mode == shared.RotationFailover {
 		if p.activeAccountID == id {
-			if next := p.findNextAvailable(id); next != nil {
+			if next := p.findNextAvailable(id, nil); next != nil {
 				p.activeAccountID = next.AccountID
 				p.config.ActiveAccountID = next.AccountID
 				_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
@@ -286,16 +314,16 @@ func (p *CodexAccountPool) ActiveAccountID() string {
 
 // --- Internal selection strategies ---
 
-func (p *CodexAccountPool) resolveActiveAccount() *shared.CodexAccount {
+func (p *CodexAccountPool) resolveActiveAccount(match func(*shared.CodexAccount) bool) *shared.CodexAccount {
 	activeID := strings.TrimSpace(p.activeAccountID)
 	if activeID != "" {
 		for i := range p.accounts {
-			if strings.TrimSpace(p.accounts[i].AccountID) == activeID {
+			if strings.TrimSpace(p.accounts[i].AccountID) == activeID && accountMatches(&p.accounts[i], match) {
 				return &p.accounts[i]
 			}
 		}
 	}
-	next := p.findNextAvailable("")
+	next := p.findNextAvailable("", match)
 	if next == nil {
 		return nil
 	}
@@ -305,8 +333,8 @@ func (p *CodexAccountPool) resolveActiveAccount() *shared.CodexAccount {
 	return next
 }
 
-func (p *CodexAccountPool) selectFixed() *shared.CodexAccount {
-	active := p.resolveActiveAccount()
+func (p *CodexAccountPool) selectFixed(match func(*shared.CodexAccount) bool) *shared.CodexAccount {
+	active := p.resolveActiveAccount(match)
 	if active == nil {
 		return nil
 	}
@@ -321,8 +349,8 @@ func (p *CodexAccountPool) selectFixed() *shared.CodexAccount {
 	return cloneAccount(active)
 }
 
-func (p *CodexAccountPool) selectFailover() *shared.CodexAccount {
-	active := p.resolveActiveAccount()
+func (p *CodexAccountPool) selectFailover(match func(*shared.CodexAccount) bool) *shared.CodexAccount {
+	active := p.resolveActiveAccount(match)
 	if active != nil {
 		active.ClearCooldownIfExpired()
 		if !active.IsCoolingDown() {
@@ -336,7 +364,7 @@ func (p *CodexAccountPool) selectFailover() *shared.CodexAccount {
 	if active != nil {
 		currentID = active.AccountID
 	}
-	next := p.findNextAvailable(currentID)
+	next := p.findNextAvailable(currentID, match)
 	if next != nil && (active == nil || next.AccountID != active.AccountID) {
 		p.activeAccountID = next.AccountID
 		p.config.ActiveAccountID = next.AccountID
@@ -345,8 +373,8 @@ func (p *CodexAccountPool) selectFailover() *shared.CodexAccount {
 	return cloneAccount(next)
 }
 
-func (p *CodexAccountPool) selectLoadBalance() *shared.CodexAccount {
-	avail := p.availableAccounts()
+func (p *CodexAccountPool) selectLoadBalance(match func(*shared.CodexAccount) bool) *shared.CodexAccount {
+	avail := p.availableAccounts(match)
 	if len(avail) == 0 {
 		return nil
 	}
@@ -387,10 +415,16 @@ func (p *CodexAccountPool) selectLoadBalance() *shared.CodexAccount {
 	return cloneAccount(avail[bestIdx])
 }
 
-func (p *CodexAccountPool) availableAccounts() []*shared.CodexAccount {
+func (p *CodexAccountPool) availableAccounts(match func(*shared.CodexAccount) bool) []*shared.CodexAccount {
 	var result []*shared.CodexAccount
 	for i := range p.accounts {
 		a := &p.accounts[i]
+		if !accountMatches(a, match) {
+			continue
+		}
+		if !a.IsEnabled() {
+			continue
+		}
 		if strings.TrimSpace(a.AccountID) == "" {
 			continue
 		}
@@ -409,8 +443,15 @@ func (p *CodexAccountPool) availableAccounts() []*shared.CodexAccount {
 	return result
 }
 
-func (p *CodexAccountPool) findNextAvailable(currentAccountID string) *shared.CodexAccount {
-	accounts := p.availableAccounts()
+func accountMatches(a *shared.CodexAccount, match func(*shared.CodexAccount) bool) bool {
+	if match == nil {
+		return true
+	}
+	return match(a)
+}
+
+func (p *CodexAccountPool) findNextAvailable(currentAccountID string, match func(*shared.CodexAccount) bool) *shared.CodexAccount {
+	accounts := p.availableAccounts(match)
 	if len(accounts) == 0 {
 		return nil
 	}
@@ -437,6 +478,6 @@ func cloneAccount(a *shared.CodexAccount) *shared.CodexAccount {
 }
 
 func (p *CodexAccountPool) resetWRR() {
-	avail := p.availableAccounts()
+	avail := p.availableAccounts(nil)
 	p.wrrCounters = make([]int, len(avail))
 }

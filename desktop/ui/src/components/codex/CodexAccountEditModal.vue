@@ -51,6 +51,19 @@
           style="width: 100%"
         />
       </n-form-item>
+
+      <n-form-item :label="t('codex.accountCapabilityLabel')">
+        <n-space vertical>
+          <n-space align="center" justify="space-between">
+            <span>{{ t('codex.enabledLabel') }}</span>
+            <n-switch v-model:value="formData.enabled" />
+          </n-space>
+          <n-space align="center" justify="space-between">
+            <span>{{ t('codex.websocketsLabel') }}</span>
+            <n-switch v-model:value="formData.websockets" />
+          </n-space>
+        </n-space>
+      </n-form-item>
     </n-form>
 
     <template #footer>
@@ -65,7 +78,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
-import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSpace } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSpace, NSwitch } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { CodexAccount, CodexAccountInput } from '@/types/codex'
 import { generateTotpCode } from '@/utils/totp'
@@ -79,6 +92,8 @@ type EditFormData = CodexAccountInput & {
   mfaCode: string
   proxyUrl: string
   weight: number
+  enabled: boolean
+  websockets: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -103,7 +118,9 @@ const formData = ref<EditFormData>({
   password: '',
   mfaCode: '',
   proxyUrl: '',
-  weight: 0
+  weight: 0,
+  enabled: true,
+  websockets: false
 })
 
 const rules: FormRules = {}
@@ -142,7 +159,9 @@ watch(() => props.show, (newVal) => {
       password: props.account.password || '',
       mfaCode: props.account.mfaCode || '',
       proxyUrl: props.account.proxyUrl || '',
-      weight: props.account.weight || 0
+      weight: props.account.weight || 0,
+      enabled: props.account.enabled !== false,
+      websockets: Boolean(props.account.websockets)
     }
   }
   if (newVal) {

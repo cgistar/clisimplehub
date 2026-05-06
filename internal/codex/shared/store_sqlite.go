@@ -41,7 +41,51 @@ func (s *SQLiteCodexAccountStore) initSchema(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("apply codex schema: %w", err)
 	}
+	if err := s.ensureAccountCapabilityColumns(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *SQLiteCodexAccountStore) ensureAccountCapabilityColumns(ctx context.Context) error {
+	columns, err := s.codexAccountColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if !columns["enabled"] {
+		if _, err := s.queue.ExecWrite(ctx, `ALTER TABLE codex_accounts ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return fmt.Errorf("add codex_accounts.enabled: %w", err)
+		}
+	}
+	if !columns["websockets"] {
+		if _, err := s.queue.ExecWrite(ctx, `ALTER TABLE codex_accounts ADD COLUMN websockets INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add codex_accounts.websockets: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteCodexAccountStore) codexAccountColumns(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(codex_accounts)`)
+	if err != nil {
+		return nil, fmt.Errorf("inspect codex_accounts columns: %w", err)
+	}
+	defer rows.Close()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return nil, err
+		}
+		columns[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+	return columns, rows.Err()
 }
 
 func (s *SQLiteCodexAccountStore) Close() error {
@@ -56,7 +100,7 @@ func (s *SQLiteCodexAccountStore) Close() error {
 func (s *SQLiteCodexAccountStore) ListAccounts(ctx context.Context) ([]CodexAccount, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
-		       password, mfa_code, expires_at, status, weight, proxy_url,
+		       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
@@ -89,7 +133,7 @@ func (s *SQLiteCodexAccountStore) ListAccountsPage(ctx context.Context, offset, 
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
-		       password, mfa_code, expires_at, status, weight, proxy_url,
+		       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
@@ -125,7 +169,7 @@ func (s *SQLiteCodexAccountStore) CountAccounts(ctx context.Context) (int, error
 func (s *SQLiteCodexAccountStore) GetByID(ctx context.Context, accountID string) (*CodexAccount, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
-		       password, mfa_code, expires_at, status, weight, proxy_url,
+		       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
@@ -138,7 +182,7 @@ func (s *SQLiteCodexAccountStore) GetByID(ctx context.Context, accountID string)
 func (s *SQLiteCodexAccountStore) GetByRefreshToken(ctx context.Context, rt string) (*CodexAccount, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
-		       password, mfa_code, expires_at, status, weight, proxy_url,
+		       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
@@ -179,14 +223,15 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 	_, err := s.queue.ExecWrite(ctx, `
 		INSERT INTO codex_accounts (
 			account_id, refresh_token, access_token, id_token, email, plan_type,
-			password, mfa_code, expires_at, status, weight, proxy_url,
+			enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 			cooldown_until, cooldown_reason,
 			usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 			usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
 			usage_primary_over_secondary_pct, usage_updated_at,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
+		boolToInt(a.Enabled), boolToInt(a.Websockets),
 		a.Password, a.MFACode,
 		nullTime(a.ExpiresAt), string(a.Status), a.EffectiveWeight(), a.ProxyUrl,
 		nullTime(a.CooldownUntil), a.CooldownReason,
@@ -223,7 +268,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 	_, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET
 			refresh_token = ?, access_token = ?, id_token = ?, email = ?, plan_type = ?,
-			password = ?, mfa_code = ?,
+			enabled = ?, websockets = ?, password = ?, mfa_code = ?,
 			expires_at = ?, status = ?, weight = ?, proxy_url = ?,
 			cooldown_until = ?, cooldown_reason = ?,
 			usage_primary_used_pct = ?, usage_primary_reset_secs = ?, usage_primary_window_mins = ?,
@@ -232,6 +277,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 			updated_at = ?
 		WHERE account_id = ?`,
 		a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
+		boolToInt(a.Enabled), boolToInt(a.Websockets),
 		a.Password, a.MFACode,
 		nullTime(a.ExpiresAt), string(a.Status), a.EffectiveWeight(), a.ProxyUrl,
 		nullTime(a.CooldownUntil), a.CooldownReason,
@@ -333,14 +379,15 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 			if _, err := tx.ExecContext(txCtx, `
 				INSERT INTO codex_accounts (
 					account_id, refresh_token, access_token, id_token, email, plan_type,
-					password, mfa_code, expires_at, status, weight, proxy_url,
+					enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 					cooldown_until, cooldown_reason,
 					usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 					usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
 					usage_primary_over_secondary_pct, usage_updated_at,
 					created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
+				boolToInt(a.Enabled), boolToInt(a.Websockets),
 				a.Password, a.MFACode,
 				nullTime(a.ExpiresAt), string(a.Status), a.EffectiveWeight(), a.ProxyUrl,
 				nullTime(a.CooldownUntil), a.CooldownReason,
@@ -613,12 +660,13 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 	var a CodexAccount
 	var expiresAt, cooldownUntil, usageUpdatedAt, createdAt, updatedAt any
 	var status string
+	var enabled, websockets int
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
 	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
 
 	err := s.Scan(
 		&a.AccountID, &a.RefreshToken, &a.AccessToken, &a.IDToken, &a.Email, &a.PlanType,
-		&a.Password, &a.MFACode,
+		&enabled, &websockets, &a.Password, &a.MFACode,
 		&expiresAt, &status, &a.Weight, &a.ProxyUrl,
 		&cooldownUntil, &a.CooldownReason,
 		&usagePrimPct, &usagePrimReset, &usagePrimWin,
@@ -631,6 +679,8 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 	}
 
 	a.Status = CodexAccountStatus(status)
+	a.Enabled = enabled != 0
+	a.Websockets = websockets != 0
 	if t, ok := parseSQLiteTime(expiresAt); ok {
 		a.ExpiresAt = t
 	}
@@ -713,6 +763,13 @@ func scanAccountRow(row *sql.Row) (*CodexAccount, error) {
 		return nil, nil
 	}
 	return a, err
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func codexStatsDateCondition(timeRange string) string {

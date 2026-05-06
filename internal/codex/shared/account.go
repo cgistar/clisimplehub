@@ -24,7 +24,7 @@ const (
 
 const (
 	DefaultCodexBaseURL       = "https://chatgpt.com/backend-api/codex"
-	DefaultCodexClientVersion = "0.122.0"
+	DefaultCodexClientVersion = "0.128.0"
 	DefaultCodexOriginator    = "codex_cli_rs"
 	DefaultCodexUserAgent     = DefaultCodexOriginator + "/" + DefaultCodexClientVersion + " (Mac OS 26.0.1; arm64) Apple_Terminal/464"
 )
@@ -56,6 +56,8 @@ type CodexAccount struct {
 	AccountID      string              `json:"accountId,omitempty"`
 	Email          string              `json:"email,omitempty"`
 	PlanType       string              `json:"planType,omitempty"`
+	Enabled        bool                `json:"enabled"`
+	Websockets     bool                `json:"websockets,omitempty"`
 	Password       string              `json:"password,omitempty"`
 	MFACode        string              `json:"mfaCode,omitempty"`
 	ExpiresAt      time.Time           `json:"expiresAt,omitempty"`
@@ -114,6 +116,10 @@ func (a *CodexAccount) EffectiveWeight() int {
 		return 1
 	}
 	return a.Weight
+}
+
+func (a *CodexAccount) IsEnabled() bool {
+	return a == nil || a.Enabled
 }
 
 func (a *CodexAccount) IsCoolingDown() bool {
@@ -195,6 +201,8 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 		"email":            a.Email,
 		"planType":         a.PlanType,
 		"accountId":        a.AccountID,
+		"enabled":          a.Enabled,
+		"websockets":       a.Websockets,
 		"status":           string(a.Status),
 		"weight":           a.Weight,
 		"proxyUrl":         a.ProxyUrl,

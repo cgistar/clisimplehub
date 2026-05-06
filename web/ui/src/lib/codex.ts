@@ -29,6 +29,8 @@ export function createCodexEditForm(account: CodexAccount | null = null): CodexE
     mfaCode: account?.mfaCode || '',
     proxyUrl: account?.proxyUrl || '',
     weight: Number(account?.weight || 0),
+    enabled: account?.enabled !== false,
+    websockets: Boolean(account?.websockets),
   }
 }
 

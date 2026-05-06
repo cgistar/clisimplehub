@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +63,20 @@ func popSession(state string) *oauthSession {
 	return s
 }
 
+func getSession(state string) *oauthSession {
+	oauthSessionsMu.Lock()
+	defer oauthSessionsMu.Unlock()
+	s, ok := oauthSessions[state]
+	if !ok {
+		return nil
+	}
+	if time.Since(s.CreatedAt) > sessionTTL {
+		delete(oauthSessions, state)
+		return nil
+	}
+	return s
+}
+
 func (p *CodexPlugin) handleAuthURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -72,59 +88,6 @@ func (p *CodexPlugin) handleAuthURL(w http.ResponseWriter, r *http.Request) {
 	p.mu.RUnlock()
 
 	proxyURL := resolveProxyURL("", codexJsonPath)
-
-	if r.URL.Query().Get("is_webui") == "true" {
-		webUILoginMu.Lock()
-		if webUILoginCancel != nil {
-			webUILoginCancel()
-		}
-		if webUILoginCleanup != nil {
-			webUILoginCleanup()
-		}
-		webUILoginMu.Unlock()
-
-		bgCtx, cancel := context.WithCancel(context.Background())
-		authURL, waitFn, cleanupFn, err := codexAuth.StartCodexLoginWithURL(bgCtx, proxyURL)
-		if err != nil {
-			cancel()
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-
-		webUILoginMu.Lock()
-		webUILoginGen++
-		gen := webUILoginGen
-		webUILoginCancel = cancel
-		webUILoginCleanup = cleanupFn
-		webUILoginMu.Unlock()
-
-		go func() {
-			defer func() {
-				webUILoginMu.Lock()
-				if webUILoginGen == gen {
-					webUILoginCancel = nil
-					webUILoginCleanup = nil
-				}
-				webUILoginMu.Unlock()
-				cleanupFn()
-				cancel()
-			}()
-			result, err := waitFn()
-			if err != nil {
-				log.Printf("[codex-auth] webui login failed: %v", err)
-				return
-			}
-			if err := p.saveOAuthAccount(result); err != nil {
-				log.Printf("[codex-auth] save account failed: %v", err)
-			}
-		}()
-
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "ok",
-			"url":    authURL,
-		})
-		return
-	}
 
 	pkce, err := codexAuth.GeneratePKCECodes()
 	if err != nil {
@@ -145,6 +108,8 @@ func (p *CodexPlugin) handleAuthURL(w http.ResponseWriter, r *http.Request) {
 	})
 
 	authURL := codexAuth.BuildAuthURL(state, pkce)
+	go p.waitForOAuthCallbackFile(codexJsonPath, state)
+
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 		"url":    authURL,
@@ -163,6 +128,7 @@ func (p *CodexPlugin) handleOAuthCallback(w http.ResponseWriter, r *http.Request
 		RedirectURL string `json:"redirect_url"`
 		State       string `json:"state"`
 		Code        string `json:"code"`
+		Error       string `json:"error"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
@@ -171,6 +137,7 @@ func (p *CodexPlugin) handleOAuthCallback(w http.ResponseWriter, r *http.Request
 
 	code := body.Code
 	state := body.State
+	errorMessage := body.Error
 
 	if body.RedirectURL != "" {
 		if u, err := url.Parse(body.RedirectURL); err == nil {
@@ -180,43 +147,100 @@ func (p *CodexPlugin) handleOAuthCallback(w http.ResponseWriter, r *http.Request
 			if s := u.Query().Get("state"); s != "" {
 				state = s
 			}
+			if e := u.Query().Get("error"); e != "" {
+				errorMessage = e
+			} else if e := u.Query().Get("error_description"); e != "" {
+				errorMessage = e
+			}
 		}
 	}
 
+	if provider := strings.TrimSpace(body.Provider); provider != "" && !strings.EqualFold(provider, "codex") && !strings.EqualFold(provider, "openai") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported provider"})
+		return
+	}
 	if strings.TrimSpace(state) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing state"})
 		return
 	}
-	if strings.TrimSpace(code) == "" {
+	if strings.Contains(state, "/") || strings.Contains(state, "\\") || strings.Contains(state, "..") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid state"})
+		return
+	}
+	if strings.TrimSpace(code) == "" && strings.TrimSpace(errorMessage) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing authorization code"})
 		return
 	}
-
-	sess := popSession(state)
-	if sess == nil {
+	if getSession(state) == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found or expired"})
 		return
 	}
 
-	result, err := codexAuth.ExchangeCodeForTokens(r.Context(), code, sess.PKCE, sess.ProxyURL)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "token exchange failed: " + err.Error()})
-		return
-	}
+	p.mu.RLock()
+	codexJsonPath := p.codexJsonPath
+	p.mu.RUnlock()
 
-	if err := p.saveOAuthAccount(result); err != nil {
+	if err := writeOAuthCallbackFile(codexJsonPath, state, code, errorMessage); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "ok",
-		"account": map[string]any{
-			"email":     result.Email,
-			"planType":  result.PlanType,
-			"accountId": result.AccountID,
-		},
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+func (p *CodexPlugin) waitForOAuthCallbackFile(codexJsonPath, state string) {
+	path := oauthCallbackFilePath(codexJsonPath, state)
+	deadline := time.Now().Add(5 * time.Minute)
+
+	for {
+		if time.Now().After(deadline) {
+			_ = popSession(state)
+			log.Printf("[codex-auth] OAuth callback timeout for state %s", state)
+			return
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		_ = os.Remove(path)
+
+		var payload struct {
+			Code  string `json:"code"`
+			State string `json:"state"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			log.Printf("[codex-auth] invalid OAuth callback file: %v", err)
+			continue
+		}
+		if payload.State != state {
+			log.Printf("[codex-auth] ignored OAuth callback with mismatched state")
+			continue
+		}
+		if strings.TrimSpace(payload.Error) != "" {
+			_ = popSession(state)
+			log.Printf("[codex-auth] OAuth callback error: %s", payload.Error)
+			return
+		}
+
+		sess := popSession(state)
+		if sess == nil {
+			log.Printf("[codex-auth] OAuth session expired before token exchange")
+			return
+		}
+
+		result, err := codexAuth.ExchangeCodeForTokens(context.Background(), payload.Code, sess.PKCE, sess.ProxyURL)
+		if err != nil {
+			log.Printf("[codex-auth] token exchange failed: %v", err)
+			return
+		}
+		if err := p.saveOAuthAccount(result); err != nil {
+			log.Printf("[codex-auth] save account failed: %v", err)
+		}
+		return
+	}
 }
 
 func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error {
@@ -268,6 +292,7 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 			AccountID:    result.AccountID,
 			Email:        result.Email,
 			PlanType:     result.PlanType,
+			Enabled:      true,
 			Status:       codexShared.CodexStatusValid,
 			ExpiresAt:    expiresAt,
 			CreatedAt:    now,
@@ -297,6 +322,34 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 	}
 
 	return nil
+}
+
+func writeOAuthCallbackFile(codexJsonPath, state, code, errorMessage string) error {
+	path := oauthCallbackFilePath(codexJsonPath, state)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create callback directory: %w", err)
+	}
+	payload := map[string]string{
+		"code":  strings.TrimSpace(code),
+		"state": strings.TrimSpace(state),
+		"error": strings.TrimSpace(errorMessage),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal callback payload: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("write callback file: %w", err)
+	}
+	return nil
+}
+
+func oauthCallbackFilePath(codexJsonPath, state string) string {
+	baseDir := "."
+	if p := strings.TrimSpace(codexJsonPath); p != "" {
+		baseDir = filepath.Dir(p)
+	}
+	return filepath.Join(baseDir, fmt.Sprintf(".oauth-codex-%s.oauth", strings.TrimSpace(state)))
 }
 
 func resolveProxyURL(requested, codexJsonPath string) string {

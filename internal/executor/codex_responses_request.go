@@ -52,7 +52,9 @@ func stripQueryParam(rawQuery, key string) string {
 func applyCodexResponsesHeaders(req *http.Request, src http.Header, isStreaming bool) {
 	req.Header = make(http.Header)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Version", headerValueOrDefault(src, "Version", codexShared.DefaultCodexClientVersion))
+	if version := strings.TrimSpace(src.Get("Version")); version != "" {
+		req.Header.Set("Version", version)
+	}
 
 	sessionID := strings.TrimSpace(src.Get("Session_id"))
 	if sessionID == "" {
@@ -63,9 +65,13 @@ func applyCodexResponsesHeaders(req *http.Request, src http.Header, isStreaming 
 	if openAIBeta := strings.TrimSpace(src.Get("Openai-Beta")); openAIBeta != "" {
 		req.Header.Set("Openai-Beta", openAIBeta)
 	}
+	copyCodexHeaderIfPresent(req.Header, src, "X-Codex-Beta-Features")
+	copyCodexHeaderIfPresent(req.Header, src, "X-Codex-Turn-Metadata")
+	copyCodexHeaderIfPresent(req.Header, src, "X-Client-Request-Id")
+	copyCodexHeaderIfPresent(req.Header, src, "Originator")
 
 	req.Header.Set("User-Agent", codexShared.DefaultCodexUserAgent)
-	req.Header.Set("Connection", "close")
+	req.Header.Set("Connection", "Keep-Alive")
 	if isStreaming {
 		req.Header.Set("Accept", "text/event-stream")
 		return
@@ -73,12 +79,11 @@ func applyCodexResponsesHeaders(req *http.Request, src http.Header, isStreaming 
 	req.Header.Set("Accept", "application/json")
 }
 
-func headerValueOrDefault(h http.Header, key, fallback string) string {
-	if h == nil {
-		return fallback
+func copyCodexHeaderIfPresent(dst, src http.Header, key string) {
+	if dst == nil || src == nil {
+		return
 	}
-	if value := strings.TrimSpace(h.Get(key)); value != "" {
-		return value
+	if value := strings.TrimSpace(src.Get(key)); value != "" {
+		dst.Set(key, value)
 	}
-	return fallback
 }

@@ -14,18 +14,18 @@ const (
 
 // UsageRateLimit represents rate limit information
 type UsageRateLimit struct {
-	Allowed       bool                  `json:"allowed"`
-	LimitReached  bool                  `json:"limit_reached"`
-	PrimaryWindow *UsageRateLimitWindow `json:"primary_window"`
+	Allowed         bool                  `json:"allowed"`
+	LimitReached    bool                  `json:"limit_reached"`
+	PrimaryWindow   *UsageRateLimitWindow `json:"primary_window"`
 	SecondaryWindow *UsageRateLimitWindow `json:"secondary_window"`
 }
 
 // UsageRateLimitWindow represents a rate limit time window
 type UsageRateLimitWindow struct {
-	UsedPercent         float64 `json:"used_percent"`
-	LimitWindowSeconds  int     `json:"limit_window_seconds"`
-	ResetAfterSeconds   int     `json:"reset_after_seconds"`
-	ResetAt             int64   `json:"reset_at"`
+	UsedPercent        float64 `json:"used_percent"`
+	LimitWindowSeconds int     `json:"limit_window_seconds"`
+	ResetAfterSeconds  int     `json:"reset_after_seconds"`
+	ResetAt            int64   `json:"reset_at"`
 }
 
 // UsagePromo represents promotional information
@@ -36,15 +36,15 @@ type UsagePromo struct {
 
 // UsageResponse represents the full response from the usage API
 type UsageResponse struct {
-	UserID              string          `json:"user_id"`
-	AccountID           string          `json:"account_id"`
-	Email               string          `json:"email"`
-	PlanType            string          `json:"plan_type"`
-	RateLimit           *UsageRateLimit `json:"rate_limit"`
-	CodeReviewRateLimit *UsageRateLimit `json:"code_review_rate_limit"`
+	UserID               string          `json:"user_id"`
+	AccountID            string          `json:"account_id"`
+	Email                string          `json:"email"`
+	PlanType             string          `json:"plan_type"`
+	RateLimit            *UsageRateLimit `json:"rate_limit"`
+	CodeReviewRateLimit  *UsageRateLimit `json:"code_review_rate_limit"`
 	AdditionalRateLimits json.RawMessage `json:"additional_rate_limits"`
-	Credits             json.RawMessage `json:"credits"`
-	Promo               *UsagePromo     `json:"promo"`
+	Credits              json.RawMessage `json:"credits"`
+	Promo                *UsagePromo     `json:"promo"`
 }
 
 // UsageQuery contains parameters for fetching usage
@@ -52,6 +52,8 @@ type UsageQuery struct {
 	AccessToken string
 	AccountID   string
 	UserAgent   string
+	Originator  string
+	SessionID   string
 	ProxyURL    string
 }
 
@@ -79,6 +81,12 @@ func FetchUsage(ctx context.Context, client *http.Client, query UsageQuery) (*Us
 	builder := NewHeaderBuilder(accessToken, query.AccountID)
 	if query.UserAgent != "" {
 		builder.WithUserAgent(query.UserAgent)
+	}
+	if query.Originator != "" {
+		builder.WithOriginator(query.Originator)
+	}
+	if query.SessionID != "" {
+		builder.WithSessionID(query.SessionID)
 	}
 	builder.ApplyTo(req)
 
@@ -113,8 +121,8 @@ type UsageResult struct {
 
 // UsageWindow represents a simplified rate limit window
 type UsageWindow struct {
-	UsedPercent       float64 `json:"usedPercent"`
-	RemainingSeconds  int     `json:"remainingSeconds"`
+	UsedPercent      float64 `json:"usedPercent"`
+	RemainingSeconds int     `json:"remainingSeconds"`
 }
 
 // SimplifyUsageResponse converts the full API response to a simplified format

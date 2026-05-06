@@ -42,6 +42,8 @@ type CodexAccountDTO struct {
 	AccessToken       string         `json:"accessToken,omitempty"`
 	IDToken           string         `json:"idToken,omitempty"`
 	AccountID         string         `json:"accountId,omitempty"`
+	Enabled           bool           `json:"enabled"`
+	Websockets        bool           `json:"websockets,omitempty"`
 	Status            string         `json:"status"`
 	Weight            int            `json:"weight,omitempty"`
 	ProxyUrl          string         `json:"proxyUrl,omitempty"`
@@ -271,6 +273,18 @@ func (a *App) StartCodexLoginWithURL() (string, error) {
 	}
 	proxyURL := ""
 	return cp.StartLoginWithURL(ctx, proxyURL)
+}
+
+func (a *App) SubmitCodexLoginCallbackURL(callbackURL string) error {
+	cp := codexProvider()
+	if cp == nil {
+		return fmt.Errorf("codex plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return cp.SubmitLoginCallbackURL(ctx, callbackURL)
 }
 
 func (a *App) WaitForCodexLoginCallback() (*CodexLoginResultDTO, error) {

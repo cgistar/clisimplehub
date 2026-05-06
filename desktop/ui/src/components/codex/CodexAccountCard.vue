@@ -19,6 +19,12 @@
       <n-tag v-if="!hasRefreshToken" type="warning" size="small" :title="t('codex.noRefreshToken')">
         {{ t('codex.tempToken') }}
       </n-tag>
+      <n-tag v-if="account.enabled === false" type="error" size="small">
+        {{ t('codex.disabledLabel') }}
+      </n-tag>
+      <n-tag v-if="account.websockets" type="success" size="small">
+        WS
+      </n-tag>
       <n-tag v-if="isActive" size="tiny" type="success" round class="codex-badge-active">
         {{ t('codex.active') }}
       </n-tag>

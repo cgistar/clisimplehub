@@ -39,6 +39,16 @@ func (p *CodexPlugin) handleCodexRoute(w http.ResponseWriter, r *http.Request) {
 
 	switch normalizeCodexRoutePath(r.URL.Path) {
 	case "/codex/v1/responses", "/codex/v1/responses/compact":
+		if isCodexWebsocketRequest(r) {
+			if normalizeCodexRoutePath(r.URL.Path) != "/codex/v1/responses" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "streaming not supported for compact responses websocket",
+				})
+				return
+			}
+			svc.HandleResponsesWebsocket(w, r)
+			return
+		}
 		svc.HandleResponses(w, r)
 	case "/codex/v1/chat/completions":
 		svc.HandleChatCompletions(w, r)

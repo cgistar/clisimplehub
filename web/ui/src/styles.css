@@ -709,6 +709,14 @@ code {
   height: 18px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 14px;
+}
+
 .inline-field-action {
   display: flex;
   gap: 10px;

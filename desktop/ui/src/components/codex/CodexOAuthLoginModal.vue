@@ -26,6 +26,19 @@
           </n-button>
         </n-input-group>
       </n-form-item>
+
+      <n-form-item :label="t('codex.callbackUrlLabel')">
+        <n-input-group>
+          <n-input
+            v-model:value="callbackUrl"
+            :placeholder="t('codex.callbackUrlPlaceholder')"
+            clearable
+          />
+          <n-button :disabled="!callbackUrl.trim()" @click="handleSubmitCallbackUrl">
+            {{ t('codex.submitCallbackUrl') }}
+          </n-button>
+        </n-input-group>
+      </n-form-item>
     </n-form>
 
     <n-alert type="info" :bordered="false">
@@ -67,6 +80,7 @@ const emit = defineEmits<{
 
 const visible = ref(false)
 const authUrl = ref('')
+const callbackUrl = ref('')
 const abortController = ref<AbortController | null>(null)
 
 function toErrorMessage(error: unknown): string {
@@ -93,6 +107,7 @@ watch(visible, (newVal) => {
 async function startLogin() {
   try {
     abortController.value = new AbortController()
+    callbackUrl.value = ''
 
     // Get OAuth URL
     authUrl.value = await codexApi.startLoginWithURL()
@@ -131,6 +146,14 @@ async function startLogin() {
 
     // Keep modal open on startup failures so users can still close/retry explicitly.
     message.error(t('codex.oauthLoginFailed') + ': ' + errMsg)
+  }
+}
+
+async function handleSubmitCallbackUrl() {
+  try {
+    await codexApi.submitLoginCallbackURL(callbackUrl.value)
+  } catch (error) {
+    message.error(t('codex.oauthCallbackSubmitFailed') + ': ' + toErrorMessage(error))
   }
 }
 

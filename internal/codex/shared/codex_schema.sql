@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS codex_accounts (
     id_token       TEXT NOT NULL DEFAULT '',
     email          TEXT NOT NULL DEFAULT '',
     plan_type      TEXT NOT NULL DEFAULT '',
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    websockets     INTEGER NOT NULL DEFAULT 0,
     password       TEXT NOT NULL DEFAULT '',
     mfa_code       TEXT NOT NULL DEFAULT '',
     expires_at     DATETIME,

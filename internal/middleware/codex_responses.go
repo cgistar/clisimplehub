@@ -130,6 +130,13 @@ var fieldsToRemoveForNonCLI = []string{
 	"safety_identifier",
 }
 
+var fieldsToRemoveForCodexUpstream = []string{
+	"previous_response_id",
+	"prompt_cache_retention",
+	"safety_identifier",
+	"stream_options",
+}
+
 // CodexResponsesAdaptMiddleware 在网关入口统一规范化 /responses 请求。
 func CodexResponsesAdaptMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +214,7 @@ func NormalizeCodexResponsesRequest(body []byte, requestPath string, userAgent s
 	} else {
 		reqBody["store"] = false
 	}
+	RemoveFieldsForCodexUpstream(reqBody)
 
 	if !isCodexClient {
 		AdaptResponsesPayloadForNonCLI(reqBody)
@@ -217,6 +225,13 @@ func NormalizeCodexResponsesRequest(body []byte, requestPath string, userAgent s
 		return body, normalizedUserAgent, err
 	}
 	return adapted, normalizedUserAgent, nil
+}
+
+// RemoveFieldsForCodexUpstream 删除客户端可能携带但会降低 Codex OAuth 上游稳定性的字段。
+func RemoveFieldsForCodexUpstream(reqBody map[string]any) {
+	for _, field := range fieldsToRemoveForCodexUpstream {
+		delete(reqBody, field)
+	}
 }
 
 // AdaptResponsesPayloadForNonCLI 删除非 Codex CLI 请求中不兼容的字段并补充固定 instructions。

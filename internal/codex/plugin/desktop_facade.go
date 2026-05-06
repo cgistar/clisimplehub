@@ -209,6 +209,8 @@ func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage
 		RefreshToken *string `json:"refreshToken,omitempty"`
 		Email        *string `json:"email,omitempty"`
 		PlanType     *string `json:"planType,omitempty"`
+		Enabled      *bool   `json:"enabled,omitempty"`
+		Websockets   *bool   `json:"websockets,omitempty"`
 		Password     *string `json:"password,omitempty"`
 		MFACode      *string `json:"mfaCode,omitempty"`
 		ProxyUrl     *string `json:"proxyUrl,omitempty"`
@@ -248,6 +250,12 @@ func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage
 		if planType := strings.TrimSpace(*dto.PlanType); planType != "" {
 			account.PlanType = planType
 		}
+	}
+	if dto.Enabled != nil {
+		account.Enabled = *dto.Enabled
+	}
+	if dto.Websockets != nil {
+		account.Websockets = *dto.Websockets
 	}
 	if dto.Password != nil {
 		account.Password = *dto.Password
@@ -522,6 +530,10 @@ func (d *desktopFacade) StartLoginWithURL(ctx context.Context, proxyURL string) 
 	return authURL, nil
 }
 
+func (d *desktopFacade) SubmitLoginCallbackURL(ctx context.Context, callbackURL string) error {
+	return codexAuth.SubmitCallbackURL(ctx, callbackURL)
+}
+
 func (d *desktopFacade) WaitForLoginCallback(ctx context.Context) (json.RawMessage, error) {
 	svc := getService()
 	if svc == nil {
@@ -578,21 +590,34 @@ func (d *desktopFacade) GetAccountUsage(ctx context.Context, configPath, account
 	}
 
 	proxyURL := strings.TrimSpace(account.ProxyUrl)
+	var mc *codexShared.CodexMultiConfig
 	if proxyURL == "" {
-		mc, _ := codexShared.LoadCodexMultiConfig(configPath)
+		mc, _ = codexShared.LoadCodexMultiConfig(configPath)
 		if mc != nil {
 			proxyURL = mc.ProxyUrl
 		}
+	} else {
+		mc, _ = codexShared.LoadCodexMultiConfig(configPath)
+	}
+	if mc == nil {
+		mc = &codexShared.CodexMultiConfig{}
 	}
 
 	svc := getService()
 	mgr := svc.GetOrCreateAuthManager(accountId, configPath, proxyURL)
 	accessToken, acctID, err := mgr.GetAccessToken()
 	if err != nil {
-		return nil, fmt.Errorf("auth failed: %v", err)
+		if strings.TrimSpace(account.AccessToken) == "" {
+			return nil, fmt.Errorf("auth failed: %v", err)
+		}
+		accessToken = strings.TrimSpace(account.AccessToken)
+		acctID = strings.TrimSpace(account.AccountID)
+	}
+	if strings.TrimSpace(acctID) == "" {
+		acctID = strings.TrimSpace(account.AccountID)
 	}
 
-	usage, err := fetchCodexUsage(ctx, accessToken, acctID, proxyURL)
+	usage, err := fetchCodexUsage(ctx, accessToken, acctID, proxyURL, mc)
 	if err != nil {
 		return nil, err
 	}
@@ -972,11 +997,16 @@ func (s *CodexService) cancelLoginSession() {
 	}
 }
 
-func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL string) (*codexShared.CodexUsageSnapshot, error) {
+func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL string, config *codexShared.CodexMultiConfig) (*codexShared.CodexUsageSnapshot, error) {
+	if config == nil {
+		config = &codexShared.CodexMultiConfig{}
+	}
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
 	resp, err := codexAuth.FetchUsage(ctx, client, codexAuth.UsageQuery{
 		AccessToken: accessToken,
 		AccountID:   accountID,
+		UserAgent:   config.GetUserAgent(),
+		Originator:  config.GetOriginator(),
 		ProxyURL:    proxyURL,
 	})
 	if err != nil {

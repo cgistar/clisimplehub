@@ -111,6 +111,19 @@ func (p *CodexPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	r.HandleFunc("/v0/management/oauth-callback", r.RequireAuth(p.handleOAuthCallback))
 }
 
+func (p *CodexPlugin) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Request) {
+	p.mu.RLock()
+	svc := p.service
+	p.mu.RUnlock()
+	if svc == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "codex plugin not initialized",
+		})
+		return
+	}
+	svc.HandleResponsesWebsocket(w, r)
+}
+
 func (p *CodexPlugin) Reload() error {
 	pool := codex.GetPool()
 	if pool != nil {
@@ -174,6 +187,7 @@ func (p *CodexPlugin) SyncExport(configPath string) (string, json.RawMessage, er
 }
 
 func (p *CodexPlugin) SyncImport(configPath string, data json.RawMessage) error {
+	hasEnabledField := bytes.Contains(data, []byte(`"enabled"`))
 	var payload codexSyncPayload
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return err
@@ -195,6 +209,9 @@ func (p *CodexPlugin) SyncImport(configPath string, data json.RawMessage) error 
 		account.CooldownReason = strings.TrimSpace(account.CooldownReason)
 		if account.Weight <= 0 {
 			account.Weight = 1
+		}
+		if !hasEnabledField {
+			account.Enabled = true
 		}
 		switch account.Status {
 		case codexShared.CodexStatusValid, codexShared.CodexStatusBanned, codexShared.CodexStatusExhausted, codexShared.CodexStatusReused, codexShared.CodexStatusUnknown:
@@ -286,6 +303,8 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		Email        string `json:"email"`
 		PlanType     string `json:"planType"`
 		AccountID    string `json:"accountId"`
+		Enabled      *bool  `json:"enabled,omitempty"`
+		Websockets   bool   `json:"websockets"`
 		AccessToken  string `json:"accessToken"`
 		IDToken      string `json:"idToken"`
 		ExpiresAt    string `json:"expiresAt"`
@@ -329,6 +348,10 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	}
 
 	now := time.Now()
+	enabled := true
+	if dto.Enabled != nil {
+		enabled = *dto.Enabled
+	}
 	account := codexShared.CodexAccount{
 		RefreshToken: dto.RefreshToken,
 		AccessToken:  dto.AccessToken,
@@ -336,6 +359,8 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		AccountID:    dto.AccountID,
 		Email:        dto.Email,
 		PlanType:     dto.PlanType,
+		Enabled:      enabled,
+		Websockets:   dto.Websockets,
 		Password:     dto.Password,
 		MFACode:      dto.MFACode,
 		ProxyUrl:     dto.ProxyUrl,

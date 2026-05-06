@@ -48,6 +48,8 @@ function normalizeUsage(raw: unknown): CodexUsage | undefined {
 function normalizeAccount(account: main.CodexAccountDTO): CodexAccount {
   return {
     ...account,
+    enabled: account.enabled !== false,
+    websockets: Boolean(account.websockets),
     status: account.status || 'valid',
     codexUsage: normalizeUsage(account.codexUsage)
   }
@@ -56,6 +58,8 @@ function normalizeAccount(account: main.CodexAccountDTO): CodexAccount {
 function toCodexDto(input: CodexAccountInput): main.CodexAccountDTO {
   return {
     refreshToken: input.refreshToken ?? '',
+    enabled: input.enabled !== false,
+    websockets: Boolean(input.websockets),
     status: input.status ?? 'valid',
     isActive: Boolean(input.isActive),
     ...input
@@ -132,6 +136,10 @@ export const codexApi = {
 
   async startLoginWithURL(): Promise<string> {
     return App.StartCodexLoginWithURL()
+  },
+
+  async submitLoginCallbackURL(callbackURL: string): Promise<void> {
+    await App.SubmitCodexLoginCallbackURL(callbackURL)
   },
 
   async waitForLoginCallback(): Promise<CodexLoginResult> {

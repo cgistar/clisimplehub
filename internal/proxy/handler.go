@@ -136,6 +136,38 @@ func isAnthropicRequest(interfaceType InterfaceType, path string) bool {
 	return interfaceType == InterfaceTypeClaude || IsAnthropicCompatiblePath(path)
 }
 
+func (p *ProxyServer) handleV1ResponsesWebsocketRoute(w http.ResponseWriter, r *http.Request) {
+	if r == nil || !strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
+		p.handleGatewayFallback(w, r)
+		return
+	}
+
+	exec := p.ensureExecutor()
+	forwardReq := executor.ForwardRequestFromHTTP(r, nil, true)
+	endpoint, resolvedType := p.resolveEndpointForRequest(exec, r, forwardReq)
+	if resolvedType != "" && !strings.EqualFold(resolvedType, string(InterfaceTypeCodex)) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "responses websocket requires codex endpoint",
+		})
+		return
+	}
+	if endpoint == nil || !strings.EqualFold(strings.TrimSpace(endpoint.Transformer), "openai/codex") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "responses websocket requires active codex endpoint with openai/codex transformer",
+		})
+		return
+	}
+
+	provider, ok := plugin.ByName("codex-accounts").(plugin.CodexResponsesWebsocketProvider)
+	if !ok || provider == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "codex websocket provider not available",
+		})
+		return
+	}
+	provider.HandleResponsesWebsocket(w, r)
+}
+
 func (p *ProxyServer) resolveEndpointForRequest(exec *proxyExecutor, r *http.Request, req *executor.ForwardRequest) (*executor.EndpointConfig, string) {
 	if exec == nil || req == nil {
 		return nil, ""
