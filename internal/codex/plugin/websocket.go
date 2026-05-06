@@ -638,6 +638,11 @@ func normalizeResponsesWebsocketSubsequent(rawJSON []byte, lastRequest []byte, l
 		return nil, nil, lastRequest, errors.New("websocket request requires array field: input")
 	}
 
+	if shouldReplaceWebsocketTranscript(rawJSON, nextInput) {
+		normalized := normalizeResponsesWebsocketTranscriptReplacement(rawJSON, lastRequest)
+		return normalized, bytes.Clone(normalized), bytes.Clone(normalized), nil
+	}
+
 	if prev := strings.TrimSpace(gjson.GetBytes(rawJSON, "previous_response_id").String()); prev != "" {
 		websocketBody, errDelete := sjson.DeleteBytes(rawJSON, "type")
 		if errDelete != nil {
@@ -652,6 +657,11 @@ func normalizeResponsesWebsocketSubsequent(rawJSON []byte, lastRequest []byte, l
 			return nil, nil, lastRequest, err
 		}
 		return websocketBody, httpBody, bytes.Clone(httpBody), nil
+	}
+
+	if inputContainsFullTranscript(nextInput) {
+		normalized := normalizeResponsesWebsocketTranscriptReplacement(rawJSON, lastRequest)
+		return normalized, bytes.Clone(normalized), bytes.Clone(normalized), nil
 	}
 
 	mergedBody, err := normalizeResponsesWebsocketMergedSubsequent(rawJSON, lastRequest, lastResponseOutput, nextInput.Raw)
@@ -686,6 +696,43 @@ func normalizeResponsesWebsocketMergedSubsequent(rawJSON []byte, lastRequest []b
 	return normalized, nil
 }
 
+func shouldReplaceWebsocketTranscript(rawJSON []byte, nextInput gjson.Result) bool {
+	requestType := strings.TrimSpace(gjson.GetBytes(rawJSON, "type").String())
+	if requestType != "response.create" && requestType != "response.append" {
+		return false
+	}
+	if strings.TrimSpace(gjson.GetBytes(rawJSON, "previous_response_id").String()) != "" {
+		return false
+	}
+	if !nextInput.Exists() || !nextInput.IsArray() {
+		return false
+	}
+
+	for _, item := range nextInput.Array() {
+		switch strings.TrimSpace(item.Get("type").String()) {
+		case "function_call", "custom_tool_call":
+			return true
+		case "message":
+			if strings.TrimSpace(item.Get("role").String()) == "assistant" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeResponsesWebsocketTranscriptReplacement(rawJSON []byte, lastRequest []byte) []byte {
+	normalized, errDelete := sjson.DeleteBytes(rawJSON, "type")
+	if errDelete != nil {
+		normalized = bytes.Clone(rawJSON)
+	}
+	normalized, _ = sjson.DeleteBytes(normalized, "previous_response_id")
+	normalized = ensureResponsesWebsocketInheritedFields(normalized, lastRequest)
+	normalized, _ = sjson.SetBytes(normalized, "stream", true)
+	normalized = stripCodexUnsupportedRequestFields(normalized)
+	return bytes.Clone(normalized)
+}
+
 func ensureResponsesWebsocketInheritedFields(normalized []byte, lastRequest []byte) []byte {
 	if !gjson.GetBytes(normalized, "model").Exists() {
 		if modelName := strings.TrimSpace(gjson.GetBytes(lastRequest, "model").String()); modelName != "" {
@@ -699,6 +746,19 @@ func ensureResponsesWebsocketInheritedFields(normalized []byte, lastRequest []by
 		}
 	}
 	return normalized
+}
+
+func inputContainsFullTranscript(input gjson.Result) bool {
+	if !input.IsArray() {
+		return false
+	}
+	for _, item := range input.Array() {
+		switch item.Get("type").String() {
+		case "compaction", "compaction_summary":
+			return true
+		}
+	}
+	return false
 }
 
 func stripCodexUnsupportedRequestFields(rawJSON []byte) []byte {
