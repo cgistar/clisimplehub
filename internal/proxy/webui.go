@@ -819,10 +819,10 @@ func (p *ProxyServer) handleWebUIUpdateCodexAccount(w http.ResponseWriter, r *ht
 		return
 	}
 
-	accountID := strings.TrimSpace(fmt.Sprint(req["accountId"]))
+	accountID := strings.TrimSpace(fmt.Sprint(req["id"]))
 	if accountID == "" || accountID == "<nil>" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "accountId 必填",
+			"error": "id 必填",
 		})
 		return
 	}

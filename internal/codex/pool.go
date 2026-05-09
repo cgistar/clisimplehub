@@ -39,7 +39,7 @@ func SortAccounts(accounts []shared.CodexAccount) {
 		if !left.CreatedAt.Equal(right.CreatedAt) {
 			return left.CreatedAt.Before(right.CreatedAt)
 		}
-		return strings.TrimSpace(left.AccountID) < strings.TrimSpace(right.AccountID)
+		return accountLocalID(&left) < accountLocalID(&right)
 	})
 }
 func InitPool(codexJsonPath string, store shared.CodexAccountStore) error {
@@ -68,8 +68,15 @@ func InitPool(codexJsonPath string, store shared.CodexAccountStore) error {
 		if err != nil {
 			log.Printf("[codex-pool] failed to load accounts from store: %v", err)
 		} else {
+			normalizeAccountIDs(accounts)
 			SortAccounts(accounts)
 			pool.accounts = accounts
+			oldActiveID := pool.activeAccountID
+			pool.activeAccountID = resolveConfiguredActiveID(pool.activeAccountID, accounts)
+			pool.config.ActiveAccountID = pool.activeAccountID
+			if oldActiveID != pool.activeAccountID {
+				_ = shared.SaveCodexMultiConfig(codexJsonPath, pool.config)
+			}
 		}
 	}
 
@@ -102,7 +109,7 @@ func (p *CodexAccountPool) SelectExcluding(excluded map[string]bool) *shared.Cod
 		if a == nil || len(excluded) == 0 {
 			return true
 		}
-		return !excluded[strings.TrimSpace(a.AccountID)]
+		return !excluded[accountLocalID(a)]
 	})
 }
 
@@ -117,7 +124,7 @@ func (p *CodexAccountPool) SelectWebsocketExcluding(excluded map[string]bool) *s
 		if a == nil || !a.Websockets {
 			return false
 		}
-		return !excluded[strings.TrimSpace(a.AccountID)]
+		return !excluded[accountLocalID(a)]
 	})
 }
 
@@ -171,7 +178,7 @@ func (p *CodexAccountPool) MarkFailed(accountId string, status shared.CodexAccou
 	}
 
 	for i := range p.accounts {
-		if strings.TrimSpace(p.accounts[i].AccountID) == id {
+		if accountLocalID(&p.accounts[i]) == id {
 			if status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused {
 				p.accounts[i].Status = status
 			}
@@ -201,8 +208,8 @@ func (p *CodexAccountPool) MarkFailed(accountId string, status shared.CodexAccou
 	if mode == shared.RotationFailover {
 		if p.activeAccountID == id {
 			if next := p.findNextAvailable(id, nil); next != nil {
-				p.activeAccountID = next.AccountID
-				p.config.ActiveAccountID = next.AccountID
+				p.activeAccountID = accountLocalID(next)
+				p.config.ActiveAccountID = p.activeAccountID
 				_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 			}
 		}
@@ -219,7 +226,7 @@ func (p *CodexAccountPool) ReportSuccess(accountId string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.failed, accountId)
+	delete(p.failed, strings.TrimSpace(accountId))
 }
 
 func (p *CodexAccountPool) UpdateUsageSnapshot(accountId string, snapshot *shared.CodexUsageSnapshot) {
@@ -230,7 +237,7 @@ func (p *CodexAccountPool) UpdateUsageSnapshot(accountId string, snapshot *share
 	defer p.mu.Unlock()
 
 	for i := range p.accounts {
-		if p.accounts[i].AccountID == accountId {
+		if accountLocalID(&p.accounts[i]) == accountId {
 			p.accounts[i].CodexUsage = snapshot
 			break
 		}
@@ -261,8 +268,15 @@ func (p *CodexAccountPool) Reload() {
 
 	if p.store != nil {
 		if accounts, err := p.store.ListAccounts(context.Background()); err == nil {
+			normalizeAccountIDs(accounts)
 			SortAccounts(accounts)
 			p.accounts = accounts
+			oldActiveID := p.activeAccountID
+			p.activeAccountID = resolveConfiguredActiveID(p.activeAccountID, accounts)
+			p.config.ActiveAccountID = p.activeAccountID
+			if oldActiveID != p.activeAccountID {
+				_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
+			}
 		}
 	}
 
@@ -318,7 +332,7 @@ func (p *CodexAccountPool) resolveActiveAccount(match func(*shared.CodexAccount)
 	activeID := strings.TrimSpace(p.activeAccountID)
 	if activeID != "" {
 		for i := range p.accounts {
-			if strings.TrimSpace(p.accounts[i].AccountID) == activeID && accountMatches(&p.accounts[i], match) {
+			if accountLocalID(&p.accounts[i]) == activeID && accountMatches(&p.accounts[i], match) {
 				return &p.accounts[i]
 			}
 		}
@@ -327,8 +341,8 @@ func (p *CodexAccountPool) resolveActiveAccount(match func(*shared.CodexAccount)
 	if next == nil {
 		return nil
 	}
-	p.activeAccountID = next.AccountID
-	p.config.ActiveAccountID = next.AccountID
+	p.activeAccountID = accountLocalID(next)
+	p.config.ActiveAccountID = p.activeAccountID
 	_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 	return next
 }
@@ -343,7 +357,7 @@ func (p *CodexAccountPool) selectFixed(match func(*shared.CodexAccount) bool) *s
 	if active.IsCoolingDown() {
 		return nil
 	}
-	if _, isFailed := p.failed[active.AccountID]; isFailed {
+	if _, isFailed := p.failed[accountLocalID(active)]; isFailed {
 		return nil
 	}
 	return cloneAccount(active)
@@ -354,7 +368,7 @@ func (p *CodexAccountPool) selectFailover(match func(*shared.CodexAccount) bool)
 	if active != nil {
 		active.ClearCooldownIfExpired()
 		if !active.IsCoolingDown() {
-			if _, isFailed := p.failed[active.AccountID]; !isFailed {
+			if _, isFailed := p.failed[accountLocalID(active)]; !isFailed {
 				return cloneAccount(active)
 			}
 		}
@@ -362,12 +376,12 @@ func (p *CodexAccountPool) selectFailover(match func(*shared.CodexAccount) bool)
 
 	currentID := ""
 	if active != nil {
-		currentID = active.AccountID
+		currentID = accountLocalID(active)
 	}
 	next := p.findNextAvailable(currentID, match)
-	if next != nil && (active == nil || next.AccountID != active.AccountID) {
-		p.activeAccountID = next.AccountID
-		p.config.ActiveAccountID = next.AccountID
+	if next != nil && (active == nil || accountLocalID(next) != accountLocalID(active)) {
+		p.activeAccountID = accountLocalID(next)
+		p.config.ActiveAccountID = p.activeAccountID
 		_ = shared.SaveCodexMultiConfig(p.configPath, p.config)
 	}
 	return cloneAccount(next)
@@ -425,10 +439,11 @@ func (p *CodexAccountPool) availableAccounts(match func(*shared.CodexAccount) bo
 		if !a.IsEnabled() {
 			continue
 		}
-		if strings.TrimSpace(a.AccountID) == "" {
+		localID := accountLocalID(a)
+		if localID == "" {
 			continue
 		}
-		if _, isFailed := p.failed[a.AccountID]; isFailed {
+		if _, isFailed := p.failed[localID]; isFailed {
 			continue
 		}
 		if a.Status == shared.CodexStatusBanned || a.Status == shared.CodexStatusExhausted || a.Status == shared.CodexStatusReused {
@@ -457,7 +472,7 @@ func (p *CodexAccountPool) findNextAvailable(currentAccountID string, match func
 	}
 	startIdx := 0
 	for i, a := range accounts {
-		if a.AccountID == currentAccountID {
+		if accountLocalID(a) == currentAccountID {
 			startIdx = i + 1
 			break
 		}
@@ -480,4 +495,42 @@ func cloneAccount(a *shared.CodexAccount) *shared.CodexAccount {
 func (p *CodexAccountPool) resetWRR() {
 	avail := p.availableAccounts(nil)
 	p.wrrCounters = make([]int, len(avail))
+}
+
+func normalizeAccountIDs(accounts []shared.CodexAccount) {
+	for i := range accounts {
+		shared.EnsureCodexLocalID(&accounts[i])
+		if strings.TrimSpace(accounts[i].ID) == "" {
+			accounts[i].ID = strings.TrimSpace(accounts[i].AccountID)
+		}
+	}
+}
+
+func accountLocalID(a *shared.CodexAccount) string {
+	if a == nil {
+		return ""
+	}
+	id := strings.TrimSpace(a.ID)
+	if id != "" {
+		return id
+	}
+	return strings.TrimSpace(a.AccountID)
+}
+
+func resolveConfiguredActiveID(activeID string, accounts []shared.CodexAccount) string {
+	activeID = strings.TrimSpace(activeID)
+	if activeID == "" {
+		return ""
+	}
+	for i := range accounts {
+		if accountLocalID(&accounts[i]) == activeID {
+			return activeID
+		}
+	}
+	for i := range accounts {
+		if strings.TrimSpace(accounts[i].AccountID) == activeID {
+			return accountLocalID(&accounts[i])
+		}
+	}
+	return activeID
 }

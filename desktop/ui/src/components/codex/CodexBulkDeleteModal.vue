@@ -21,10 +21,10 @@
           <n-space vertical :size="8">
             <div
               v-for="account in manageableAccounts"
-              :key="account.accountId"
+              :key="account.id"
               class="account-item"
             >
-              <n-checkbox :value="account.accountId" :label="getAccountLabel(account)">
+              <n-checkbox :value="account.id" :label="getAccountLabel(account)">
                 <template #default>
                   <div class="account-item-content">
                     <span class="account-label">{{ getAccountLabel(account) }}</span>
@@ -87,7 +87,7 @@ const selectedAccountIds = ref<string[]>([])
 const deleting = ref(false)
 
 const manageableAccounts = computed(() =>
-  accounts.value.filter((account): account is CodexAccount & { accountId: string } => Boolean(account.accountId))
+  accounts.value.filter((account): account is CodexAccount & { id: string } => Boolean(account.id))
 )
 
 function toErrorMessage(error: unknown): string {
@@ -154,7 +154,7 @@ function truncateToken(token?: string): string {
 
 function toggleAll(checked: boolean): void {
   if (checked) {
-    selectedAccountIds.value = manageableAccounts.value.map((account) => account.accountId)
+    selectedAccountIds.value = manageableAccounts.value.map((account) => account.id)
   } else {
     selectedAccountIds.value = []
   }
@@ -163,7 +163,7 @@ function toggleAll(checked: boolean): void {
 function selectBanned(): void {
   selectedAccountIds.value = manageableAccounts.value
     .filter((account) => account.status === 'banned' || account.status === 'reused')
-    .map((account) => account.accountId)
+    .map((account) => account.id)
 }
 
 function handleCancel(): void {

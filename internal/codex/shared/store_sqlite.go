@@ -14,6 +14,37 @@ import (
 //go:embed codex_schema.sql
 var codexSchemaSQL string
 
+const createCodexAccountsTableSQL = `
+CREATE TABLE codex_accounts (
+    id             TEXT PRIMARY KEY,
+    account_id     TEXT NOT NULL DEFAULT '',
+    refresh_token  TEXT NOT NULL DEFAULT '',
+    access_token   TEXT NOT NULL DEFAULT '',
+    id_token       TEXT NOT NULL DEFAULT '',
+    email          TEXT NOT NULL DEFAULT '',
+    plan_type      TEXT NOT NULL DEFAULT '',
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    websockets     INTEGER NOT NULL DEFAULT 0,
+    password       TEXT NOT NULL DEFAULT '',
+    mfa_code       TEXT NOT NULL DEFAULT '',
+    expires_at     DATETIME,
+    status         TEXT NOT NULL DEFAULT 'valid',
+    weight         INTEGER NOT NULL DEFAULT 1,
+    proxy_url      TEXT NOT NULL DEFAULT '',
+    cooldown_until DATETIME,
+    cooldown_reason TEXT NOT NULL DEFAULT '',
+    usage_primary_used_pct           REAL NOT NULL DEFAULT 0,
+    usage_primary_reset_secs         INTEGER NOT NULL DEFAULT 0,
+    usage_primary_window_mins        INTEGER NOT NULL DEFAULT 0,
+    usage_secondary_used_pct         REAL NOT NULL DEFAULT 0,
+    usage_secondary_reset_secs       INTEGER NOT NULL DEFAULT 0,
+    usage_secondary_window_mins      INTEGER NOT NULL DEFAULT 0,
+    usage_primary_over_secondary_pct REAL NOT NULL DEFAULT 0,
+    usage_updated_at                 DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+)`
+
 type SQLiteCodexAccountStore struct {
 	db    *sql.DB
 	queue *sqlitequeue.Manager
@@ -44,7 +75,135 @@ func (s *SQLiteCodexAccountStore) initSchema(ctx context.Context) error {
 	if err := s.ensureAccountCapabilityColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateCodexAccountsLocalID(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *SQLiteCodexAccountStore) migrateCodexAccountsLocalID(ctx context.Context) error {
+	columns, err := s.codexAccountColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if columns["id"] {
+		return nil
+	}
+
+	return s.queue.WithTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(txCtx, `ALTER TABLE codex_accounts RENAME TO codex_accounts_legacy_account_id_pk`); err != nil {
+			return fmt.Errorf("rename legacy codex_accounts: %w", err)
+		}
+		if _, err := tx.ExecContext(txCtx, createCodexAccountsTableSQL); err != nil {
+			return fmt.Errorf("create migrated codex_accounts: %w", err)
+		}
+
+		rows, err := tx.QueryContext(txCtx, `
+			SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
+			       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
+			       cooldown_until, cooldown_reason,
+			       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
+			       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
+			       usage_primary_over_secondary_pct, usage_updated_at,
+			       created_at, updated_at
+			FROM codex_accounts_legacy_account_id_pk`)
+		if err != nil {
+			return fmt.Errorf("read legacy codex accounts: %w", err)
+		}
+		defer rows.Close()
+
+		legacyIDMap := make(map[string]string)
+		for rows.Next() {
+			a, err := scanLegacyAccount(rows)
+			if err != nil {
+				return err
+			}
+			localID := GenerateCodexLocalID(a.AccountID, a.Email)
+			if localID == "" {
+				localID = strings.TrimSpace(a.AccountID)
+			}
+			if localID == "" {
+				return fmt.Errorf("legacy codex account missing account_id")
+			}
+			a.ID = localID
+			if _, exists := legacyIDMap[a.AccountID]; !exists {
+				legacyIDMap[a.AccountID] = localID
+			}
+			if err := insertCodexAccountTx(txCtx, tx, a); err != nil {
+				return fmt.Errorf("migrate account %q: %w", a.AccountID, err)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		for legacyID, localID := range legacyIDMap {
+			if _, err := tx.ExecContext(txCtx, `UPDATE codex_account_stats SET account_id = ? WHERE account_id = ?`, localID, legacyID); err != nil {
+				return fmt.Errorf("migrate stats account id: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(txCtx, `DROP TABLE codex_accounts_legacy_account_id_pk`); err != nil {
+			return fmt.Errorf("drop legacy codex_accounts: %w", err)
+		}
+		if _, err := tx.ExecContext(txCtx, `CREATE INDEX IF NOT EXISTS idx_codex_accounts_refresh_token ON codex_accounts(refresh_token)`); err != nil {
+			return fmt.Errorf("create refresh token index: %w", err)
+		}
+		if _, err := tx.ExecContext(txCtx, `CREATE INDEX IF NOT EXISTS idx_codex_accounts_account_id ON codex_accounts(account_id)`); err != nil {
+			return fmt.Errorf("create account id index: %w", err)
+		}
+		return nil
+	})
+}
+
+func insertCodexAccountTx(ctx context.Context, tx *sql.Tx, a *CodexAccount) error {
+	if a == nil {
+		return errors.New("nil account")
+	}
+	EnsureCodexLocalID(a)
+	if strings.TrimSpace(a.ID) == "" {
+		a.ID = strings.TrimSpace(a.AccountID)
+	}
+	if strings.TrimSpace(a.ID) == "" {
+		return fmt.Errorf("account id is required")
+	}
+
+	var usagePrimPct, usageSecPct, usagePriOverSec float64
+	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+	var usageUpdatedAt any
+	if a.CodexUsage != nil {
+		usagePrimPct = a.CodexUsage.PrimaryUsedPercent
+		usagePrimReset = a.CodexUsage.PrimaryResetAfterSeconds
+		usagePrimWin = a.CodexUsage.PrimaryWindowMinutes
+		usageSecPct = a.CodexUsage.SecondaryUsedPercent
+		usageSecReset = a.CodexUsage.SecondaryResetAfterSeconds
+		usageSecWin = a.CodexUsage.SecondaryWindowMinutes
+		usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
+		if !a.CodexUsage.UpdatedAt.IsZero() {
+			usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
+		}
+	}
+
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO codex_accounts (
+			id, account_id, refresh_token, access_token, id_token, email, plan_type,
+			enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
+			cooldown_until, cooldown_reason,
+			usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
+			usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
+			usage_primary_over_secondary_pct, usage_updated_at,
+			created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
+		boolToInt(a.Enabled), boolToInt(a.Websockets),
+		a.Password, a.MFACode,
+		nullTime(a.ExpiresAt), string(a.Status), a.EffectiveWeight(), a.ProxyUrl,
+		nullTime(a.CooldownUntil), a.CooldownReason,
+		usagePrimPct, usagePrimReset, usagePrimWin,
+		usageSecPct, usageSecReset, usageSecWin,
+		usagePriOverSec, usageUpdatedAt,
+		sqliteTime(a.CreatedAt), sqliteTime(a.UpdatedAt),
+	)
+	return err
 }
 
 func (s *SQLiteCodexAccountStore) ensureAccountCapabilityColumns(ctx context.Context) error {
@@ -99,7 +258,7 @@ func (s *SQLiteCodexAccountStore) Close() error {
 
 func (s *SQLiteCodexAccountStore) ListAccounts(ctx context.Context) ([]CodexAccount, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
+		SELECT id, account_id, refresh_token, access_token, id_token, email, plan_type,
 		       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
@@ -132,7 +291,7 @@ func (s *SQLiteCodexAccountStore) ListAccountsPage(ctx context.Context, offset, 
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
+		SELECT id, account_id, refresh_token, access_token, id_token, email, plan_type,
 		       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
@@ -168,20 +327,20 @@ func (s *SQLiteCodexAccountStore) CountAccounts(ctx context.Context) (int, error
 
 func (s *SQLiteCodexAccountStore) GetByID(ctx context.Context, accountID string) (*CodexAccount, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
+		SELECT id, account_id, refresh_token, access_token, id_token, email, plan_type,
 		       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
 		       usage_primary_over_secondary_pct, usage_updated_at,
 		       created_at, updated_at
-		FROM codex_accounts WHERE account_id = ?`, accountID)
+		FROM codex_accounts WHERE id = ?`, accountID)
 	return scanAccountRow(row)
 }
 
 func (s *SQLiteCodexAccountStore) GetByRefreshToken(ctx context.Context, rt string) (*CodexAccount, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT account_id, refresh_token, access_token, id_token, email, plan_type,
+		SELECT id, account_id, refresh_token, access_token, id_token, email, plan_type,
 		       enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
@@ -195,6 +354,13 @@ func (s *SQLiteCodexAccountStore) GetByRefreshToken(ctx context.Context, rt stri
 func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) error {
 	if a == nil {
 		return errors.New("nil account")
+	}
+	EnsureCodexLocalID(a)
+	if strings.TrimSpace(a.ID) == "" {
+		a.ID = strings.TrimSpace(a.AccountID)
+	}
+	if strings.TrimSpace(a.ID) == "" {
+		return fmt.Errorf("account id is required")
 	}
 	now := time.Now()
 	if a.CreatedAt.IsZero() {
@@ -222,15 +388,15 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 
 	_, err := s.queue.ExecWrite(ctx, `
 		INSERT INTO codex_accounts (
-			account_id, refresh_token, access_token, id_token, email, plan_type,
+			id, account_id, refresh_token, access_token, id_token, email, plan_type,
 			enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 			cooldown_until, cooldown_reason,
 			usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 			usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
 			usage_primary_over_secondary_pct, usage_updated_at,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
 		boolToInt(a.Enabled), boolToInt(a.Websockets),
 		a.Password, a.MFACode,
 		nullTime(a.ExpiresAt), string(a.Status), a.EffectiveWeight(), a.ProxyUrl,
@@ -246,6 +412,13 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) error {
 	if a == nil {
 		return errors.New("nil account")
+	}
+	EnsureCodexLocalID(a)
+	if strings.TrimSpace(a.ID) == "" {
+		a.ID = strings.TrimSpace(a.AccountID)
+	}
+	if strings.TrimSpace(a.ID) == "" {
+		return fmt.Errorf("account id is required")
 	}
 	a.UpdatedAt = time.Now()
 
@@ -275,7 +448,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 			usage_secondary_used_pct = ?, usage_secondary_reset_secs = ?, usage_secondary_window_mins = ?,
 			usage_primary_over_secondary_pct = ?, usage_updated_at = ?,
 			updated_at = ?
-		WHERE account_id = ?`,
+		WHERE id = ?`,
 		a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
 		boolToInt(a.Enabled), boolToInt(a.Websockets),
 		a.Password, a.MFACode,
@@ -285,7 +458,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 		usageSecPct, usageSecReset, usageSecWin,
 		usagePriOverSec, usageUpdatedAt,
 		sqliteTime(a.UpdatedAt),
-		a.AccountID,
+		a.ID,
 	)
 	return err
 }
@@ -295,7 +468,7 @@ func (s *SQLiteCodexAccountStore) Delete(ctx context.Context, accountID string) 
 		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_account_stats WHERE account_id = ?`, accountID); err != nil {
 			return fmt.Errorf("delete stats: %w", err)
 		}
-		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_accounts WHERE account_id = ?`, accountID); err != nil {
+		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_accounts WHERE id = ?`, accountID); err != nil {
 			return fmt.Errorf("delete account: %w", err)
 		}
 		return nil
@@ -331,7 +504,7 @@ func (s *SQLiteCodexAccountStore) DeleteMany(ctx context.Context, accountIDs []s
 		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_account_stats WHERE account_id IN (`+placeholders+`)`, args...); err != nil {
 			return fmt.Errorf("delete stats: %w", err)
 		}
-		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_accounts WHERE account_id IN (`+placeholders+`)`, args...); err != nil {
+		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_accounts WHERE id IN (`+placeholders+`)`, args...); err != nil {
 			return fmt.Errorf("delete accounts: %w", err)
 		}
 		return nil
@@ -349,6 +522,13 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 		now := time.Now()
 		for i := range accounts {
 			a := accounts[i]
+			EnsureCodexLocalID(&a)
+			if strings.TrimSpace(a.ID) == "" {
+				a.ID = strings.TrimSpace(a.AccountID)
+			}
+			if a.ID == "" {
+				return fmt.Errorf("account[%d] id is required", i)
+			}
 			a.AccountID = strings.TrimSpace(a.AccountID)
 			if a.AccountID == "" {
 				return fmt.Errorf("account[%d] account_id is required", i)
@@ -378,15 +558,15 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 
 			if _, err := tx.ExecContext(txCtx, `
 				INSERT INTO codex_accounts (
-					account_id, refresh_token, access_token, id_token, email, plan_type,
+					id, account_id, refresh_token, access_token, id_token, email, plan_type,
 					enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
 					cooldown_until, cooldown_reason,
 					usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 					usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
 					usage_primary_over_secondary_pct, usage_updated_at,
 					created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				a.ID, a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
 				boolToInt(a.Enabled), boolToInt(a.Websockets),
 				a.Password, a.MFACode,
 				nullTime(a.ExpiresAt), string(a.Status), a.EffectiveWeight(), a.ProxyUrl,
@@ -404,7 +584,7 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 		if _, err := tx.ExecContext(txCtx, `
 			DELETE FROM codex_account_stats
 			WHERE NOT EXISTS (
-				SELECT 1 FROM codex_accounts WHERE codex_accounts.account_id = codex_account_stats.account_id
+				SELECT 1 FROM codex_accounts WHERE codex_accounts.id = codex_account_stats.account_id
 			)`); err != nil {
 			return fmt.Errorf("clear orphan stats: %w", err)
 		}
@@ -424,7 +604,7 @@ func (s *SQLiteCodexAccountStore) UpdateTokens(ctx context.Context, accountID, a
 	result, err := s.queue.ExecWrite(ctx, `
 		UPDATE codex_accounts SET
 			access_token = ?, id_token = ?, refresh_token = ?, expires_at = ?, updated_at = ?
-		WHERE account_id = ?`,
+		WHERE id = ?`,
 		accessToken, idToken, refreshToken, nullTime(expiresAt), sqliteTime(time.Now()), accountID)
 	if err != nil {
 		return err
@@ -442,14 +622,14 @@ func (s *SQLiteCodexAccountStore) UpdateTokens(ctx context.Context, accountID, a
 
 func (s *SQLiteCodexAccountStore) UpdateStatus(ctx context.Context, accountID string, status CodexAccountStatus) error {
 	_, err := s.queue.ExecWrite(ctx, `
-		UPDATE codex_accounts SET status = ?, updated_at = ? WHERE account_id = ?`,
+		UPDATE codex_accounts SET status = ?, updated_at = ? WHERE id = ?`,
 		string(status), sqliteTime(time.Now()), accountID)
 	return err
 }
 
 func (s *SQLiteCodexAccountStore) UpdateCooldown(ctx context.Context, accountID string, until time.Time, reason string) error {
 	_, err := s.queue.ExecWrite(ctx, `
-		UPDATE codex_accounts SET cooldown_until = ?, cooldown_reason = ?, updated_at = ? WHERE account_id = ?`,
+		UPDATE codex_accounts SET cooldown_until = ?, cooldown_reason = ?, updated_at = ? WHERE id = ?`,
 		nullTime(until), reason, sqliteTime(time.Now()), accountID)
 	return err
 }
@@ -464,7 +644,7 @@ func (s *SQLiteCodexAccountStore) UpdateUsageSnapshot(ctx context.Context, accou
 			usage_secondary_used_pct = ?, usage_secondary_reset_secs = ?, usage_secondary_window_mins = ?,
 			usage_primary_over_secondary_pct = ?, usage_updated_at = ?,
 			updated_at = ?
-		WHERE account_id = ?`,
+		WHERE id = ?`,
 		snapshot.PrimaryUsedPercent, snapshot.PrimaryResetAfterSeconds, snapshot.PrimaryWindowMinutes,
 		snapshot.SecondaryUsedPercent, snapshot.SecondaryResetAfterSeconds, snapshot.SecondaryWindowMinutes,
 		snapshot.PrimaryOverSecondaryPercent, nullTime(snapshot.UpdatedAt),
@@ -665,7 +845,7 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
 
 	err := s.Scan(
-		&a.AccountID, &a.RefreshToken, &a.AccessToken, &a.IDToken, &a.Email, &a.PlanType,
+		&a.ID, &a.AccountID, &a.RefreshToken, &a.AccessToken, &a.IDToken, &a.Email, &a.PlanType,
 		&enabled, &websockets, &a.Password, &a.MFACode,
 		&expiresAt, &status, &a.Weight, &a.ProxyUrl,
 		&cooldownUntil, &a.CooldownReason,
@@ -678,6 +858,60 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 		return nil, err
 	}
 
+	a.Status = CodexAccountStatus(status)
+	a.Enabled = enabled != 0
+	a.Websockets = websockets != 0
+	if t, ok := parseSQLiteTime(expiresAt); ok {
+		a.ExpiresAt = t
+	}
+	if t, ok := parseSQLiteTime(cooldownUntil); ok {
+		a.CooldownUntil = t
+	}
+	if t, ok := parseSQLiteTime(createdAt); ok {
+		a.CreatedAt = t
+	}
+	if t, ok := parseSQLiteTime(updatedAt); ok {
+		a.UpdatedAt = t
+	}
+	usageUpdatedAtTime, hasUsageUpdatedAt := parseSQLiteTime(usageUpdatedAt)
+	if hasUsageUpdatedAt || usagePrimPct > 0 || usageSecPct > 0 {
+		a.CodexUsage = &CodexUsageSnapshot{
+			PrimaryUsedPercent:          usagePrimPct,
+			PrimaryResetAfterSeconds:    usagePrimReset,
+			PrimaryWindowMinutes:        usagePrimWin,
+			SecondaryUsedPercent:        usageSecPct,
+			SecondaryResetAfterSeconds:  usageSecReset,
+			SecondaryWindowMinutes:      usageSecWin,
+			PrimaryOverSecondaryPercent: usagePriOverSec,
+		}
+		if hasUsageUpdatedAt {
+			a.CodexUsage.UpdatedAt = usageUpdatedAtTime
+		}
+	}
+	return &a, nil
+}
+
+func scanLegacyAccount(rows *sql.Rows) (*CodexAccount, error) {
+	var a CodexAccount
+	var expiresAt, cooldownUntil, usageUpdatedAt, createdAt, updatedAt any
+	var status string
+	var enabled, websockets int
+	var usagePrimPct, usageSecPct, usagePriOverSec float64
+	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+
+	err := rows.Scan(
+		&a.AccountID, &a.RefreshToken, &a.AccessToken, &a.IDToken, &a.Email, &a.PlanType,
+		&enabled, &websockets, &a.Password, &a.MFACode,
+		&expiresAt, &status, &a.Weight, &a.ProxyUrl,
+		&cooldownUntil, &a.CooldownReason,
+		&usagePrimPct, &usagePrimReset, &usagePrimWin,
+		&usageSecPct, &usageSecReset, &usageSecWin,
+		&usagePriOverSec, &usageUpdatedAt,
+		&createdAt, &updatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
 	a.Status = CodexAccountStatus(status)
 	a.Enabled = enabled != 0
 	a.Websockets = websockets != 0

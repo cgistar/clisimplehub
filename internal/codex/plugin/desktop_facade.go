@@ -56,7 +56,7 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 	if len(accounts) > 0 {
 		accountIDs := make([]string, 0, len(accounts))
 		for i := range accounts {
-			accountIDs = append(accountIDs, accounts[i].AccountID)
+			accountIDs = append(accountIDs, accounts[i].ID)
 		}
 		if statsMap, err := store.GetStatsSummaryMap(context.Background(), accountIDs, "today"); err == nil && statsMap != nil {
 			statsByAccount = statsMap
@@ -64,7 +64,7 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 	}
 
 	for i := range accounts {
-		if summary, ok := statsByAccount[accounts[i].AccountID]; ok {
+		if summary, ok := statsByAccount[accounts[i].ID]; ok {
 			accounts[i].TodayRequests = summary.RequestCount
 			accounts[i].TodayTokens = summary.TotalTokens
 		}
@@ -116,7 +116,7 @@ func (d *desktopFacade) GetAccountsPage(configPath string, offset, limit int) (j
 	if len(accounts) > 0 {
 		accountIDs := make([]string, 0, len(accounts))
 		for i := range accounts {
-			accountIDs = append(accountIDs, accounts[i].AccountID)
+			accountIDs = append(accountIDs, accounts[i].ID)
 		}
 		if statsMap, err := store.GetStatsSummaryMap(context.Background(), accountIDs, "today"); err == nil && statsMap != nil {
 			statsByAccount = statsMap
@@ -126,11 +126,11 @@ func (d *desktopFacade) GetAccountsPage(configPath string, offset, limit int) (j
 	list := make([]map[string]any, 0, len(accounts))
 	for i := range accounts {
 		a := &accounts[i]
-		if summary, ok := statsByAccount[a.AccountID]; ok {
+		if summary, ok := statsByAccount[a.ID]; ok {
 			a.TodayRequests = summary.RequestCount
 			a.TodayTokens = summary.TotalTokens
 		}
-		isActive := activeID != "" && strings.TrimSpace(a.AccountID) == strings.TrimSpace(activeID)
+		isActive := activeID != "" && strings.TrimSpace(a.ID) == strings.TrimSpace(activeID)
 		list = append(list, codexShared.MarshalAccountForFrontend(a, isActive))
 	}
 
@@ -205,6 +205,7 @@ func (d *desktopFacade) AddAccount(configPath string, dtoJSON json.RawMessage) (
 
 func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage) error {
 	var dto struct {
+		ID           string  `json:"id"`
 		AccountID    string  `json:"accountId"`
 		RefreshToken *string `json:"refreshToken,omitempty"`
 		Email        *string `json:"email,omitempty"`
@@ -221,9 +222,9 @@ func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage
 		return err
 	}
 
-	dto.AccountID = strings.TrimSpace(dto.AccountID)
-	if dto.AccountID == "" {
-		return fmt.Errorf("accountId is required")
+	dto.ID = strings.TrimSpace(dto.ID)
+	if dto.ID == "" {
+		return fmt.Errorf("id is required")
 	}
 
 	store := getStore()
@@ -231,9 +232,9 @@ func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage
 		return fmt.Errorf("account store not initialized")
 	}
 
-	account, err := store.GetByID(context.Background(), dto.AccountID)
+	account, err := store.GetByID(context.Background(), dto.ID)
 	if err != nil || account == nil {
-		return fmt.Errorf("account not found: %s", dto.AccountID)
+		return fmt.Errorf("account not found: %s", dto.ID)
 	}
 
 	if dto.RefreshToken != nil {
@@ -304,7 +305,7 @@ func (d *desktopFacade) DeleteAccount(configPath, accountId string) error {
 	if mc != nil && mc.ActiveAccountID == accountId {
 		accounts, _ := store.ListAccounts(context.Background())
 		if len(accounts) > 0 {
-			mc.ActiveAccountID = accounts[0].AccountID
+			mc.ActiveAccountID = accounts[0].ID
 		} else {
 			mc.ActiveAccountID = ""
 		}
@@ -352,7 +353,7 @@ func (d *desktopFacade) DeleteAccounts(configPath string, accountIDs []string) e
 				if id == activeID {
 					accounts, _ := store.ListAccounts(context.Background())
 					if len(accounts) > 0 {
-						mc.ActiveAccountID = accounts[0].AccountID
+						mc.ActiveAccountID = accounts[0].ID
 					} else {
 						mc.ActiveAccountID = ""
 					}
@@ -398,7 +399,7 @@ func (d *desktopFacade) TestAccount(configPath, accountId string) (json.RawMessa
 		return nil, err
 	}
 
-	if err := store.UpdateTokens(context.Background(), account.AccountID, accessToken, idToken, account.RefreshToken, expiresAt); err != nil {
+	if err := store.UpdateTokens(context.Background(), account.ID, accessToken, idToken, account.RefreshToken, expiresAt); err != nil {
 		return nil, fmt.Errorf("persist refreshed tokens failed: %w", err)
 	}
 
@@ -414,10 +415,10 @@ func (d *desktopFacade) TestAccount(configPath, accountId string) (json.RawMessa
 		}
 	}
 
-	if err := store.UpdateCooldown(context.Background(), account.AccountID, time.Time{}, ""); err != nil {
+	if err := store.UpdateCooldown(context.Background(), account.ID, time.Time{}, ""); err != nil {
 		return nil, fmt.Errorf("clear cooldown failed: %w", err)
 	}
-	if err := store.UpdateStatus(context.Background(), account.AccountID, codexShared.CodexStatusValid); err != nil {
+	if err := store.UpdateStatus(context.Background(), account.ID, codexShared.CodexStatusValid); err != nil {
 		return nil, fmt.Errorf("update account status failed: %w", err)
 	}
 

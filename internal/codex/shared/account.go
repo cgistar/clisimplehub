@@ -1,7 +1,9 @@
 package shared
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -50,6 +52,7 @@ func ComputeResetMeta(updatedAt time.Time, resetAfterSeconds int) (resetAt time.
 }
 
 type CodexAccount struct {
+	ID             string              `json:"id,omitempty"`
 	RefreshToken   string              `json:"refreshToken"`
 	AccessToken    string              `json:"accessToken,omitempty"`
 	IDToken        string              `json:"idToken,omitempty"`
@@ -71,6 +74,27 @@ type CodexAccount struct {
 	UpdatedAt      time.Time           `json:"updatedAt,omitempty"`
 	TodayRequests  int64               `json:"todayRequests,omitempty"`
 	TodayTokens    int64               `json:"todayTotalTokens,omitempty"`
+}
+
+func GenerateCodexLocalID(accountID, email string) string {
+	accountID = strings.ToLower(strings.TrimSpace(accountID))
+	email = strings.ToLower(strings.TrimSpace(email))
+	if accountID == "" || email == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(accountID + "\x00" + email))
+	return "codex_" + fmt.Sprintf("%x", sum[:])[:32]
+}
+
+func EnsureCodexLocalID(a *CodexAccount) string {
+	if a == nil {
+		return ""
+	}
+	a.ID = strings.TrimSpace(a.ID)
+	if a.ID == "" {
+		a.ID = GenerateCodexLocalID(a.AccountID, a.Email)
+	}
+	return a.ID
 }
 
 type CodexMultiConfig struct {
@@ -195,6 +219,7 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 		return nil
 	}
 	m := map[string]interface{}{
+		"id":               a.ID,
 		"refreshToken":     a.RefreshToken,
 		"accessToken":      a.AccessToken,
 		"idToken":          a.IDToken,
@@ -260,7 +285,7 @@ func MarshalAccountsResponse(activeAccountID string, accounts []CodexAccount) (j
 	list := make([]map[string]interface{}, 0, len(accounts))
 	for i := range accounts {
 		a := &accounts[i]
-		isActive := activeAccountID != "" && strings.TrimSpace(a.AccountID) == activeAccountID
+		isActive := activeAccountID != "" && strings.TrimSpace(a.ID) == activeAccountID
 		list = append(list, MarshalAccountForFrontend(a, isActive))
 	}
 

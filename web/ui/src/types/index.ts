@@ -74,6 +74,7 @@ export interface CodexUsage {
 }
 
 export interface CodexAccount {
+  id?: string
   refreshToken?: string
   email?: string
   planType?: string
@@ -107,6 +108,7 @@ export interface CodexPageData {
 }
 
 export interface CodexAccountInput {
+  id?: string
   refreshToken?: string
   email?: string
   planType?: string
@@ -134,6 +136,7 @@ export interface CodexConfigForm {
 }
 
 export interface CodexEditForm {
+  id: string
   accountId: string
   refreshToken: string
   password: string

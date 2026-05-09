@@ -4,7 +4,7 @@ import { ROUTES, routeFromPath } from '@/constants/routes'
 import { webApi } from '@/api/web'
 import type { ApiError } from '@/api/client'
 import { copyToClipboard } from '@/lib/format'
-import { createCodexConfigForm, createCodexEditForm } from '@/lib/codex'
+import { buildCodexAccountCopyData, buildCodexAccountsCopyJson, createCodexConfigForm, createCodexEditForm } from '@/lib/codex'
 import type { ActionResponse, CodexAccount, CodexConfigForm, CodexEditForm, CodexPageData, HomePageData, RouteKey, SettingsData, SettingsForm } from '@/types'
 import LoginScreen from '@/components/LoginScreen'
 import Topbar from '@/components/Topbar'
@@ -210,23 +210,19 @@ export default function App() {
 
   async function handleCopyCodexAccount(account: CodexAccount): Promise<void> {
     try {
-      const copyData: Record<string, string | number> = {}
-      if (account.refreshToken) copyData.refreshToken = account.refreshToken
-      if (account.email) copyData.email = account.email
-      if (account.accountId) copyData.accountId = account.accountId
-      if (account.planType) copyData.planType = account.planType
-      if (account.accessToken) copyData.accessToken = account.accessToken
-      if (account.idToken) copyData.idToken = account.idToken
-      if (account.password) copyData.password = account.password
-      if (account.mfaCode) copyData.mfaCode = account.mfaCode
-      if (account.expiresAt) copyData.expiresAt = account.expiresAt
-      if (account.proxyUrl) copyData.proxyUrl = account.proxyUrl
-      if (typeof account.weight === 'number') copyData.weight = account.weight
-
-      await copyToClipboard(JSON.stringify(copyData, null, 2))
+      await copyToClipboard(JSON.stringify(buildCodexAccountCopyData(account), null, 2))
       toast.success('账号信息已复制到剪贴板')
     } catch (error) {
       toast.error((error as ApiError).message || '复制账号信息失败')
+    }
+  }
+
+  async function handleCopyVisibleCodexAccounts(accounts: CodexAccount[]): Promise<void> {
+    try {
+      await copyToClipboard(buildCodexAccountsCopyJson(accounts))
+      toast.success('当前显示账号已复制到剪贴板')
+    } catch (error) {
+      toast.error((error as ApiError).message || '复制当前显示账号失败')
     }
   }
 
@@ -385,6 +381,7 @@ export default function App() {
             onOpenConfig={handleOpenCodexConfig}
             onOpenImport={handleOpenCodexImport}
             onRefreshCodex={() => refreshCurrentPage('codex')}
+            onCopyVisibleAccounts={handleCopyVisibleCodexAccounts}
             onActivateAccount={handleActivateAccount}
             onRefreshToken={handleRefreshCodexToken}
             onFetchUsage={handleFetchCodexUsage}

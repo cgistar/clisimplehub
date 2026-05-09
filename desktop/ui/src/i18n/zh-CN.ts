@@ -173,6 +173,7 @@ export default {
     fetchUsage: '获取用量',
     refreshToken: '刷新 Token',
     copy: '复制',
+    copyVisibleAccounts: '复制',
     active: '正在使用',
     proxy: '代理',
     config: '配置',

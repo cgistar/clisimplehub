@@ -173,6 +173,7 @@ export default {
     fetchUsage: 'Fetch Usage',
     refreshToken: 'Refresh Token',
     copy: 'Copy',
+    copyVisibleAccounts: 'Copy',
     active: 'Active',
     proxy: 'Proxy',
     config: 'Config',

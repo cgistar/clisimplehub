@@ -195,15 +195,16 @@ func (p *CodexPlugin) SyncImport(configPath string, data json.RawMessage) error 
 
 	now := time.Now()
 	seenAccountIDs := make(map[string]struct{}, len(payload.Accounts))
+	legacyAccountIDs := make(map[string]string, len(payload.Accounts))
 	seenRefreshTokens := make(map[string]struct{}, len(payload.Accounts))
 
 	for i := range payload.Accounts {
 		account := &payload.Accounts[i]
 		account.AccountID = strings.TrimSpace(account.AccountID)
+		account.Email = strings.TrimSpace(account.Email)
 		account.RefreshToken = strings.TrimSpace(account.RefreshToken)
 		account.AccessToken = strings.TrimSpace(account.AccessToken)
 		account.IDToken = strings.TrimSpace(account.IDToken)
-		account.Email = strings.TrimSpace(account.Email)
 		account.PlanType = strings.TrimSpace(account.PlanType)
 		account.ProxyUrl = strings.TrimSpace(account.ProxyUrl)
 		account.CooldownReason = strings.TrimSpace(account.CooldownReason)
@@ -228,10 +229,23 @@ func (p *CodexPlugin) SyncImport(configPath string, data json.RawMessage) error 
 		if account.AccountID == "" {
 			return fmt.Errorf("codex account[%d] missing accountId", i)
 		}
-		if _, exists := seenAccountIDs[account.AccountID]; exists {
-			return fmt.Errorf("duplicate codex accountId: %s", account.AccountID)
+		account.ID = strings.TrimSpace(account.ID)
+		if account.ID == "" {
+			account.ID = codexShared.GenerateCodexLocalID(account.AccountID, account.Email)
 		}
-		seenAccountIDs[account.AccountID] = struct{}{}
+		if account.ID == "" {
+			account.ID = account.AccountID
+		}
+		if account.ID == "" {
+			return fmt.Errorf("codex account[%d] missing id inputs", i)
+		}
+		if _, exists := seenAccountIDs[account.ID]; exists {
+			return fmt.Errorf("duplicate codex account id: %s", account.ID)
+		}
+		seenAccountIDs[account.ID] = struct{}{}
+		if _, exists := legacyAccountIDs[account.AccountID]; !exists {
+			legacyAccountIDs[account.AccountID] = account.ID
+		}
 
 		if account.RefreshToken != "" {
 			if _, exists := seenRefreshTokens[account.RefreshToken]; exists {
@@ -263,7 +277,11 @@ func (p *CodexPlugin) SyncImport(configPath string, data json.RawMessage) error 
 	if len(payload.Accounts) == 0 {
 		payload.MultiConfig.ActiveAccountID = ""
 	} else if _, ok := seenAccountIDs[payload.MultiConfig.ActiveAccountID]; !ok {
-		payload.MultiConfig.ActiveAccountID = payload.Accounts[0].AccountID
+		if localID, ok := legacyAccountIDs[payload.MultiConfig.ActiveAccountID]; ok {
+			payload.MultiConfig.ActiveAccountID = localID
+		} else {
+			payload.MultiConfig.ActiveAccountID = payload.Accounts[0].ID
+		}
 	}
 
 	if err := codexShared.SaveCodexMultiConfig(codexJsonPathFromConfig(configPath), &payload.MultiConfig); err != nil {
@@ -331,15 +349,22 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	if dto.AccountID == "" {
 		return nil, fmt.Errorf("accountId is required")
 	}
+	if dto.Email == "" {
+		return nil, fmt.Errorf("email is required")
+	}
+	localID := codexShared.GenerateCodexLocalID(dto.AccountID, dto.Email)
+	if localID == "" {
+		return nil, fmt.Errorf("account id is required")
+	}
 
 	store := p.GetAccountStore()
 	if store == nil {
 		return nil, fmt.Errorf("account store not initialized")
 	}
 
-	existing, _ := store.GetByID(context.Background(), dto.AccountID)
+	existing, _ := store.GetByID(context.Background(), localID)
 	if existing != nil {
-		return nil, fmt.Errorf("account with this accountId already exists")
+		return nil, fmt.Errorf("account with this id already exists")
 	}
 	if dto.RefreshToken != "" {
 		if rt, _ := store.GetByRefreshToken(context.Background(), dto.RefreshToken); rt != nil {
@@ -353,6 +378,7 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		enabled = *dto.Enabled
 	}
 	account := codexShared.CodexAccount{
+		ID:           localID,
 		RefreshToken: dto.RefreshToken,
 		AccessToken:  dto.AccessToken,
 		IDToken:      dto.IDToken,
@@ -389,7 +415,7 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		mc = &codexShared.CodexMultiConfig{}
 	}
 	if mc.ActiveAccountID == "" {
-		mc.ActiveAccountID = account.AccountID
+		mc.ActiveAccountID = account.ID
 		_ = codexShared.SaveCodexMultiConfig(codexJsonPath, mc)
 	}
 
@@ -401,7 +427,7 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		pool.Reload()
 	}
 
-	isActive := account.AccountID == mc.ActiveAccountID
+	isActive := account.ID == mc.ActiveAccountID
 	return json.Marshal(codexShared.MarshalAccountForFrontend(&account, isActive))
 }
 

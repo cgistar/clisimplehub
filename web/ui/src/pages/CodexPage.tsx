@@ -11,6 +11,7 @@ interface CodexPageProps {
   onOpenConfig: () => void
   onOpenImport: () => void
   onRefreshCodex: () => void | Promise<void>
+  onCopyVisibleAccounts: (accounts: CodexAccount[]) => void | Promise<void>
   onActivateAccount: (accountId: string) => void
   onRefreshToken: (accountId: string) => void
   onFetchUsage: (accountId: string) => void
@@ -26,6 +27,7 @@ export default function CodexPage({
   onOpenConfig,
   onOpenImport,
   onRefreshCodex,
+  onCopyVisibleAccounts,
   onActivateAccount,
   onRefreshToken,
   onFetchUsage,
@@ -85,6 +87,9 @@ export default function CodexPage({
             <button className="btn" type="button" onClick={onRefreshCodex} disabled={loading}>
               {loading ? '刷新中...' : '刷新'}
             </button>
+            <button className="btn" type="button" onClick={() => onCopyVisibleAccounts(accounts)} disabled={accounts.length === 0}>
+              复制
+            </button>
             <button className="btn" type="button" onClick={onOpenImport}>
               导入
             </button>
@@ -100,7 +105,7 @@ export default function CodexPage({
           <div className="codex-account-grid">
             {accounts.map((account) => (
               <CodexAccountCard
-                key={account.accountId || account.refreshToken}
+                key={account.id || account.accountId || account.refreshToken}
                 account={account}
                 busyAction={busyAction}
                 onActivate={onActivateAccount}

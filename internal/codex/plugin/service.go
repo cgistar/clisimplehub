@@ -65,8 +65,8 @@ func (s *CodexService) GetOrCreateAuthManager(accountId, configPath, proxyURL st
 
 	if account == nil {
 		m := codexAuth.NewCodexAuthManager(&codexShared.CodexAccount{
-			AccountID: accountId,
-			ProxyUrl:  proxyURL,
+			ID:       accountId,
+			ProxyUrl: proxyURL,
 		}, s.store)
 		s.authManagers[accountId] = m
 		return m

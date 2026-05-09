@@ -29,12 +29,12 @@ export default function CodexAccountCard({
   const expireInfo = getExpireInfo(account)
   const displayName = account.email || account.accountId || '(未命名账号)'
   const planLabel = getCodexPlanLabel(account.planType)
-  const accountId = account.accountId || ''
-  const canActivate = Boolean(accountId) && !account.isActive && account.status !== 'banned' && account.status !== 'reused'
-  const activateBusy = busyAction === `codex:activate:${accountId}`
-  const refreshBusy = busyAction === `codex:refresh:${accountId}`
-  const usageBusy = busyAction === `codex:usage:${accountId}`
-  const deleteBusy = busyAction === `codex:delete:${accountId}`
+  const localId = account.id || ''
+  const canActivate = Boolean(localId) && !account.isActive && account.status !== 'banned' && account.status !== 'reused'
+  const activateBusy = busyAction === `codex:activate:${localId}`
+  const refreshBusy = busyAction === `codex:refresh:${localId}`
+  const usageBusy = busyAction === `codex:usage:${localId}`
+  const deleteBusy = busyAction === `codex:delete:${localId}`
   const actionBusy = activateBusy || refreshBusy || usageBusy || deleteBusy
 
   return (
@@ -77,7 +77,7 @@ export default function CodexAccountCard({
               title={activateBusy ? '激活中...' : '激活'}
               aria-label="激活"
               disabled={actionBusy}
-              onClick={() => onActivate(accountId)}
+              onClick={() => onActivate(localId)}
             >
               <PowerIcon />
             </button>
@@ -87,7 +87,7 @@ export default function CodexAccountCard({
             title={refreshBusy ? '刷新 Token 中...' : '刷新 Token'}
             aria-label="刷新 Token"
             disabled={actionBusy || !account.refreshToken}
-            onClick={() => onRefreshToken(accountId)}
+            onClick={() => onRefreshToken(localId)}
           >
             <RefreshIcon />
           </button>
@@ -96,7 +96,7 @@ export default function CodexAccountCard({
             title={usageBusy ? '获取用量中...' : '获取用量'}
             aria-label="获取用量"
             disabled={actionBusy}
-            onClick={() => onFetchUsage(accountId)}
+            onClick={() => onFetchUsage(localId)}
           >
             <ActivityIcon />
           </button>
@@ -113,7 +113,7 @@ export default function CodexAccountCard({
             aria-label="删除"
             onClick={() => {
               if (window.confirm(`确定删除账号 ${displayName} 吗？`)) {
-                onDelete(accountId)
+                onDelete(localId)
               }
             }}
           >

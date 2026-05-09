@@ -45,7 +45,7 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 		}
 		now := time.Now()
 		stat := &codexShared.CodexAccountStat{
-			AccountID:    usedAccount.AccountID,
+			AccountID:    usedAccount.ID,
 			AccountEmail: usedAccount.Email,
 			Model:        requestModel,
 			Date:         now.Format("2006-01-02"),
@@ -179,7 +179,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 	}
 
 	upstreamURL := getCodexUpstreamURL(config, req.TargetPath)
-	authMgr := s.GetOrCreateAuthManager(account.AccountID, configPath, proxyURL)
+	authMgr := s.GetOrCreateAuthManager(account.ID, configPath, proxyURL)
 
 	var accessToken string
 	var accountID string
@@ -194,7 +194,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 		}
 		errStr := err.Error()
 		if strings.Contains(errStr, "refresh_token_reused") {
-			pool.MarkFailed(account.AccountID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
+			pool.MarkFailed(account.ID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
 			return &executor.UpstreamRoundTripResult{
 				StatusCode: http.StatusUnauthorized,
 				Error:      fmt.Errorf("auth failed: %v", err),
@@ -202,7 +202,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 			}, true
 		}
 		if strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
-			pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 0, "auth_failed")
+			pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 0, "auth_failed")
 			return &executor.UpstreamRoundTripResult{
 				StatusCode: http.StatusUnauthorized,
 				Error:      fmt.Errorf("auth failed: %v", err),
@@ -308,7 +308,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 				}
 			}
 		}
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
 		return &executor.UpstreamRoundTripResult{
 			StatusCode:    resp.StatusCode,
 			Body:          respBody,
@@ -322,7 +322,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 	if resp.StatusCode == http.StatusForbidden {
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
 		return &executor.UpstreamRoundTripResult{
 			StatusCode:    resp.StatusCode,
 			Body:          respBody,
@@ -336,7 +336,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 	if resp.StatusCode == http.StatusPaymentRequired {
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
 		return &executor.UpstreamRoundTripResult{
 			StatusCode:    resp.StatusCode,
 			Body:          respBody,
@@ -355,9 +355,9 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 			cooldown = parseCooldownDuration(resp)
 		}
 		if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
-			pool.UpdateUsageSnapshot(account.AccountID, snapshot)
+			pool.UpdateUsageSnapshot(account.ID, snapshot)
 		}
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, cooldown, "rate_limit")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, cooldown, "rate_limit")
 		return &executor.UpstreamRoundTripResult{
 			StatusCode:    resp.StatusCode,
 			Body:          respBody,
@@ -386,9 +386,9 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 
 func buildCodexSuccessRoundTrip(resp *http.Response, isStreaming bool, upstreamURL string, targetHeaders map[string]string, debugLogger interface{ Log(string, ...any) }, pool *codex.CodexAccountPool, account *codexShared.CodexAccount) *executor.UpstreamRoundTripResult {
 	if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
-		pool.UpdateUsageSnapshot(account.AccountID, snapshot)
+		pool.UpdateUsageSnapshot(account.ID, snapshot)
 	}
-	pool.ReportSuccess(account.AccountID)
+	pool.ReportSuccess(account.ID)
 
 	result := &executor.UpstreamRoundTripResult{
 		StatusCode:    resp.StatusCode,

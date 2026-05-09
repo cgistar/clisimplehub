@@ -175,7 +175,7 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		if store := pool.Store(); store != nil && usedAccount != nil {
 			now := time.Now()
 			stat := &codexShared.CodexAccountStat{
-				AccountID:    usedAccount.AccountID,
+				AccountID:    usedAccount.ID,
 				AccountEmail: usedAccount.Email,
 				Model:        requestModel,
 				Date:         now.Format("2006-01-02"),
@@ -358,7 +358,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 		debugLogger.SetMetadata("ProxyURL", proxyURL)
 	}
 
-	authMgr := s.GetOrCreateAuthManager(account.AccountID, configPath, proxyURL)
+	authMgr := s.GetOrCreateAuthManager(account.ID, configPath, proxyURL)
 	var accessToken string
 	var accountID string
 	for authAttempt := 1; authAttempt <= codexNetworkRetryAttempts; authAttempt++ {
@@ -371,10 +371,10 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 		}
 		errStr := err.Error()
 		if strings.Contains(errStr, "refresh_token_reused") {
-			pool.MarkFailed(account.AccountID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
+			pool.MarkFailed(account.ID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
 			return &forwardResult{errMsg: fmt.Sprintf("auth failed: %v", err)}, true
 		} else if strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
-			pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 0, "auth_failed")
+			pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 0, "auth_failed")
 			return &forwardResult{errMsg: fmt.Sprintf("auth failed: %v", err)}, true
 		}
 		if authAttempt < codexNetworkRetryAttempts {
@@ -510,7 +510,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 				}
 			}
 		}
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
 		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "unauthorized"}, true
 	}
 
@@ -520,7 +520,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 			debugLogger.Log("403 禁止访问")
 			debugLogger.SetSection("UpstreamResponseBody", string(respBody))
 		}
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
 		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "forbidden"}, true
 	}
 
@@ -530,7 +530,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 			debugLogger.Log("402 配额耗尽")
 			debugLogger.SetSection("UpstreamResponseBody", string(respBody))
 		}
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
 		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "payment required"}, false
 	}
 
@@ -545,13 +545,13 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 			debugLogger.SetSection("UpstreamResponseBody", string(respBody))
 		}
 		if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
-			pool.UpdateUsageSnapshot(account.AccountID, snapshot)
+			pool.UpdateUsageSnapshot(account.ID, snapshot)
 			if debugLogger != nil {
 				debugLogger.Log("提取使用率快照: primary=%.1f%%, secondary=%.1f%%",
 					snapshot.PrimaryUsedPercent, snapshot.SecondaryUsedPercent)
 			}
 		}
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, cooldown, "rate_limit")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, cooldown, "rate_limit")
 		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "rate limited"}, true
 	}
 
@@ -564,7 +564,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 		return &forwardResult{statusCode: resp.StatusCode, headers: resp.Header.Clone(), body: respBody}, false
 	}
 
-	pool.ReportSuccess(account.AccountID)
+	pool.ReportSuccess(account.ID)
 	if debugLogger != nil {
 		debugLogger.Log("请求成功")
 	}
@@ -575,7 +575,7 @@ func (s *CodexService) handleSuccess(ctx context.Context, resp *http.Response, i
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
 	if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
-		pool.UpdateUsageSnapshot(account.AccountID, snapshot)
+		pool.UpdateUsageSnapshot(account.ID, snapshot)
 		if debugLogger != nil {
 			debugLogger.Log("提取使用率快照: primary=%.1f%%, secondary=%.1f%%",
 				snapshot.PrimaryUsedPercent, snapshot.SecondaryUsedPercent)

@@ -143,7 +143,7 @@ func (s *CodexService) forwardResponsesWebsocketTurn(ctx context.Context, downst
 		if account == nil {
 			break
 		}
-		tried[strings.TrimSpace(account.AccountID)] = true
+		tried[strings.TrimSpace(account.ID)] = true
 
 		var completedOutput []byte
 		var retryable bool
@@ -168,7 +168,7 @@ func (s *CodexService) forwardResponsesWebsocketTurn(ctx context.Context, downst
 
 func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Context, downstream *websocket.Conn, requestJSON []byte, clientHeaders http.Header, requestPath string, sessionKey string, pool *codex.CodexAccountPool, config *codexShared.CodexMultiConfig, account *codexShared.CodexAccount) ([]byte, bool, error) {
 	proxyURL := resolveCodexAccountProxyURL(pool, account)
-	authMgr := s.GetOrCreateAuthManager(account.AccountID, pool.ConfigPath(), proxyURL)
+	authMgr := s.GetOrCreateAuthManager(account.ID, pool.ConfigPath(), proxyURL)
 	accessToken, accountID, err := authMgr.GetAccessToken()
 	if err != nil {
 		markCodexWebsocketAuthError(pool, account, err)
@@ -204,7 +204,7 @@ func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Cont
 		}
 		return completedOutput, false, err
 	}
-	pool.ReportSuccess(account.AccountID)
+	pool.ReportSuccess(account.ID)
 	return completedOutput, false, nil
 }
 
@@ -253,9 +253,9 @@ func markCodexWebsocketAuthError(pool *codex.CodexAccountPool, account *codexSha
 		errStr := err.Error()
 		switch {
 		case strings.Contains(errStr, "refresh_token_reused"):
-			pool.MarkFailed(account.AccountID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
+			pool.MarkFailed(account.ID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
 		case strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403"):
-			pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 0, "auth_failed")
+			pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 0, "auth_failed")
 		}
 	}
 }
@@ -266,11 +266,11 @@ func markCodexWebsocketHandshakeStatus(pool *codex.CodexAccountPool, account *co
 	}
 	switch statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "websocket_auth_failed")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "websocket_auth_failed")
 	case http.StatusPaymentRequired:
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusExhausted, 0, "websocket_quota_exhausted")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusExhausted, 0, "websocket_quota_exhausted")
 	case http.StatusTooManyRequests:
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, time.Minute, "websocket_rate_limit")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, time.Minute, "websocket_rate_limit")
 	}
 }
 
@@ -280,9 +280,9 @@ func markCodexWebsocketUpstreamError(pool *codex.CodexAccountPool, account *code
 	}
 	switch strings.ToLower(strings.TrimSpace(upstreamErr.errorType)) {
 	case "authentication_error", "permission_error":
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusBanned, 24*time.Hour, "websocket_upstream_auth_error")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "websocket_upstream_auth_error")
 	case "rate_limit_error":
-		pool.MarkFailed(account.AccountID, codexShared.CodexStatusValid, time.Minute, "websocket_upstream_rate_limit")
+		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, time.Minute, "websocket_upstream_rate_limit")
 	}
 }
 

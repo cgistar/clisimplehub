@@ -86,6 +86,7 @@ import { generateTotpCode } from '@/utils/totp'
 const { t } = useI18n()
 
 type EditFormData = CodexAccountInput & {
+  id: string
   accountId: string
   refreshToken: string
   password: string
@@ -113,6 +114,7 @@ const visible = ref(false)
 const formRef = ref<FormInst | null>(null)
 const totpValue = ref('')
 const formData = ref<EditFormData>({
+  id: '',
   accountId: '',
   refreshToken: '',
   password: '',
@@ -154,6 +156,7 @@ watch(() => props.show, (newVal) => {
   visible.value = newVal
   if (newVal && props.account) {
     formData.value = {
+      id: props.account.id || '',
       accountId: props.account.accountId || '',
       refreshToken: props.account.refreshToken || '',
       password: props.account.password || '',

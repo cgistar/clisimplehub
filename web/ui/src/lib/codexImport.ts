@@ -74,7 +74,7 @@ export function parseCodexJsonFile(data: unknown): CodexAccountInput | null {
     account.refreshToken = refreshToken
   }
 
-  if (!account.accessToken || !account.accountId) {
+  if (!account.accessToken || !account.accountId || !account.email) {
     return null
   }
 
@@ -103,11 +103,17 @@ export function buildCodexImportDTOs(rawJsonText: string): BuildImportResult {
       errors.push(`#${index + 1}: missing accountId`)
       return
     }
-    if (seen.has(accountId)) {
-      errors.push(`#${index + 1}: duplicate accountId`)
+    const email = getStringField(item, ['email', 'Email'])
+    if (!email) {
+      errors.push(`#${index + 1}: missing email`)
       return
     }
-    seen.add(accountId)
+    const localKey = `${accountId.trim().toLowerCase()}\x00${email.trim().toLowerCase()}`
+    if (seen.has(localKey)) {
+      errors.push(`#${index + 1}: duplicate account id`)
+      return
+    }
+    seen.add(localKey)
 
     const refreshToken = getStringField(item, ['refreshToken', 'refresh_token', 'RefreshToken'])
     const accessToken = getStringField(item, ['accessToken', 'access_token', 'AccessToken'])
@@ -122,7 +128,7 @@ export function buildCodexImportDTOs(rawJsonText: string): BuildImportResult {
       accessToken,
       idToken: getStringField(item, ['idToken', 'id_token', 'IdToken']),
       expiresAt: getStringField(item, ['expiresAt', 'expires_at', 'ExpiresAt']),
-      email: getStringField(item, ['email', 'Email']),
+      email,
       password: getStringField(item, ['password', 'Password']),
       planType: getStringField(item, ['planType', 'plan_type', 'PlanType']),
       proxyUrl: getStringField(item, ['proxyUrl', 'proxy_url', 'ProxyUrl']),

@@ -7,10 +7,10 @@
     <div v-else ref="scrollRef" class="account-grid" @scroll="handleScroll">
       <CodexAccountCard
         v-for="item in filteredAccounts"
-        :key="item.accountId"
+        :key="item.id"
         :account="item"
-        :is-active="item.accountId === activeAccountId"
-        :busy="isAccountPending(item.accountId)"
+        :is-active="item.id === activeAccountId"
+        :busy="isAccountPending(item.id)"
         @activate="handleActivate"
         @test="handleTest"
         @fetch-usage="handleFetchUsage"
@@ -35,6 +35,7 @@ import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useCodexAccountsStore } from '../../stores/codexAccountsStore'
 import type { CodexAccount } from '@/types/codex'
+import { buildCodexAccountCopyData } from '@/utils/codexAccountCopy'
 import CodexAccountCard from './CodexAccountCard.vue'
 
 const { t } = useI18n()
@@ -157,20 +158,7 @@ async function handleFetchUsage(accountId: string): Promise<void> {
 
 async function handleCopy(account: CodexAccount): Promise<void> {
   try {
-    const copyData: Record<string, string | number> = {}
-    if (account.refreshToken) copyData.refreshToken = account.refreshToken
-    if (account.email) copyData.email = account.email
-    if (account.accountId) copyData.accountId = account.accountId
-    if (account.planType) copyData.planType = account.planType
-    if (account.accessToken) copyData.accessToken = account.accessToken
-    if (account.idToken) copyData.idToken = account.idToken
-    if (account.password) copyData.password = account.password
-    if (account.mfaCode) copyData.mfaCode = account.mfaCode
-    if (account.expiresAt) copyData.expiresAt = account.expiresAt
-    if (account.proxyUrl) copyData.proxyUrl = account.proxyUrl
-    if (typeof account.weight === 'number') copyData.weight = account.weight
-
-    await navigator.clipboard.writeText(JSON.stringify(copyData, null, 2))
+    await navigator.clipboard.writeText(JSON.stringify(buildCodexAccountCopyData(account), null, 2))
     message.success(t('codex.copySuccess'))
   } catch (error) {
     message.error(t('codex.copyFailed') + ': ' + toErrorMessage(error))

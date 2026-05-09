@@ -250,6 +250,13 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 	if strings.TrimSpace(result.AccountID) == "" {
 		return fmt.Errorf("accountId is required from OAuth login")
 	}
+	if strings.TrimSpace(result.Email) == "" {
+		return fmt.Errorf("email is required from OAuth login")
+	}
+	localID := codexShared.GenerateCodexLocalID(result.AccountID, result.Email)
+	if localID == "" {
+		return fmt.Errorf("account id is required from OAuth login")
+	}
 
 	store := p.GetAccountStore()
 	if store == nil {
@@ -261,7 +268,7 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 	p.mu.RUnlock()
 
 	ctx := context.Background()
-	existing, _ := store.GetByID(ctx, result.AccountID)
+	existing, _ := store.GetByID(ctx, localID)
 
 	var expiresAt time.Time
 	if result.ExpiresAt != "" {
@@ -286,6 +293,7 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 	} else {
 		now := time.Now()
 		account := &codexShared.CodexAccount{
+			ID:           localID,
 			RefreshToken: result.RefreshToken,
 			AccessToken:  result.AccessToken,
 			IDToken:      result.IDToken,
@@ -309,7 +317,7 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 		mc = &codexShared.CodexMultiConfig{}
 	}
 	if mc.ActiveAccountID == "" {
-		mc.ActiveAccountID = result.AccountID
+		mc.ActiveAccountID = localID
 		_ = codexShared.SaveCodexMultiConfig(codexJsonPath, mc)
 	}
 

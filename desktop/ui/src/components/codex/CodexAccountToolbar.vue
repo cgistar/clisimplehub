@@ -31,6 +31,10 @@
         <template #icon><n-icon><RefreshCw /></n-icon></template>
         {{ t('common.refresh') }}
       </n-button>
+      <n-button @click="handleCopyVisibleAccounts" :disabled="filteredAccounts.length === 0">
+        <template #icon><n-icon><Copy /></n-icon></template>
+        {{ t('codex.copyVisibleAccounts') }}
+      </n-button>
       <n-button @click="emit('open-config')">
         <template #icon><n-icon><Settings /></n-icon></template>
         {{ t('codex.config') }}
@@ -51,20 +55,23 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NInput, NSelect, NSpace, NTag, NButton, NDropdown, NIcon } from 'naive-ui'
-import { Search, RefreshCw, Plus, Trash2, Settings } from 'lucide-vue-next'
+import { NInput, NSelect, NSpace, NTag, NButton, NDropdown, NIcon, useMessage } from 'naive-ui'
+import { Search, RefreshCw, Plus, Trash2, Settings, Copy } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useCodexAccountsStore } from '../../stores/codexAccountsStore'
+import { buildCodexAccountsCopyJson } from '@/utils/codexAccountCopy'
 
 const { t } = useI18n()
+const message = useMessage()
 const codexStore = useCodexAccountsStore()
 
 const {
   searchQuery,
   filterStatus,
   accountCount,
-  loading
+  loading,
+  filteredAccounts
 } = storeToRefs(codexStore)
 
 const emit = defineEmits<{
@@ -101,6 +108,20 @@ const addAccountOptions = computed(() => [
 
 async function handleRefresh(): Promise<void> {
   await codexStore.loadAccounts(true)
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+async function handleCopyVisibleAccounts(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(buildCodexAccountsCopyJson(filteredAccounts.value))
+    message.success(t('codex.copySuccess'))
+  } catch (error) {
+    message.error(t('codex.copyFailed') + ': ' + toErrorMessage(error))
+  }
 }
 
 function handleAddAccountSelect(key: string | number): void {

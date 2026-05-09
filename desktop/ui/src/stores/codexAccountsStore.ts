@@ -31,7 +31,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     const normalizedId = String(accountId || '').trim()
     if (!normalizedId) return false
 
-    const index = accounts.value.findIndex((account) => String(account.accountId || '').trim() === normalizedId)
+    const index = accounts.value.findIndex((account) => String(account.id || '').trim() === normalizedId)
     if (index === -1) return false
 
     accounts.value[index] = {
@@ -79,7 +79,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
 
     const page = await codexApi.getAccountsPage(0, loadedCount)
     const latest = (page.accounts || []).find(
-      (account) => String(account.accountId || '').trim() === normalizedId
+      (account) => String(account.id || '').trim() === normalizedId
     )
 
     if (page.activeAccountId) {
@@ -217,7 +217,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     try {
       await codexApi.updateAccount(accountData)
 
-      const accountId = accountData.accountId
+      const accountId = accountData.id
       if (accountId) {
         patchAccountById(accountId, accountData)
       }
@@ -262,7 +262,6 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
 
     try {
       const result = await codexApi.testAccount(accountId)
-      const nextAccountId = String(result.accountId || accountId).trim()
 
       let synced = false
       try {
@@ -271,17 +270,9 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
         synced = false
       }
 
-      if (!synced && nextAccountId !== accountId) {
-        try {
-          synced = await syncVisibleAccountById(nextAccountId)
-        } catch {
-          synced = false
-        }
-      }
-
       if (!synced) {
         patchAccountById(accountId, {
-          accountId: nextAccountId,
+          accountId: result.accountId,
           accessToken: result.accessToken,
           email: result.email,
           planType: result.planType,
@@ -291,10 +282,6 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
           cooldownReason: '',
           cooldownRemaining: 0
         })
-      }
-
-      if (activeAccountId.value === accountId) {
-        activeAccountId.value = nextAccountId
       }
 
       return result

@@ -24,6 +24,7 @@ export type CodexAccount = Omit<main.CodexAccountDTO, 'status' | 'codexUsage'> &
 }
 
 export interface CodexAccountInput {
+  id?: string
   refreshToken?: string
   email?: string
   planType?: string

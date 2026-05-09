@@ -66,7 +66,7 @@
           :title="t('codex.activate')"
           :aria-label="t('codex.activate')"
           :disabled="busy"
-          @click="emit('activate', account.accountId)"
+          @click="emit('activate', account.id)"
         >
           <Power class="codex-action-icon" />
         </button>
@@ -76,7 +76,7 @@
           :title="t('codex.test')"
           :aria-label="t('codex.test')"
           :disabled="busy || !hasRefreshToken || isCoolingDown"
-          @click="emit('test', account.accountId)"
+          @click="emit('test', account.id)"
         >
           <RefreshCw class="codex-action-icon" />
         </button>
@@ -86,7 +86,7 @@
           :title="t('codex.fetchUsage')"
           :aria-label="t('codex.fetchUsage')"
           :disabled="busy || isCoolingDown"
-          @click="emit('fetch-usage', account.accountId)"
+          @click="emit('fetch-usage', account.id)"
         >
           <Activity class="codex-action-icon" />
         </button>
@@ -279,7 +279,7 @@ function confirmDelete() {
     positiveText: t('common.ok'),
     negativeText: t('common.cancel'),
     onPositiveClick: () => {
-      emit('delete', props.account.accountId)
+      emit('delete', props.account.id)
     }
   })
 }

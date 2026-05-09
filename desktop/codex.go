@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/plugin"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -36,6 +37,7 @@ func (a *App) getCodexMultiConfigPath() string {
 
 // CodexAccountDTO represents a Codex account for frontend
 type CodexAccountDTO struct {
+	ID                string         `json:"id,omitempty"`
 	RefreshToken      string         `json:"refreshToken"`
 	Email             string         `json:"email,omitempty"`
 	PlanType          string         `json:"planType,omitempty"`
@@ -801,9 +803,9 @@ func normalizeCodexSyncPayload(payload *codexSyncPayloadDTO) {
 func mergeCodexAccounts(localAccounts, remoteAccounts []map[string]interface{}) ([]map[string]interface{}, error) {
 	localByID := make(map[string]map[string]interface{}, len(localAccounts))
 	for _, account := range localAccounts {
-		accountID := getCodexAccountID(account)
+		accountID := getCodexLocalID(account)
 		if accountID == "" {
-			return nil, fmt.Errorf("local codex payload contains account without accountId")
+			return nil, fmt.Errorf("local codex payload contains account without id")
 		}
 		localByID[accountID] = account
 	}
@@ -813,13 +815,13 @@ func mergeCodexAccounts(localAccounts, remoteAccounts []map[string]interface{}) 
 	seen := make(map[string]struct{}, len(localAccounts)+len(remoteAccounts))
 
 	for _, remoteAccount := range remoteAccounts {
-		accountID := getCodexAccountID(remoteAccount)
+		accountID := getCodexLocalID(remoteAccount)
 		if accountID == "" {
-			return nil, fmt.Errorf("backup codex payload contains account without accountId")
+			return nil, fmt.Errorf("backup codex payload contains account without id")
 		}
 
 		account := deepMergeJSONMaps(localByID[accountID], remoteAccount)
-		account["accountId"] = accountID
+		account["id"] = accountID
 
 		if idx, exists := mergedIndex[accountID]; exists {
 			merged[idx] = account
@@ -831,12 +833,12 @@ func mergeCodexAccounts(localAccounts, remoteAccounts []map[string]interface{}) 
 	}
 
 	for _, localAccount := range localAccounts {
-		accountID := getCodexAccountID(localAccount)
+		accountID := getCodexLocalID(localAccount)
 		if _, exists := seen[accountID]; exists {
 			continue
 		}
 		account := deepMergeJSONMaps(nil, localAccount)
-		account["accountId"] = accountID
+		account["id"] = accountID
 		merged = append(merged, account)
 	}
 
@@ -845,10 +847,14 @@ func mergeCodexAccounts(localAccounts, remoteAccounts []map[string]interface{}) 
 
 func pickCodexActiveAccountID(accounts []map[string]interface{}, remoteMultiConfig, localMultiConfig map[string]interface{}) string {
 	validAccountIDs := make(map[string]struct{}, len(accounts))
+	legacyAccountIDs := make(map[string]string, len(accounts))
 	for _, account := range accounts {
-		accountID := getCodexAccountID(account)
+		accountID := getCodexLocalID(account)
 		if accountID != "" {
 			validAccountIDs[accountID] = struct{}{}
+		}
+		if upstreamID := getCodexAccountID(account); upstreamID != "" {
+			legacyAccountIDs[upstreamID] = accountID
 		}
 	}
 
@@ -860,11 +866,30 @@ func pickCodexActiveAccountID(accounts []map[string]interface{}, remoteMultiConf
 		if _, exists := validAccountIDs[candidate]; exists {
 			return candidate
 		}
+		if localID, exists := legacyAccountIDs[candidate]; exists {
+			return localID
+		}
 	}
 	if len(accounts) > 0 {
-		return getCodexAccountID(accounts[0])
+		return getCodexLocalID(accounts[0])
 	}
 	return ""
+}
+
+func getCodexLocalID(account map[string]interface{}) string {
+	if account == nil {
+		return ""
+	}
+	id, _ := account["id"].(string)
+	id = strings.TrimSpace(id)
+	if id != "" {
+		return id
+	}
+	id = codexShared.GenerateCodexLocalID(getCodexAccountID(account), getCodexAccountEmail(account))
+	if id != "" {
+		return id
+	}
+	return getCodexAccountID(account)
 }
 
 func getCodexAccountID(account map[string]interface{}) string {
@@ -873,6 +898,14 @@ func getCodexAccountID(account map[string]interface{}) string {
 	}
 	accountID, _ := account["accountId"].(string)
 	return strings.TrimSpace(accountID)
+}
+
+func getCodexAccountEmail(account map[string]interface{}) string {
+	if account == nil {
+		return ""
+	}
+	email, _ := account["email"].(string)
+	return strings.TrimSpace(email)
 }
 
 func getCodexActiveAccountID(multiConfig map[string]interface{}) string {

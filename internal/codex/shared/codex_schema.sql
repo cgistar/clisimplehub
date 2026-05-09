@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS codex_accounts (
-    account_id     TEXT PRIMARY KEY,
+    id             TEXT PRIMARY KEY,
+    account_id     TEXT NOT NULL DEFAULT '',
     refresh_token  TEXT NOT NULL DEFAULT '',
     access_token   TEXT NOT NULL DEFAULT '',
     id_token       TEXT NOT NULL DEFAULT '',
@@ -48,5 +49,6 @@ CREATE TABLE IF NOT EXISTS codex_account_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_codex_accounts_refresh_token ON codex_accounts(refresh_token);
+CREATE INDEX IF NOT EXISTS idx_codex_accounts_account_id ON codex_accounts(account_id);
 CREATE INDEX IF NOT EXISTS idx_codex_stats_account_date ON codex_account_stats(account_id, date);
 CREATE INDEX IF NOT EXISTS idx_codex_stats_date ON codex_account_stats(date);

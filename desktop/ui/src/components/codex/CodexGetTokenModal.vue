@@ -201,14 +201,14 @@ function isAccountDeactivatedError(message: string): boolean {
 }
 
 function emitBannedStatusIfDeactivated(rawError: unknown): void {
-  const accountId = props.account?.accountId?.trim()
-  if (!accountId) return
+  const id = props.account?.id?.trim()
+  if (!id) return
 
   const message = toErrorMessage(rawError)
   if (!isAccountDeactivatedError(message)) return
 
   emit('status-update', {
-    accountId,
+    id,
     status: 'banned'
   })
 }
@@ -338,6 +338,7 @@ function handleSuccess(result: any) {
   phase.value = 'success'
   stopListening()
   emit('success', {
+    id: props.account?.id || '',
     refreshToken: result.refreshToken || '',
     accessToken: result.accessToken || '',
     idToken: result.idToken || '',

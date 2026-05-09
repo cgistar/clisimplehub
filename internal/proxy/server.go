@@ -198,7 +198,7 @@ func (p *ProxyServer) registerCoreRoutes(r chi.Router) {
 	r.HandleFunc("/endpoint", p.requireAuth(p.handleEndpoint))
 	r.HandleFunc("/sync/config", p.requireAuth(p.handleSyncConfig))
 	r.Get("/v1/models", p.requireAuth(p.handleUnifiedModelsRoute))
-	r.Get("/v1/responses", p.requireAuth(p.handleV1ResponsesWebsocketRoute))
+	r.HandleFunc("/v1/responses", p.requireAuth(p.handleV1ResponsesWebsocketRoute))
 	p.registerWebUIRoutes(r)
 }
 
