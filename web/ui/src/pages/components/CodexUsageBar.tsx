@@ -1,5 +1,5 @@
 import type { CodexUsageWindow } from '@/types'
-import { formatRemainingSeconds } from '@/lib/format'
+import { formatCompactRemainingSeconds } from '@/lib/format'
 
 interface CodexUsageBarProps {
   label: string
@@ -15,13 +15,12 @@ export default function CodexUsageBar({ label, usage }: CodexUsageBarProps) {
   return (
     <div className="codex-usage-block">
       <div className="codex-usage-head">
-        <span>{label}</span>
+        <span>{label}: {formatCompactRemainingSeconds(usage.remainingSeconds)}</span>
         <span>{usedPercent.toFixed(1)}%</span>
       </div>
       <div className="codex-usage-track">
         <div className={`codex-usage-fill codex-usage-fill-${tone}`} style={{ width: `${usedPercent}%` }} />
       </div>
-      <div className="codex-usage-foot">重置剩余：{formatRemainingSeconds(usage.remainingSeconds)}</div>
     </div>
   )
 }

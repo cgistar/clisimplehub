@@ -1049,22 +1049,13 @@ code {
   margin-top: 12px;
 }
 
-.codex-usage-head,
-.codex-usage-foot {
+.codex-usage-head {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   font-size: 12px;
-}
-
-.codex-usage-head {
   margin-bottom: 8px;
   color: var(--text);
-}
-
-.codex-usage-foot {
-  margin-top: 6px;
-  color: var(--muted);
 }
 
 .codex-usage-track {

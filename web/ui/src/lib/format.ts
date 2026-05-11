@@ -36,6 +36,19 @@ export function formatRemainingSeconds(value: unknown): string {
   return `${minutes}m`
 }
 
+export function formatCompactRemainingSeconds(value: unknown): string {
+  const seconds = Number(value) || 0
+  if (seconds <= 0) return '0'
+
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.ceil((seconds % 3600) / 60)
+
+  if (days > 0) return `${days}d${hours}h`
+  if (hours > 0) return `${hours}h${minutes}m`
+  return `${minutes}m`
+}
+
 export async function copyToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text)

@@ -422,8 +422,10 @@ func (p *ProxyServer) handleWebUIHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recentLogs := make([]*RequestLog, 0)
+	inProgressLogs := make([]*RequestLog, 0)
 	if p.stats != nil {
 		recentLogs = p.stats.GetRecentLogs(10)
+		inProgressLogs = p.stats.GetInProgressLogs()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -441,6 +443,7 @@ func (p *ProxyServer) handleWebUIHome(w http.ResponseWriter, r *http.Request) {
 		},
 		"groupedEndpoints": grouped,
 		"recentLogs":       recentLogs,
+		"inProgressLogs":   inProgressLogs,
 	})
 }
 

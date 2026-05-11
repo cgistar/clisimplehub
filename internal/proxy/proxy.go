@@ -57,6 +57,9 @@ type Stats interface {
 	// GetRecentLogs returns the most recent request logs
 	GetRecentLogs(limit int) []*RequestLog
 
+	// GetInProgressLogs returns all currently in-progress request logs
+	GetInProgressLogs() []*RequestLog
+
 	// GetTokenStats returns token statistics for all endpoints
 	GetTokenStats() []*TokenStats
 }

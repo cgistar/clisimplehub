@@ -280,6 +280,10 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 	// Create HTTP client
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 0)
 
+	// 派生稳定的 prompt_cache_key / Session_id，让同一个 (账号, 客户端) 组合稳定命中上游 prompt 缓存。
+	// 客户端已显式携带 Session_id 或 body.prompt_cache_key 时保持不变。
+	body, clientHeaders = ensureCodexPromptCacheKey(body, clientHeaders, account.ID)
+
 	buildRequest := func() (*http.Request, error) {
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
 		if reqErr != nil {

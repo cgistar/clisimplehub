@@ -12,18 +12,13 @@ type codexModelCatalogEntry struct {
 }
 
 var codexModelsCatalog = []codexModelCatalogEntry{
-	{ID: "gpt-5", Created: 1754524800, OwnedBy: "openai"},
-	{ID: "gpt-5-codex", Created: 1757894400, OwnedBy: "openai"},
-	{ID: "gpt-5-codex-mini", Created: 1762473600, OwnedBy: "openai"},
-	{ID: "gpt-5.1", Created: 1762905600, OwnedBy: "openai"},
-	{ID: "gpt-5.1-codex", Created: 1762905600, OwnedBy: "openai"},
-	{ID: "gpt-5.1-codex-mini", Created: 1762905600, OwnedBy: "openai"},
-	{ID: "gpt-5.1-codex-max", Created: 1763424000, OwnedBy: "openai"},
 	{ID: "gpt-5.2", Created: 1765440000, OwnedBy: "openai"},
-	{ID: "gpt-5.2-codex", Created: 1765440000, OwnedBy: "openai"},
 	{ID: "gpt-5.3-codex", Created: 1770307200, OwnedBy: "openai"},
 	{ID: "gpt-5.3-codex-spark", Created: 1770912000, OwnedBy: "openai"},
 	{ID: "gpt-5.4", Created: 1772668800, OwnedBy: "openai"},
+	{ID: "gpt-5.4-mini", Created: 1773705600, OwnedBy: "openai"},
+	{ID: "gpt-5.5", Created: 1776902400, OwnedBy: "openai"},
+	{ID: "codex-auto-review", Created: 1776902400, OwnedBy: "openai"},
 }
 
 func (p *CodexPlugin) handleCodexRoute(w http.ResponseWriter, r *http.Request) {

@@ -61,6 +61,7 @@ export interface HomePageData {
   summary?: HomeSummary
   groupedEndpoints?: EndpointGroup[]
   recentLogs?: RequestLogItem[]
+  inProgressLogs?: RequestLogItem[]
 }
 
 export interface CodexUsageWindow {

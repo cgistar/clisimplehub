@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatDateTime, numberOrDash } from '@/lib/format'
 import type { EndpointGroup, EndpointInfo, HomePageData, RequestLogItem } from '@/types'
 
@@ -99,12 +99,21 @@ function formatRuntime(value?: number): string {
   return `${runtime}ms`
 }
 
+function formatElapsed(timestamp?: string): string {
+  if (!timestamp) return '0s'
+  const elapsed = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000)
+  if (elapsed < 60) return `${elapsed}s`
+  return `${Math.floor(elapsed / 60)}m${elapsed % 60}s`
+}
+
 export default function HomePage({ data, loading, busyAction, onActivateEndpoint }: HomePageProps) {
   const [activeTab, setActiveTab] = useState<string>('')
   const [selectedEndpointId, setSelectedEndpointId] = useState<string>('')
   const [realtimeLogs, setRealtimeLogs] = useState<RequestLogItem[]>([])
   const [historyLogs, setHistoryLogs] = useState<RequestLogItem[]>([])
   const [streamConnected, setStreamConnected] = useState<boolean>(false)
+  const [, setTick] = useState(0)
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const groupedEndpoints = useMemo(() => sortEndpointGroups(data?.groupedEndpoints || []), [data?.groupedEndpoints])
   const recentLogs = useMemo(
     () => (data?.recentLogs || []).filter((log) => !isIgnoredRequestLog(log)),
@@ -149,6 +158,29 @@ export default function HomePage({ data, loading, busyAction, onActivateEndpoint
   useEffect(() => {
     setHistoryLogs(sortLogsByTimestamp(recentLogs.filter((log) => isFinishedStatus(log.status))).slice(0, 10))
   }, [recentLogs])
+
+  const initialInProgressLogs = useMemo(
+    () => (data?.inProgressLogs || []).filter((log) => !isIgnoredRequestLog(log)),
+    [data?.inProgressLogs],
+  )
+
+  useEffect(() => {
+    if (initialInProgressLogs.length === 0) return
+    setRealtimeLogs((current) => {
+      let merged = [...current]
+      for (const log of initialInProgressLogs) {
+        merged = upsertLog(merged, log, 20)
+      }
+      return merged
+    })
+  }, [initialInProgressLogs])
+
+  useEffect(() => {
+    tickRef.current = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => {
+      if (tickRef.current) clearInterval(tickRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
@@ -354,6 +386,7 @@ export default function HomePage({ data, loading, busyAction, onActivateEndpoint
 
                     <div className="request-card-meta">
                       <span className="meta-pill">时间: {formatDateTime(log.timestamp)}</span>
+                      <span className="meta-pill">耗时: {formatElapsed(log.timestamp)}</span>
                       {log.model ? <span className="meta-pill">model: {log.model}</span> : null}
                     </div>
                   </div>

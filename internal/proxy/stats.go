@@ -2,6 +2,7 @@
 package proxy
 
 import (
+	"strings"
 	"sync"
 
 	"clisimplehub/internal/storage"
@@ -12,18 +13,20 @@ const MaxRecentLogs = 10
 
 // StatsManager manages request logs and token statistics (in-memory only)
 type StatsManager struct {
-	recentLogs []*RequestLog
-	tokenStats map[string]*TokenStats // keyed by endpoint name
-	mu         sync.RWMutex
-	sseHub     *SSEHub
-	storage    storage.Storage // Storage for vendor lookup
+	recentLogs    []*RequestLog
+	inProgressMap map[string]*RequestLog // keyed by ID
+	tokenStats    map[string]*TokenStats // keyed by endpoint name
+	mu            sync.RWMutex
+	sseHub        *SSEHub
+	storage       storage.Storage // Storage for vendor lookup
 }
 
 // NewStatsManager creates a new StatsManager instance
 func NewStatsManager() *StatsManager {
 	return &StatsManager{
-		recentLogs: make([]*RequestLog, 0, MaxRecentLogs),
-		tokenStats: make(map[string]*TokenStats),
+		recentLogs:    make([]*RequestLog, 0, MaxRecentLogs),
+		inProgressMap: make(map[string]*RequestLog),
+		tokenStats:    make(map[string]*TokenStats),
 	}
 }
 
@@ -59,28 +62,47 @@ func (s *StatsManager) RecordRequest(log *RequestLog) {
 		}
 	}
 
-	// Upsert by ID to support "in_progress" -> "done" updates.
-	for i, existing := range s.recentLogs {
-		if existing != nil && existing.ID != "" && existing.ID == log.ID {
-			s.recentLogs[i] = log
-			goto broadcast
+	inProgress := isInProgressStatus(log.Status)
+
+	if inProgress {
+		// Track in-progress requests separately
+		if log.ID != "" {
+			s.inProgressMap[log.ID] = log
 		}
-	}
+	} else {
+		// Remove from in-progress when finished
+		if log.ID != "" {
+			delete(s.inProgressMap, log.ID)
+		}
 
-	// Prepend new log (newest first)
-	// Requirements: 7.3
-	s.recentLogs = append([]*RequestLog{log}, s.recentLogs...)
+		// Upsert by ID in recentLogs
+		for i, existing := range s.recentLogs {
+			if existing != nil && existing.ID != "" && existing.ID == log.ID {
+				s.recentLogs[i] = log
+				goto broadcast
+			}
+		}
 
-	// Maintain max size
-	// Requirements: 7.4
-	if len(s.recentLogs) > MaxRecentLogs {
-		s.recentLogs = s.recentLogs[:MaxRecentLogs]
+		// Prepend new log (newest first)
+		// Requirements: 7.3
+		s.recentLogs = append([]*RequestLog{log}, s.recentLogs...)
+
+		// Maintain max size
+		// Requirements: 7.4
+		if len(s.recentLogs) > MaxRecentLogs {
+			s.recentLogs = s.recentLogs[:MaxRecentLogs]
+		}
 	}
 
 broadcast:
 	if s.sseHub != nil {
 		s.sseHub.BroadcastRequestLog(log)
 	}
+}
+
+func isInProgressStatus(status string) bool {
+	s := strings.ToLower(strings.TrimSpace(status))
+	return s == "in_progress" || s == "streaming" || s == "pending"
 }
 
 // RecordTokens records token usage for an endpoint
@@ -118,7 +140,7 @@ func (s *StatsManager) RecordTokens(endpointName string, tokens *TokenUsage) {
 	}
 }
 
-// GetRecentLogs returns the most recent request logs
+// GetRecentLogs returns the most recent completed request logs
 // Requirements: 7.2, 7.3
 func (s *StatsManager) GetRecentLogs(limit int) []*RequestLog {
 	s.mu.RLock()
@@ -131,6 +153,19 @@ func (s *StatsManager) GetRecentLogs(limit int) []*RequestLog {
 	// Return a copy to prevent external modification
 	result := make([]*RequestLog, limit)
 	copy(result, s.recentLogs[:limit])
+	return result
+}
+
+// GetInProgressLogs returns all currently in-progress request logs
+func (s *StatsManager) GetInProgressLogs() []*RequestLog {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]*RequestLog, 0, len(s.inProgressMap))
+	for _, log := range s.inProgressMap {
+		cp := *log
+		result = append(result, &cp)
+	}
 	return result
 }
 

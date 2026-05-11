@@ -14,6 +14,7 @@ import (
 
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/logger"
+	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/transformer"
 
@@ -332,7 +333,13 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if debugLogger != nil {
 		execCtx = executor.WithDebugLogger(execCtx, debugLogger)
 	}
+
+	// compact 非流式：在等待上游（ChatGPT backend）返回期间向下游定期发 "\n"，
+	// 防止客户端或中间 nginx 因空闲超时把连接断掉。仅在环境变量启用且非流式时生效。
+	stopCompactKeepAlive := maybeStartCodexCompactKeepAlive(execCtx, w, interfaceType, r.URL.Path, isStreaming)
+
 	execResult := exec.retry.Execute(execCtx, forwardReq, w, enableRetry)
+	stopCompactKeepAlive()
 	result := execResult.Result
 
 	if result != nil {
@@ -444,6 +451,29 @@ func writeResponseWithHeaders(w http.ResponseWriter, statusCode int, headers htt
 	}
 	w.WriteHeader(statusCode)
 	_, _ = w.Write(body)
+}
+
+// maybeStartCodexCompactKeepAlive 按需为 codex /responses/compact 非流式请求启动下游 keep-alive ping。
+// 返回的 stop 函数必须在开始真正写响应前调用；条件不满足时返回 no-op。
+func maybeStartCodexCompactKeepAlive(ctx context.Context, w http.ResponseWriter, interfaceType InterfaceType, path string, isStreaming bool) func() {
+	if isStreaming {
+		return func() {}
+	}
+	if interfaceType != InterfaceTypeCodex {
+		return func() {}
+	}
+	if !IsCodexCompactResponsesPath(path) {
+		return func() {}
+	}
+	interval := appmiddleware.CodexCompactKeepAliveInterval()
+	if interval <= 0 {
+		return func() {}
+	}
+	// compact 响应始终是 JSON。这里预先声明 Content-Type，
+	// 若 ticker 触发前就收到上游响应，writeResponseWithHeaders 里上游 headers 仍会以 Add 方式补全；
+	// 若 ticker 先触发写入 "\n"，状态码会被 commit 为 200，JSON 解析器会忽略领先空白。
+	w.Header().Set("Content-Type", "application/json")
+	return appmiddleware.StartNonStreamingKeepAlive(ctx, w, interval)
 }
 
 func inferUpstreamErrorStage(result *executor.ForwardResult) string {

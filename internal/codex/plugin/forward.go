@@ -402,6 +402,10 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 0)
 
 	upstreamURL := getCodexUpstreamURL(config, requestPath)
+
+	// 派生稳定的 prompt_cache_key / Session_id，让同一个 (账号, 客户端) 组合稳定命中上游 prompt 缓存。
+	body, clientHeaders = ensureCodexPromptCacheKey(body, clientHeaders, account.ID)
+
 	buildRequest := func() (*http.Request, error) {
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
 		if reqErr != nil {

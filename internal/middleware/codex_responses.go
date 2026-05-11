@@ -135,6 +135,10 @@ var fieldsToRemoveForCodexUpstream = []string{
 	"prompt_cache_retention",
 	"safety_identifier",
 	"stream_options",
+	// Codex upstream (ChatGPT backend) rejects this with
+	// {"detail":"Unsupported parameter: context_management"} on /responses
+	// and it meaningfully increases compaction latency on /responses/compact.
+	"context_management",
 }
 
 // CodexResponsesAdaptMiddleware 在网关入口统一规范化 /responses 请求。
@@ -217,7 +221,15 @@ func NormalizeCodexResponsesRequest(body []byte, requestPath string, userAgent s
 	RemoveFieldsForCodexUpstream(reqBody)
 
 	if !isCodexClient {
-		AdaptResponsesPayloadForNonCLI(reqBody)
+		if IsCompactResponsesPath(requestPath) {
+			// compact 请求不要塞整段 Codex CLI instructions：
+			// 1) compact 只负责对历史做摘要，上游本身有自己的系统提示；
+			// 2) 客户端若已携带自定义 instructions 应保留；
+			// 3) 过大的 instructions 会显著抬高上游处理耗时，触发 ChatGPT backend 的 nginx 504。
+			AdaptCompactResponsesPayloadForNonCLI(reqBody)
+		} else {
+			AdaptResponsesPayloadForNonCLI(reqBody)
+		}
 	}
 
 	adapted, err := json.Marshal(reqBody)
@@ -235,11 +247,26 @@ func RemoveFieldsForCodexUpstream(reqBody map[string]any) {
 }
 
 // AdaptResponsesPayloadForNonCLI 删除非 Codex CLI 请求中不兼容的字段并补充固定 instructions。
+// 仅用于常规 /responses 路径；/responses/compact 请使用 AdaptCompactResponsesPayloadForNonCLI。
 func AdaptResponsesPayloadForNonCLI(reqBody map[string]any) {
+	removeNonCLIIncompatibleFields(reqBody)
+	reqBody["instructions"] = codexCLIInstructions
+}
+
+// AdaptCompactResponsesPayloadForNonCLI 删除非 Codex CLI 请求中不兼容的字段，
+// 但不会覆盖 instructions；缺失时仅兜底一个空串。
+// compact 请求不需要 Codex CLI 的完整提示词，塞进大段 instructions 会显著抬高上游耗时。
+func AdaptCompactResponsesPayloadForNonCLI(reqBody map[string]any) {
+	removeNonCLIIncompatibleFields(reqBody)
+	if v, ok := reqBody["instructions"]; !ok || v == nil {
+		reqBody["instructions"] = ""
+	}
+}
+
+func removeNonCLIIncompatibleFields(reqBody map[string]any) {
 	for _, field := range fieldsToRemoveForNonCLI {
 		delete(reqBody, field)
 	}
-	reqBody["instructions"] = codexCLIInstructions
 }
 
 func IsCodexCLI(userAgent string) bool {
