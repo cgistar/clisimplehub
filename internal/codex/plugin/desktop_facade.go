@@ -1,9 +1,13 @@
 package codexplugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -618,7 +622,7 @@ func (d *desktopFacade) GetAccountUsage(ctx context.Context, configPath, account
 		acctID = strings.TrimSpace(account.AccountID)
 	}
 
-	usage, err := fetchCodexUsage(ctx, accessToken, acctID, proxyURL, mc)
+	usage, planType, err := fetchCodexUsage(ctx, accessToken, acctID, proxyURL, mc)
 	if err != nil {
 		return nil, err
 	}
@@ -630,6 +634,14 @@ func (d *desktopFacade) GetAccountUsage(ctx context.Context, configPath, account
 		}
 	}
 
+	if planType != "" && planType != account.PlanType {
+		account.PlanType = planType
+		_ = store.Update(ctx, account)
+		if pool := codex.GetPool(); pool != nil {
+			pool.Reload()
+		}
+	}
+
 	return json.Marshal(formatUsageResult(usage))
 }
 
@@ -637,20 +649,29 @@ func formatUsageResult(usage *codexShared.CodexUsageSnapshot) map[string]any {
 	if usage == nil {
 		return map[string]any{}
 	}
-	result := map[string]any{}
+	result := map[string]any{
+		"updatedAt": usage.UpdatedAt.Format(time.RFC3339),
+	}
 	if usage.PrimaryUsedPercent > 0 || usage.PrimaryResetAfterSeconds > 0 {
-		_, remaining := codexShared.ComputeResetMeta(usage.UpdatedAt, usage.PrimaryResetAfterSeconds)
+		resetAt, remaining := codexShared.ComputeResetMeta(usage.UpdatedAt, usage.PrimaryResetAfterSeconds)
 		result["primary"] = map[string]any{
 			"usedPercent":      usage.PrimaryUsedPercent,
+			"windowMinutes":    usage.PrimaryWindowMinutes,
+			"resetAt":          resetAt.Format(time.RFC3339),
 			"remainingSeconds": remaining,
 		}
 	}
 	if usage.SecondaryUsedPercent > 0 || usage.SecondaryResetAfterSeconds > 0 {
-		_, remaining := codexShared.ComputeResetMeta(usage.UpdatedAt, usage.SecondaryResetAfterSeconds)
+		resetAt, remaining := codexShared.ComputeResetMeta(usage.UpdatedAt, usage.SecondaryResetAfterSeconds)
 		result["secondary"] = map[string]any{
 			"usedPercent":      usage.SecondaryUsedPercent,
+			"windowMinutes":    usage.SecondaryWindowMinutes,
+			"resetAt":          resetAt.Format(time.RFC3339),
 			"remainingSeconds": remaining,
 		}
+	}
+	if usage.PrimaryOverSecondaryPercent > 0 {
+		result["primaryOverSecondaryPercent"] = usage.PrimaryOverSecondaryPercent
 	}
 	return result
 }
@@ -998,37 +1019,34 @@ func (s *CodexService) cancelLoginSession() {
 	}
 }
 
-func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL string, config *codexShared.CodexMultiConfig) (*codexShared.CodexUsageSnapshot, error) {
+func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL string, config *codexShared.CodexMultiConfig) (*codexShared.CodexUsageSnapshot, string, error) {
 	if config == nil {
 		config = &codexShared.CodexMultiConfig{}
 	}
-	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
-	resp, err := codexAuth.FetchUsage(ctx, client, codexAuth.UsageQuery{
-		AccessToken: accessToken,
-		AccountID:   accountID,
-		UserAgent:   config.GetUserAgent(),
-		Originator:  config.GetOriginator(),
-		ProxyURL:    proxyURL,
-	})
+
+	upstreamURL := getCodexUpstreamURL(config, "/v1/responses")
+	body := []byte(`{"model":"gpt-5.4-mini","reasoning":{"effort":"medium"},"instructions":"hi","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true,"store":false}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, "", fmt.Errorf("build request: %w", err)
 	}
-	if resp == nil || resp.RateLimit == nil {
-		return nil, nil
+	applyCodexHeaders(req, accessToken, accountID, true, config, http.Header{})
+
+	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	log.Printf("[codex-usage] status=%d headers=%v", resp.StatusCode, resp.Header)
+
+	if resp.StatusCode >= 400 {
+		return nil, "", fmt.Errorf("upstream %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	snapshot := &codexShared.CodexUsageSnapshot{
-		UpdatedAt: time.Now(),
-	}
-	if resp.RateLimit.PrimaryWindow != nil {
-		snapshot.PrimaryUsedPercent = resp.RateLimit.PrimaryWindow.UsedPercent
-		snapshot.PrimaryResetAfterSeconds = resp.RateLimit.PrimaryWindow.ResetAfterSeconds
-		snapshot.PrimaryWindowMinutes = resp.RateLimit.PrimaryWindow.LimitWindowSeconds / 60
-	}
-	if resp.RateLimit.SecondaryWindow != nil {
-		snapshot.SecondaryUsedPercent = resp.RateLimit.SecondaryWindow.UsedPercent
-		snapshot.SecondaryResetAfterSeconds = resp.RateLimit.SecondaryWindow.ResetAfterSeconds
-		snapshot.SecondaryWindowMinutes = resp.RateLimit.SecondaryWindow.LimitWindowSeconds / 60
-	}
-	return snapshot, nil
+	planType := resp.Header.Get("X-Codex-Plan-Type")
+	snapshot := extractCodexUsageHeaders(resp.Header)
+	return snapshot, planType, nil
 }

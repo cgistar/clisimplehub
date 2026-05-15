@@ -252,7 +252,7 @@ func (a *App) StartCodexLogin() (*CodexLoginResultDTO, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	proxyURL := ""
+	proxyURL := a.resolveCodexLoginProxy()
 	raw, err := cp.StartLogin(ctx, proxyURL)
 	if err != nil {
 		return nil, err
@@ -273,7 +273,7 @@ func (a *App) StartCodexLoginWithURL() (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	proxyURL := ""
+	proxyURL := a.resolveCodexLoginProxy()
 	return cp.StartLoginWithURL(ctx, proxyURL)
 }
 
@@ -360,6 +360,34 @@ func (a *App) StartCodexHeadlessLoginWithProvider(email, password, clientID, ema
 		return nil, err
 	}
 	return &result, nil
+}
+
+// resolveCodexLoginProxy resolves proxy URL for OAuth login (no account context yet).
+// Priority: appConfig.proxyUrl -> codex.json global proxy
+func (a *App) resolveCodexLoginProxy() string {
+	proxyURL := plugin.GetAppProxyURL()
+	if proxyURL != "" {
+		return proxyURL
+	}
+
+	cp := codexProvider()
+	if cp == nil {
+		return ""
+	}
+	configPath := a.getCodexMultiConfigPath()
+	if configPath == "" {
+		return ""
+	}
+	globalConfigRaw, err := cp.GetCodexGlobalConfig(configPath)
+	if err == nil {
+		var gc struct {
+			ProxyUrl string `json:"proxyUrl"`
+		}
+		if json.Unmarshal(globalConfigRaw, &gc) == nil {
+			proxyURL = strings.TrimSpace(gc.ProxyUrl)
+		}
+	}
+	return proxyURL
 }
 
 // resolveCodexProxyForEmail resolves proxy URL for a Codex account by email

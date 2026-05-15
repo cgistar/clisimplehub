@@ -68,6 +68,12 @@ export default function App() {
   }, [authenticated, route])
 
   useEffect(() => {
+    if (!authenticated || route !== 'codex') return
+    const timer = setInterval(() => void refreshCurrentPage('codex'), 60_000)
+    return () => clearInterval(timer)
+  }, [authenticated, route])
+
+  useEffect(() => {
     if (!settingsData) return
     setSettingsForm({
       port: settingsData.port || 5600,

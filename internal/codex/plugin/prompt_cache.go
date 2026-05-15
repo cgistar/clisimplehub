@@ -12,6 +12,18 @@ import (
 // promptCacheSeedNamespace 前缀用于把派生的 UUID 与其他服务隔离开，避免误命中别的缓存分片。
 const promptCacheSeedNamespace = "clisimplehub:codex:prompt-cache"
 
+// passthroughPromptCacheKey 仅透传客户端已有的 prompt_cache_key
+// 如果客户端没有提供 key，不做任何派生。
+func passthroughPromptCacheKey(body []byte, clientHeaders http.Header) ([]byte, http.Header) {
+	key := pickPromptCacheKeyFromRequest(body, clientHeaders)
+	if key == "" {
+		return body, clientHeaders
+	}
+	newBody := injectPromptCacheKey(body, key)
+	newHeaders := cloneHeadersWithSessionID(clientHeaders, key)
+	return newBody, newHeaders
+}
+
 // ensureCodexPromptCacheKey 为 Codex 请求规范化 prompt_cache_key（body）与 Session_id（header），
 // 让同一个客户端/账号组合稳定地命中上游 prompt 缓存，显著降低 /responses/compact 的上游处理耗时。
 //

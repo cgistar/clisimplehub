@@ -403,8 +403,8 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 
 	upstreamURL := getCodexUpstreamURL(config, requestPath)
 
-	// 派生稳定的 prompt_cache_key / Session_id，让同一个 (账号, 客户端) 组合稳定命中上游 prompt 缓存。
-	body, clientHeaders = ensureCodexPromptCacheKey(body, clientHeaders, account.ID)
+	// openai-response 直连路径：仅透传客户端已有的 prompt_cache_key，不自动派生。
+	body, clientHeaders = passthroughPromptCacheKey(body, clientHeaders)
 
 	buildRequest := func() (*http.Request, error) {
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))

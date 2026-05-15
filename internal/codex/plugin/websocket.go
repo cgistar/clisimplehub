@@ -179,7 +179,7 @@ func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Cont
 	if err != nil {
 		return nil, false, err
 	}
-	upstreamHeaders := applyCodexWebsocketHeaders(clientHeaders, accessToken, accountID, config)
+	upstreamHeaders := applyCodexWebsocketHeaders(clientHeaders, accessToken, accountID, config, gjson.GetBytes(requestJSON, "prompt_cache_key").String())
 	upstreamConn, handshakeResp, err := dialCodexWebsocket(ctx, upstreamURL, upstreamHeaders, proxyURL)
 	if err != nil {
 		defer closeHTTPResponseBody(handshakeResp)
@@ -295,7 +295,7 @@ func isCodexWebsocketRetryableStatus(statusCode int) bool {
 	}
 }
 
-func applyCodexWebsocketHeaders(clientHeaders http.Header, accessToken, accountID string, config *codexShared.CodexMultiConfig) http.Header {
+func applyCodexWebsocketHeaders(clientHeaders http.Header, accessToken, accountID string, config *codexShared.CodexMultiConfig, cacheKey string) http.Header {
 	headers := http.Header{}
 	if strings.TrimSpace(accessToken) != "" {
 		headers.Set("Authorization", "Bearer "+accessToken)
@@ -332,10 +332,16 @@ func applyCodexWebsocketHeaders(clientHeaders http.Header, accessToken, accountI
 	}
 	headers.Set("OpenAI-Beta", betaHeader)
 
-	if sessionID := strings.TrimSpace(clientHeaders.Get("session_id")); sessionID != "" {
+	if cacheKey != "" {
+		setHeaderCasePreserved(headers, "session_id", cacheKey)
+		headers.Set("Conversation_id", cacheKey)
+	} else if sessionID := strings.TrimSpace(clientHeaders.Get("session_id")); sessionID != "" {
 		setHeaderCasePreserved(headers, "session_id", sessionID)
+		headers.Set("Conversation_id", sessionID)
 	} else if strings.Contains(userAgent, "Mac OS") {
-		setHeaderCasePreserved(headers, "session_id", uuid.NewString())
+		id := uuid.NewString()
+		setHeaderCasePreserved(headers, "session_id", id)
+		headers.Set("Conversation_id", id)
 	}
 
 	if val := filtered.Get("Originator"); val != "" {
@@ -346,6 +352,16 @@ func applyCodexWebsocketHeaders(clientHeaders http.Header, accessToken, accountI
 	if strings.TrimSpace(accountID) != "" {
 		setHeaderCasePreserved(headers, "ChatGPT-Account-ID", accountID)
 	}
+
+	// 注入 codex.json 中配置的自定义 headers。
+	for k, v := range config.GetCustomHeaders() {
+		if k = strings.TrimSpace(k); k != "" {
+			if v = strings.TrimSpace(v); v != "" {
+				headers.Set(k, v)
+			}
+		}
+	}
+
 	return headers
 }
 

@@ -40,13 +40,10 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 
 	if val := filtered.Get("Session_id"); val != "" {
 		req.Header.Set("Session_id", val)
-	} else {
+	} else if strings.Contains(userAgent, "Mac OS") {
 		req.Header.Set("Session_id", uuid.NewString())
 	}
 
-	if val := filtered.Get("Openai-Beta"); val != "" {
-		req.Header.Set("Openai-Beta", val)
-	}
 	if val := filtered.Get("X-Codex-Beta-Features"); val != "" {
 		req.Header.Set("X-Codex-Beta-Features", val)
 	}
@@ -76,6 +73,15 @@ func applyCodexHeaders(req *http.Request, accessToken, accountID string, isStrea
 		}
 		if accountID != "" {
 			req.Header.Set("Chatgpt-Account-Id", accountID)
+		}
+	}
+
+	// 注入 codex.json 中配置的自定义 headers（覆盖已有值）。
+	for k, v := range config.GetCustomHeaders() {
+		if k = strings.TrimSpace(k); k != "" {
+			if v = strings.TrimSpace(v); v != "" {
+				req.Header.Set(k, v)
+			}
 		}
 	}
 }

@@ -76,7 +76,7 @@ func StartCodexLogin(ctx context.Context, proxyURL string) (*CodexLoginResult, e
 	}
 
 	resultCh := make(chan *OAuthResult, 1)
-	server, err := startOAuthServer(state, resultCh)
+	server, err := startOAuthServer(resultCh)
 	if err != nil {
 		return nil, fmt.Errorf("start callback server: %w", err)
 	}
@@ -123,7 +123,7 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 	}
 
 	resultCh := make(chan *OAuthResult, 1)
-	server, err := startOAuthServer(state, resultCh)
+	server, err := startOAuthServer(resultCh)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("start callback server: %w", err)
 	}
@@ -284,7 +284,7 @@ func SubmitCallbackURL(ctx context.Context, callbackURL string) error {
 	return nil
 }
 
-func startOAuthServer(expectedState string, resultCh chan<- *OAuthResult) (*http.Server, error) {
+func startOAuthServer(resultCh chan<- *OAuthResult) (*http.Server, error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", OAuthPort)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -295,17 +295,15 @@ func startOAuthServer(expectedState string, resultCh chan<- *OAuthResult) (*http
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		state := q.Get("state")
-		if state == "" || state != expectedState {
-			http.Error(w, "OAuth state mismatch; please use the latest login link", http.StatusBadRequest)
-			return
-		}
 		code := q.Get("code")
+		state := q.Get("state")
 		errorParam := q.Get("error")
+
 		if code == "" && errorParam == "" {
 			http.Error(w, "No authorization code received", http.StatusBadRequest)
 			return
 		}
+
 		result := &OAuthResult{
 			Code:  code,
 			State: state,

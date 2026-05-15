@@ -106,10 +106,11 @@ type CodexMultiConfig struct {
 
 // CodexConfig holds configurable parameters for Codex API requests
 type CodexConfig struct {
-	BaseURL       string `json:"baseURL,omitempty"`       // Upstream API base URL
-	ClientVersion string `json:"clientVersion,omitempty"` // Version header value
-	UserAgent     string `json:"userAgent,omitempty"`     // User-Agent header value
-	Originator    string `json:"originator,omitempty"`    // Originator header value
+	BaseURL       string            `json:"baseURL,omitempty"`       // Upstream API base URL
+	ClientVersion string            `json:"clientVersion,omitempty"` // Version header value
+	UserAgent     string            `json:"userAgent,omitempty"`     // User-Agent header value
+	Originator    string            `json:"originator,omitempty"`    // Originator header value
+	CustomHeaders map[string]string `json:"customHeaders,omitempty"` // Additional headers to inject into upstream requests
 }
 
 func DefaultCodexConfig() CodexConfig {
@@ -207,6 +208,14 @@ func (c *CodexMultiConfig) GetOriginator() string {
 		return DefaultCodexOriginator
 	}
 	return strings.TrimSpace(c.Config.Originator)
+}
+
+// GetCustomHeaders returns the configured custom headers (may be nil)
+func (c *CodexMultiConfig) GetCustomHeaders() map[string]string {
+	if c == nil {
+		return nil
+	}
+	return c.Config.CustomHeaders
 }
 
 func GetDefaultCodexMultiConfigPath() string {
