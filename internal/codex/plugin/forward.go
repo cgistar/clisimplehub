@@ -535,7 +535,7 @@ func (s *CodexService) forwardToUpstream(ctx context.Context, account *codexShar
 			debugLogger.SetSection("UpstreamResponseBody", string(respBody))
 		}
 		pool.MarkFailed(account.ID, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
-		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "payment required"}, false
+		return &forwardResult{statusCode: resp.StatusCode, body: respBody, errMsg: "payment required"}, true
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {

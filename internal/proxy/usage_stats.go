@@ -51,6 +51,7 @@ func (p *ProxyServer) insertUsageStat(_ context.Context, interfaceType Interface
 	if tokens != nil {
 		stat.InputTokens = tokens.InputTokens
 		stat.OutputTokens = tokens.OutputTokens
+		stat.TotalTokens = tokenUsageTotalFromExecutor(tokens)
 		stat.CachedCreate = tokens.CachedCreate
 		stat.CachedRead = tokens.CachedRead
 		stat.Reasoning = tokens.Reasoning
@@ -62,4 +63,14 @@ func (p *ProxyServer) insertUsageStat(_ context.Context, interfaceType Interface
 	if err := usageStats.InsertUsageStat(insertCtx, stat); err != nil {
 		log.Printf("Warning: insert usage_stats failed: %v", err)
 	}
+}
+
+func tokenUsageTotalFromExecutor(tokens *executor.TokenUsage) int64 {
+	if tokens == nil {
+		return 0
+	}
+	if tokens.TotalTokens > 0 {
+		return tokens.TotalTokens
+	}
+	return tokens.InputTokens + tokens.OutputTokens
 }

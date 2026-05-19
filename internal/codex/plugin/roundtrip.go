@@ -63,7 +63,7 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 		if ret.Tokens != nil {
 			stat.InputTokens = ret.Tokens.InputTokens
 			stat.OutputTokens = ret.Tokens.OutputTokens
-			stat.TotalTokens = ret.Tokens.InputTokens + ret.Tokens.OutputTokens
+			stat.TotalTokens = tokenUsageTotal(ret.Tokens)
 		}
 		if ret.Stream != nil {
 			// 流式响应的 token 只能在下游读取到 completed 事件后确定。
@@ -344,7 +344,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 			TargetURL:     upstreamURL,
 			TargetHeaders: targetHeaders,
 			Error:         fmt.Errorf("payment required"),
-		}, false
+		}, true
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
@@ -539,7 +539,7 @@ func (r *codexStatsReadCloser) finish(readErr error) {
 		if r.latest != nil {
 			r.stat.InputTokens = r.latest.InputTokens
 			r.stat.OutputTokens = r.latest.OutputTokens
-			r.stat.TotalTokens = r.latest.InputTokens + r.latest.OutputTokens
+			r.stat.TotalTokens = tokenUsageTotal(r.latest)
 		}
 		insertCodexAccountStatAsync(r.store, r.stat)
 	})

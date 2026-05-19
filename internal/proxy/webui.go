@@ -71,6 +71,7 @@ type webUIEndpointInfo struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
 	APIURL        string `json:"apiUrl"`
+	APIKey        string `json:"apiKey,omitempty"`
 	Active        bool   `json:"active"`
 	Enabled       bool   `json:"enabled"`
 	InterfaceType string `json:"interfaceType"`
@@ -89,6 +90,25 @@ type webUIEndpointGroup struct {
 	ActiveEndpointID   int64               `json:"activeEndpointId"`
 	ActiveEndpointName string              `json:"activeEndpointName,omitempty"`
 	Endpoints          []webUIEndpointInfo `json:"endpoints"`
+}
+
+type webUIEndpointImportInput struct {
+	ID            int64                  `json:"id"`
+	Name          string                 `json:"name"`
+	APIURL        string                 `json:"apiUrl"`
+	APIKey        string                 `json:"apiKey"`
+	Active        *bool                  `json:"active,omitempty"`
+	Enabled       *bool                  `json:"enabled,omitempty"`
+	InterfaceType string                 `json:"interfaceType"`
+	ProviderName  string                 `json:"providerName,omitempty"`
+	Model         string                 `json:"model,omitempty"`
+	Transformer   string                 `json:"transformer,omitempty"`
+	ProxyURL      string                 `json:"proxyUrl,omitempty"`
+	Routes        []string               `json:"routes,omitempty"`
+	Models        []storage.ModelMapping `json:"models,omitempty"`
+	Headers       map[string]string      `json:"headers,omitempty"`
+	Remark        string                 `json:"remark,omitempty"`
+	Priority      int                    `json:"priority,omitempty"`
 }
 
 func webUIFS() (fs.FS, error) {
@@ -113,7 +133,12 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Post("/web/api/auth/logout", p.handleWebUILogout)
 	r.Get("/web/sse", p.requireWebUISession(p.handleWebUISSE))
 	r.Get("/web/api/home", p.requireWebUISession(p.handleWebUIHome))
+	r.Get("/web/api/home/stats", p.requireWebUISession(p.handleWebUIStats))
+	r.Delete("/web/api/home/stats", p.requireWebUISession(p.handleWebUIClearStats))
+	r.Get("/web/api/home/stats/hourly", p.requireWebUISession(p.handleWebUIHourlyStats))
 	r.Post("/web/api/home/endpoints/active", p.requireWebUISession(p.handleWebUIActiveEndpoint))
+	r.Post("/web/api/home/endpoints/import", p.requireWebUISession(p.handleWebUIImportEndpoints))
+	r.Delete("/web/api/home/endpoints/{endpointId}", p.requireWebUISession(p.handleWebUIDeleteEndpoint))
 	r.Get("/web/api/codex", p.requireWebUISession(p.handleWebUICodex))
 	r.Post("/web/api/codex/active", p.requireWebUISession(p.handleWebUIActiveCodexAccount))
 	r.Post("/web/api/codex/refresh-token", p.requireWebUISession(p.handleWebUIRefreshCodexToken))
@@ -363,6 +388,7 @@ func (p *ProxyServer) handleWebUIHome(w http.ResponseWriter, r *http.Request) {
 			ID:            ep.ID,
 			Name:          ep.Name,
 			APIURL:        ep.APIURL,
+			APIKey:        ep.APIKey,
 			Active:        false,
 			Enabled:       ep.Enabled,
 			InterfaceType: ep.InterfaceType,
@@ -447,6 +473,90 @@ func (p *ProxyServer) handleWebUIHome(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func parseWebUIStatsRange(raw string) (statsdb.TimeRange, bool) {
+	switch statsdb.TimeRange(strings.TrimSpace(raw)) {
+	case statsdb.TimeRangeToday:
+		return statsdb.TimeRangeToday, true
+	case statsdb.TimeRangeYesterday:
+		return statsdb.TimeRangeYesterday, true
+	case statsdb.TimeRangeWeek:
+		return statsdb.TimeRangeWeek, true
+	case statsdb.TimeRangeMonth:
+		return statsdb.TimeRangeMonth, true
+	case statsdb.TimeRangeAll:
+		return statsdb.TimeRangeAll, true
+	default:
+		return statsdb.TimeRangeToday, false
+	}
+}
+
+func (p *ProxyServer) handleWebUIStats(w http.ResponseWriter, r *http.Request) {
+	if p.usageStats == nil {
+		writeJSON(w, http.StatusOK, []statsdb.InterfaceTypeStatsSummary{})
+		return
+	}
+
+	timeRange, ok := parseWebUIStatsRange(r.URL.Query().Get("range"))
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "range 无效",
+		})
+		return
+	}
+
+	stats, err := p.usageStats.GetStatsByInterfaceType(r.Context(), timeRange)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (p *ProxyServer) handleWebUIClearStats(w http.ResponseWriter, r *http.Request) {
+	if p.usageStats == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "usage stats store not initialized",
+		})
+		return
+	}
+
+	timeRange, ok := parseWebUIStatsRange(r.URL.Query().Get("range"))
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "range 无效",
+		})
+		return
+	}
+
+	if err := p.usageStats.ClearStats(r.Context(), timeRange); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "token stats cleared",
+	})
+}
+
+func (p *ProxyServer) handleWebUIHourlyStats(w http.ResponseWriter, r *http.Request) {
+	if p.usageStats == nil {
+		writeJSON(w, http.StatusOK, []statsdb.HourlyStatsSummary{})
+		return
+	}
+
+	stats, err := p.usageStats.GetTodayHourlyStats(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
 func (p *ProxyServer) handleWebUIActiveEndpoint(w http.ResponseWriter, r *http.Request) {
 	if p.store == nil || p.router == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
@@ -524,6 +634,261 @@ func (p *ProxyServer) handleWebUIActiveEndpoint(w http.ResponseWriter, r *http.R
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message": "active endpoint updated",
+	})
+}
+
+func (p *ProxyServer) reloadWebUIRouterFromStore() error {
+	if p.store == nil || p.router == nil {
+		return nil
+	}
+	endpoints, err := p.store.GetEndpoints()
+	if err != nil {
+		return err
+	}
+	p.router.LoadEndpoints(convertStorageEndpoints(endpoints))
+	return nil
+}
+
+func webUIHasEnabledActiveEndpoint(endpoints []*storage.Endpoint, interfaceType string, excludeID int64) bool {
+	for _, ep := range endpoints {
+		if ep == nil || ep.ID == excludeID {
+			continue
+		}
+		if ep.InterfaceType == interfaceType && ep.Enabled && ep.Active {
+			return true
+		}
+	}
+	return false
+}
+
+func parseWebUIEndpointImportItems(r *http.Request) ([]webUIEndpointImportInput, error) {
+	var raw json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("请求体格式无效: %w", err)
+	}
+
+	var items []webUIEndpointImportInput
+	if err := json.Unmarshal(raw, &items); err == nil {
+		return items, nil
+	}
+
+	var wrapped struct {
+		Endpoints []webUIEndpointImportInput `json:"endpoints"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Endpoints == nil {
+		return nil, fmt.Errorf("请提供 endpoint JSON 数组")
+	}
+	return wrapped.Endpoints, nil
+}
+
+func (p *ProxyServer) endpointFromWebUIImportInput(input webUIEndpointImportInput) (*storage.Endpoint, error) {
+	name := strings.TrimSpace(input.Name)
+	apiURL := strings.TrimSpace(input.APIURL)
+	apiKey := strings.TrimSpace(input.APIKey)
+	interfaceType := strings.TrimSpace(input.InterfaceType)
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	if apiURL == "" {
+		return nil, fmt.Errorf("apiUrl is required")
+	}
+	if interfaceType == "" {
+		return nil, fmt.Errorf("interfaceType is required")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("apiKey is required")
+	}
+
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+
+	active := false
+	if input.Active != nil {
+		active = *input.Active
+	}
+
+	priority := input.Priority
+	if priority == 0 {
+		priority = 5
+	}
+
+	endpoint := &storage.Endpoint{
+		Name:          name,
+		APIURL:        apiURL,
+		APIKey:        apiKey,
+		Active:        active,
+		Enabled:       enabled,
+		InterfaceType: interfaceType,
+		ProviderName:  strings.TrimSpace(input.ProviderName),
+		Model:         strings.TrimSpace(input.Model),
+		Transformer:   strings.TrimSpace(input.Transformer),
+		ProxyURL:      strings.TrimSpace(input.ProxyURL),
+		Routes:        input.Routes,
+		Models:        input.Models,
+		Headers:       input.Headers,
+		Remark:        strings.TrimSpace(input.Remark),
+		Priority:      priority,
+	}
+	return endpoint, nil
+}
+
+func (p *ProxyServer) activateImportedWebUIEndpoint(endpoint *storage.Endpoint, endpoints []*storage.Endpoint) error {
+	if endpoint == nil {
+		return nil
+	}
+	oldActiveEndpoints := make([]*storage.Endpoint, 0)
+	for _, ep := range endpoints {
+		if ep == nil || ep.ID == endpoint.ID || ep.InterfaceType != endpoint.InterfaceType || !ep.Active {
+			continue
+		}
+		oldActiveEndpoints = append(oldActiveEndpoints, ep)
+		ep.Active = false
+		if err := p.store.UpdateEndpoint(ep); err != nil {
+			restoreWebUIActiveEndpoints(p.store, oldActiveEndpoints)
+			return err
+		}
+	}
+	endpoint.Active = true
+	if err := p.store.UpdateEndpoint(endpoint); err != nil {
+		restoreWebUIActiveEndpoints(p.store, oldActiveEndpoints)
+		return err
+	}
+	return nil
+}
+
+func restoreWebUIActiveEndpoints(store storage.Storage, endpoints []*storage.Endpoint) {
+	if store == nil {
+		return
+	}
+	for _, ep := range endpoints {
+		if ep == nil {
+			continue
+		}
+		ep.Active = true
+		_ = store.UpdateEndpoint(ep)
+	}
+}
+
+func (p *ProxyServer) handleWebUIImportEndpoints(w http.ResponseWriter, r *http.Request) {
+	if p.store == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "storage not initialized",
+		})
+		return
+	}
+
+	items, err := parseWebUIEndpointImportItems(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+	if len(items) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "没有可导入的 endpoint",
+		})
+		return
+	}
+
+	successCount := 0
+	failed := make([]map[string]any, 0)
+	for idx, item := range items {
+		endpoint, err := p.endpointFromWebUIImportInput(item)
+		if err != nil {
+			failed = append(failed, map[string]any{"index": idx, "error": err.Error()})
+			continue
+		}
+
+		endpoints, err := p.store.GetEndpoints()
+		if err != nil {
+			failed = append(failed, map[string]any{"index": idx, "error": err.Error()})
+			continue
+		}
+
+		shouldActivate := endpoint.Active
+		endpoint.Active = false
+		if !shouldActivate && endpoint.Enabled && !webUIHasEnabledActiveEndpoint(endpoints, endpoint.InterfaceType, 0) {
+			endpoint.Active = true
+		}
+
+		if err := p.store.SaveEndpoint(endpoint); err != nil {
+			failed = append(failed, map[string]any{"index": idx, "error": err.Error()})
+			continue
+		}
+
+		if shouldActivate {
+			if err := p.activateImportedWebUIEndpoint(endpoint, endpoints); err != nil {
+				failed = append(failed, map[string]any{"index": idx, "error": err.Error()})
+				continue
+			}
+		}
+		successCount++
+	}
+
+	if err := p.reloadWebUIRouterFromStore(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "reload endpoints failed: " + err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": fmt.Sprintf("端点导入完成：成功 %d，失败 %d", successCount, len(failed)),
+		"success": successCount,
+		"failed":  failed,
+	})
+}
+
+func (p *ProxyServer) handleWebUIDeleteEndpoint(w http.ResponseWriter, r *http.Request) {
+	if p.store == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "storage not initialized",
+		})
+		return
+	}
+
+	id, err := strconv.ParseInt(strings.TrimSpace(chi.URLParam(r, "endpointId")), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "endpointId 无效",
+		})
+		return
+	}
+	if _, err := p.store.GetEndpointByID(id); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			"error": "endpoint not found",
+		})
+		return
+	}
+
+	if err := p.store.DeleteEndpoint(id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if p.usageStats != nil {
+		if err := p.usageStats.DeleteStatsByEndpointID(r.Context(), id); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": err.Error(),
+			})
+			return
+		}
+	}
+
+	if err := p.reloadWebUIRouterFromStore(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "reload endpoints failed: " + err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "端点已删除",
 	})
 }
 

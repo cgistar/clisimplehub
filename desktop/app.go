@@ -2274,6 +2274,82 @@ type ProcessCodexConfigResult struct {
 	AuthJson   string `json:"authJson"`
 }
 
+func isCodexChatGPTAuth(auth map[string]interface{}) bool {
+	authMode, ok := auth["auth_mode"].(string)
+	return ok && strings.EqualFold(strings.TrimSpace(authMode), "chatgpt")
+}
+
+func tomlLineKey(line string) string {
+	key, _, found := strings.Cut(strings.TrimSpace(line), "=")
+	if !found {
+		return ""
+	}
+	return strings.TrimSpace(key)
+}
+
+func updateCodexLocalProviderConfig(configToml, baseURL, experimentalBearerToken string) string {
+	lines := strings.Split(configToml, "\n")
+	newLines := make([]string, 0, len(lines)+3)
+	inLocalProvider := false
+	localProviderFound := false
+	baseURLUpdated := false
+	tokenUpdated := false
+
+	appendMissingFields := func() {
+		if !baseURLUpdated {
+			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
+			baseURLUpdated = true
+		}
+		if experimentalBearerToken != "" && !tokenUpdated {
+			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
+			tokenUpdated = true
+		}
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isSection := strings.HasPrefix(trimmed, "[")
+
+		if isSection && inLocalProvider && !strings.HasPrefix(trimmed, "[model_providers.local]") {
+			appendMissingFields()
+			inLocalProvider = false
+		}
+
+		if strings.HasPrefix(trimmed, "[model_providers.local]") {
+			inLocalProvider = true
+			localProviderFound = true
+		}
+
+		switch {
+		case inLocalProvider && tomlLineKey(line) == "base_url":
+			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
+			baseURLUpdated = true
+		case inLocalProvider && experimentalBearerToken != "" && tomlLineKey(line) == "experimental_bearer_token":
+			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
+			tokenUpdated = true
+		default:
+			newLines = append(newLines, line)
+		}
+	}
+
+	if inLocalProvider {
+		appendMissingFields()
+	}
+
+	if !localProviderFound {
+		if len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) != "" {
+			newLines = append(newLines, "")
+		}
+		newLines = append(newLines, "[model_providers.local]")
+		newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
+		if experimentalBearerToken != "" {
+			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
+		}
+	}
+
+	return strings.Join(newLines, "\n")
+}
+
 // ProcessClaudeConfigWithIP processes Claude config with proxy settings using specified IP
 func (a *App) ProcessClaudeConfigWithIP(content string, ip string) (string, error) {
 	settings, err := a.GetSettings()
@@ -2326,35 +2402,18 @@ func (a *App) ProcessCodexConfigWithIP(configToml, authJson, ip string) (*Proces
 		apiKey = "-"
 	}
 
-	// Process config.toml - replace base_url
-	lines := strings.Split(configToml, "\n")
-	var newLines []string
-	inLocalProvider := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Track if we're in [model_providers.local] section
-		if strings.HasPrefix(trimmed, "[model_providers.local]") {
-			inLocalProvider = true
-		} else if strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "[model_providers.local]") {
-			inLocalProvider = false
-		}
-
-		// Replace base_url in local provider section
-		if inLocalProvider && strings.HasPrefix(trimmed, "base_url") {
-			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", proxyURL))
-		} else {
-			newLines = append(newLines, line)
-		}
-	}
-	newConfigToml := strings.Join(newLines, "\n")
-
 	// Process auth.json
 	var auth map[string]interface{}
 	if err := json.Unmarshal([]byte(authJson), &auth); err != nil {
 		auth = make(map[string]interface{})
 	}
+
+	experimentalBearerToken := ""
+	if isCodexChatGPTAuth(auth) {
+		experimentalBearerToken = apiKey
+	}
+	newConfigToml := updateCodexLocalProviderConfig(configToml, proxyURL, experimentalBearerToken)
+
 	auth["OPENAI_API_KEY"] = apiKey
 
 	newAuthJson, err := json.MarshalIndent(auth, "", "  ")
@@ -2463,12 +2522,14 @@ model_provider = 'local'
 network_access = true
 sandbox_mode = "workspace-write"
 experimental_use_rmcp_client = true
-model = "gpt-5.3-codex"
+model = "gpt-5.5"
 model_reasoning_effort = "high"
 personality = "pragmatic"
 web_search = "live"
 windows_wsl_setup_acknowledged = true
 model_verbosity = "high"
+plan_mode_reasoning_effort = "high"
+supports_websockets = true
 
 [features]
 plan_tool = true
@@ -2481,12 +2542,17 @@ unified_exec = true
 shell_snapshot = true
 multi_agent = true
 steer = true
+goals = true
 
 [model_providers.local]
-name = 'OpenAI'
-base_url = '%s'
+name = "local"
+base_url = "%s"
 requires_openai_auth = true
-wire_api = 'responses'`, proxyURL)
+wire_api = "responses"
+
+[tui]
+status_line = ["current-dir", "git-branch", "model-with-reasoning", "five-hour-limit", "weekly-limit", "context-used"]
+status_line_use_colors = true`, proxyURL)
 }
 
 func (a *App) getDefaultCodexAuth() string {

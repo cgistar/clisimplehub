@@ -40,35 +40,81 @@ function isEndpointConfigTarget(value: string): value is EndpointConfigTarget {
   return value === 'claude' || value === 'codex'
 }
 
-function updateCodexLocalProviderBaseUrl(configToml: string, apiUrl: string): string {
+function formatTomlString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+function isCodexChatGPTAuth(auth: Record<string, unknown>): boolean {
+  return typeof auth.auth_mode === 'string' && auth.auth_mode.trim().toLowerCase() === 'chatgpt'
+}
+
+function tomlLineKey(line: string): string {
+  const separatorIndex = line.indexOf('=')
+  if (separatorIndex < 0) return ''
+  return line.slice(0, separatorIndex).trim()
+}
+
+function updateCodexLocalProviderConfig(
+  configToml: string,
+  apiUrl: string,
+  experimentalBearerToken?: string
+): string {
   const lines = configToml.split('\n')
   const newLines: string[] = []
   let inLocalProvider = false
+  let localProviderFound = false
   let baseUrlUpdated = false
+  let tokenUpdated = false
+
+  const appendMissingLocalProviderFields = () => {
+    if (!baseUrlUpdated) {
+      newLines.push(`base_url = '${apiUrl}'`)
+      baseUrlUpdated = true
+    }
+    if (experimentalBearerToken && !tokenUpdated) {
+      newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken)}`)
+      tokenUpdated = true
+    }
+  }
 
   for (const line of lines) {
     const trimmed = line.trim()
+    const isSection = trimmed.startsWith('[')
 
-    if (trimmed.startsWith('[model_providers.local]')) {
-      inLocalProvider = true
-    } else if (trimmed.startsWith('[') && !trimmed.startsWith('[model_providers.local]')) {
+    if (isSection && inLocalProvider && !trimmed.startsWith('[model_providers.local]')) {
+      appendMissingLocalProviderFields()
       inLocalProvider = false
     }
 
-    if (inLocalProvider && trimmed.startsWith('base_url')) {
+    if (trimmed.startsWith('[model_providers.local]')) {
+      inLocalProvider = true
+      localProviderFound = true
+    }
+
+    if (inLocalProvider && tomlLineKey(line) === 'base_url') {
       newLines.push(`base_url = '${apiUrl}'`)
       baseUrlUpdated = true
+    } else if (inLocalProvider && experimentalBearerToken && tomlLineKey(line) === 'experimental_bearer_token') {
+      newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken)}`)
+      tokenUpdated = true
     } else {
       newLines.push(line)
     }
   }
 
-  if (!baseUrlUpdated) {
+  if (inLocalProvider) {
+    appendMissingLocalProviderFields()
+  }
+
+  if (!localProviderFound) {
     if (newLines.length > 0 && newLines[newLines.length - 1].trim() !== '') {
       newLines.push('')
     }
     newLines.push('[model_providers.local]')
     newLines.push(`base_url = '${apiUrl}'`)
+    if (experimentalBearerToken) {
+      newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken)}`)
+    }
   }
 
   return newLines.join('\n')
@@ -121,16 +167,20 @@ async function applyCodexEndpointUrl(apiUrl: string, apiKey?: string): Promise<v
     throw new Error('config.toml not found')
   }
 
-  const newConfigToml = updateCodexLocalProviderBaseUrl(configFile.content, apiUrl)
-
-  let auth: Record<string, string>
+  let auth: Record<string, unknown>
   try {
     auth = authFile?.content
-      ? (JSON.parse(authFile.content) as Record<string, string>)
+      ? (JSON.parse(authFile.content) as Record<string, unknown>)
       : {}
   } catch {
     auth = {}
   }
+
+  const newConfigToml = updateCodexLocalProviderConfig(
+    configFile.content,
+    apiUrl,
+    apiKey && isCodexChatGPTAuth(auth) ? apiKey : undefined
+  )
 
   if (apiKey) {
     auth.OPENAI_API_KEY = apiKey

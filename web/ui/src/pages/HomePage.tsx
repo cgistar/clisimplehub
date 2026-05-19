@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { formatDateTime, numberOrDash } from '@/lib/format'
-import type { EndpointGroup, EndpointInfo, HomePageData, RequestLogItem } from '@/types'
+import { copyToClipboard, formatDateTime, numberOrDash } from '@/lib/format'
+import { CopyIcon, TrashIcon } from '@/components/icons'
+import type { EndpointGroup, EndpointImportInput, EndpointInfo, HomePageData, RequestLogItem } from '@/types'
+import { toast } from 'sonner'
 
 interface HomePageProps {
   data: HomePageData | null
   loading: boolean
   busyAction: string
+  onOpenEndpointImport: () => void
   onActivateEndpoint: (interfaceType: string, endpointId: number) => void
+  onDeleteEndpoint: (endpoint: EndpointInfo) => void
 }
 
 function getInterfaceLabel(interfaceType: string): string {
@@ -28,6 +32,42 @@ function formatTokens(value?: number): string {
 
 function endpointDisplayName(endpoint: EndpointInfo): string {
   return endpoint.providerName ? `${endpoint.providerName} - ${endpoint.name}` : endpoint.name
+}
+
+function removeEmptyFields<T extends Record<string, unknown>>(value: T): T {
+  for (const key of Object.keys(value) as Array<keyof T>) {
+    const item = value[key]
+    if (item === '' || item === undefined || item === null) {
+      delete value[key]
+    }
+  }
+  return value
+}
+
+function buildEndpointImportJson(endpoint: EndpointInfo): string {
+  const payload: EndpointImportInput = removeEmptyFields({
+    name: endpoint.name,
+    apiUrl: endpoint.apiUrl,
+    apiKey: endpoint.apiKey || '',
+    active: endpoint.active,
+    enabled: endpoint.enabled,
+    interfaceType: endpoint.interfaceType,
+    providerName: endpoint.providerName || '',
+    model: endpoint.model || '',
+    transformer: endpoint.transformer || '',
+    priority: endpoint.priority || undefined,
+  })
+  return JSON.stringify([payload], null, 2)
+}
+
+async function copyEndpointImportJson(endpoint: EndpointInfo): Promise<void> {
+  try {
+    await copyToClipboard(buildEndpointImportJson(endpoint))
+    toast.success('端点 JSON 已复制，可直接粘贴导入')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    toast.error(`复制端点 JSON 失败：${message}`)
+  }
 }
 
 function sortEndpoints(endpoints: EndpointInfo[]): EndpointInfo[] {
@@ -106,7 +146,7 @@ function formatElapsed(timestamp?: string): string {
   return `${Math.floor(elapsed / 60)}m${elapsed % 60}s`
 }
 
-export default function HomePage({ data, loading, busyAction, onActivateEndpoint }: HomePageProps) {
+export default function HomePage({ data, loading, busyAction, onOpenEndpointImport, onActivateEndpoint, onDeleteEndpoint }: HomePageProps) {
   const [activeTab, setActiveTab] = useState<string>('')
   const [selectedEndpointId, setSelectedEndpointId] = useState<string>('')
   const [realtimeLogs, setRealtimeLogs] = useState<RequestLogItem[]>([])
@@ -232,6 +272,11 @@ export default function HomePage({ data, loading, busyAction, onActivateEndpoint
             <h2 className="card-title">端点概览</h2>
             <div className="card-subtitle">参考桌面版布局，按类型切换并查看端点今日统计</div>
           </div>
+          <div className="actions">
+            <button type="button" className="btn" onClick={onOpenEndpointImport}>
+              导入
+            </button>
+          </div>
         </div>
 
         {groupedEndpoints.length === 0 ? (
@@ -341,6 +386,28 @@ export default function HomePage({ data, loading, busyAction, onActivateEndpoint
                         <span className="home-endpoint-stat-subitem">
                           输入 {formatTokens(endpoint.todayInput)} / 输出 {formatTokens(endpoint.todayOutput)}
                         </span>
+                      </div>
+
+                      <div className="home-endpoint-card-footer">
+                        <button
+                          type="button"
+                          className="endpoint-card-icon-btn"
+                          title="复制端点 JSON"
+                          aria-label={`复制端点 ${endpointDisplayName(endpoint)} JSON`}
+                          onClick={() => void copyEndpointImportJson(endpoint)}
+                        >
+                          <CopyIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="endpoint-card-icon-btn danger"
+                          title="删除端点"
+                          aria-label={`删除端点 ${endpointDisplayName(endpoint)}`}
+                          disabled={busyAction === `endpoint:delete:${endpoint.id}`}
+                          onClick={() => onDeleteEndpoint(endpoint)}
+                        >
+                          <TrashIcon />
+                        </button>
                       </div>
                     </div>
                   ))}

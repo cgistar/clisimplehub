@@ -600,6 +600,7 @@ func usageTokens(body []byte) *TokenUsage {
 	return &TokenUsage{
 		InputTokens:  stats.InputTokens,
 		OutputTokens: stats.OutputTokens,
+		TotalTokens:  stats.Total(),
 		CachedCreate: stats.CachedCreate,
 		CachedRead:   stats.CachedRead,
 		Reasoning:    stats.Reasoning,
@@ -621,6 +622,7 @@ func extractStreamTokensFromLine(line []byte) *TokenUsage {
 	return &TokenUsage{
 		InputTokens:  stats.InputTokens,
 		OutputTokens: stats.OutputTokens,
+		TotalTokens:  stats.Total(),
 		CachedCreate: stats.CachedCreate,
 		CachedRead:   stats.CachedRead,
 		Reasoning:    stats.Reasoning,

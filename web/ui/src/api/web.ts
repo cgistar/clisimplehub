@@ -9,12 +9,17 @@ import type {
   CodexConfigForm,
   CodexEditForm,
   CodexPageData,
+  EndpointImportInput,
+  EndpointImportResponse,
   HomePageData,
+  HourlyStatsSummary,
+  InterfaceTypeStatsSummary,
   PathPickerData,
   RestoreMode,
   ServerConfig,
   SettingsData,
   SettingsForm,
+  StatsRange,
   WebDAVConfig,
   WebDAVRequestPayload,
   WebDAVResponse,
@@ -29,10 +34,22 @@ export const webApi = {
     }),
   logout: () => apiFetch<ActionResponse>('/web/api/auth/logout', { method: 'POST' }),
   getHome: () => apiFetch<HomePageData>('/web/api/home'),
+  getHomeStats: (range: StatsRange) =>
+    apiFetch<InterfaceTypeStatsSummary[]>(`/web/api/home/stats?range=${encodeURIComponent(range)}`),
+  clearHomeStats: (range: StatsRange) =>
+    apiFetch<ActionResponse>(`/web/api/home/stats?range=${encodeURIComponent(range)}`, { method: 'DELETE' }),
+  getTodayHourlyStats: () => apiFetch<HourlyStatsSummary[]>('/web/api/home/stats/hourly'),
   setActiveEndpoint: (interfaceType: string, endpointId: number) =>
     apiFetch<ActionResponse>('/web/api/home/endpoints/active', {
       method: 'POST',
       body: JSON.stringify({ interfaceType, endpointId }),
+    }),
+  deleteEndpoint: (endpointId: number) =>
+    apiFetch<ActionResponse>(`/web/api/home/endpoints/${encodeURIComponent(String(endpointId))}`, { method: 'DELETE' }),
+  importEndpoints: (endpoints: EndpointImportInput[]) =>
+    apiFetch<EndpointImportResponse>('/web/api/home/endpoints/import', {
+      method: 'POST',
+      body: JSON.stringify(endpoints),
     }),
   getCodex: () => apiFetch<CodexPageData>('/web/api/codex'),
   activateCodexAccount: (accountId: string) =>

@@ -44,6 +44,7 @@ type TokenUsage struct {
 	CachedRead   int64 `json:"cached_read"`
 	OutputTokens int64 `json:"output_tokens"`
 	Reasoning    int64 `json:"reasoning"`
+	TotalTokens  int64 `json:"total_tokens,omitempty"`
 }
 
 // Stats defines statistics operations interface

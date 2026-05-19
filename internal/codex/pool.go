@@ -349,15 +349,7 @@ func (p *CodexAccountPool) resolveActiveAccount(match func(*shared.CodexAccount)
 
 func (p *CodexAccountPool) selectFixed(match func(*shared.CodexAccount) bool) *shared.CodexAccount {
 	active := p.resolveActiveAccount(match)
-	if active == nil {
-		return nil
-	}
-
-	active.ClearCooldownIfExpired()
-	if active.IsCoolingDown() {
-		return nil
-	}
-	if _, isFailed := p.failed[accountLocalID(active)]; isFailed {
+	if !p.isAccountAvailable(active, match) {
 		return nil
 	}
 	return cloneAccount(active)
@@ -365,13 +357,8 @@ func (p *CodexAccountPool) selectFixed(match func(*shared.CodexAccount) bool) *s
 
 func (p *CodexAccountPool) selectFailover(match func(*shared.CodexAccount) bool) *shared.CodexAccount {
 	active := p.resolveActiveAccount(match)
-	if active != nil {
-		active.ClearCooldownIfExpired()
-		if !active.IsCoolingDown() {
-			if _, isFailed := p.failed[accountLocalID(active)]; !isFailed {
-				return cloneAccount(active)
-			}
-		}
+	if p.isAccountAvailable(active, match) {
+		return cloneAccount(active)
 	}
 
 	currentID := ""
@@ -433,29 +420,32 @@ func (p *CodexAccountPool) availableAccounts(match func(*shared.CodexAccount) bo
 	var result []*shared.CodexAccount
 	for i := range p.accounts {
 		a := &p.accounts[i]
-		if !accountMatches(a, match) {
-			continue
+		if p.isAccountAvailable(a, match) {
+			result = append(result, a)
 		}
-		if !a.IsEnabled() {
-			continue
-		}
-		localID := accountLocalID(a)
-		if localID == "" {
-			continue
-		}
-		if _, isFailed := p.failed[localID]; isFailed {
-			continue
-		}
-		if a.Status == shared.CodexStatusBanned || a.Status == shared.CodexStatusExhausted || a.Status == shared.CodexStatusReused {
-			continue
-		}
-		a.ClearCooldownIfExpired()
-		if a.IsCoolingDown() {
-			continue
-		}
-		result = append(result, a)
 	}
 	return result
+}
+
+func (p *CodexAccountPool) isAccountAvailable(a *shared.CodexAccount, match func(*shared.CodexAccount) bool) bool {
+	if a == nil || !accountMatches(a, match) {
+		return false
+	}
+	if !a.IsEnabled() {
+		return false
+	}
+	localID := accountLocalID(a)
+	if localID == "" {
+		return false
+	}
+	if _, isFailed := p.failed[localID]; isFailed {
+		return false
+	}
+	if a.Status == shared.CodexStatusBanned || a.Status == shared.CodexStatusExhausted || a.Status == shared.CodexStatusReused {
+		return false
+	}
+	a.ClearCooldownIfExpired()
+	return !a.IsCoolingDown()
 }
 
 func accountMatches(a *shared.CodexAccount, match func(*shared.CodexAccount) bool) bool {
@@ -466,18 +456,24 @@ func accountMatches(a *shared.CodexAccount, match func(*shared.CodexAccount) boo
 }
 
 func (p *CodexAccountPool) findNextAvailable(currentAccountID string, match func(*shared.CodexAccount) bool) *shared.CodexAccount {
-	accounts := p.availableAccounts(match)
-	if len(accounts) == 0 {
+	if len(p.accounts) == 0 {
 		return nil
 	}
 	startIdx := 0
-	for i, a := range accounts {
-		if accountLocalID(a) == currentAccountID {
+	currentAccountID = strings.TrimSpace(currentAccountID)
+	for i := range p.accounts {
+		if accountLocalID(&p.accounts[i]) == currentAccountID {
 			startIdx = i + 1
 			break
 		}
 	}
-	return accounts[startIdx%len(accounts)]
+	for offset := 0; offset < len(p.accounts); offset++ {
+		a := &p.accounts[(startIdx+offset)%len(p.accounts)]
+		if p.isAccountAvailable(a, match) {
+			return a
+		}
+	}
+	return nil
 }
 
 func cloneAccount(a *shared.CodexAccount) *shared.CodexAccount {

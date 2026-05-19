@@ -2,11 +2,12 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NButton, NSelect, NTabPane, NTabs } from 'naive-ui'
-import { Pencil, Plus, Power, RefreshCw, Zap } from 'lucide-vue-next'
+import { ClipboardCopy, Pencil, Plus, Power, RefreshCw, Trash2, Zap } from 'lucide-vue-next'
 import { storeToRefs } from 'pinia'
 import type { Endpoint, InterfaceType } from '@/types/endpoint'
 import { useHomeEndpointsStore } from '@/stores/homeEndpointsStore'
 import { useFeedback } from '@/composables/useFeedback'
+import { endpointApi } from '@/api/endpoint'
 import CLIConfigEditorModal from './CLIConfigEditorModal.vue'
 
 type HomeInterfaceType = 'claude' | 'codex' | 'gemini' | 'chat'
@@ -71,6 +72,69 @@ function formatTokens(value: number): string {
   if (num >= 1000000) return `${(num / 1000000).toFixed(1)}m`
   if (num >= 1000) return `${(num / 1000).toFixed(1)}k`
   return String(num)
+}
+
+function removeEmptyFields<T extends Record<string, unknown>>(value: T): T {
+  for (const key of Object.keys(value) as Array<keyof T>) {
+    const item = value[key]
+    if (item === '' || item === undefined || item === null) {
+      delete value[key]
+    }
+  }
+  return value
+}
+
+function buildEndpointImportJson(endpoint: Endpoint): string {
+  const payload = removeEmptyFields({
+    name: endpoint.name,
+    apiUrl: endpoint.apiUrl,
+    apiKey: endpoint.apiKey || '',
+    active: endpoint.active,
+    enabled: endpoint.enabled,
+    interfaceType: endpoint.interfaceType,
+    providerName: endpoint.providerName || '',
+    model: endpoint.model || '',
+    transformer: endpoint.transformer || '',
+    proxyUrl: endpoint.proxyUrl || '',
+    models: endpoint.models,
+    routes: endpoint.routes,
+    headers: endpoint.headers,
+    remark: endpoint.remark || '',
+    priority: endpoint.priority || undefined
+  })
+  return JSON.stringify([payload], null, 2)
+}
+
+function fallbackCopyWithExecCommand(text: string): boolean {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  return copied
+}
+
+async function copyText(text: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  if (!fallbackCopyWithExecCommand(text)) {
+    throw new Error('clipboard_unavailable')
+  }
+}
+
+async function handleCopyEndpoint(endpoint: Endpoint): Promise<void> {
+  try {
+    await copyText(buildEndpointImportJson(endpoint))
+    feedback.success(t('logs.copyToClipboard'))
+  } catch (error) {
+    feedback.error(t('common.copy') + ': ' + toErrorMessage(error))
+  }
 }
 
 async function handleTabSwitch(type: HomeInterfaceType): Promise<void> {
@@ -141,6 +205,24 @@ async function handleToggleEnabled(endpointId: number, enabled: boolean): Promis
 
 async function handlePingSingle(endpointId: number): Promise<void> {
   await endpointStore.pingSingle(endpointId)
+}
+
+async function handleDeleteEndpoint(endpointId: number): Promise<void> {
+  if (!endpointId) return
+
+  const confirmed = await feedback.confirm(t('manage.confirmDeleteEndpoint'), {
+    danger: true
+  })
+  if (!confirmed) return
+
+  try {
+    await endpointApi.deleteEndpoint(endpointId)
+    await endpointStore.refreshCurrent()
+    syncSelectedEndpoint()
+    feedback.success('Endpoint deleted successfully')
+  } catch (error) {
+    feedback.error(t('manage.deleteFailed') + ': ' + toErrorMessage(error))
+  }
 }
 
 function handleManageVendors(): void {
@@ -338,16 +420,36 @@ watch(activeEndpointId, () => {
               {{ formatTokens((endpoint.todayInput || 0) + (endpoint.todayOutput || 0)) }}
               ({{ t('stats.input') }}: {{ formatTokens(endpoint.todayInput || 0) }}, {{ t('stats.output') }}: {{ formatTokens(endpoint.todayOutput || 0) }})
             </span>
-            <n-button
-              v-if="endpoint.interfaceType === 'claude' || endpoint.interfaceType === 'codex'"
-              quaternary
-              circle
-              class="endpoint-apply-btn"
-              :title="t('endpoints.applyToConfig')"
-              @click.stop="handleApplyEndpoint(endpoint.id)"
-            >
-              <Power :size="14" :stroke-width="2" />
-            </n-button>
+            <div class="endpoint-card-actions">
+              <n-button
+                quaternary
+                circle
+                class="endpoint-icon-btn"
+                :title="t('common.copy')"
+                @click.stop="handleCopyEndpoint(endpoint)"
+              >
+                <ClipboardCopy :size="14" :stroke-width="2" />
+              </n-button>
+              <n-button
+                quaternary
+                circle
+                class="endpoint-icon-btn endpoint-delete-btn"
+                :title="t('common.delete')"
+                @click.stop="handleDeleteEndpoint(endpoint.id)"
+              >
+                <Trash2 :size="14" :stroke-width="2" />
+              </n-button>
+              <n-button
+                v-if="endpoint.interfaceType === 'claude' || endpoint.interfaceType === 'codex'"
+                quaternary
+                circle
+                class="endpoint-apply-btn"
+                :title="t('endpoints.applyToConfig')"
+                @click.stop="handleApplyEndpoint(endpoint.id)"
+              >
+                <Power :size="14" :stroke-width="2" />
+              </n-button>
+            </div>
           </div>
         </div>
       </div>

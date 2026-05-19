@@ -33,6 +33,7 @@ type UsageStat struct {
 
 	InputTokens  int64
 	OutputTokens int64
+	TotalTokens  int64
 	CachedCreate int64
 	CachedRead   int64
 	Reasoning    int64
@@ -42,6 +43,10 @@ type UsageStat struct {
 type UsageStatsStore interface {
 	InsertUsageStat(ctx context.Context, stat UsageStat) error
 	GetTodayStatsByEndpoints(ctx context.Context) (map[string]*EndpointDailyStats, error)
+	GetStatsByInterfaceType(ctx context.Context, timeRange TimeRange) ([]InterfaceTypeStatsSummary, error)
+	GetTodayHourlyStats(ctx context.Context) ([]HourlyStatsSummary, error)
+	ClearStats(ctx context.Context, timeRange TimeRange) error
+	DeleteStatsByEndpointID(ctx context.Context, endpointID int64) error
 	Close() error
 }
 
@@ -128,6 +133,16 @@ func (s *SQLiteUsageStatsStore) ensureUsageStatsColumns(ctx context.Context) err
 			return fmt.Errorf("add usage_stats.response_body: %w", err)
 		}
 	}
+
+	ok, err = hasColumn("usage_stats", "total_tokens")
+	if err != nil {
+		return fmt.Errorf("check usage_stats columns: %w", err)
+	}
+	if !ok {
+		if _, err := s.queue.ExecWrite(ctx, "ALTER TABLE usage_stats ADD COLUMN total_tokens INTEGER DEFAULT 0"); err != nil {
+			return fmt.Errorf("add usage_stats.total_tokens: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -151,8 +166,8 @@ INSERT INTO usage_stats(
   path, date, interface_type, target_headers,
   request_body, response_body,
   duration_ms, status_code, status,
-  input_tokens, output_tokens, cached_create, cached_read, reasoning
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	  input_tokens, output_tokens, total_tokens, cached_create, cached_read, reasoning
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.EndpointID,
 		normalized.EndpointName,
 		normalized.ProviderName,
@@ -167,6 +182,7 @@ INSERT INTO usage_stats(
 		normalized.Status,
 		normalized.InputTokens,
 		normalized.OutputTokens,
+		normalized.TotalTokens,
 		normalized.CachedCreate,
 		normalized.CachedRead,
 		normalized.Reasoning,
@@ -232,6 +248,9 @@ func normalizeUsageStat(stat UsageStat) UsageStat {
 	if !json.Valid([]byte(out.TargetHeaders)) {
 		out.TargetHeaders = "{}"
 	}
+	if out.TotalTokens <= 0 {
+		out.TotalTokens = out.InputTokens + out.OutputTokens
+	}
 	return out
 }
 
@@ -289,6 +308,18 @@ type InterfaceTypeStatsSummary struct {
 	Endpoints     []EndpointStatsSummary `json:"endpoints"`
 }
 
+// HourlyStatsSummary 今日小时统计汇总
+type HourlyStatsSummary struct {
+	Hour         int   `json:"hour"`
+	RequestCount int64 `json:"requestCount"`
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+	CachedCreate int64 `json:"cachedCreate"`
+	CachedRead   int64 `json:"cachedRead"`
+	Reasoning    int64 `json:"reasoning"`
+	Total        int64 `json:"total"`
+}
+
 // TimeRange 时间范围
 type TimeRange string
 
@@ -310,12 +341,13 @@ func (s *SQLiteUsageStatsStore) GetStatsByTimeRange(ctx context.Context, timeRan
 
 	query := fmt.Sprintf(`
 		SELECT
-			provider_name, endpoint_id, endpoint_name,
-			COALESCE(SUM(input_tokens), 0) as input_tokens,
-			COALESCE(SUM(output_tokens), 0) as output_tokens,
-			COALESCE(SUM(cached_create), 0) as cached_create,
-			COALESCE(SUM(cached_read), 0) as cached_read,
-			COALESCE(SUM(reasoning), 0) as reasoning
+				provider_name, endpoint_id, endpoint_name,
+				COALESCE(SUM(input_tokens), 0) as input_tokens,
+				COALESCE(SUM(output_tokens), 0) as output_tokens,
+				COALESCE(SUM(CASE WHEN total_tokens > 0 THEN total_tokens ELSE input_tokens + output_tokens END), 0) as total_tokens,
+				COALESCE(SUM(cached_create), 0) as cached_create,
+				COALESCE(SUM(cached_read), 0) as cached_read,
+				COALESCE(SUM(reasoning), 0) as reasoning
 		FROM usage_stats
 		WHERE %s
 		GROUP BY provider_name, endpoint_id, endpoint_name
@@ -333,13 +365,11 @@ func (s *SQLiteUsageStatsStore) GetStatsByTimeRange(ctx context.Context, timeRan
 
 	for rows.Next() {
 		var providerName, endpointID, endpointName string
-		var input, output, cachedCreate, cachedRead, reasoning int64
+		var input, output, total, cachedCreate, cachedRead, reasoning int64
 
-		if err := rows.Scan(&providerName, &endpointID, &endpointName, &input, &output, &cachedCreate, &cachedRead, &reasoning); err != nil {
+		if err := rows.Scan(&providerName, &endpointID, &endpointName, &input, &output, &total, &cachedCreate, &cachedRead, &reasoning); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
-
-		total := input + output + cachedCreate + cachedRead + reasoning
 
 		endpointSummary := EndpointStatsSummary{
 			EndpointID:   endpointID,
@@ -422,12 +452,13 @@ func (s *SQLiteUsageStatsStore) GetStatsByInterfaceType(ctx context.Context, tim
 	if includeDate {
 		query = fmt.Sprintf(`
 			SELECT
-				interface_type, provider_name, endpoint_id, endpoint_name, date,
-				COALESCE(SUM(input_tokens), 0) as input_tokens,
-				COALESCE(SUM(output_tokens), 0) as output_tokens,
-				COALESCE(SUM(cached_create), 0) as cached_create,
-				COALESCE(SUM(cached_read), 0) as cached_read,
-				COALESCE(SUM(reasoning), 0) as reasoning,
+					interface_type, provider_name, endpoint_id, endpoint_name, date,
+					COALESCE(SUM(input_tokens), 0) as input_tokens,
+					COALESCE(SUM(output_tokens), 0) as output_tokens,
+					COALESCE(SUM(CASE WHEN total_tokens > 0 THEN total_tokens ELSE input_tokens + output_tokens END), 0) as total_tokens,
+					COALESCE(SUM(cached_create), 0) as cached_create,
+					COALESCE(SUM(cached_read), 0) as cached_read,
+					COALESCE(SUM(reasoning), 0) as reasoning,
 				COUNT(*) as request_count
 			FROM usage_stats
 			WHERE %s
@@ -437,12 +468,13 @@ func (s *SQLiteUsageStatsStore) GetStatsByInterfaceType(ctx context.Context, tim
 	} else {
 		query = fmt.Sprintf(`
 			SELECT
-				interface_type, provider_name, endpoint_id, endpoint_name, '' as date,
-				COALESCE(SUM(input_tokens), 0) as input_tokens,
-				COALESCE(SUM(output_tokens), 0) as output_tokens,
-				COALESCE(SUM(cached_create), 0) as cached_create,
-				COALESCE(SUM(cached_read), 0) as cached_read,
-				COALESCE(SUM(reasoning), 0) as reasoning,
+					interface_type, provider_name, endpoint_id, endpoint_name, '' as date,
+					COALESCE(SUM(input_tokens), 0) as input_tokens,
+					COALESCE(SUM(output_tokens), 0) as output_tokens,
+					COALESCE(SUM(CASE WHEN total_tokens > 0 THEN total_tokens ELSE input_tokens + output_tokens END), 0) as total_tokens,
+					COALESCE(SUM(cached_create), 0) as cached_create,
+					COALESCE(SUM(cached_read), 0) as cached_read,
+					COALESCE(SUM(reasoning), 0) as reasoning,
 				COUNT(*) as request_count
 			FROM usage_stats
 			WHERE %s
@@ -462,13 +494,11 @@ func (s *SQLiteUsageStatsStore) GetStatsByInterfaceType(ctx context.Context, tim
 
 	for rows.Next() {
 		var interfaceType, providerName, endpointID, endpointName, date string
-		var input, output, cachedCreate, cachedRead, reasoning, requestCount int64
+		var input, output, total, cachedCreate, cachedRead, reasoning, requestCount int64
 
-		if err := rows.Scan(&interfaceType, &providerName, &endpointID, &endpointName, &date, &input, &output, &cachedCreate, &cachedRead, &reasoning, &requestCount); err != nil {
+		if err := rows.Scan(&interfaceType, &providerName, &endpointID, &endpointName, &date, &input, &output, &total, &cachedCreate, &cachedRead, &reasoning, &requestCount); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
-
-		total := input + output + cachedCreate + cachedRead + reasoning
 
 		endpointSummary := EndpointStatsSummary{
 			EndpointID:   endpointID,
@@ -512,6 +542,65 @@ func (s *SQLiteUsageStatsStore) GetStatsByInterfaceType(ctx context.Context, tim
 	result := make([]InterfaceTypeStatsSummary, 0, len(typeOrder))
 	for _, interfaceType := range typeOrder {
 		result = append(result, *typeMap[interfaceType])
+	}
+
+	return result, nil
+}
+
+// GetTodayHourlyStats 获取今日按小时聚合的统计。
+func (s *SQLiteUsageStatsStore) GetTodayHourlyStats(ctx context.Context) ([]HourlyStatsSummary, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("nil sqlite store")
+	}
+
+	today := time.Now().Format("2006-01-02")
+	result := make([]HourlyStatsSummary, 24)
+	for hour := range result {
+		result[hour].Hour = hour
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			CAST(strftime('%H', create_time, 'localtime') AS INTEGER) as hour,
+				COUNT(*) as request_count,
+				COALESCE(SUM(input_tokens), 0) as input_tokens,
+				COALESCE(SUM(output_tokens), 0) as output_tokens,
+				COALESCE(SUM(CASE WHEN total_tokens > 0 THEN total_tokens ELSE input_tokens + output_tokens END), 0) as total_tokens,
+				COALESCE(SUM(cached_create), 0) as cached_create,
+				COALESCE(SUM(cached_read), 0) as cached_read,
+				COALESCE(SUM(reasoning), 0) as reasoning
+		FROM usage_stats
+		WHERE date = ?
+		GROUP BY hour
+		ORDER BY hour
+	`, today)
+	if err != nil {
+		return nil, fmt.Errorf("query hourly stats: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var hour int
+		var requestCount, input, output, total, cachedCreate, cachedRead, reasoning int64
+		if err := rows.Scan(&hour, &requestCount, &input, &output, &total, &cachedCreate, &cachedRead, &reasoning); err != nil {
+			return nil, fmt.Errorf("scan hourly row: %w", err)
+		}
+		if hour < 0 || hour > 23 {
+			continue
+		}
+		result[hour] = HourlyStatsSummary{
+			Hour:         hour,
+			RequestCount: requestCount,
+			InputTokens:  input,
+			OutputTokens: output,
+			CachedCreate: cachedCreate,
+			CachedRead:   cachedRead,
+			Reasoning:    reasoning,
+			Total:        total,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate hourly rows: %w", err)
 	}
 
 	return result, nil

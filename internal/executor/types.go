@@ -5,7 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
-	
+
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
 )
@@ -23,19 +23,19 @@ type ForwardRequest struct {
 
 // ForwardResult 表示转发请求的结果
 type ForwardResult struct {
-	StatusCode     int
-	Headers        http.Header
-	Body           []byte
-	TargetURL      string
-	TargetHeaders  map[string]string
+	StatusCode    int
+	Headers       http.Header
+	Body          []byte
+	TargetURL     string
+	TargetHeaders map[string]string
 	// UpstreamRequestBody records the effective request body sent to upstream when enabled via context.
-	UpstreamRequestBody          string
+	UpstreamRequestBody string
 	// UpstreamResponseBody records the response body from upstream when enabled via context (base64 encoded if binary).
-	UpstreamResponseBody          string
-	ResponseStream                string
-	Tokens                        *TokenUsage
-	Streamed                      bool
-	Error                         error
+	UpstreamResponseBody string
+	ResponseStream       string
+	Tokens               *TokenUsage
+	Streamed             bool
+	Error                error
 }
 
 type StreamInputMode string
@@ -100,6 +100,7 @@ type StreamWriter interface {
 type TokenUsage struct {
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens,omitempty"`
 	CachedCreate int64 `json:"cached_create,omitempty"`
 	CachedRead   int64 `json:"cached_read,omitempty"`
 	Reasoning    int64 `json:"reasoning,omitempty"`

@@ -375,6 +375,7 @@ func usageTokensFromBody(body []byte) *executor.TokenUsage {
 	return &executor.TokenUsage{
 		InputTokens:  stats.InputTokens,
 		OutputTokens: stats.OutputTokens,
+		TotalTokens:  stats.Total(),
 		CachedCreate: stats.CachedCreate,
 		CachedRead:   stats.CachedRead,
 		Reasoning:    stats.Reasoning,

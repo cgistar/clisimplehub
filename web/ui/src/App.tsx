@@ -5,7 +5,7 @@ import { webApi } from '@/api/web'
 import type { ApiError } from '@/api/client'
 import { copyToClipboard } from '@/lib/format'
 import { buildCodexAccountCopyData, buildCodexAccountsCopyJson, createCodexConfigForm, createCodexEditForm } from '@/lib/codex'
-import type { ActionResponse, CodexAccount, CodexConfigForm, CodexEditForm, CodexPageData, HomePageData, RouteKey, SettingsData, SettingsForm } from '@/types'
+import type { ActionResponse, CodexAccount, CodexConfigForm, CodexEditForm, CodexPageData, EndpointInfo, HomePageData, RouteKey, SettingsData, SettingsForm } from '@/types'
 import LoginScreen from '@/components/LoginScreen'
 import Topbar from '@/components/Topbar'
 import PageHeader from '@/components/PageHeader'
@@ -15,6 +15,8 @@ import SettingsPage from '@/pages/SettingsPage'
 import CodexConfigDialog from '@/pages/components/CodexConfigDialog'
 import CodexEditDialog from '@/pages/components/CodexEditDialog'
 import CodexImportDialog from '@/pages/components/CodexImportDialog'
+import EndpointImportDialog from '@/pages/components/EndpointImportDialog'
+import HomeStatsDialog from '@/pages/components/HomeStatsDialog'
 import { Toaster } from '@/components/ui/sonner'
 
 export default function App() {
@@ -39,6 +41,8 @@ export default function App() {
   const [codexEditForm, setCodexEditForm] = useState<CodexEditForm>(createCodexEditForm())
   const [codexEditSaving, setCodexEditSaving] = useState<boolean>(false)
   const [codexImportDialogOpen, setCodexImportDialogOpen] = useState<boolean>(false)
+  const [homeStatsDialogOpen, setHomeStatsDialogOpen] = useState<boolean>(false)
+  const [endpointImportDialogOpen, setEndpointImportDialogOpen] = useState<boolean>(false)
 
   useEffect(() => {
     const onPopState = () => setRoute(routeFromPath(window.location.pathname))
@@ -155,6 +159,8 @@ export default function App() {
     setSettingsForm(null)
     setCodexConfigDialogOpen(false)
     setCodexImportDialogOpen(false)
+    setHomeStatsDialogOpen(false)
+    setEndpointImportDialogOpen(false)
   }
 
   async function handleActivateEndpoint(interfaceType: string, endpointId: number): Promise<void> {
@@ -171,6 +177,29 @@ export default function App() {
         setGlobalError('登录状态已失效，请重新登录')
       } else {
         toast.error(apiError.message || '切换活跃端点失败')
+      }
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  async function handleDeleteEndpoint(endpoint: EndpointInfo): Promise<void> {
+    const displayName = endpoint.providerName ? `${endpoint.providerName} - ${endpoint.name}` : endpoint.name
+    if (!window.confirm(`确定删除端点 ${displayName} 吗？`)) return
+
+    const actionKey = `endpoint:delete:${endpoint.id}`
+    setBusyAction(actionKey)
+    try {
+      const result = await webApi.deleteEndpoint(endpoint.id)
+      toast.success(result.message || '端点已删除')
+      await refreshCurrentPage('home')
+    } catch (error) {
+      const apiError = error as ApiError
+      if (apiError.status === 401 || apiError.status === 403) {
+        setAuthenticated(false)
+        setGlobalError('登录状态已失效，请重新登录')
+      } else {
+        toast.error(apiError.message || '删除端点失败')
       }
     } finally {
       setBusyAction('')
@@ -258,6 +287,13 @@ export default function App() {
 
   function handleCloseCodexImport(): void {
     setCodexImportDialogOpen(false)
+  }
+
+  function handleAuthExpired(): void {
+    setAuthenticated(false)
+    setGlobalError('登录状态已失效，请重新登录')
+    setHomeStatsDialogOpen(false)
+    setEndpointImportDialogOpen(false)
   }
 
   async function handleSaveCodexConfig(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -370,14 +406,27 @@ export default function App() {
       <Topbar route={route} onNavigate={navigate} onLogout={handleLogout} />
 
       <main className="page">
-        <PageHeader title={pageTitle} description={pageDescription} loading={pageLoading} onRefresh={() => void refreshCurrentPage(route)} showRefresh={route !== 'codex'} />
+        <PageHeader
+          title={pageTitle}
+          description={pageDescription}
+          loading={pageLoading}
+          onRefresh={() => void refreshCurrentPage(route)}
+          showRefresh={route !== 'codex'}
+          extraActions={route === 'home' ? (
+            <button type="button" className="btn" onClick={() => setHomeStatsDialogOpen(true)}>
+              统计
+            </button>
+          ) : null}
+        />
 
         {route === 'home' ? (
           <HomePage
             data={homeData}
             loading={pageLoading}
             busyAction={busyAction}
+            onOpenEndpointImport={() => setEndpointImportDialogOpen(true)}
             onActivateEndpoint={handleActivateEndpoint}
+            onDeleteEndpoint={handleDeleteEndpoint}
           />
         ) : route === 'codex' ? (
           <CodexPage
@@ -411,6 +460,8 @@ export default function App() {
       <CodexConfigDialog open={codexConfigDialogOpen} form={codexConfigForm} saving={codexConfigSaving} onClose={handleCloseCodexConfig} onChange={setCodexConfigForm} onSubmit={handleSaveCodexConfig} />
       <CodexEditDialog open={codexEditDialogOpen} form={codexEditForm} saving={codexEditSaving} onClose={handleCloseCodexEdit} onChange={setCodexEditForm} onSubmit={handleSaveCodexEdit} />
       <CodexImportDialog open={codexImportDialogOpen} onClose={handleCloseCodexImport} onSuccess={() => refreshCurrentPage('codex')} />
+      <HomeStatsDialog open={homeStatsDialogOpen} onClose={() => setHomeStatsDialogOpen(false)} onCleared={() => refreshCurrentPage('home')} onAuthExpired={handleAuthExpired} />
+      <EndpointImportDialog open={endpointImportDialogOpen} onClose={() => setEndpointImportDialogOpen(false)} onSuccess={() => refreshCurrentPage('home')} onAuthExpired={handleAuthExpired} />
     </div>
   )
 }

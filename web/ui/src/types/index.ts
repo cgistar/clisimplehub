@@ -9,6 +9,7 @@ export interface EndpointInfo {
   id: number
   name: string
   apiUrl: string
+  apiKey?: string
   active: boolean
   enabled: boolean
   interfaceType: string
@@ -20,6 +21,34 @@ export interface EndpointInfo {
   todayErrors?: number
   todayInput?: number
   todayOutput?: number
+}
+
+export interface EndpointModelMapping {
+  name: string
+  alias: string
+}
+
+export interface EndpointImportInput {
+  name: string
+  apiUrl: string
+  apiKey: string
+  active?: boolean
+  enabled?: boolean
+  interfaceType: string
+  providerName?: string
+  model?: string
+  transformer?: string
+  proxyUrl?: string
+  routes?: string[]
+  models?: EndpointModelMapping[]
+  headers?: Record<string, string>
+  remark?: string
+  priority?: number
+}
+
+export interface EndpointImportResponse extends ActionResponse {
+  success?: number
+  failed?: Array<{ index: number; error: string }>
 }
 
 export interface EndpointGroup {
@@ -62,6 +91,45 @@ export interface HomePageData {
   groupedEndpoints?: EndpointGroup[]
   recentLogs?: RequestLogItem[]
   inProgressLogs?: RequestLogItem[]
+}
+
+export type StatsRange = 'today' | 'yesterday' | 'week' | 'month' | 'all'
+
+export interface EndpointStatsSummary {
+  endpointId: string
+  endpointName: string
+  providerName: string
+  date?: string
+  inputTokens: number
+  outputTokens: number
+  cachedCreate: number
+  cachedRead: number
+  reasoning: number
+  total: number
+  requestCount: number
+}
+
+export interface InterfaceTypeStatsSummary {
+  interfaceType: string
+  inputTokens: number
+  outputTokens: number
+  cachedCreate: number
+  cachedRead: number
+  reasoning: number
+  total: number
+  requestCount: number
+  endpoints: EndpointStatsSummary[]
+}
+
+export interface HourlyStatsSummary {
+  hour: number
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  cachedCreate: number
+  cachedRead: number
+  reasoning: number
+  total: number
 }
 
 export interface CodexUsageWindow {

@@ -9,6 +9,7 @@ func (p *ProxyServer) recordTokens(endpoint *executor.EndpointConfig, result *ex
 	p.stats.RecordTokens(endpoint.Name, &TokenUsage{
 		InputTokens:  result.Tokens.InputTokens,
 		OutputTokens: result.Tokens.OutputTokens,
+		TotalTokens:  result.Tokens.TotalTokens,
 		CachedCreate: result.Tokens.CachedCreate,
 		CachedRead:   result.Tokens.CachedRead,
 		Reasoning:    result.Tokens.Reasoning,

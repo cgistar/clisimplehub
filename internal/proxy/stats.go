@@ -131,13 +131,23 @@ func (s *StatsManager) RecordTokens(endpointName string, tokens *TokenUsage) {
 	stats.OutputTokens += tokens.OutputTokens
 	stats.Reasoning += tokens.Reasoning
 
-	// Calculate total
+	// detail 字段已包含在 input/output 中；总量优先使用上游 total_tokens。
 	// Requirements: 8.3
-	stats.Total = stats.InputTokens + stats.CachedCreate + stats.CachedRead + stats.OutputTokens + stats.Reasoning
+	stats.Total += tokenUsageTotal(tokens)
 
 	if s.sseHub != nil {
 		s.sseHub.BroadcastTokenStats(stats)
 	}
+}
+
+func tokenUsageTotal(tokens *TokenUsage) int64 {
+	if tokens == nil {
+		return 0
+	}
+	if tokens.TotalTokens > 0 {
+		return tokens.TotalTokens
+	}
+	return tokens.InputTokens + tokens.OutputTokens
 }
 
 // GetRecentLogs returns the most recent completed request logs

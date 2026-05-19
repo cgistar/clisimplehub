@@ -23,6 +23,7 @@ func (e *BaseExecutor) extractStreamTokens(line []byte) *TokenUsage {
 	return &TokenUsage{
 		InputTokens:  stats.InputTokens,
 		OutputTokens: stats.OutputTokens,
+		TotalTokens:  stats.Total(),
 		CachedCreate: stats.CachedCreate,
 		CachedRead:   stats.CachedRead,
 		Reasoning:    stats.Reasoning,
@@ -38,6 +39,7 @@ func (e *BaseExecutor) ExtractTokens(body []byte) *TokenUsage {
 	return &TokenUsage{
 		InputTokens:  stats.InputTokens,
 		OutputTokens: stats.OutputTokens,
+		TotalTokens:  stats.Total(),
 		CachedCreate: stats.CachedCreate,
 		CachedRead:   stats.CachedRead,
 		Reasoning:    stats.Reasoning,

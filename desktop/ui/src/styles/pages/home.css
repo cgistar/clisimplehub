@@ -204,8 +204,19 @@
     overflow-wrap: anywhere;
   }
 
-  #homeView .endpoint-token-stats .endpoint-apply-btn {
+  #homeView .endpoint-token-stats .endpoint-card-actions {
     justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  #homeView .endpoint-token-stats .endpoint-icon-btn {
+    color: var(--accent);
+  }
+
+  #homeView .endpoint-token-stats .endpoint-delete-btn {
+    color: var(--danger);
   }
 
   #homeView .stat-error {

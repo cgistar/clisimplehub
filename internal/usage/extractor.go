@@ -82,6 +82,9 @@ func applyUsageMap(usage map[string]any, tokens *TokenStats) {
 	if v, ok := parseInt64(usage["output_tokens"]); ok {
 		setMax(&tokens.OutputTokens, v)
 	}
+	if v, ok := parseInt64(usage["total_tokens"]); ok {
+		setMax(&tokens.TotalTokens, v)
+	}
 	if v, ok := parseInt64(usage["cache_creation_input_tokens"]); ok {
 		setMax(&tokens.CachedCreate, v)
 	}
@@ -135,6 +138,9 @@ func extractGeminiUsage(usageMeta map[string]any) *TokenStats {
 	}
 	if v, ok := parseInt64(usageMeta["candidatesTokenCount"]); ok {
 		tokens.OutputTokens = v
+	}
+	if v, ok := parseInt64(usageMeta["totalTokenCount"]); ok {
+		tokens.TotalTokens = v
 	}
 	// Fallback: 如果只有 totalTokenCount
 	if v, ok := parseInt64(usageMeta["totalTokenCount"]); ok && tokens.InputTokens == 0 && tokens.OutputTokens == 0 {

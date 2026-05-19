@@ -5,6 +5,7 @@ package usage
 type TokenStats struct {
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
 	CachedCreate int64 `json:"cached_create"` // cache_creation_input_tokens
 	CachedRead   int64 `json:"cached_read"`   // cache_read_input_tokens
 	Reasoning    int64 `json:"reasoning"`     // reasoning_tokens / thinking_tokens
@@ -14,6 +15,9 @@ type TokenStats struct {
 func (t *TokenStats) Total() int64 {
 	if t == nil {
 		return 0
+	}
+	if t.TotalTokens > 0 {
+		return t.TotalTokens
 	}
 	return t.InputTokens + t.OutputTokens
 }
@@ -32,7 +36,7 @@ func (t *TokenStats) IsEmpty() bool {
 		return true
 	}
 	return t.InputTokens == 0 && t.OutputTokens == 0 &&
-		t.CachedCreate == 0 && t.CachedRead == 0 && t.Reasoning == 0
+		t.TotalTokens == 0 && t.CachedCreate == 0 && t.CachedRead == 0 && t.Reasoning == 0
 }
 
 // Merge 合并另一个 TokenStats（取最大值）
@@ -45,6 +49,9 @@ func (t *TokenStats) Merge(other *TokenStats) {
 	}
 	if other.OutputTokens > t.OutputTokens {
 		t.OutputTokens = other.OutputTokens
+	}
+	if other.TotalTokens > t.TotalTokens {
+		t.TotalTokens = other.TotalTokens
 	}
 	if other.CachedCreate > t.CachedCreate {
 		t.CachedCreate = other.CachedCreate

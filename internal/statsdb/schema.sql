@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS usage_stats (
     status TEXT NOT NULL,
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
     cached_create INTEGER DEFAULT 0,
     cached_read INTEGER DEFAULT 0,
     reasoning INTEGER DEFAULT 0,

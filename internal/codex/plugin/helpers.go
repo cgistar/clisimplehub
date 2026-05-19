@@ -168,10 +168,21 @@ func extractTokensFromBody(body []byte) *executor.TokenUsage {
 	return &executor.TokenUsage{
 		InputTokens:  u.InputTokens,
 		OutputTokens: u.OutputTokens,
+		TotalTokens:  u.Total(),
 		CachedCreate: u.CachedCreate,
 		CachedRead:   u.CachedRead,
 		Reasoning:    u.Reasoning,
 	}
+}
+
+func tokenUsageTotal(tokens *executor.TokenUsage) int64 {
+	if tokens == nil {
+		return 0
+	}
+	if tokens.TotalTokens > 0 {
+		return tokens.TotalTokens
+	}
+	return tokens.InputTokens + tokens.OutputTokens
 }
 
 // sanitizeHeaders removes sensitive headers for logging.

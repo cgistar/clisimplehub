@@ -61,7 +61,7 @@ func (s *CodexService) Forward(ctx context.Context, body []byte, model string, i
 		if ret.Tokens != nil {
 			stat.InputTokens = ret.Tokens.InputTokens
 			stat.OutputTokens = ret.Tokens.OutputTokens
-			stat.TotalTokens = ret.Tokens.InputTokens + ret.Tokens.OutputTokens
+			stat.TotalTokens = tokenUsageTotal(ret.Tokens)
 		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -416,7 +416,7 @@ func (s *CodexService) forwardWithAccount(ctx context.Context, account *codexSha
 			StatusCode: resp.StatusCode,
 			Body:       respBody,
 			Error:      fmt.Errorf("payment required"),
-		}, false
+		}, true
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {

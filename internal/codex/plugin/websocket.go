@@ -288,7 +288,7 @@ func markCodexWebsocketUpstreamError(pool *codex.CodexAccountPool, account *code
 
 func isCodexWebsocketRetryableStatus(statusCode int) bool {
 	switch statusCode {
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusPaymentRequired, http.StatusTooManyRequests:
 		return true
 	default:
 		return statusCode == 0 || statusCode >= 500
