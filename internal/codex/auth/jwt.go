@@ -15,12 +15,18 @@ type JWTClaims struct {
 	Iss           string        `json:"iss"`
 	Sub           string        `json:"sub"`
 	CodexAuth     CodexAuthInfo `json:"https://api.openai.com/auth"`
+	Profile       ProfileInfo   `json:"https://api.openai.com/profile"`
 }
 
 type CodexAuthInfo struct {
 	ChatgptAccountID string `json:"chatgpt_account_id"`
 	ChatgptPlanType  string `json:"chatgpt_plan_type"`
 	ChatgptUserID    string `json:"chatgpt_user_id"`
+}
+
+type ProfileInfo struct {
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
 }
 
 func ParseJWTToken(token string) (*JWTClaims, error) {

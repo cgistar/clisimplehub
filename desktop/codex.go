@@ -81,12 +81,13 @@ type CodexAccountsPageResponse struct {
 }
 
 type CodexGlobalConfigDTO struct {
-	RotationMode  string `json:"rotationMode"`
-	ProxyUrl      string `json:"proxyUrl"`
-	BaseURL       string `json:"baseURL"`
-	ClientVersion string `json:"clientVersion"`
-	UserAgent     string `json:"userAgent"`
-	Originator    string `json:"originator"`
+	RotationMode  string            `json:"rotationMode"`
+	ProxyUrl      string            `json:"proxyUrl"`
+	BaseURL       string            `json:"baseURL"`
+	ClientVersion string            `json:"clientVersion"`
+	UserAgent     string            `json:"userAgent"`
+	Originator    string            `json:"originator"`
+	CustomHeaders map[string]string `json:"customHeaders"`
 }
 
 type CodexTestResult struct {

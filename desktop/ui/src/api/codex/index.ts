@@ -16,7 +16,6 @@ import type {
 } from '@/types/codex'
 
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
-const DEFAULT_ORIGINATOR = 'codex_cli_rs'
 
 function toUsageWindow(raw: unknown): CodexUsageWindow | undefined {
   if (!raw || typeof raw !== 'object') return undefined
@@ -119,7 +118,8 @@ export const codexApi = {
       baseURL: config?.baseURL || DEFAULT_BASE_URL,
       clientVersion: config?.clientVersion || '',
       userAgent: config?.userAgent || '',
-      originator: config?.originator || DEFAULT_ORIGINATOR
+      originator: config?.originator || '',
+      customHeaders: config?.customHeaders || {}
     }
   },
 
@@ -130,7 +130,8 @@ export const codexApi = {
       baseURL: config.baseURL || '',
       clientVersion: config.clientVersion || '',
       userAgent: config.userAgent || '',
-      originator: config.originator || ''
+      originator: config.originator || '',
+      customHeaders: config.customHeaders || {}
     })
   },
 

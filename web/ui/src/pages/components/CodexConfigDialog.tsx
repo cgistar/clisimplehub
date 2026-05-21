@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DEFAULT_CODEX_CONFIG } from '@/lib/codex'
 import type { CodexConfigForm } from '@/types'
@@ -12,10 +12,48 @@ interface CodexConfigDialogProps {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
 }
 
+interface HeaderRow {
+  key: string
+  value: string
+}
+
+function customHeadersToRows(headers: Record<string, string> | undefined): HeaderRow[] {
+  return Object.entries(headers || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => ({ key, value }))
+}
+
+function rowsToCustomHeaders(rows: HeaderRow[]): Record<string, string> {
+  const headers: Record<string, string> = {}
+  rows.forEach((row) => {
+    const key = row.key.trim()
+    const value = row.value.trim()
+    if (key && value) headers[key] = value
+  })
+  return headers
+}
+
 export default function CodexConfigDialog({ open, form, saving, onClose, onChange, onSubmit }: CodexConfigDialogProps) {
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>([])
+
+  useEffect(() => {
+    if (open && form) {
+      setHeaderRows(customHeadersToRows(form.customHeaders))
+    }
+  }, [open])
+
   if (!open || !form) return null
 
   const updateField = <K extends keyof CodexConfigForm>(key: K, value: CodexConfigForm[K]) => onChange({ ...form, [key]: value })
+  const syncHeaderRows = (nextRows: HeaderRow[]) => {
+    setHeaderRows(nextRows)
+    onChange({ ...form, customHeaders: rowsToCustomHeaders(nextRows) })
+  }
+  const addHeaderRow = () => syncHeaderRows([...headerRows, { key: '', value: '' }])
+  const removeHeaderRow = (index: number) => syncHeaderRows(headerRows.filter((_, itemIndex) => itemIndex !== index))
+  const updateHeaderRow = (index: number, field: keyof HeaderRow, value: string) => {
+    syncHeaderRows(headerRows.map((row, itemIndex) => (itemIndex === index ? { ...row, [field]: value } : row)))
+  }
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => {
@@ -93,6 +131,37 @@ export default function CodexConfigDialog({ open, form, saving, onClose, onChang
                 onChange={(event) => updateField('userAgent', event.target.value)}
                 placeholder={DEFAULT_CODEX_CONFIG.userAgent}
               />
+            </div>
+
+            <div className="field mt-14">
+              <div className="field-inline-header">
+                <label className="field-label">Custom Headers</label>
+                <button type="button" className="btn small primary" onClick={addHeaderRow} disabled={saving}>
+                  +
+                </button>
+              </div>
+              <div className="field-help">额外注入到 Codex 上游请求的 Header，会覆盖同名默认 Header。</div>
+              <div className="header-editor">
+                {headerRows.map((header, index) => (
+                  <div key={`custom-header-${index}`} className="header-editor-row">
+                    <input
+                      className="input"
+                      value={header.key}
+                      onChange={(event) => updateHeaderRow(index, 'key', event.target.value)}
+                      placeholder="Header 名称"
+                    />
+                    <input
+                      className="input"
+                      value={header.value}
+                      onChange={(event) => updateHeaderRow(index, 'value', event.target.value)}
+                      placeholder="Header 值"
+                    />
+                    <button type="button" className="btn small danger" onClick={() => removeHeaderRow(index)} disabled={saving}>
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           </DialogBody>
 

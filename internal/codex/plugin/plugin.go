@@ -15,6 +15,7 @@ import (
 	"time"
 
 	codex "clisimplehub/internal/codex"
+	codexAuth "clisimplehub/internal/codex/auth"
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
@@ -316,32 +317,11 @@ func (p *CodexPlugin) SyncDecode(encoded string) (json.RawMessage, error) {
 
 // AddAccount wraps desktopFacade.AddAccount to ensure endpoint creation.
 func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (json.RawMessage, error) {
-	var dto struct {
-		RefreshToken string `json:"refreshToken"`
-		Email        string `json:"email"`
-		PlanType     string `json:"planType"`
-		AccountID    string `json:"accountId"`
-		Enabled      *bool  `json:"enabled,omitempty"`
-		Websockets   bool   `json:"websockets"`
-		AccessToken  string `json:"accessToken"`
-		IDToken      string `json:"idToken"`
-		ExpiresAt    string `json:"expiresAt"`
-		ProxyUrl     string `json:"proxyUrl"`
-		Password     string `json:"password"`
-		MFACode      string `json:"mfaCode"`
-		Weight       int    `json:"weight"`
-	}
+	var dto codexAccountImportDTO
 	if err := json.Unmarshal(dtoJSON, &dto); err != nil {
 		return nil, err
 	}
-
-	dto.RefreshToken = strings.TrimSpace(dto.RefreshToken)
-	dto.AccessToken = strings.TrimSpace(dto.AccessToken)
-	dto.IDToken = strings.TrimSpace(dto.IDToken)
-	dto.AccountID = strings.TrimSpace(dto.AccountID)
-	dto.Email = strings.TrimSpace(dto.Email)
-	dto.PlanType = strings.TrimSpace(dto.PlanType)
-	dto.ProxyUrl = strings.TrimSpace(dto.ProxyUrl)
+	normalizeCodexAccountImportDTO(&dto)
 
 	if dto.RefreshToken == "" && dto.AccessToken == "" {
 		return nil, fmt.Errorf("either refreshToken or accessToken is required")
@@ -351,6 +331,9 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	}
 	if dto.Email == "" {
 		return nil, fmt.Errorf("email is required")
+	}
+	if dto.RefreshToken == "" && dto.AccessToken != "" && dto.ExpiresAt == "" {
+		return nil, fmt.Errorf("expiresAt or accessToken exp is required for temporary account")
 	}
 	localID := codexShared.GenerateCodexLocalID(dto.AccountID, dto.Email)
 	if localID == "" {
@@ -429,6 +412,64 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 
 	isActive := account.ID == mc.ActiveAccountID
 	return json.Marshal(codexShared.MarshalAccountForFrontend(&account, isActive))
+}
+
+type codexAccountImportDTO struct {
+	RefreshToken string `json:"refreshToken"`
+	Email        string `json:"email"`
+	PlanType     string `json:"planType"`
+	AccountID    string `json:"accountId"`
+	Enabled      *bool  `json:"enabled,omitempty"`
+	Websockets   bool   `json:"websockets"`
+	AccessToken  string `json:"accessToken"`
+	IDToken      string `json:"idToken"`
+	ExpiresAt    string `json:"expiresAt"`
+	ProxyUrl     string `json:"proxyUrl"`
+	Password     string `json:"password"`
+	MFACode      string `json:"mfaCode"`
+	Weight       int    `json:"weight"`
+	Expired      string `json:"expired"`
+}
+
+func normalizeCodexAccountImportDTO(dto *codexAccountImportDTO) {
+	if dto == nil {
+		return
+	}
+	dto.RefreshToken = strings.TrimSpace(dto.RefreshToken)
+	dto.AccessToken = strings.TrimSpace(dto.AccessToken)
+	dto.IDToken = strings.TrimSpace(dto.IDToken)
+	dto.AccountID = strings.TrimSpace(dto.AccountID)
+	dto.Email = strings.TrimSpace(dto.Email)
+	dto.PlanType = strings.TrimSpace(dto.PlanType)
+	dto.ProxyUrl = strings.TrimSpace(dto.ProxyUrl)
+	dto.ExpiresAt = strings.TrimSpace(dto.ExpiresAt)
+	dto.Expired = strings.TrimSpace(dto.Expired)
+	if dto.ExpiresAt == "" {
+		dto.ExpiresAt = dto.Expired
+	}
+
+	if dto.AccessToken == "" {
+		return
+	}
+	claims, err := codexAuth.ParseJWTToken(dto.AccessToken)
+	if err != nil || claims == nil {
+		return
+	}
+	if dto.AccountID == "" {
+		dto.AccountID = strings.TrimSpace(claims.CodexAuth.ChatgptAccountID)
+	}
+	if dto.Email == "" {
+		dto.Email = strings.TrimSpace(claims.Email)
+		if dto.Email == "" {
+			dto.Email = strings.TrimSpace(claims.Profile.Email)
+		}
+	}
+	if dto.PlanType == "" {
+		dto.PlanType = strings.TrimSpace(claims.CodexAuth.ChatgptPlanType)
+	}
+	if dto.ExpiresAt == "" && claims.Exp > 0 {
+		dto.ExpiresAt = time.Unix(claims.Exp, 0).UTC().Format(time.RFC3339)
+	}
 }
 
 func codexJsonPathFromConfig(configPath string) string {

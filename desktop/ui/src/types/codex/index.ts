@@ -56,6 +56,7 @@ export interface CodexGlobalConfig {
   clientVersion: string
   userAgent: string
   originator: string
+  customHeaders?: Record<string, string>
 }
 
 export interface CodexAccountsPage {

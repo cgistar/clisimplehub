@@ -7,7 +7,8 @@ export const DEFAULT_CODEX_CONFIG: CodexConfigForm = {
   baseURL: 'https://chatgpt.com/backend-api/codex',
   clientVersion: '',
   userAgent: '',
-  originator: 'codex_cli_rs',
+  originator: '',
+  customHeaders: {},
 }
 
 export function createCodexConfigForm(globalConfig: Partial<CodexConfigForm> = {}): CodexConfigForm {
@@ -18,7 +19,18 @@ export function createCodexConfigForm(globalConfig: Partial<CodexConfigForm> = {
     clientVersion: globalConfig.clientVersion || DEFAULT_CODEX_CONFIG.clientVersion,
     userAgent: globalConfig.userAgent || DEFAULT_CODEX_CONFIG.userAgent,
     originator: globalConfig.originator || DEFAULT_CODEX_CONFIG.originator,
+    customHeaders: normalizeCustomHeaders(globalConfig.customHeaders),
   }
+}
+
+function normalizeCustomHeaders(headers: Partial<Record<string, string>> | undefined): Record<string, string> {
+  const normalized: Record<string, string> = {}
+  Object.entries(headers || {}).forEach(([key, value]) => {
+    const name = String(key || '').trim()
+    const headerValue = String(value || '').trim()
+    if (name && headerValue) normalized[name] = headerValue
+  })
+  return normalized
 }
 
 export function createCodexEditForm(account: CodexAccount | null = null): CodexEditForm {

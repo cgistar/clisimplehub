@@ -202,6 +202,7 @@ export interface CodexConfigForm {
   clientVersion: string
   userAgent: string
   originator: string
+  customHeaders: Record<string, string>
 }
 
 export interface CodexEditForm {

@@ -127,6 +127,7 @@ func NormalizeCodexConfigForStorage(config CodexConfig) CodexConfig {
 	config.ClientVersion = strings.TrimSpace(config.ClientVersion)
 	config.UserAgent = strings.TrimSpace(config.UserAgent)
 	config.Originator = strings.TrimSpace(config.Originator)
+	config.CustomHeaders = NormalizeCustomHeadersForStorage(config.CustomHeaders)
 	if config.ClientVersion == DefaultCodexClientVersion {
 		config.ClientVersion = ""
 	}
@@ -134,6 +135,26 @@ func NormalizeCodexConfigForStorage(config CodexConfig) CodexConfig {
 		config.UserAgent = ""
 	}
 	return config
+}
+
+func NormalizeCustomHeadersForStorage(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+
+	normalized := make(map[string]string, len(headers))
+	for key, value := range headers {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		normalized[key] = value
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
 }
 
 func (a *CodexAccount) EffectiveWeight() int {

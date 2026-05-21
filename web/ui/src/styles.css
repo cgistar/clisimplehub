@@ -698,6 +698,12 @@ code {
   width: 100%;
 }
 
+.btn.small {
+  min-height: 32px;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -737,10 +743,35 @@ code {
   color: var(--muted);
 }
 
+.field-help {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.field-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .field-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.header-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.header-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
 }
 
 .switch-row {
@@ -1505,6 +1536,7 @@ code {
 
   .kpis,
   .field-row,
+  .header-editor-row,
   .codex-account-meta-grid {
     grid-template-columns: 1fr;
   }

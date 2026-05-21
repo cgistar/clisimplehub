@@ -1,12 +1,11 @@
-FROM alpine:latest
+FROM alpine:3.22
 
 # 安装 HTTPS 证书与时区数据，保证服务在最小运行时镜像中可用
-RUN apk --no-cache add ca-certificates tzdata
-
-# 创建运行目录。dist 版镜像通常会绑定宿主机目录到 /data，
-# 为避免宿主机文件权限与容器内普通用户 UID 不一致导致无法写入，
-# 这里保持 root 运行，优先保证配置与 sqlite 数据可落盘。
-RUN mkdir -p /app /data
+RUN echo -e https://mirrors.ustc.edu.cn/alpine/v3.22/main/ > /etc/apk/repositories && \
+    apk --no-cache add ca-certificates tzdata && \
+    ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    mkdir -p /app /data
 
 WORKDIR /data
 

@@ -48,6 +48,34 @@
             <n-text depth="3" class="config-help">{{ t('codex.originatorHelp') }}</n-text>
           </div>
         </n-form-item-gi>
+
+        <n-form-item-gi :span="24">
+          <n-divider class="config-divider" />
+        </n-form-item-gi>
+
+        <n-form-item-gi :span="24" :label="`${t('codex.customHeaders')}:`">
+          <div class="config-field">
+            <div class="array-editor-header">
+              <n-text depth="3" class="config-help">{{ t('codex.customHeadersHelp') }}</n-text>
+              <n-button size="small" type="primary" secondary @click="addCustomHeader">+</n-button>
+            </div>
+            <div
+              v-for="(header, index) in customHeaderRows"
+              :key="`custom-header-${index}`"
+              class="custom-header-row"
+            >
+              <n-input
+                v-model:value="customHeaderRows[index].key"
+                :placeholder="t('codex.customHeaderNamePlaceholder')"
+              />
+              <n-input
+                v-model:value="customHeaderRows[index].value"
+                :placeholder="t('codex.customHeaderValuePlaceholder')"
+              />
+              <n-button size="small" type="error" secondary @click="removeCustomHeaderAt(index)">×</n-button>
+            </div>
+          </div>
+        </n-form-item-gi>
       </n-grid>
     </n-form>
 
@@ -68,6 +96,7 @@ import {
   NFormItemGi,
   NInput,
   NButton,
+  NDivider,
   NSpace,
   NGrid,
   NSelect,
@@ -79,7 +108,11 @@ import { codexApi } from '@/api/codex'
 import type { CodexGlobalConfig } from '@/types/codex'
 
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
-const DEFAULT_ORIGINATOR = 'codex_cli_rs'
+
+interface HeaderRow {
+  key: string
+  value: string
+}
 
 const { t } = useI18n()
 const message = useMessage()
@@ -100,6 +133,7 @@ const emit = defineEmits<{
 
 const visible = ref(false)
 const saving = ref(false)
+const customHeaderRows = ref<HeaderRow[]>([])
 
 const form = reactive<CodexGlobalConfig>({
   rotationMode: 'fixed',
@@ -107,7 +141,8 @@ const form = reactive<CodexGlobalConfig>({
   baseURL: DEFAULT_BASE_URL,
   clientVersion: '',
   userAgent: '',
-  originator: DEFAULT_ORIGINATOR
+  originator: '',
+  customHeaders: {}
 })
 
 const rotationModeOptions = computed(() => [
@@ -122,7 +157,44 @@ function fillForm(config: CodexGlobalConfig): void {
   form.baseURL = config.baseURL || DEFAULT_BASE_URL
   form.clientVersion = config.clientVersion || ''
   form.userAgent = config.userAgent || ''
-  form.originator = config.originator || DEFAULT_ORIGINATOR
+  form.originator = config.originator || ''
+  form.customHeaders = normalizeCustomHeaders(config.customHeaders)
+  customHeaderRows.value = customHeadersToRows(form.customHeaders)
+}
+
+function normalizeCustomHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+  const normalized: Record<string, string> = {}
+  Object.entries(headers || {}).forEach(([key, value]) => {
+    const name = String(key || '').trim()
+    const headerValue = String(value || '').trim()
+    if (name && headerValue) normalized[name] = headerValue
+  })
+  return normalized
+}
+
+function customHeadersToRows(headers: Record<string, string> | undefined): HeaderRow[] {
+  return Object.entries(headers || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => ({ key, value }))
+}
+
+function rowsToCustomHeaders(rows: HeaderRow[]): Record<string, string> {
+  const headers: Record<string, string> = {}
+  rows.forEach((row) => {
+    const key = row.key.trim()
+    const value = row.value.trim()
+    if (key && value) headers[key] = value
+  })
+  return headers
+}
+
+function addCustomHeader(): void {
+  customHeaderRows.value.push({ key: '', value: '' })
+}
+
+function removeCustomHeaderAt(index: number): void {
+  if (index < 0 || index >= customHeaderRows.value.length) return
+  customHeaderRows.value.splice(index, 1)
 }
 
 function toErrorMessage(error: unknown): string {
@@ -163,7 +235,8 @@ async function save(): Promise<void> {
       baseURL: String(form.baseURL || '').trim(),
       clientVersion: String(form.clientVersion || '').trim(),
       userAgent: String(form.userAgent || '').trim(),
-      originator: String(form.originator || '').trim()
+      originator: String(form.originator || '').trim(),
+      customHeaders: rowsToCustomHeaders(customHeaderRows.value)
     }
     await codexApi.saveGlobalConfig(payload)
     message.success(t('codex.globalConfigSaved'))
@@ -187,5 +260,23 @@ async function save(): Promise<void> {
 
 .config-help {
   line-height: 1.35;
+}
+
+.config-divider {
+  margin: 2px 0;
+}
+
+.array-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.custom-header-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  width: 100%;
 }
 </style>

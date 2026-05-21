@@ -1089,14 +1089,6 @@ func (p *ProxyServer) handleWebUIAddCodexAccount(w http.ResponseWriter, r *http.
 		return
 	}
 
-	accountID := strings.TrimSpace(fmt.Sprint(req["accountId"]))
-	if accountID == "" || accountID == "<nil>" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "accountId 必填",
-		})
-		return
-	}
-
 	refreshToken := strings.TrimSpace(fmt.Sprint(req["refreshToken"]))
 	if refreshToken == "<nil>" {
 		refreshToken = ""

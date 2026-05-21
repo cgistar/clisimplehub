@@ -445,24 +445,26 @@ func (d *desktopFacade) GetCodexGlobalConfig(configPath string) (json.RawMessage
 		mc = &codexShared.CodexMultiConfig{}
 	}
 
-	return json.Marshal(map[string]string{
+	return json.Marshal(map[string]any{
 		"rotationMode":  mc.GetRotationMode(),
 		"proxyUrl":      mc.ProxyUrl,
 		"baseURL":       mc.GetBaseURL(),
-		"clientVersion": mc.GetClientVersion(),
-		"userAgent":     mc.GetUserAgent(),
-		"originator":    mc.GetOriginator(),
+		"clientVersion": strings.TrimSpace(mc.Config.ClientVersion),
+		"userAgent":     strings.TrimSpace(mc.Config.UserAgent),
+		"originator":    strings.TrimSpace(mc.Config.Originator),
+		"customHeaders": codexShared.NormalizeCustomHeadersForStorage(mc.Config.CustomHeaders),
 	})
 }
 
 func (d *desktopFacade) SaveCodexGlobalConfig(configPath string, dtoJSON json.RawMessage) error {
 	var dto struct {
-		RotationMode  string `json:"rotationMode"`
-		ProxyUrl      string `json:"proxyUrl"`
-		BaseURL       string `json:"baseURL"`
-		ClientVersion string `json:"clientVersion"`
-		UserAgent     string `json:"userAgent"`
-		Originator    string `json:"originator"`
+		RotationMode  string             `json:"rotationMode"`
+		ProxyUrl      string             `json:"proxyUrl"`
+		BaseURL       string             `json:"baseURL"`
+		ClientVersion string             `json:"clientVersion"`
+		UserAgent     string             `json:"userAgent"`
+		Originator    string             `json:"originator"`
+		CustomHeaders *map[string]string `json:"customHeaders"`
 	}
 	if err := json.Unmarshal(dtoJSON, &dto); err != nil {
 		return err
@@ -472,6 +474,7 @@ func (d *desktopFacade) SaveCodexGlobalConfig(configPath string, dtoJSON json.Ra
 	if mc == nil {
 		mc = &codexShared.CodexMultiConfig{}
 	}
+	existingHeaders := mc.Config.CustomHeaders
 
 	mc.RotationMode = dto.RotationMode
 	mc.ProxyUrl = dto.ProxyUrl
@@ -481,6 +484,11 @@ func (d *desktopFacade) SaveCodexGlobalConfig(configPath string, dtoJSON json.Ra
 		UserAgent:     dto.UserAgent,
 		Originator:    dto.Originator,
 	})
+	if dto.CustomHeaders != nil {
+		mc.Config.CustomHeaders = codexShared.NormalizeCustomHeadersForStorage(*dto.CustomHeaders)
+	} else {
+		mc.Config.CustomHeaders = existingHeaders
+	}
 
 	if err := codexShared.SaveCodexMultiConfig(configPath, mc); err != nil {
 		return err
