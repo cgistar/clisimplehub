@@ -99,6 +99,22 @@ func newDefaultGatewayPathRegistry() *GatewayPathRegistry {
 		codexCompact:  true,
 	})
 	r.RegisterRule(gatewayPathRule{
+		name:          "codex_images_generations",
+		match:         pathMatchSuffix,
+		pattern:       "/images/generations",
+		interfaceType: InterfaceTypeCodex,
+		knownForward:  true,
+		retryable:     true,
+	})
+	r.RegisterRule(gatewayPathRule{
+		name:          "codex_images_edits",
+		match:         pathMatchSuffix,
+		pattern:       "/images/edits",
+		interfaceType: InterfaceTypeCodex,
+		knownForward:  true,
+		retryable:     true,
+	})
+	r.RegisterRule(gatewayPathRule{
 		name:          "gemini_contains",
 		match:         pathMatchContains,
 		pattern:       "/gemini",

@@ -15,7 +15,7 @@ import (
 
 const DefaultCodexUserAgent = codexShared.DefaultCodexUserAgent
 
-var codexCliPattern = regexp.MustCompile(`(?i)^(codex_vscode|codex_cli_rs|codex_exec)/[\d.]+`)
+var codexCliPattern = regexp.MustCompile(`(?i)^(codex)/[\d.]+`)
 
 var ErrCompactStreamingNotSupported = errors.New("streaming not supported for compact responses")
 

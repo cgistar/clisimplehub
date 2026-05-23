@@ -207,6 +207,8 @@ function Build-DesktopVariant([string]$os, [string]$arch, [string]$variantName, 
 }
 
 function Build-Desktop([string]$os, [string]$arch) {
+  Build-WebUI
+
   $defaultTags = Remove-Tag $BuildTags 'proxy'
   $proxyTags = Append-Tags $defaultTags 'proxy'
 

@@ -1636,14 +1636,14 @@ func (a *App) doTestEndpoint(apiURL, apiKey, interfaceType, model, reasoning str
 					},
 				},
 			},
-			"stream":  true,
-			"store":   false,
-			"include": []string{"reasoning.encrypted_content"},
+			"stream": true,
+			"store":  false,
+			"reasoning": map[string]interface{}{
+				"effort": "medium",
+			},
 		}
-		if strings.TrimSpace(reasoning) != "" {
-			body["reasoning"] = map[string]interface{}{
-				"effort": strings.TrimSpace(reasoning),
-			}
+		if effort := strings.TrimSpace(reasoning); effort != "" {
+			body["reasoning"] = map[string]interface{}{"effort": effort}
 		}
 		requestBody, _ = json.Marshal(body)
 	}

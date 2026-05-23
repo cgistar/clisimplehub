@@ -70,8 +70,12 @@ func (c *ExecutionContext) FinalizeTransformation(ctx context.Context, w http.Re
 	result.TargetHeaders = cloneStringMap(upstream.TargetHeaders)
 	result.Tokens = upstream.Tokens
 
-	if len(plan.RequestBody) > 0 && shouldCaptureUpstreamRequestBody(ctx) {
-		result.UpstreamRequestBody = capturedUpstreamRequestBody(plan.RequestBody)
+	requestBody := plan.RequestBody
+	if len(upstream.RequestBody) > 0 {
+		requestBody = upstream.RequestBody
+	}
+	if len(requestBody) > 0 && shouldCaptureUpstreamRequestBody(ctx) {
+		result.UpstreamRequestBody = capturedUpstreamRequestBody(requestBody)
 	}
 
 	if debugLogger != nil {
@@ -113,6 +117,7 @@ func (c *ExecutionContext) standardTransformerRoundTrip(ctx context.Context, req
 		return result
 	}
 	result.TargetURL = targetURL
+	result.RequestBody = append([]byte(nil), req.Body...)
 
 	buildProxyReq := func() (*http.Request, error) {
 		proxyReq, err := http.NewRequestWithContext(ctx, req.Method, targetURL, bytes.NewReader(req.Body))
@@ -331,6 +336,9 @@ readLoop:
 
 func handleChunkStreamingResponse(ctx context.Context, w http.ResponseWriter, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
 	debugLogger := DebugLoggerFromContext(ctx)
+	isOpenAIImages := isOpenAIImagesPlan(plan)
+	captureUpstream := shouldCaptureUpstreamResponseBody(ctx) || debugLogger != nil
+	captureResponse := !isOpenAIImages
 
 	for key, values := range upstream.Headers {
 		switch strings.ToLower(key) {
@@ -357,14 +365,19 @@ func handleChunkStreamingResponse(ctx context.Context, w http.ResponseWriter, up
 
 	buf := make([]byte, 32*1024)
 	var capture strings.Builder
-	var rawCapture []byte
+	rawCapture := limitedByteBuffer{}
+	if isOpenAIImages {
+		rawCapture.max = 1024 * 1024
+	}
 
 readLoop:
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
-			rawCapture = append(rawCapture, chunk...)
+			if captureUpstream {
+				rawCapture.Append(chunk)
+			}
 
 			outs, trErr := transformChunkOrPassthrough(ctx, plan, chunk)
 			if trErr != nil {
@@ -379,7 +392,9 @@ readLoop:
 					result.Error = fmt.Errorf("downstream write failed: %w", writeErr)
 					break readLoop
 				}
-				capture.WriteString(out)
+				if captureResponse {
+					capture.WriteString(out)
+				}
 				flusher.Flush()
 			}
 		}
@@ -403,22 +418,35 @@ readLoop:
 					result.Error = fmt.Errorf("downstream write failed: %w", writeErr)
 					break
 				}
-				capture.WriteString(out)
+				if captureResponse {
+					capture.WriteString(out)
+				}
 				flusher.Flush()
 			}
 		}
 	}
 
-	if debugLogger != nil && len(rawCapture) > 0 {
-		debugLogger.SetSection("UpstreamResponseRaw", bytesToSafeText(rawCapture))
+	rawCaptured := rawCapture.Bytes()
+	if debugLogger != nil && len(rawCaptured) > 0 {
+		debugLogger.SetSection("UpstreamResponseRaw", bytesToSafeText(rawCaptured))
 	}
 
-	result.ResponseStream = capture.String()
+	if captureResponse {
+		result.ResponseStream = capture.String()
+	}
 	result.Streamed = true
-	if shouldCaptureUpstreamResponseBody(ctx) && len(rawCapture) > 0 {
-		result.UpstreamResponseBody = capturedUpstreamResponseBody(rawCapture)
+	if shouldCaptureUpstreamResponseBody(ctx) && len(rawCaptured) > 0 {
+		result.UpstreamResponseBody = capturedUpstreamResponseBody(rawCaptured)
 	}
 	return result
+}
+
+func isOpenAIImagesPlan(plan *TransformationPlan) bool {
+	if plan == nil || plan.Context == nil || plan.Context.Metadata == nil {
+		return false
+	}
+	openAIImages, _ := plan.Context.Metadata["openai_images"].(bool)
+	return openAIImages
 }
 
 func transformChunkOrPassthrough(ctx context.Context, plan *TransformationPlan, chunk []byte) ([]string, error) {

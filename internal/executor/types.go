@@ -86,6 +86,7 @@ type UpstreamRoundTripResult struct {
 	Stream        io.ReadCloser
 	TargetURL     string
 	TargetHeaders map[string]string
+	RequestBody   []byte
 	Tokens        *TokenUsage
 	Error         error
 }

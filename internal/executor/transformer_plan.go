@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	codexBackend "clisimplehub/internal/codex/backend"
 	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/transformer"
 	chat_anthropic "clisimplehub/internal/transformer/chat/anthropic/messages"
@@ -156,6 +157,32 @@ func (c *ExecutionContext) buildKiroChatTransformationPlan(ctx context.Context, 
 }
 
 func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest) (*TransformationPlan, *ForwardResult) {
+	if codexBackend.IsImagesPath(req.Path) {
+		resolvedModel := ResolveUpstreamModel(extractModelFromBody(req.Body), endpoint)
+		if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
+			debugLogger.SetSection("TransformedRequest", string(req.Body))
+		}
+		return &TransformationPlan{
+			TargetInterfaceType: "codex",
+			TargetPath:          req.Path,
+			RawQuery:            req.RawQuery,
+			RequestBody:         append([]byte(nil), req.Body...),
+			IsStreaming:         req.IsStreaming,
+			OutputContentType:   outputContentTypeForCodex(false, req.IsStreaming),
+			StreamInputMode:     StreamInputModeChunk,
+			Context: &TransformContext{
+				OriginalRequestBody:    append([]byte(nil), req.Body...),
+				TransformedRequestBody: append([]byte(nil), req.Body...),
+				Metadata: map[string]any{
+					"request_model":  extractModelFromBody(req.Body),
+					"upstream_model": codexBackend.BaseModelName(strings.TrimSpace(resolvedModel)),
+					"source_type":    codexBackend.SourceOpenAIImage,
+					"openai_images":  true,
+				},
+			},
+		}, nil
+	}
+
 	userAgent := ""
 	if req.Headers != nil {
 		userAgent = req.Headers.Get("User-Agent")
@@ -172,7 +199,7 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 	if strings.TrimSpace(resolvedModel) != "" {
 		suffixModel = strings.TrimSpace(resolvedModel)
 	}
-	if rewritten, changed := applySuffixThinkingToCodexBody(body, suffixModel); changed {
+	if rewritten, changed := codexBackend.ApplySuffixThinking(body, suffixModel); changed {
 		body = rewritten
 	}
 
@@ -183,7 +210,7 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 	if isChatCompletionsFormat(body) {
 		requestModel = extractModelFromBody(body)
 		if strings.TrimSpace(requestModel) == "" {
-			requestModel = baseModelName(strings.TrimSpace(resolvedModel))
+			requestModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
 		}
 
 		tr := chat_responses.Transformer{}
@@ -194,7 +221,7 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 			}
 			return nil, buildCodexInvalidRequestError(fmt.Sprintf("chat completions conversion failed: %v", err), err)
 		}
-		if rewritten, changed := applySuffixThinkingToCodexBody(converted, suffixModel); changed {
+		if rewritten, changed := codexBackend.ApplySuffixThinking(converted, suffixModel); changed {
 			converted = rewritten
 		}
 		normalizedBody, result := normalizeResponsesBodyForCodex(converted, req.Path, userAgent)
@@ -213,7 +240,7 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 			requestModel = extractModelFromBody(body)
 		}
 		if strings.TrimSpace(requestModel) == "" {
-			requestModel = baseModelName(strings.TrimSpace(resolvedModel))
+			requestModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
 		}
 	}
 
@@ -235,7 +262,7 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 			TransformedRequestBody: append([]byte(nil), body...),
 			Metadata: map[string]any{
 				"request_model":                      requestModel,
-				"upstream_model":                     baseModelName(strings.TrimSpace(resolvedModel)),
+				"upstream_model":                     codexBackend.BaseModelName(strings.TrimSpace(resolvedModel)),
 				"source_type":                        interfaceType,
 				"chat_conversion":                    responseTransformer != nil,
 				"response_transform_on_success_only": true,
@@ -306,7 +333,7 @@ func isChatCompletionsFormat(body []byte) bool {
 }
 
 func applyResolvedModelToBodyForCodex(body []byte, resolvedModel string) ([]byte, bool) {
-	resolvedModel = baseModelName(strings.TrimSpace(resolvedModel))
+	resolvedModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
 
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -316,7 +343,7 @@ func applyResolvedModelToBodyForCodex(body []byte, resolvedModel string) ([]byte
 	currentModel, _ := payload["model"].(string)
 	targetModel := resolvedModel
 	if targetModel == "" {
-		targetModel = baseModelName(currentModel)
+		targetModel = codexBackend.BaseModelName(currentModel)
 	}
 	if strings.TrimSpace(targetModel) == "" {
 		return body, false
@@ -326,73 +353,6 @@ func applyResolvedModelToBodyForCodex(body []byte, resolvedModel string) ([]byte
 	}
 
 	payload["model"] = targetModel
-	updated, err := json.Marshal(payload)
-	if err != nil {
-		return body, false
-	}
-	return updated, true
-}
-
-type codexModelSuffixResult struct {
-	modelName string
-	hasSuffix bool
-	rawSuffix string
-}
-
-func parseModelSuffix(model string) codexModelSuffixResult {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return codexModelSuffixResult{}
-	}
-
-	lastOpen := strings.LastIndex(model, "(")
-	if lastOpen == -1 || !strings.HasSuffix(model, ")") {
-		return codexModelSuffixResult{modelName: model}
-	}
-
-	return codexModelSuffixResult{
-		modelName: strings.TrimSpace(model[:lastOpen]),
-		hasSuffix: true,
-		rawSuffix: strings.ToLower(strings.TrimSpace(model[lastOpen+1 : len(model)-1])),
-	}
-}
-
-func baseModelName(model string) string {
-	return parseModelSuffix(model).modelName
-}
-
-func parseEffortSuffix(raw string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "minimal", "low", "medium", "high", "xhigh", "max", "none", "auto":
-		return strings.ToLower(strings.TrimSpace(raw)), true
-	default:
-		return "", false
-	}
-}
-
-func applySuffixThinkingToCodexBody(body []byte, model string) ([]byte, bool) {
-	suffix := parseModelSuffix(model)
-	if !suffix.hasSuffix {
-		return body, false
-	}
-
-	effort, ok := parseEffortSuffix(suffix.rawSuffix)
-	if !ok {
-		return body, false
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return body, false
-	}
-
-	reasoning, _ := payload["reasoning"].(map[string]any)
-	if reasoning == nil {
-		reasoning = make(map[string]any)
-	}
-	reasoning["effort"] = effort
-	payload["reasoning"] = reasoning
-
 	updated, err := json.Marshal(payload)
 	if err != nil {
 		return body, false

@@ -438,6 +438,7 @@ build_targets() {
     fi
 
     if [ "$target" = "desktop" ] || [ "$target" = "both" ]; then
+        build_webui
         check_wails
         if [ "$SKIP_DEPS" -ne 1 ]; then
             install_deps

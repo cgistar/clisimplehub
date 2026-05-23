@@ -181,6 +181,8 @@ find_local_archives() {
   local archive
   shopt -s nullglob
   for archive in \
+    "$ROOT_DIR"/cliSimpleHub-server-linux-"$release_arch".tar.gz \
+    "$ROOT_DIR"/cliSimpleHub-server-proxy-linux-"$release_arch".tar.gz \
     "$ROOT_DIR"/cliSimpleHub-server-v*-linux-"$release_arch".tar.gz \
     "$ROOT_DIR"/cliSimpleHub-server-proxy-v*-linux-"$release_arch".tar.gz; do
     [[ -f "$archive" ]] && printf '%s\n' "$archive"
@@ -240,9 +242,9 @@ select_release_asset_url() {
   local url
 
   if [[ "$use_proxy" == "yes" ]]; then
-    expected_name="cliSimpleHub-server-proxy-v.*-linux-${release_arch}\\.tar\\.gz"
+    expected_name="cliSimpleHub-server-proxy(-v.*)?-linux-${release_arch}\\.tar\\.gz"
   else
-    expected_name="cliSimpleHub-server-v.*-linux-${release_arch}\\.tar\\.gz"
+    expected_name="cliSimpleHub-server(-v.*)?-linux-${release_arch}\\.tar\\.gz"
   fi
 
   while IFS= read -r url; do
@@ -257,7 +259,7 @@ select_release_asset_url() {
   echo "parsed asset url count: $(asset_urls_from_release_json "$release_json" | wc -l | tr -d ' ')" >&2
   asset_urls_from_release_json "$release_json" |
     sed -n 's#.*/##p' |
-    grep -E '^cliSimpleHub-server(-proxy)?-v.*-linux-(amd64|arm64)\.tar\.gz$' >&2 || true
+    grep -E '^cliSimpleHub-server(-proxy)?(-v.*)?-linux-(amd64|arm64)\.tar\.gz$' >&2 || true
   return 1
 }
 

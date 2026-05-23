@@ -1,8 +1,12 @@
 package codexplugin
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
+
+	"clisimplehub/internal/executor"
 )
 
 type codexModelCatalogEntry struct {
@@ -47,6 +51,8 @@ func (p *CodexPlugin) handleCodexRoute(w http.ResponseWriter, r *http.Request) {
 		svc.HandleResponses(w, r)
 	case "/codex/v1/chat/completions":
 		svc.HandleChatCompletions(w, r)
+	case "/codex/v1/images/generations", "/codex/v1/images/edits":
+		svc.HandleOpenAIImages(w, r)
 	case "/codex/v1/models":
 		handleCodexModels(w, r)
 	default:
@@ -93,4 +99,51 @@ func handleCodexModels(w http.ResponseWriter, r *http.Request) {
 		"object": "list",
 		"data":   models,
 	})
+}
+
+func (s *CodexService) HandleOpenAIImages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	_ = r.Body.Close()
+
+	isStreaming := isOpenAIImagesStreamRequested(r, body)
+	result := s.RoundTrip(r.Context(), &executor.UpstreamRequest{
+		Method:              http.MethodPost,
+		TargetPath:          r.URL.Path,
+		RawQuery:            r.URL.RawQuery,
+		Headers:             r.Header.Clone(),
+		Body:                body,
+		IsStreaming:         isStreaming,
+		RequestModel:        extractModelFromBody(body),
+		OriginalPath:        r.URL.Path,
+		TargetInterfaceType: "codex",
+	})
+	if result == nil {
+		http.Error(w, "codex image request failed", http.StatusBadGateway)
+		return
+	}
+	writeUpstreamRoundTripHTTPResult(w, result)
+}
+
+func isOpenAIImagesStreamRequested(r *http.Request, body []byte) bool {
+	if r != nil {
+		if strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream") {
+			return true
+		}
+		if v := strings.TrimSpace(r.URL.Query().Get("stream")); strings.EqualFold(v, "true") || v == "1" {
+			return true
+		}
+	}
+	var payload struct {
+		Stream bool `json:"stream"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	return payload.Stream
 }

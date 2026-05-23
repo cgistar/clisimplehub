@@ -1,7 +1,6 @@
 package codexplugin
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	codex "clisimplehub/internal/codex"
 	codexAuth "clisimplehub/internal/codex/auth"
 	"clisimplehub/internal/codex/auth/mailprovider"
+	codexBackend "clisimplehub/internal/codex/backend"
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
@@ -1032,13 +1032,21 @@ func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL strin
 		config = &codexShared.CodexMultiConfig{}
 	}
 
-	upstreamURL := getCodexUpstreamURL(config, "/v1/responses")
-	body := []byte(`{"model":"gpt-5.4-mini","reasoning":{"effort":"medium"},"instructions":"hi","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true,"store":false}`)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
+	body := []byte(`{"model":"gpt-5.4-mini","reasoning":{"effort":"medium"},"instructions":"You are Codex, based on GPT-5.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Say 'OK' only"}]}],"stream":true,"store":false}`)
+	req, _, _, err := codexBackend.Prepare(ctx, codexBackend.Request{
+		Method:      http.MethodPost,
+		Path:        "/v1/responses",
+		Source:      codexBackend.SourceCodex,
+		Model:       "gpt-5.4-mini",
+		Body:        body,
+		IsStreaming: true,
+		Config:      config,
+		AccessToken: accessToken,
+		AccountID:   accountID,
+	})
 	if err != nil {
 		return nil, "", fmt.Errorf("build request: %w", err)
 	}
-	applyCodexHeaders(req, accessToken, accountID, true, config, http.Header{})
 
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
 	resp, err := client.Do(req)

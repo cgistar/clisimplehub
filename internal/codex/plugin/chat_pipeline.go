@@ -8,7 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	codexBackend "clisimplehub/internal/codex/backend"
 	"clisimplehub/internal/executor"
+	appmiddleware "clisimplehub/internal/middleware"
+	"clisimplehub/internal/proxy"
 	chat_responses "clisimplehub/internal/transformer/chat/openai/responses"
 )
 
@@ -25,8 +28,11 @@ func (s *CodexService) prepareCodexRequest(ctx context.Context, body []byte, req
 
 	prepared := &preparedCodexRequest{
 		body:          body,
-		isStreaming:   normalizeStreamingModeForCodexPath(requestPath, isStreaming),
+		isStreaming:   isStreaming,
 		clientHeaders: cloneHeaders(clientHeaders),
+	}
+	if proxy.IsCodexCompactResponsesPath(requestPath) {
+		prepared.isStreaming = false
 	}
 	suffixModel := extractModelFromBody(prepared.body)
 	if strings.TrimSpace(resolvedModel) != "" {
@@ -41,7 +47,7 @@ func (s *CodexService) prepareCodexRequest(ctx context.Context, body []byte, req
 	}
 
 	currentModel := extractModelFromBody(prepared.body)
-	if bodyWithThinking, applied := applySuffixThinkingToCodexBody(prepared.body, suffixModel); applied {
+	if bodyWithThinking, applied := codexBackend.ApplySuffixThinking(prepared.body, suffixModel); applied {
 		prepared.body = bodyWithThinking
 		if debugLogger != nil {
 			debugLogger.Log("应用模型 suffix thinking: model=%q", suffixModel)
@@ -53,7 +59,7 @@ func (s *CodexService) prepareCodexRequest(ctx context.Context, body []byte, req
 		chatOriginal := prepared.body
 		requestModel := extractModelFromBody(chatOriginal)
 		if strings.TrimSpace(requestModel) == "" {
-			requestModel = baseModelName(strings.TrimSpace(resolvedModel))
+			requestModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
 		}
 
 		tr := chat_responses.Transformer{}
@@ -65,7 +71,7 @@ func (s *CodexService) prepareCodexRequest(ctx context.Context, body []byte, req
 			return nil, buildInvalidRequestError(fmt.Sprintf("chat completions conversion failed: %v", err), err)
 		}
 
-		if bodyWithThinking, applied := applySuffixThinkingToCodexBody(converted, suffixModel); applied {
+		if bodyWithThinking, applied := codexBackend.ApplySuffixThinking(converted, suffixModel); applied {
 			converted = bodyWithThinking
 		}
 
@@ -97,7 +103,7 @@ func (s *CodexService) prepareCodexRequest(ctx context.Context, body []byte, req
 		prepared.requestModel = currentModel
 	}
 	if strings.TrimSpace(prepared.requestModel) == "" {
-		prepared.requestModel = baseModelName(strings.TrimSpace(resolvedModel))
+		prepared.requestModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
 	}
 	if debugLogger != nil {
 		debugLogger.SetSection("TransformedRequest", string(prepared.body))
@@ -109,16 +115,16 @@ func (s *CodexService) prepareCodexRequest(ctx context.Context, body []byte, req
 func normalizeResponsesBodyForCodex(ctx context.Context, body []byte, requestPath, userAgent string) ([]byte, *executor.ForwardResult) {
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 
-	processedBody, err := processRequestBody(body, requestPath, userAgent)
+	processedBody, _, err := appmiddleware.NormalizeCodexResponsesRequest(body, requestPath, userAgent)
 	if err != nil {
 		if debugLogger != nil {
 			debugLogger.Log("请求体处理失败: %v", err)
 		}
-		if errors.Is(err, errCompactStreamingNotSupported) {
+		if errors.Is(err, appmiddleware.ErrCompactStreamingNotSupported) {
 			return nil, &executor.ForwardResult{
 				StatusCode: http.StatusBadRequest,
-				Error:      errCompactStreamingNotSupported,
-				Body:       compactStreamingErrorPayload(),
+				Error:      appmiddleware.ErrCompactStreamingNotSupported,
+				Body:       appmiddleware.CompactStreamingErrorPayload(),
 				Headers:    http.Header{"Content-Type": []string{"application/json"}},
 			}
 		}

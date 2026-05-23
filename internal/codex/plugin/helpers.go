@@ -1,18 +1,28 @@
 package codexplugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	codexBackend "clisimplehub/internal/codex/backend"
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/usage"
+
+	"github.com/tidwall/gjson"
 )
 
 const statusClientClosedRequest = 499
+
+type chatCompletionsConversion struct {
+	originalBody []byte
+	streamState  any
+}
 
 func waitForRetry(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
@@ -108,17 +118,6 @@ func buildGatewayErrorPayload(errorType, message string, details map[string]any)
 	return errJSON
 }
 
-// buildGatewayError constructs a structured error response for upstream/network/auth transient errors.
-func buildGatewayError(errorType, message string, details map[string]any) *forwardResult {
-	errJSON := buildGatewayErrorPayload(errorType, message, details)
-	return &forwardResult{
-		statusCode: http.StatusBadGateway,
-		body:       errJSON,
-		headers:    http.Header{"Content-Type": []string{"application/json"}},
-		errMsg:     message,
-	}
-}
-
 // buildGatewayExecutorError constructs a structured executor error response for upstream/network/auth transient errors.
 func buildGatewayExecutorError(errorType, message string, details map[string]any, err error, targetURL string) *executor.ForwardResult {
 	errJSON := buildGatewayErrorPayload(errorType, message, details)
@@ -128,20 +127,6 @@ func buildGatewayExecutorError(errorType, message string, details map[string]any
 		Headers:    http.Header{"Content-Type": []string{"application/json"}},
 		Error:      err,
 		TargetURL:  targetURL,
-	}
-}
-
-func buildCancelledForwardError(err error) *forwardResult {
-	message := "Request cancelled by client"
-	if err != nil {
-		message = fmt.Sprintf("%s: %v", message, err)
-	}
-
-	return &forwardResult{
-		statusCode: statusClientClosedRequest,
-		body:       buildGatewayErrorPayload("request_cancelled", message, nil),
-		headers:    http.Header{"Content-Type": []string{"application/json"}},
-		errMsg:     message,
 	}
 }
 
@@ -183,6 +168,35 @@ func tokenUsageTotal(tokens *executor.TokenUsage) int64 {
 		return tokens.TotalTokens
 	}
 	return tokens.InputTokens + tokens.OutputTokens
+}
+
+func isChatCompletionsFormat(body []byte) bool {
+	return gjson.GetBytes(body, "messages").Exists() && !gjson.GetBytes(body, "input").Exists()
+}
+
+func applyResolvedModelToBody(body []byte, resolvedModel string) ([]byte, bool) {
+	resolvedModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
+
+	var payload map[string]any
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&payload); err != nil {
+		return body, false
+	}
+
+	currentModel, _ := payload["model"].(string)
+	targetModel := resolvedModel
+	if targetModel == "" {
+		targetModel = codexBackend.BaseModelName(currentModel)
+	}
+	if strings.TrimSpace(targetModel) == "" || strings.EqualFold(strings.TrimSpace(currentModel), targetModel) {
+		return body, false
+	}
+
+	payload["model"] = targetModel
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return body, false
+	}
+	return updated, true
 }
 
 // sanitizeHeaders removes sensitive headers for logging.

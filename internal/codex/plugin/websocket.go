@@ -6,22 +6,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	codex "clisimplehub/internal/codex"
+	codexBackend "clisimplehub/internal/codex/backend"
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/logger"
-	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/plugin"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -29,9 +28,8 @@ import (
 )
 
 const (
-	codexResponsesWebsocketBetaHeaderValue = "responses_websockets=2026-02-06"
-	codexResponsesWebsocketIdleTimeout     = 5 * time.Minute
-	codexResponsesWebsocketHandshakeTO     = 30 * time.Second
+	codexResponsesWebsocketIdleTimeout = 5 * time.Minute
+	codexResponsesWebsocketHandshakeTO = 30 * time.Second
 )
 
 var codexWebsocketUpgrader = websocket.Upgrader{
@@ -150,7 +148,7 @@ func (s *CodexService) forwardResponsesWebsocketTurn(ctx context.Context, downst
 		if account.Websockets && tryWebsocketAccounts {
 			completedOutput, retryable, err = s.forwardResponsesWebsocketTurnViaUpstream(ctx, downstream, requestJSON, clientHeaders, requestPath, sessionKey, pool, config, account)
 		} else {
-			completedOutput, retryable, err = s.forwardResponsesWebsocketTurnViaHTTP(ctx, downstream, httpRequestJSON, clientHeaders, requestPath, sessionKey, pool, config, account)
+			completedOutput, retryable, err = s.forwardResponsesWebsocketTurnViaHTTP(ctx, downstream, httpRequestJSON, clientHeaders, requestPath, sessionKey)
 		}
 		if err == nil {
 			return completedOutput, nil
@@ -175,16 +173,34 @@ func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Cont
 		return nil, true, fmt.Errorf("auth failed: %v", err)
 	}
 
-	upstreamURL, err := buildCodexResponsesWebsocketURL(getCodexUpstreamURL(config, requestPath))
+	upstreamURL, err := buildCodexResponsesWebsocketURL(codexBackend.UpstreamURL(config, codexBackend.TargetPath(requestPath)))
 	if err != nil {
 		return nil, false, err
 	}
-	upstreamHeaders := applyCodexWebsocketHeaders(clientHeaders, accessToken, accountID, config, gjson.GetBytes(requestJSON, "prompt_cache_key").String())
+	preparedBody, upstreamHeaders, err := codexBackend.PrepareWebsocket(ctx, codexBackend.Request{
+		Path:           requestPath,
+		Source:         codexBackend.SourceCodex,
+		Model:          extractModelFromBody(requestJSON),
+		Body:           requestJSON,
+		OriginalBody:   requestJSON,
+		Headers:        clientHeaders,
+		Config:         config,
+		AccessToken:    accessToken,
+		AccountID:      accountID,
+		LocalAccountID: account.ID,
+		PlanType:       account.PlanType,
+	})
+	if err != nil {
+		return nil, false, err
+	}
 	upstreamConn, handshakeResp, err := dialCodexWebsocket(ctx, upstreamURL, upstreamHeaders, proxyURL)
 	if err != nil {
-		defer closeHTTPResponseBody(handshakeResp)
+		handshakeBody := readAndCloseHTTPResponseBody(handshakeResp)
 		if handshakeResp != nil && handshakeResp.StatusCode > 0 {
-			markCodexWebsocketHandshakeStatus(pool, account, handshakeResp.StatusCode)
+			markCodexWebsocketHandshakeStatus(pool, account, handshakeResp, handshakeBody)
+			if len(handshakeBody) > 0 {
+				return nil, isCodexWebsocketRetryableStatus(handshakeResp.StatusCode), fmt.Errorf("codex websocket upstream returned %d: %s", handshakeResp.StatusCode, strings.TrimSpace(string(handshakeBody)))
+			}
 			return nil, isCodexWebsocketRetryableStatus(handshakeResp.StatusCode), fmt.Errorf("codex websocket upstream returned %d", handshakeResp.StatusCode)
 		}
 		return nil, true, fmt.Errorf("codex websocket dial failed: %v", err)
@@ -192,7 +208,7 @@ func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Cont
 	defer upstreamConn.Close()
 	upstreamConn.EnableWriteCompression(false)
 
-	if err := upstreamConn.WriteMessage(websocket.TextMessage, buildCodexWebsocketRequestBody(requestJSON)); err != nil {
+	if err := upstreamConn.WriteMessage(websocket.TextMessage, preparedBody); err != nil {
 		return nil, true, err
 	}
 
@@ -208,22 +224,41 @@ func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Cont
 	return completedOutput, false, nil
 }
 
-func (s *CodexService) forwardResponsesWebsocketTurnViaHTTP(ctx context.Context, downstream *websocket.Conn, requestJSON []byte, clientHeaders http.Header, requestPath string, sessionKey string, pool *codex.CodexAccountPool, config *codexShared.CodexMultiConfig, account *codexShared.CodexAccount) ([]byte, bool, error) {
-	writer := newCodexWebsocketHTTPWriter()
-	result, retryable := s.forwardWithAccount(ctx, account, requestJSON, true, writer, pool, config, clientHeaders, requestPath, nil)
+func (s *CodexService) forwardResponsesWebsocketTurnViaHTTP(ctx context.Context, downstream *websocket.Conn, requestJSON []byte, clientHeaders http.Header, requestPath string, sessionKey string) ([]byte, bool, error) {
+	result := s.RoundTrip(ctx, &executor.UpstreamRequest{
+		Method:              http.MethodPost,
+		TargetPath:          requestPath,
+		Headers:             clientHeaders,
+		Body:                requestJSON,
+		IsStreaming:         true,
+		RequestModel:        extractModelFromBody(requestJSON),
+		OriginalPath:        requestPath,
+		TargetInterfaceType: "codex",
+	})
 	if result == nil {
 		return nil, false, fmt.Errorf("codex HTTP fallback returned nil result")
 	}
 	if result.Error != nil {
-		return nil, retryable, result.Error
+		return nil, false, result.Error
 	}
 	if result.StatusCode >= 400 {
 		if len(result.Body) > 0 {
-			return nil, retryable, fmt.Errorf("codex HTTP fallback returned %d: %s", result.StatusCode, strings.TrimSpace(string(result.Body)))
+			return nil, false, fmt.Errorf("codex HTTP fallback returned %d: %s", result.StatusCode, strings.TrimSpace(string(result.Body)))
 		}
-		return nil, retryable, fmt.Errorf("codex HTTP fallback returned %d", result.StatusCode)
+		return nil, false, fmt.Errorf("codex HTTP fallback returned %d", result.StatusCode)
 	}
-	completedOutput, err := writeSSEFramesToWebsocket(downstream, writer.Body(), sessionKey)
+	var stream []byte
+	if result.Stream != nil {
+		defer result.Stream.Close()
+		data, err := io.ReadAll(result.Stream)
+		if err != nil {
+			return nil, false, err
+		}
+		stream = data
+	} else {
+		stream = result.Body
+	}
+	completedOutput, err := writeSSEFramesToWebsocket(downstream, stream, sessionKey)
 	return completedOutput, false, err
 }
 
@@ -260,17 +295,21 @@ func markCodexWebsocketAuthError(pool *codex.CodexAccountPool, account *codexSha
 	}
 }
 
-func markCodexWebsocketHandshakeStatus(pool *codex.CodexAccountPool, account *codexShared.CodexAccount, statusCode int) {
-	if pool == nil || account == nil {
+func markCodexWebsocketHandshakeStatus(pool *codex.CodexAccountPool, account *codexShared.CodexAccount, resp *http.Response, body []byte) {
+	if pool == nil || account == nil || resp == nil {
 		return
 	}
-	switch statusCode {
+	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "websocket_auth_failed")
 	case http.StatusPaymentRequired:
 		pool.MarkFailed(account.ID, codexShared.CodexStatusExhausted, 0, "websocket_quota_exhausted")
 	case http.StatusTooManyRequests:
-		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, time.Minute, "websocket_rate_limit")
+		cooldown := parseCooldownFromBody(body)
+		if cooldown <= 0 {
+			cooldown = parseCooldownDuration(resp)
+		}
+		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, cooldown, "websocket_rate_limit")
 	}
 }
 
@@ -293,120 +332,6 @@ func isCodexWebsocketRetryableStatus(statusCode int) bool {
 	default:
 		return statusCode == 0 || statusCode >= 500
 	}
-}
-
-func applyCodexWebsocketHeaders(clientHeaders http.Header, accessToken, accountID string, config *codexShared.CodexMultiConfig, cacheKey string) http.Header {
-	headers := http.Header{}
-	if strings.TrimSpace(accessToken) != "" {
-		headers.Set("Authorization", "Bearer "+accessToken)
-	}
-
-	userAgent := codexShared.DefaultCodexUserAgent
-	originator := codexShared.DefaultCodexOriginator
-	if config != nil {
-		userAgent = config.GetUserAgent()
-		originator = config.GetOriginator()
-	}
-	if config == nil || strings.TrimSpace(config.Config.UserAgent) == "" {
-		if clientUserAgent := strings.TrimSpace(clientHeaders.Get("User-Agent")); appmiddleware.IsCodexCLI(clientUserAgent) {
-			userAgent = clientUserAgent
-		}
-	}
-
-	filtered := filterClientHeaders(clientHeaders)
-	copyHeaderIfPresent(headers, filtered, "X-Codex-Beta-Features")
-	copyHeaderIfPresent(headers, clientHeaders, "X-Codex-Turn-State")
-	copyHeaderIfPresent(headers, filtered, "X-Codex-Turn-Metadata")
-	copyHeaderIfPresent(headers, filtered, "X-Client-Request-Id")
-	copyHeaderIfPresent(headers, clientHeaders, "X-ResponsesAPI-Include-Timing-Metrics")
-	if val := filtered.Get("Version"); val != "" {
-		headers.Set("Version", val)
-	} else if config != nil && strings.TrimSpace(config.Config.ClientVersion) != "" {
-		headers.Set("Version", config.GetClientVersion())
-	}
-
-	headers.Set("User-Agent", userAgent)
-	betaHeader := strings.TrimSpace(clientHeaders.Get("OpenAI-Beta"))
-	if betaHeader == "" || !strings.Contains(betaHeader, "responses_websockets=") {
-		betaHeader = codexResponsesWebsocketBetaHeaderValue
-	}
-	headers.Set("OpenAI-Beta", betaHeader)
-
-	if cacheKey != "" {
-		setHeaderCasePreserved(headers, "session_id", cacheKey)
-		headers.Set("Conversation_id", cacheKey)
-	} else if sessionID := strings.TrimSpace(clientHeaders.Get("session_id")); sessionID != "" {
-		setHeaderCasePreserved(headers, "session_id", sessionID)
-		headers.Set("Conversation_id", sessionID)
-	} else if strings.Contains(userAgent, "Mac OS") {
-		id := uuid.NewString()
-		setHeaderCasePreserved(headers, "session_id", id)
-		headers.Set("Conversation_id", id)
-	}
-
-	if val := filtered.Get("Originator"); val != "" {
-		headers.Set("Originator", val)
-	} else {
-		headers.Set("Originator", originator)
-	}
-	if strings.TrimSpace(accountID) != "" {
-		setHeaderCasePreserved(headers, "ChatGPT-Account-ID", accountID)
-	}
-
-	// 注入 codex.json 中配置的自定义 headers。
-	for k, v := range config.GetCustomHeaders() {
-		if k = strings.TrimSpace(k); k != "" {
-			if v = strings.TrimSpace(v); v != "" {
-				headers.Set(k, v)
-			}
-		}
-	}
-
-	return headers
-}
-
-func copyHeaderIfPresent(dst, src http.Header, key string) {
-	if dst == nil || src == nil {
-		return
-	}
-	if value := headerValueCaseInsensitive(src, key); value != "" {
-		dst.Set(key, value)
-	}
-}
-
-func headerValueCaseInsensitive(headers http.Header, key string) string {
-	key = strings.TrimSpace(key)
-	if headers == nil || key == "" {
-		return ""
-	}
-	if val := strings.TrimSpace(headers.Get(key)); val != "" {
-		return val
-	}
-	for existingKey, values := range headers {
-		if !strings.EqualFold(existingKey, key) {
-			continue
-		}
-		for _, value := range values {
-			if trimmed := strings.TrimSpace(value); trimmed != "" {
-				return trimmed
-			}
-		}
-	}
-	return ""
-}
-
-func setHeaderCasePreserved(headers http.Header, key, value string) {
-	key = strings.TrimSpace(key)
-	value = strings.TrimSpace(value)
-	if headers == nil || key == "" || value == "" {
-		return
-	}
-	for existingKey := range headers {
-		if strings.EqualFold(existingKey, key) {
-			delete(headers, existingKey)
-		}
-	}
-	headers[key] = []string{value}
 }
 
 func buildCodexResponsesWebsocketURL(httpURL string) (string, error) {
@@ -481,55 +406,6 @@ func newCodexWebsocketDialer(proxyURL string) *websocket.Dialer {
 		logger.Warn("[Codex] unsupported websocket proxy scheme: %s", parsed.Scheme)
 	}
 	return dialer
-}
-
-func proxyCodexWebsocket(ctx context.Context, downstream, upstream *websocket.Conn) {
-	done := make(chan struct{})
-	var closeOnce sync.Once
-	closeBoth := func() {
-		closeOnce.Do(func() {
-			_ = downstream.Close()
-			_ = upstream.Close()
-			close(done)
-		})
-	}
-
-	go func() {
-		defer closeBoth()
-		for {
-			_ = upstream.SetReadDeadline(time.Now().Add(codexResponsesWebsocketIdleTimeout))
-			msgType, payload, err := upstream.ReadMessage()
-			if err != nil {
-				return
-			}
-			if err := downstream.WriteMessage(msgType, payload); err != nil {
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer closeBoth()
-		for {
-			msgType, payload, err := downstream.ReadMessage()
-			if err != nil {
-				return
-			}
-			if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
-				continue
-			}
-			normalized := normalizeCodexWebsocketRequestBody(payload)
-			if err := upstream.WriteMessage(websocket.TextMessage, normalized); err != nil {
-				return
-			}
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		closeBoth()
-	case <-done:
-	}
 }
 
 type codexWebsocketUpstreamError struct {
@@ -820,19 +696,6 @@ func normalizeJSONArrayRaw(raw []byte) string {
 	return "[]"
 }
 
-func buildCodexWebsocketRequestBody(body []byte) []byte {
-	if len(body) == 0 {
-		return nil
-	}
-	wsReqBody, errSet := sjson.SetBytes(bytes.Clone(body), "type", "response.create")
-	if errSet == nil && len(wsReqBody) > 0 {
-		return wsReqBody
-	}
-	fallback := bytes.Clone(body)
-	fallback, _ = sjson.SetBytes(fallback, "type", "response.create")
-	return fallback
-}
-
 func responseCompletedOutputFromWebsocketPayload(payload []byte) []byte {
 	output := gjson.GetBytes(payload, "response.output")
 	if output.Exists() && output.IsArray() {
@@ -905,61 +768,11 @@ func writeCodexWebsocketError(conn *websocket.Conn, status int, err error) error
 	return conn.WriteMessage(websocket.TextMessage, body)
 }
 
-type codexWebsocketHTTPWriter struct {
-	header     http.Header
-	statusCode int
-	body       bytes.Buffer
-}
-
-func newCodexWebsocketHTTPWriter() *codexWebsocketHTTPWriter {
-	return &codexWebsocketHTTPWriter{header: make(http.Header), statusCode: http.StatusOK}
-}
-
-func (w *codexWebsocketHTTPWriter) Header() http.Header { return w.header }
-
-func (w *codexWebsocketHTTPWriter) WriteHeader(statusCode int) {
-	if statusCode > 0 {
-		w.statusCode = statusCode
+func readAndCloseHTTPResponseBody(resp *http.Response) []byte {
+	if resp == nil || resp.Body == nil {
+		return nil
 	}
-}
-
-func (w *codexWebsocketHTTPWriter) Write(p []byte) (int, error) {
-	return w.body.Write(p)
-}
-
-func (w *codexWebsocketHTTPWriter) Flush() {}
-
-func (w *codexWebsocketHTTPWriter) Body() []byte {
-	return bytes.Clone(w.body.Bytes())
-}
-
-func normalizeCodexWebsocketRequestBody(body []byte) []byte {
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 || !json.Valid(body) {
-		return body
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return body
-	}
-	payload["type"] = "response.create"
-	payload["stream"] = true
-	if _, ok := payload["instructions"]; !ok {
-		payload["instructions"] = ""
-	}
-	delete(payload, "prompt_cache_retention")
-	delete(payload, "safety_identifier")
-
-	normalized, err := json.Marshal(payload)
-	if err != nil {
-		return body
-	}
-	return normalized
-}
-
-func closeHTTPResponseBody(resp *http.Response) {
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return data
 }

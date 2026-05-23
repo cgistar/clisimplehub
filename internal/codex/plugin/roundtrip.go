@@ -13,6 +13,7 @@ import (
 	"time"
 
 	codex "clisimplehub/internal/codex"
+	codexBackend "clisimplehub/internal/codex/backend"
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
@@ -178,7 +179,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 		debugLogger.SetMetadata("ProxyURL", proxyURL)
 	}
 
-	upstreamURL := getCodexUpstreamURL(config, req.TargetPath)
+	upstreamURL := codexBackend.UpstreamURL(config, codexBackend.TargetPath(req.TargetPath))
 	authMgr := s.GetOrCreateAuthManager(account.ID, configPath, proxyURL)
 
 	var accessToken string
@@ -231,44 +232,58 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 	}
 
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 0)
-	buildRequest := func(token, acctID string) (*http.Request, map[string]string, error) {
-		httpReq, reqErr := http.NewRequestWithContext(ctx, req.Method, upstreamURL, bytes.NewReader(req.Body))
-		if reqErr != nil {
-			return nil, nil, reqErr
+	requestPath := req.OriginalPath
+	if strings.TrimSpace(requestPath) == "" {
+		requestPath = req.TargetPath
+	}
+	source := strings.TrimSpace(req.TargetInterfaceType)
+	if req.TransformContext != nil && req.TransformContext.Metadata != nil {
+		if v, _ := req.TransformContext.Metadata["source_type"].(string); strings.TrimSpace(v) != "" {
+			source = strings.TrimSpace(v)
 		}
-		applyCodexHeaders(httpReq, token, acctID, req.IsStreaming, config, req.Headers)
-		return httpReq, sanitizeHeaderMap(httpReq.Header), nil
+	}
+	if strings.EqualFold(source, "chat") {
+		source = codexBackend.SourceOpenAI
+	}
+	if codexBackend.IsImagesPath(requestPath) {
+		source = codexBackend.SourceOpenAIImage
+	}
+	originalBody := req.Body
+	if req.TransformContext != nil && len(req.TransformContext.OriginalRequestBody) > 0 {
+		originalBody = req.TransformContext.OriginalRequestBody
+	}
+	buildBackendReq := func(token, acctID string) codexBackend.Request {
+		return codexBackend.Request{
+			Method:         req.Method,
+			Path:           requestPath,
+			Source:         source,
+			Model:          req.RequestModel,
+			Body:           req.Body,
+			OriginalBody:   originalBody,
+			Headers:        req.Headers,
+			IsStreaming:    req.IsStreaming,
+			Config:         config,
+			Client:         client,
+			AccessToken:    token,
+			AccountID:      acctID,
+			LocalAccountID: account.ID,
+			PlanType:       account.PlanType,
+			Attempts:       codexNetworkRetryAttempts,
+			RetryDelay:     codexNetworkRetryDelay,
+		}
 	}
 
-	var (
-		resp          *http.Response
-		targetHeaders map[string]string
-	)
-	for requestAttempt := 1; requestAttempt <= codexNetworkRetryAttempts; requestAttempt++ {
-		httpReq, sanitizedHeaders, reqErr := buildRequest(accessToken, accountID)
-		if reqErr != nil {
-			return roundTripInternalError(reqErr), false
-		}
-		targetHeaders = sanitizedHeaders
-
-		if debugLogger != nil {
-			debugLogger.SetMetadata("UpstreamURL", upstreamURL)
-			debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(targetHeaders))
-		}
-
-		resp, err = client.Do(httpReq)
-		if err == nil {
-			break
-		}
-		if debugLogger != nil {
-			debugLogger.Log("上游请求失败: %v", err)
-		}
-		if requestAttempt < codexNetworkRetryAttempts {
-			if waitErr := waitForRetry(ctx, codexNetworkRetryDelay); waitErr != nil {
-				return roundTripCancelledError(waitErr), false
-			}
-			continue
-		}
+	backendResult, err := codexBackend.Execute(ctx, buildBackendReq(accessToken, accountID))
+	if backendResult == nil {
+		backendResult = &codexBackend.Result{TargetURL: upstreamURL}
+	}
+	if debugLogger != nil {
+		debugLogger.SetMetadata("UpstreamURL", backendResult.TargetURL)
+		debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", backendResult.StatusCode))
+		debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(backendResult.TargetHeaders))
+		debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaderDebug(backendResult.StatusCode, backendResult.Headers))
+	}
+	if err != nil && backendResult.StatusCode == 0 {
 		return roundTripGatewayError(
 			"transport_error",
 			"Codex upstream network request failed after retries",
@@ -280,135 +295,123 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 				"retryDelaySeconds": int(codexNetworkRetryDelay / time.Second),
 			},
 			fmt.Errorf("upstream error: %v", err),
-			upstreamURL,
+			backendResult.TargetURL,
 		), false
 	}
 
-	if debugLogger != nil {
-		debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", resp.StatusCode))
-		debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaderDebug(resp.StatusCode, resp.Header))
-	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+	if backendResult.StatusCode == http.StatusUnauthorized {
+		respBody := backendResult.Body
 		if refreshErr := authMgr.ForceRefresh(); refreshErr == nil {
 			newToken, newAccountID, tokenErr := authMgr.GetAccessToken()
 			if tokenErr == nil && newToken != "" {
-				retryReq, sanitizedHeaders, reqErr := buildRequest(newToken, newAccountID)
-				if reqErr == nil {
-					targetHeaders = sanitizedHeaders
-					retryResp, retryErr := client.Do(retryReq)
-					if retryErr == nil {
-						if retryResp.StatusCode == http.StatusOK {
-							return buildCodexSuccessRoundTrip(retryResp, req.IsStreaming, upstreamURL, targetHeaders, debugLogger, pool, account), false
-						}
-						_ = retryResp.Body.Close()
-					}
+				retryResult, retryErr := codexBackend.Execute(ctx, buildBackendReq(newToken, newAccountID))
+				if retryErr == nil && retryResult != nil && retryResult.StatusCode == http.StatusOK {
+					return buildCodexBackendSuccessRoundTrip(retryResult, debugLogger, pool, account), false
 				}
 			}
 		}
 		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
 		return &executor.UpstreamRoundTripResult{
-			StatusCode:    resp.StatusCode,
+			StatusCode:    backendResult.StatusCode,
 			Body:          respBody,
-			Headers:       http.Header{"Content-Type": []string{"application/json"}},
-			TargetURL:     upstreamURL,
-			TargetHeaders: targetHeaders,
+			Headers:       cloneHTTPHeader(backendResult.Headers),
+			TargetURL:     backendResult.TargetURL,
+			TargetHeaders: backendResult.TargetHeaders,
+			RequestBody:   append([]byte(nil), backendResult.RequestBody...),
 			Error:         fmt.Errorf("unauthorized"),
 		}, true
 	}
 
-	if resp.StatusCode == http.StatusForbidden {
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+	if backendResult.StatusCode == http.StatusForbidden {
+		respBody := backendResult.Body
 		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "suspended")
 		return &executor.UpstreamRoundTripResult{
-			StatusCode:    resp.StatusCode,
+			StatusCode:    backendResult.StatusCode,
 			Body:          respBody,
-			Headers:       cloneHTTPHeader(resp.Header),
-			TargetURL:     upstreamURL,
-			TargetHeaders: targetHeaders,
+			Headers:       cloneHTTPHeader(backendResult.Headers),
+			TargetURL:     backendResult.TargetURL,
+			TargetHeaders: backendResult.TargetHeaders,
+			RequestBody:   append([]byte(nil), backendResult.RequestBody...),
 			Error:         fmt.Errorf("forbidden"),
 		}, true
 	}
 
-	if resp.StatusCode == http.StatusPaymentRequired {
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+	if backendResult.StatusCode == http.StatusPaymentRequired {
+		respBody := backendResult.Body
 		pool.MarkFailed(account.ID, codexShared.CodexStatusExhausted, 0, "quota_exhausted")
 		return &executor.UpstreamRoundTripResult{
-			StatusCode:    resp.StatusCode,
+			StatusCode:    backendResult.StatusCode,
 			Body:          respBody,
-			Headers:       cloneHTTPHeader(resp.Header),
-			TargetURL:     upstreamURL,
-			TargetHeaders: targetHeaders,
+			Headers:       cloneHTTPHeader(backendResult.Headers),
+			TargetURL:     backendResult.TargetURL,
+			TargetHeaders: backendResult.TargetHeaders,
+			RequestBody:   append([]byte(nil), backendResult.RequestBody...),
 			Error:         fmt.Errorf("payment required"),
 		}, true
 	}
 
-	if resp.StatusCode == http.StatusTooManyRequests {
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		cooldown := parseCooldownFromBody(respBody)
+	if backendResult.StatusCode == http.StatusTooManyRequests {
+		respBody := backendResult.Body
+		cooldown := retryAfterFromBackendError(backendResult.Error)
 		if cooldown <= 0 {
-			cooldown = parseCooldownDuration(resp)
+			cooldown = parseCooldownFromBody(respBody)
 		}
-		if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
+		if cooldown <= 0 {
+			cooldown = parseCooldownDuration(&http.Response{Header: backendResult.Headers})
+		}
+		if snapshot := extractCodexUsageHeaders(backendResult.Headers); snapshot != nil {
 			pool.UpdateUsageSnapshot(account.ID, snapshot)
 		}
 		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, cooldown, "rate_limit")
 		return &executor.UpstreamRoundTripResult{
-			StatusCode:    resp.StatusCode,
+			StatusCode:    backendResult.StatusCode,
 			Body:          respBody,
-			Headers:       cloneHTTPHeader(resp.Header),
-			TargetURL:     upstreamURL,
-			TargetHeaders: targetHeaders,
+			Headers:       cloneHTTPHeader(backendResult.Headers),
+			TargetURL:     backendResult.TargetURL,
+			TargetHeaders: backendResult.TargetHeaders,
+			RequestBody:   append([]byte(nil), backendResult.RequestBody...),
 			Error:         fmt.Errorf("rate limited"),
 		}, true
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+	if backendResult.StatusCode != http.StatusOK {
+		respBody := backendResult.Body
 		return &executor.UpstreamRoundTripResult{
-			StatusCode:    resp.StatusCode,
+			StatusCode:    backendResult.StatusCode,
 			Body:          respBody,
-			Headers:       cloneHTTPHeader(resp.Header),
-			TargetURL:     upstreamURL,
-			TargetHeaders: targetHeaders,
-			Error:         fmt.Errorf("upstream returned %d", resp.StatusCode),
+			Headers:       cloneHTTPHeader(backendResult.Headers),
+			TargetURL:     backendResult.TargetURL,
+			TargetHeaders: backendResult.TargetHeaders,
+			RequestBody:   append([]byte(nil), backendResult.RequestBody...),
+			Error:         fmt.Errorf("upstream returned %d", backendResult.StatusCode),
 		}, false
 	}
 
-	return buildCodexSuccessRoundTrip(resp, req.IsStreaming, upstreamURL, targetHeaders, debugLogger, pool, account), false
+	return buildCodexBackendSuccessRoundTrip(backendResult, debugLogger, pool, account), false
 }
 
-func buildCodexSuccessRoundTrip(resp *http.Response, isStreaming bool, upstreamURL string, targetHeaders map[string]string, debugLogger interface{ Log(string, ...any) }, pool *codex.CodexAccountPool, account *codexShared.CodexAccount) *executor.UpstreamRoundTripResult {
-	if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
+func buildCodexBackendSuccessRoundTrip(result *codexBackend.Result, debugLogger interface{ Log(string, ...any) }, pool *codex.CodexAccountPool, account *codexShared.CodexAccount) *executor.UpstreamRoundTripResult {
+	if result == nil {
+		return roundTripInternalError(fmt.Errorf("nil backend result"))
+	}
+	if snapshot := extractCodexUsageHeaders(result.Headers); snapshot != nil {
 		pool.UpdateUsageSnapshot(account.ID, snapshot)
 	}
 	pool.ReportSuccess(account.ID)
 
-	result := &executor.UpstreamRoundTripResult{
-		StatusCode:    resp.StatusCode,
-		Headers:       cloneHTTPHeader(resp.Header),
-		TargetURL:     upstreamURL,
-		TargetHeaders: targetHeaders,
+	out := &executor.UpstreamRoundTripResult{
+		StatusCode:    result.StatusCode,
+		Headers:       cloneHTTPHeader(result.Headers),
+		Body:          result.Body,
+		Stream:        result.Stream,
+		TargetURL:     result.TargetURL,
+		TargetHeaders: result.TargetHeaders,
+		RequestBody:   append([]byte(nil), result.RequestBody...),
 	}
-	if isStreaming {
-		result.Stream = resp.Body
-		return result
+	if result.Stream == nil {
+		out.Tokens = extractTokensFromBody(result.Body)
 	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
-	_ = resp.Body.Close()
-	if err != nil {
-		return roundTripInternalError(fmt.Errorf("read response: %v", err))
-	}
-	result.Body = body
-	result.Tokens = extractTokensFromBody(body)
-	return result
+	return out
 }
 
 func roundTripInternalError(err error) *executor.UpstreamRoundTripResult {
@@ -441,24 +444,6 @@ func roundTripCancelledError(err error) *executor.UpstreamRoundTripResult {
 		Body:       append([]byte(nil), forward.Body...),
 		Error:      forward.Error,
 	}
-}
-
-func sanitizeHeaderMap(headers http.Header) map[string]string {
-	if len(headers) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(headers))
-	for key, values := range headers {
-		if len(values) == 0 {
-			continue
-		}
-		if strings.EqualFold(key, "Authorization") {
-			out[key] = "Bearer ***"
-			continue
-		}
-		out[key] = values[0]
-	}
-	return out
 }
 
 func cloneHTTPHeader(headers http.Header) http.Header {
