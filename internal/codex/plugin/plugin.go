@@ -21,6 +21,8 @@ import (
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
+
+	"github.com/google/uuid"
 )
 
 func init() {
@@ -327,7 +329,7 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		return nil, fmt.Errorf("either refreshToken or accessToken is required")
 	}
 	if dto.AccountID == "" {
-		return nil, fmt.Errorf("accountId is required")
+		dto.AccountID = uuid.NewString()
 	}
 	if dto.Email == "" {
 		return nil, fmt.Errorf("email is required")
@@ -448,27 +450,28 @@ func normalizeCodexAccountImportDTO(dto *codexAccountImportDTO) {
 		dto.ExpiresAt = dto.Expired
 	}
 
-	if dto.AccessToken == "" {
-		return
-	}
-	claims, err := codexAuth.ParseJWTToken(dto.AccessToken)
-	if err != nil || claims == nil {
-		return
-	}
-	if dto.AccountID == "" {
-		dto.AccountID = strings.TrimSpace(claims.CodexAuth.ChatgptAccountID)
-	}
-	if dto.Email == "" {
-		dto.Email = strings.TrimSpace(claims.Email)
-		if dto.Email == "" {
-			dto.Email = strings.TrimSpace(claims.Profile.Email)
+	if dto.AccessToken != "" {
+		claims, err := codexAuth.ParseJWTToken(dto.AccessToken)
+		if err == nil && claims != nil {
+			if dto.AccountID == "" {
+				dto.AccountID = strings.TrimSpace(claims.CodexAuth.ChatgptAccountID)
+			}
+			if dto.Email == "" {
+				dto.Email = strings.TrimSpace(claims.Email)
+				if dto.Email == "" {
+					dto.Email = strings.TrimSpace(claims.Profile.Email)
+				}
+			}
+			if dto.PlanType == "" {
+				dto.PlanType = strings.TrimSpace(claims.CodexAuth.ChatgptPlanType)
+			}
+			if dto.ExpiresAt == "" && claims.Exp > 0 {
+				dto.ExpiresAt = time.Unix(claims.Exp, 0).UTC().Format(time.RFC3339)
+			}
 		}
 	}
-	if dto.PlanType == "" {
-		dto.PlanType = strings.TrimSpace(claims.CodexAuth.ChatgptPlanType)
-	}
-	if dto.ExpiresAt == "" && claims.Exp > 0 {
-		dto.ExpiresAt = time.Unix(claims.Exp, 0).UTC().Format(time.RFC3339)
+	if dto.AccountID == "" {
+		dto.AccountID = uuid.NewString()
 	}
 }
 

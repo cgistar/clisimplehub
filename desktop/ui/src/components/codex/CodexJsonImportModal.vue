@@ -146,7 +146,7 @@ function parseCodexJsonFile(data: unknown): CodexAccountInput | null {
   const account: CodexAccountInput = {
     accessToken,
     idToken: getStringField(data, ['id_token', 'idToken']),
-    accountId: getStringField(data, ['account_id', 'accountId']) || jwtFields.accountId,
+    accountId: getStringField(data, ['account_id', 'accountId']) || jwtFields.accountId || createFallbackAccountId(),
     email: getStringField(data, ['email']) || jwtFields.email,
     password: getStringField(data, ['password', 'Password']),
     planType: getPlanType(data) || jwtFields.planType || 'free',
@@ -157,7 +157,7 @@ function parseCodexJsonFile(data: unknown): CodexAccountInput | null {
     account.refreshToken = refreshToken
   }
 
-  if (!account.accessToken || !account.accountId || !account.email) {
+  if (!account.accessToken || !account.email) {
     return null
   }
   if (!account.refreshToken && !account.expiresAt) {
@@ -223,6 +223,13 @@ function getJwtFields(accessToken: string): CodexJwtFields {
     planType: getStringFromRecord(authData, ['chatgpt_plan_type']),
     expiresAt: getJwtExpiresAt(claims)
   }
+}
+
+function createFallbackAccountId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `codex-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function handleCancel(): void {
@@ -330,11 +337,7 @@ function buildCodexImportDTOs(rawJsonText: string): BuildImportResult {
     const refreshToken = getStringField(item, ['refreshToken', 'refresh_token', 'RefreshToken'])
     const accessToken = getStringField(item, ['accessToken', 'access_token', 'AccessToken'])
     const jwtFields = getJwtFields(accessToken)
-    const accountId = getStringField(item, ['accountId', 'account_id', 'AccountId']) || jwtFields.accountId
-    if (!accountId) {
-      errors.push(`#${index + 1}: missing accountId`)
-      return
-    }
+    const accountId = getStringField(item, ['accountId', 'account_id', 'AccountId']) || jwtFields.accountId || createFallbackAccountId()
     const email = getStringField(item, ['email', 'Email']) || jwtFields.email
     if (!email) {
       errors.push(`#${index + 1}: missing email`)
