@@ -37,6 +37,8 @@ func ParseURIList(content string, sourceID string) ([]ProxyNode, []string) {
 			node, err = parseTrojanURI(line)
 		case strings.HasPrefix(line, "ss://"):
 			node, err = parseShadowsocksURI(line)
+		case strings.HasPrefix(line, "anytls://"):
+			node, err = parseAnyTLSURI(line)
 		default:
 			scheme := line
 			if idx := strings.Index(line, "://"); idx > 0 {
@@ -287,6 +289,59 @@ func parseVlessURI(uri string) (*ProxyNode, error) {
 	return &node, nil
 }
 
+func parseAnyTLSURI(uri string) (*ProxyNode, error) {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return nil, fmt.Errorf("anytls url parse: %w", err)
+	}
+
+	port, _ := strconv.Atoi(parsed.Port())
+	q := parsed.Query()
+	node := ProxyNode{
+		"name":     decodeFragment(parsed.Fragment),
+		"type":     "anytls",
+		"server":   parsed.Hostname(),
+		"port":     port,
+		"password": parsed.User.Username(),
+	}
+
+	if sni := q.Get("sni"); sni != "" {
+		node["sni"] = sni
+	}
+	if fp := firstNonEmptyQueryValue(q, "fp", "client-fingerprint", "fingerprint"); fp != "" {
+		node["client-fingerprint"] = fp
+	}
+	if insecure, ok := firstBoolFromQuery(q, "allowInsecure", "insecure", "skip-cert-verify", "skipCertVerify"); ok {
+		node["skip-cert-verify"] = insecure
+	}
+	if udp, ok := firstBoolFromQuery(q, "udp"); ok {
+		node["udp"] = udp
+	}
+	if tfo, ok := firstBoolFromQuery(q, "tfo"); ok {
+		node["tfo"] = tfo
+	}
+	if alpn := queryStringList(q, "alpn"); len(alpn) > 0 {
+		node["alpn"] = alpn
+	}
+	if value, ok := firstIntFromQuery(q, "idle-session-check-interval"); ok {
+		node["idle-session-check-interval"] = value
+	}
+	if value, ok := firstIntFromQuery(q, "idle-session-timeout"); ok {
+		node["idle-session-timeout"] = value
+	}
+	if value, ok := firstIntFromQuery(q, "min-idle-session"); ok {
+		node["min-idle-session"] = value
+	}
+
+	if nodeName(node) == "" {
+		setNodeString(node, "name", fmt.Sprintf("%s:%d", nodeServer(node), nodePort(node)))
+	}
+	if err := validateProxyNode(node); err != nil {
+		return nil, err
+	}
+	return &node, nil
+}
+
 func parseTrojanURI(uri string) (*ProxyNode, error) {
 	parsed, err := url.Parse(uri)
 	if err != nil {
@@ -501,6 +556,38 @@ func firstBoolFromObject(obj map[string]any, keys ...string) (bool, bool) {
 		return false, true
 	}
 	return false, false
+}
+
+func firstIntFromQuery(q url.Values, keys ...string) (int, bool) {
+	for _, key := range keys {
+		raw := strings.TrimSpace(q.Get(key))
+		if raw == "" {
+			continue
+		}
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return 0, true
+		}
+		return value, true
+	}
+	return 0, false
+}
+
+func queryStringList(q url.Values, key string) []string {
+	values, ok := q[key]
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
 }
 
 func parseBoolAny(value any) (bool, bool) {

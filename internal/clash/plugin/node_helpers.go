@@ -184,6 +184,10 @@ func validateProxyNode(node ProxyNode) error {
 		if nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "password") == "" || nodeString(node, "cipher") == "" {
 			return fmt.Errorf("ss missing required fields: %s", name)
 		}
+	case "anytls":
+		if nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "password") == "" {
+			return fmt.Errorf("anytls missing required fields: %s", name)
+		}
 	default:
 		return fmt.Errorf("skipped unsupported clash type: %s (%s)", proxyType, name)
 	}
