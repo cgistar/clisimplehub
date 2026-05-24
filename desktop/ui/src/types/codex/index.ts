@@ -97,6 +97,17 @@ export interface CodexSignupRequest {
   clientId: string
 }
 
+export interface CodexVerificationCodeRequest {
+  emailProvider: string
+  providerParams: Record<string, string>
+  email: string
+  timeoutSec?: number
+}
+
+export interface CodexVerificationCodeResult {
+  code: string
+}
+
 export interface SignupState {
   state: number
   needOTP?: boolean

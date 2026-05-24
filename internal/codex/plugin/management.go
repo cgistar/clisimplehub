@@ -305,6 +305,7 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 	}
 
 	if svc := p.GetService(); svc != nil {
+		svc.RemoveAuthManager(localID)
 		svc.ensureCodexEndpoint()
 	}
 

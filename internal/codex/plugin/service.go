@@ -84,6 +84,12 @@ func (s *CodexService) RemoveAuthManager(accountId string) {
 	delete(s.authManagers, accountId)
 }
 
+func (s *CodexService) ClearAuthManagers() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.authManagers = make(map[string]*codexAuth.CodexAuthManager)
+}
+
 func (s *CodexService) SaveConfigAndReload(configPath string, mc *codexShared.CodexMultiConfig) error {
 	if err := codexShared.SaveCodexMultiConfig(configPath, mc); err != nil {
 		return err

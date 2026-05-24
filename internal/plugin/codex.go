@@ -36,6 +36,7 @@ type CodexDesktopProvider interface {
 	CancelSignup() error
 	GetEmailProviders() (json.RawMessage, error)
 	GenerateRandomEmail(provider string, params json.RawMessage) (json.RawMessage, error)
+	FetchVerificationCode(ctx context.Context, req json.RawMessage) (json.RawMessage, error)
 }
 
 type CodexResponsesWebsocketProvider interface {

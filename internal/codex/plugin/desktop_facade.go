@@ -284,6 +284,9 @@ func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage
 		return err
 	}
 
+	if svc := getService(); svc != nil {
+		svc.RemoveAuthManager(account.ID)
+	}
 	if pool := codex.GetPool(); pool != nil {
 		pool.Reload()
 	}
@@ -305,6 +308,9 @@ func (d *desktopFacade) DeleteAccount(configPath, accountId string) error {
 		return err
 	}
 
+	if svc := getService(); svc != nil {
+		svc.RemoveAuthManager(accountId)
+	}
 	mc, _ := codexShared.LoadCodexMultiConfig(configPath)
 	if mc != nil && mc.ActiveAccountID == accountId {
 		accounts, _ := store.ListAccounts(context.Background())
@@ -349,6 +355,11 @@ func (d *desktopFacade) DeleteAccounts(configPath string, accountIDs []string) e
 		return err
 	}
 
+	if svc := getService(); svc != nil {
+		for _, id := range normalized {
+			svc.RemoveAuthManager(id)
+		}
+	}
 	mc, _ := codexShared.LoadCodexMultiConfig(configPath)
 	if mc != nil {
 		activeID := strings.TrimSpace(mc.ActiveAccountID)
@@ -426,6 +437,9 @@ func (d *desktopFacade) TestAccount(configPath, accountId string) (json.RawMessa
 		return nil, fmt.Errorf("update account status failed: %w", err)
 	}
 
+	if svc := getService(); svc != nil {
+		svc.RemoveAuthManager(account.ID)
+	}
 	if pool := codex.GetPool(); pool != nil {
 		pool.Reload()
 	}
@@ -876,6 +890,84 @@ func (d *desktopFacade) GenerateRandomEmail(provider string, paramsRaw json.RawM
 		return nil, err
 	}
 	return json.Marshal(result)
+}
+
+func (d *desktopFacade) FetchVerificationCode(ctx context.Context, req json.RawMessage) (json.RawMessage, error) {
+	var input struct {
+		EmailProvider  string            `json:"emailProvider"`
+		ProviderParams map[string]string `json:"providerParams"`
+		Email          string            `json:"email"`
+		TimeoutSec     int               `json:"timeoutSec"`
+	}
+	if err := json.Unmarshal(req, &input); err != nil {
+		return nil, fmt.Errorf("parse verification code request: %w", err)
+	}
+	if input.TimeoutSec <= 0 {
+		input.TimeoutSec = 120
+	}
+	if input.ProviderParams == nil {
+		input.ProviderParams = map[string]string{}
+	}
+
+	provider, err := mailprovider.NewProvider(input.EmailProvider)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := prepareProviderForVerificationTest(provider, input.EmailProvider, input.ProviderParams, input.Email); err != nil {
+		return nil, err
+	}
+
+	code, err := provider.FetchVerificationCode(ctx, input.ProviderParams, input.Email, input.TimeoutSec)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]string{"code": code})
+}
+
+func prepareProviderForVerificationTest(provider mailprovider.EmailProvider, providerName string, params map[string]string, email string) error {
+	provider.RestoreState(params)
+
+	switch providerName {
+	case "outlook":
+		_, _, err := provider.CreateEmail(params)
+		return err
+	case "duckmail":
+		if params["_mail_token"] == "" {
+			return fmt.Errorf("duckmail test requires generated mailbox state; click random generate first")
+		}
+		return nil
+	case "gptmail":
+		if strings.TrimSpace(email) == "" {
+			return fmt.Errorf("gptmail test requires email")
+		}
+		return nil
+	case "cloudflare":
+		if params["_jwt"] != "" {
+			return nil
+		}
+		if strings.TrimSpace(params["cf_worker_domain"]) == "" {
+			return fmt.Errorf("cloudflare test requires worker domain")
+		}
+		if strings.TrimSpace(params["cf_admin_password"]) == "" {
+			return fmt.Errorf("cloudflare test requires admin password")
+		}
+		return nil
+	case "tempmail":
+		if params["tempmail_forward_email"] == "" && params["_forward_email"] == "" {
+			return fmt.Errorf("tempmail test requires forward email")
+		}
+		if params["tempmail_forward_email"] == "" {
+			params["tempmail_forward_email"] = params["_forward_email"]
+		}
+		if params["_email"] == "" {
+			params["_email"] = email
+		}
+		_, _, err := provider.CreateEmail(params)
+		return err
+	default:
+		return fmt.Errorf("verification code test does not support provider: %s", providerName)
+	}
 }
 
 func marshalSignupState(session *codexAuth.SignupSession) json.RawMessage {

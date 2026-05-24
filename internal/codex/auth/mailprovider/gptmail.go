@@ -83,6 +83,10 @@ func (g *GPTMailProvider) FetchVerificationCode(ctx context.Context, params map[
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
+	if !parseBoolDefault(params["mail_wait_for_new"], true) {
+		return g.pollOnce(client, apiBase, apiKey, email)
+	}
+
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()

@@ -94,6 +94,10 @@ func (t *TempMailProvider) FetchVerificationCode(ctx context.Context, params map
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
+	if !parseBoolDefault(params["mail_wait_for_new"], true) {
+		return t.pollOnce(client, forwardEmail, epin)
+	}
+
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -195,8 +199,8 @@ func (t *TempMailProvider) fetchMailDetail(client *http.Client, email, epin stri
 }
 
 var tempMailCodePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\b(\d{6})\b`),     // 优先：6位纯数字
-	regexp.MustCompile(`\b(\d{4,8})\b`),   // 降级：4-8位数字
+	regexp.MustCompile(`\b(\d{6})\b`),   // 优先：6位纯数字
+	regexp.MustCompile(`\b(\d{4,8})\b`), // 降级：4-8位数字
 }
 
 func extractTempMailCode(text string) string {

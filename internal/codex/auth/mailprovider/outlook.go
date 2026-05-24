@@ -5,11 +5,14 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
+	"mime/quotedprintable"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +25,11 @@ type OutlookProvider struct {
 	mode              string
 	clientID          string
 	refreshToken      string
+	deleteAfterFetch  bool
+	includeExisting   bool
+	existingMaxAge    time.Duration
+	existingLimit     int
+	waitForNew        bool
 	graphDelete       bool
 	graphDeleteStrict bool
 }
@@ -35,6 +43,11 @@ func (o *OutlookProvider) CreateEmail(params map[string]string) (string, string,
 	o.mode = params["outlook_mode"]
 	o.clientID = params["outlook_client_id"]
 	o.refreshToken = params["outlook_refresh_token"]
+	o.deleteAfterFetch = parseBoolDefault(params["outlook_delete_after_fetch"], true)
+	o.includeExisting = parseBoolDefault(params["outlook_include_existing"], false)
+	o.existingMaxAge = time.Duration(parseIntDefault(params["outlook_existing_max_age_sec"], 600)) * time.Second
+	o.existingLimit = parseIntDefault(params["outlook_existing_limit"], 5)
+	o.waitForNew = parseBoolDefault(params["outlook_wait_for_new"], true)
 	o.graphDelete = parseBoolDefault(params["outlook_graph_delete"], true)
 	o.graphDeleteStrict = parseBoolDefault(params["outlook_graph_delete_strict"], false)
 
@@ -167,6 +180,22 @@ func (o *OutlookProvider) fetchViaIMAP(ctx context.Context, timeoutSec int) (str
 		return "", fmt.Errorf("get known mail IDs: %w", err)
 	}
 
+	if o.includeExisting {
+		if otp, uid, err := o.fetchRecentExistingIMAPOTP(c, knownIDs); err != nil {
+			return "", err
+		} else if otp != "" {
+			if o.deleteAfterFetch {
+				if err := o.deleteMailByUID(c, uid); err != nil {
+					return "", fmt.Errorf("delete OTP mail (uid=%d): %w", uid, err)
+				}
+			}
+			return otp, nil
+		}
+		if !o.waitForNew {
+			return "", nil
+		}
+	}
+
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -204,13 +233,71 @@ func (o *OutlookProvider) fetchViaIMAP(ctx context.Context, timeoutSec int) (str
 
 			otp, err := o.extractOTPFromMail(c, candidateID)
 			if err == nil && otp != "" {
-				if err := o.deleteMailByUID(c, candidateID); err != nil {
-					return "", fmt.Errorf("delete OTP mail (uid=%d): %w", candidateID, err)
+				if o.deleteAfterFetch {
+					if err := o.deleteMailByUID(c, candidateID); err != nil {
+						return "", fmt.Errorf("delete OTP mail (uid=%d): %w", candidateID, err)
+					}
 				}
 				return otp, nil
 			}
 		}
 	}
+}
+
+func (o *OutlookProvider) fetchRecentExistingIMAPOTP(c *imapclient.Client, uids []imap.UID) (string, imap.UID, error) {
+	now := time.Now()
+	checked := 0
+	for i := len(uids) - 1; i >= 0; i-- {
+		if o.existingLimit > 0 && checked >= o.existingLimit {
+			break
+		}
+		checked++
+
+		uid := uids[i]
+		internalDate, err := o.getMailInternalDate(c, uid)
+		if err != nil {
+			continue
+		}
+		if o.existingMaxAge > 0 && !internalDate.IsZero() && internalDate.Before(now.Add(-o.existingMaxAge)) {
+			continue
+		}
+
+		otp, err := o.extractOTPFromMail(c, uid)
+		if err != nil {
+			continue
+		}
+		if otp != "" {
+			return otp, uid, nil
+		}
+	}
+	return "", 0, nil
+}
+
+func (o *OutlookProvider) getMailInternalDate(c *imapclient.Client, uid imap.UID) (time.Time, error) {
+	fetchCmd := c.Fetch(imap.UIDSetNum(uid), &imap.FetchOptions{
+		InternalDate: true,
+	})
+	defer fetchCmd.Close()
+
+	for {
+		msg := fetchCmd.Next()
+		if msg == nil {
+			break
+		}
+		for {
+			item := msg.Next()
+			if item == nil {
+				break
+			}
+			switch data := item.(type) {
+			case imapclient.FetchItemDataInternalDate:
+				return data.Time, nil
+			case *imapclient.FetchItemDataInternalDate:
+				return data.Time, nil
+			}
+		}
+	}
+	return time.Time{}, nil
 }
 
 func (o *OutlookProvider) deleteMailByUID(c *imapclient.Client, uid imap.UID) error {
@@ -370,7 +457,10 @@ func (o *OutlookProvider) extractOTPFromMail(c *imapclient.Client, uid imap.UID)
 	if code := extractNumericVerificationCode(subject); code != "" {
 		return code, nil
 	}
-	return extractNumericVerificationCode(body), nil
+	if !isVerificationCodeSubject(subject) {
+		return "", nil
+	}
+	return extractVisibleVerificationCode(body), nil
 }
 
 type graphMessage struct {
@@ -410,7 +500,7 @@ func (o *OutlookProvider) fetchViaGraph(ctx context.Context, timeoutSec int) (st
 	tryOnce := func() (string, error) {
 		messages, err := o.queryGraphMessages(accessToken)
 		if err != nil {
-			return "", nil
+			return "", err
 		}
 
 		openAIMessages := filterGraphMessagesForOpenAI(messages)
@@ -486,7 +576,7 @@ func (o *OutlookProvider) queryGraphMessages(token string) ([]graphMessage, erro
 }
 
 func (o *OutlookProvider) deleteGraphMessageMaybe(token, messageID string) error {
-	if !o.graphDelete || messageID == "" {
+	if !o.deleteAfterFetch || !o.graphDelete || messageID == "" {
 		return nil
 	}
 	if err := o.deleteGraphMessage(token, messageID); err != nil {
@@ -533,7 +623,10 @@ func extractOTPFromGraphMessage(msg graphMessage) string {
 	if code := extractNumericVerificationCode(msg.Subject); code != "" {
 		return code
 	}
-	return extractNumericVerificationCode(msg.BodyPreview)
+	if !isVerificationCodeSubject(msg.Subject) {
+		return ""
+	}
+	return extractVisibleVerificationCode(msg.BodyPreview)
 }
 
 func findOTPFromGraphMessages(messages []graphMessage, now time.Time, maxAge time.Duration, triedMessageIDs map[string]struct{}) (otp string, messageID string) {
@@ -558,15 +651,93 @@ func findOTPFromGraphMessages(messages []graphMessage, now time.Time, maxAge tim
 }
 
 var numericCodePattern = regexp.MustCompile(`\b(\d{6})\b`)
+var standaloneNumericCodePattern = regexp.MustCompile(`(?m)^\s*(\d{6})\s*$`)
+var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
+var styleBlockPattern = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+var urlPattern = regexp.MustCompile(`https?://\S+`)
+var hexColorPattern = regexp.MustCompile(`#(?i:[0-9a-f]{6})\b`)
 
 func extractNumericVerificationCode(text string) string {
 	if text == "" {
 		return ""
 	}
-	if m := numericCodePattern.FindStringSubmatch(text); len(m) > 1 {
+	matches := numericCodePattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 || len(matches[len(matches)-1]) < 2 {
+		return ""
+	}
+	return matches[len(matches)-1][1]
+}
+
+func extractVisibleVerificationCode(text string) string {
+	visible := visibleEmailText(text)
+	if m := standaloneNumericCodePattern.FindStringSubmatch(visible); len(m) > 1 {
 		return m[1]
 	}
+	return extractContextualVerificationCode(visible)
+}
+
+func extractContextualVerificationCode(text string) string {
+	matches := numericCodePattern.FindAllStringSubmatchIndex(text, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		match := matches[i]
+		if len(match) < 4 {
+			continue
+		}
+		start := match[2] - 80
+		if start < 0 {
+			start = 0
+		}
+		end := match[3] + 80
+		if end > len(text) {
+			end = len(text)
+		}
+		context := strings.ToLower(text[start:end])
+		if strings.Contains(context, "code") ||
+			strings.Contains(context, "verification") ||
+			strings.Contains(context, "login") ||
+			strings.Contains(context, "验证码") {
+			return text[match[2]:match[3]]
+		}
+	}
 	return ""
+}
+
+func visibleEmailText(text string) string {
+	if text == "" {
+		return ""
+	}
+	if decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(text))); err == nil {
+		text = string(decoded)
+	}
+	text = styleBlockPattern.ReplaceAllString(text, " ")
+	text = urlPattern.ReplaceAllString(text, " ")
+	text = hexColorPattern.ReplaceAllString(text, " ")
+	text = htmlTagPattern.ReplaceAllString(text, "\n")
+	text = html.UnescapeString(text)
+	lines := strings.Split(text, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			cleaned = append(cleaned, line)
+		}
+	}
+	return strings.Join(cleaned, "\n")
+}
+
+func isVerificationCodeSubject(subject string) bool {
+	subject = strings.ToLower(strings.TrimSpace(subject))
+	if subject == "" {
+		return false
+	}
+	if !strings.Contains(subject, "code") {
+		return false
+	}
+	return strings.Contains(subject, "verification") ||
+		strings.Contains(subject, "login") ||
+		strings.Contains(subject, "temporary") ||
+		strings.Contains(subject, "chatgpt") ||
+		strings.Contains(subject, "openai")
 }
 
 func filterGraphMessagesForOpenAI(messages []graphMessage) []graphMessage {
@@ -616,4 +787,15 @@ func parseBoolDefault(v string, defaultValue bool) bool {
 	default:
 		return defaultValue
 	}
+}
+
+func parseIntDefault(v string, defaultValue int) int {
+	if strings.TrimSpace(v) == "" {
+		return defaultValue
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return defaultValue
+	}
+	return n
 }

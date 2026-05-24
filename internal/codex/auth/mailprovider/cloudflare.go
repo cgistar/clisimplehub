@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -32,7 +33,7 @@ func (c *CloudflareProvider) RestoreState(params map[string]string) {
 }
 
 func (c *CloudflareProvider) CreateEmail(params map[string]string) (string, string, error) {
-	workerDomain := params["cf_worker_domain"]
+	workerDomain := normalizeCloudflareWorkerDomain(params["cf_worker_domain"])
 	if workerDomain == "" {
 		return "", "", fmt.Errorf("cf_worker_domain is required")
 	}
@@ -109,12 +110,13 @@ func (c *CloudflareProvider) CreateEmail(params map[string]string) (string, stri
 }
 
 func (c *CloudflareProvider) FetchVerificationCode(ctx context.Context, params map[string]string, email string, timeoutSec int) (string, error) {
-	workerDomain := params["cf_worker_domain"]
+	workerDomain := normalizeCloudflareWorkerDomain(params["cf_worker_domain"])
 	if workerDomain == "" {
 		return "", fmt.Errorf("cf_worker_domain is required")
 	}
 	jwt := c.jwt
-	if jwt == "" {
+	adminPwd := params["cf_admin_password"]
+	if jwt == "" && adminPwd == "" {
 		return "", fmt.Errorf("cloudflare: no jwt token (CreateEmail not called?)")
 	}
 
@@ -122,16 +124,19 @@ func (c *CloudflareProvider) FetchVerificationCode(ctx context.Context, params m
 
 	// Record old mail IDs to skip
 	oldIDs := map[int]bool{}
-	if mails, err := c.fetchMails(client, workerDomain, jwt); err == nil {
+	if mails, err := c.fetchMailsForVerificationTest(client, workerDomain, jwt, adminPwd, email); err == nil {
 		for _, m := range mails {
 			if m.ID != 0 {
 				oldIDs[m.ID] = true
 				// Check existing mails for code
-				if code := extractVerificationCode(m.Raw); code != "" {
+				if code := extractCloudflareVerificationCode(m.Subject, m.Raw); code != "" {
 					return code, nil
 				}
 			}
 		}
+	}
+	if !parseBoolDefault(params["mail_wait_for_new"], true) {
+		return "", nil
 	}
 
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
@@ -146,13 +151,13 @@ func (c *CloudflareProvider) FetchVerificationCode(ctx context.Context, params m
 			if time.Now().After(deadline) {
 				return "", fmt.Errorf("timeout waiting for verification code")
 			}
-			mails, err := c.fetchMails(client, workerDomain, jwt)
+			mails, err := c.fetchMailsForVerificationTest(client, workerDomain, jwt, adminPwd, email)
 			if err == nil {
 				for _, m := range mails {
 					if oldIDs[m.ID] {
 						continue
 					}
-					if code := extractVerificationCode(m.Raw); code != "" {
+					if code := extractCloudflareVerificationCode(m.Subject, m.Raw); code != "" {
 						// Delete the mail after successfully getting the code
 						c.deleteMail(params, m.ID)
 						return code, nil
@@ -165,7 +170,7 @@ func (c *CloudflareProvider) FetchVerificationCode(ctx context.Context, params m
 
 // deleteMail deletes a specific mail by ID using user-level API
 func (c *CloudflareProvider) deleteMail(params map[string]string, mailID int) {
-	workerDomain := params["cf_worker_domain"]
+	workerDomain := normalizeCloudflareWorkerDomain(params["cf_worker_domain"])
 	if workerDomain == "" || c.jwt == "" {
 		return
 	}
@@ -183,7 +188,7 @@ func (c *CloudflareProvider) deleteMail(params map[string]string, mailID int) {
 
 // deleteAddress deletes the email address using admin-level API (cleanup method)
 func (c *CloudflareProvider) deleteAddress(params map[string]string) {
-	workerDomain := params["cf_worker_domain"]
+	workerDomain := normalizeCloudflareWorkerDomain(params["cf_worker_domain"])
 	adminPwd := params["cf_admin_password"]
 	if workerDomain == "" || adminPwd == "" || c.addressID == 0 {
 		return
@@ -208,6 +213,7 @@ type cfMail struct {
 }
 
 func (c *CloudflareProvider) fetchMails(client *http.Client, workerDomain, jwt string) ([]cfMail, error) {
+	workerDomain = normalizeCloudflareWorkerDomain(workerDomain)
 	req, _ := http.NewRequest("GET", "https://"+workerDomain+"/api/mails?limit=10&offset=0", nil)
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	resp, err := client.Do(req)
@@ -226,6 +232,122 @@ func (c *CloudflareProvider) fetchMails(client *http.Client, workerDomain, jwt s
 		return nil, err
 	}
 	return result.Results, nil
+}
+
+func (c *CloudflareProvider) fetchMailsForVerificationTest(client *http.Client, workerDomain, jwt, adminPwd, email string) ([]cfMail, error) {
+	if jwt != "" {
+		return c.fetchMails(client, workerDomain, jwt)
+	}
+	return c.fetchAdminMails(client, workerDomain, adminPwd, email)
+}
+
+func (c *CloudflareProvider) fetchAdminMails(client *http.Client, workerDomain, adminPwd, email string) ([]cfMail, error) {
+	workerDomain = normalizeCloudflareWorkerDomain(workerDomain)
+	req, _ := http.NewRequest("GET", cloudflareAdminMailsURL(workerDomain, email), nil)
+	req.Header.Set("x-admin-auth", adminPwd)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("fetch admin mails: status %d", resp.StatusCode)
+	}
+	var result struct {
+		Results []cfMail `json:"results"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return filterCloudflareMailsByEmail(result.Results, email), nil
+}
+
+func cloudflareAdminMailsURL(workerDomain, email string) string {
+	workerDomain = normalizeCloudflareWorkerDomain(workerDomain)
+	params := url.Values{
+		"limit":  {"20"},
+		"offset": {"0"},
+	}
+	if strings.TrimSpace(email) != "" {
+		params.Set("address", strings.TrimSpace(email))
+	}
+	return "https://" + workerDomain + "/admin/mails?" + params.Encode()
+}
+
+func filterCloudflareMailsByEmail(mails []cfMail, email string) []cfMail {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return mails
+	}
+	filtered := make([]cfMail, 0, len(mails))
+	for _, mail := range mails {
+		haystack := strings.ToLower(mail.Raw + "\n" + mail.Source + "\n" + mail.Subject)
+		if strings.Contains(haystack, email) {
+			filtered = append(filtered, mail)
+		}
+	}
+	return filtered
+}
+
+func normalizeCloudflareWorkerDomain(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.TrimPrefix(value, "https//")
+	value = strings.TrimPrefix(value, "http//")
+	value = strings.TrimLeft(value, "/")
+	if slash := strings.Index(value, "/"); slash >= 0 {
+		value = value[:slash]
+	}
+	return strings.TrimRight(value, "/")
+}
+
+func extractCloudflareVerificationCode(subject, raw string) string {
+	if strings.TrimSpace(subject) == "" {
+		subject = extractRawMailHeader(raw, "Subject")
+	}
+	if code := extractNumericVerificationCode(subject); code != "" {
+		return code
+	}
+	if !isVerificationCodeSubject(subject) {
+		return ""
+	}
+	if code := extractVisibleVerificationCode(raw); code != "" {
+		return code
+	}
+	return ""
+}
+
+func extractRawMailHeader(raw, headerName string) string {
+	headerName = strings.ToLower(strings.TrimSpace(headerName))
+	if raw == "" || headerName == "" {
+		return ""
+	}
+
+	lines := strings.Split(raw, "\n")
+	var value strings.Builder
+	matched := false
+	prefix := headerName + ":"
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			break
+		}
+		if matched {
+			if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+				value.WriteString(" ")
+				value.WriteString(strings.TrimSpace(line))
+				continue
+			}
+			break
+		}
+		if strings.HasPrefix(strings.ToLower(line), prefix) {
+			matched = true
+			value.WriteString(strings.TrimSpace(line[len(prefix):]))
+		}
+	}
+	return value.String()
 }
 
 // randomEmailName generates a random email local part (10-14 lowercase letters with 1-2 digits inserted).

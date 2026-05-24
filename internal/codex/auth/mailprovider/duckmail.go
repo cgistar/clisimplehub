@@ -92,6 +92,10 @@ func (d *DuckMailProvider) FetchVerificationCode(ctx context.Context, params map
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
+	if !parseBoolDefault(params["mail_wait_for_new"], true) {
+		return d.pollOnce(client, apiBase)
+	}
+
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()

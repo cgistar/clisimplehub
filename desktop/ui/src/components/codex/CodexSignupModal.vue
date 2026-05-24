@@ -98,6 +98,13 @@
         </n-input-group>
       </n-form-item>
 
+      <n-alert v-if="verificationCode" type="success" :bordered="false" style="margin-bottom: 16px">
+        验证码：{{ verificationCode }}（已复制到剪贴板）
+      </n-alert>
+      <n-alert v-else-if="verificationConnected" type="info" :bordered="false" style="margin-bottom: 16px">
+        邮箱已连接，最近邮件中还没有验证码
+      </n-alert>
+
       <n-form-item label="密码">
         <n-input v-model:value="formPassword" type="password" show-password-on="click" placeholder="留空自动生成" />
       </n-form-item>
@@ -138,6 +145,14 @@
     <template #footer>
       <n-space v-if="phase === 'form'" justify="end">
         <n-button @click="handleClose">取消</n-button>
+        <n-button
+          v-if="canFetchVerificationCode || fetchingVerificationCode"
+          :loading="fetchingVerificationCode"
+          :disabled="!canFetchVerificationCode"
+          @click="handleFetchVerificationCode"
+        >
+          验证码
+        </n-button>
         <n-button type="primary" :disabled="!canSubmit" @click="handleStart">开始注册</n-button>
       </n-space>
       <n-space v-else-if="phase === 'need_otp'" justify="end">
@@ -198,6 +213,10 @@ const stepLogs = ref<string[]>([])
 const signupResult = ref<SignupState | null>(null)
 const providerState = ref<Record<string, string>>({})
 const generating = ref(false)
+const fetchingVerificationCode = ref(false)
+const verificationCode = ref('')
+const verificationConnected = ref(false)
+const parsedOutlookRawInput = ref('')
 
 const canRandomGenerate = computed(() =>
   ['duckmail', 'cloudflare', 'gptmail'].includes(formProvider.value)
@@ -214,9 +233,7 @@ const providerOptions = computed(() => [
 
 const canSubmit = computed(() => {
   if (formProvider.value === 'outlook') {
-    if (!formParams.outlook_email || !formParams.outlook_client_id || !formParams.outlook_refresh_token) return false
-    if (!isValidEmail(formParams.outlook_email)) return false
-    return true
+    return canFetchVerificationCode.value
   }
   if (formProvider.value === 'tempmail') {
     if (!formEmail.value || !isValidEmail(formEmail.value)) return false
@@ -229,6 +246,27 @@ const canSubmit = computed(() => {
     if (!formParams.cf_worker_domain || !formParams.cf_email_domain || !formParams.cf_admin_password) return false
   }
   return true
+})
+
+const canFetchVerificationCode = computed(() => {
+  switch (formProvider.value) {
+    case 'outlook':
+      if (!formParams.outlook_email || !formParams.outlook_client_id || !formParams.outlook_refresh_token) return false
+      return isValidEmail(formParams.outlook_email)
+    case 'duckmail':
+      return Boolean(formEmail.value && isValidEmail(formEmail.value) && providerState.value._mail_token)
+    case 'gptmail':
+      return Boolean(formEmail.value && isValidEmail(formEmail.value))
+    case 'cloudflare':
+      return Boolean(
+        formParams.cf_worker_domain &&
+        (providerState.value._jwt || formParams.cf_admin_password)
+      )
+    case 'tempmail':
+      return Boolean(formParams.tempmail_forward_email && isValidEmail(formParams.tempmail_forward_email))
+    default:
+      return false
+  }
 })
 
 // --- Event listening ---
@@ -274,6 +312,25 @@ watch(() => props.show, (v) => {
 watch(visible, (v) => {
   if (!v) { emit('update:show', false); stopListening() }
 })
+watch(
+  () => [
+    formProvider.value,
+    formParams.outlook_raw_input,
+    formParams.outlook_email,
+    formParams.outlook_client_id,
+    formParams.outlook_refresh_token,
+    formParams.outlook_mode,
+    formEmail.value,
+    formParams.duckmail_api_base,
+    formParams.gptmail_api_base,
+    formParams.gptmail_api_key,
+    formParams.cf_worker_domain,
+    formParams.tempmail_forward_email,
+    formParams.tempmail_epin,
+    JSON.stringify(providerState.value)
+  ],
+  () => clearVerificationStatus()
+)
 
 // --- Actions ---
 function resetToForm() {
@@ -283,6 +340,12 @@ function resetToForm() {
   stepLogs.value = []
   signupResult.value = null
   providerState.value = {}
+  clearVerificationStatus()
+}
+
+function clearVerificationStatus() {
+  verificationCode.value = ''
+  verificationConnected.value = false
 }
 
 function resetState() {
@@ -308,21 +371,27 @@ function resetState() {
   formEmail.value = ''
   formPassword.value = ''
   formClientId.value = 'app_EMoamEEZ73f0CkXaXp7hrann'
+  fetchingVerificationCode.value = false
+  parsedOutlookRawInput.value = ''
 }
 
 // Parse Outlook account info from raw input
 // Format: email----password----client-id----refresh-token
 // Supports multiple '-' separators (e.g., ----, --, etc.)
-function parseOutlookInput() {
+function parseOutlookInput(): boolean {
   const raw = formParams.outlook_raw_input?.trim()
-  if (!raw) return
+  if (!raw) {
+    parsedOutlookRawInput.value = ''
+    return true
+  }
+  if (raw === parsedOutlookRawInput.value) return true
 
   // Split by multiple dashes (2 or more consecutive dashes)
   const parts = raw.split(/--+/).map(p => p.trim()).filter(p => p.length > 0)
 
   if (parts.length < 3) {
-    // Not enough parts, skip parsing
-    return
+    message.warning('Outlook 账号信息不完整，未更新邮箱字段')
+    return false
   }
 
   // Identify each part by pattern matching
@@ -350,10 +419,118 @@ function parseOutlookInput() {
     )
   }
 
+  if (!email || !clientId || !refreshToken) {
+    message.warning('Outlook 账号信息解析失败，请确认包含邮箱、Client ID 和 Refresh Token')
+    return false
+  }
+
   // Update form fields
-  if (email) formParams.outlook_email = email
-  if (clientId) formParams.outlook_client_id = clientId
-  if (refreshToken) formParams.outlook_refresh_token = refreshToken
+  formParams.outlook_email = email
+  formParams.outlook_client_id = clientId
+  formParams.outlook_refresh_token = refreshToken
+  parsedOutlookRawInput.value = raw
+  return true
+}
+
+async function copyText(text: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  throw new Error('clipboard_unavailable')
+}
+
+async function handleFetchVerificationCode() {
+  if (!canFetchVerificationCode.value || fetchingVerificationCode.value) return
+
+  fetchingVerificationCode.value = true
+  clearVerificationStatus()
+  try {
+    const params = buildVerificationParams()
+    const result = await codexApi.fetchVerificationCode({
+      emailProvider: formProvider.value,
+      providerParams: params,
+      email: verificationEmail(),
+      timeoutSec: 120
+    })
+    const code = result.code?.trim()
+    if (!code) {
+      verificationConnected.value = true
+      message.info('邮箱已连接，最近邮件中还没有验证码')
+      return
+    }
+
+    verificationCode.value = code
+    try {
+      await copyText(code)
+      message.success(`验证码 ${code} 已复制到剪贴板`)
+    } catch (copyError) {
+      message.warning(`验证码 ${code} 获取成功，但复制失败: ${copyError instanceof Error ? copyError.message : String(copyError)}`)
+    }
+  } catch (e) {
+    message.error('获取验证码失败: ' + (e instanceof Error ? e.message : String(e)))
+  } finally {
+    fetchingVerificationCode.value = false
+  }
+}
+
+function verificationEmail(): string {
+  if (formProvider.value === 'outlook') return formParams.outlook_email
+  if (formProvider.value === 'tempmail') return formEmail.value
+  return formEmail.value
+}
+
+function buildVerificationParams(): Record<string, string> {
+  const common = {
+    ...providerState.value,
+    mail_wait_for_new: 'false'
+  }
+
+  switch (formProvider.value) {
+    case 'outlook':
+      return {
+        ...common,
+        outlook_email: formParams.outlook_email,
+        outlook_mode: formParams.outlook_mode,
+        outlook_client_id: formParams.outlook_client_id,
+        outlook_refresh_token: formParams.outlook_refresh_token,
+        outlook_delete_after_fetch: 'false',
+        outlook_include_existing: 'true',
+        outlook_existing_max_age_sec: '0',
+        outlook_existing_limit: '5',
+        outlook_wait_for_new: 'false'
+      }
+    case 'duckmail':
+      return {
+        ...common,
+        _email: formEmail.value,
+        duckmail_api_base: formParams.duckmail_api_base || 'https://api.duckmail.sbs'
+      }
+    case 'gptmail':
+      return {
+        ...common,
+        _email: formEmail.value,
+        gptmail_api_base: formParams.gptmail_api_base || 'https://mail.chatgpt.org.uk',
+        gptmail_api_key: formParams.gptmail_api_key || 'gpt-test'
+      }
+    case 'cloudflare':
+      return {
+        ...common,
+        _email: formEmail.value,
+        cf_worker_domain: formParams.cf_worker_domain,
+        cf_email_domain: formParams.cf_email_domain,
+        cf_admin_password: formParams.cf_admin_password
+      }
+    case 'tempmail':
+      return {
+        ...common,
+        _email: formEmail.value,
+        tempmail_forward_email: formParams.tempmail_forward_email,
+        tempmail_epin: formParams.tempmail_epin
+      }
+    default:
+      return common
+  }
 }
 
 async function handleRandomGenerate() {
@@ -384,6 +561,8 @@ async function handleRandomGenerate() {
 }
 
 async function handleStart() {
+  if (formProvider.value === 'outlook' && !parseOutlookInput()) return
+
   // 检查邮箱是否已存在
   const emailToCheck = formProvider.value === 'outlook' ? formParams.outlook_email : formEmail.value
   if (emailToCheck) {

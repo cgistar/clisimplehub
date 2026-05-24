@@ -275,6 +275,10 @@ func (p *CodexPlugin) SyncImport(configPath string, data json.RawMessage) error 
 	if err := replacer.ReplaceAllAccounts(ctx, payload.Accounts); err != nil {
 		return fmt.Errorf("replace codex accounts: %w", err)
 	}
+	svc := p.GetService()
+	if svc != nil {
+		svc.ClearAuthManagers()
+	}
 
 	payload.MultiConfig.ActiveAccountID = strings.TrimSpace(payload.MultiConfig.ActiveAccountID)
 	if len(payload.Accounts) == 0 {
@@ -291,8 +295,10 @@ func (p *CodexPlugin) SyncImport(configPath string, data json.RawMessage) error 
 		return fmt.Errorf("save codex global config: %w", err)
 	}
 
-	if svc := p.GetService(); svc != nil && len(payload.Accounts) > 0 {
-		svc.ensureCodexEndpoint()
+	if svc != nil {
+		if len(payload.Accounts) > 0 {
+			svc.ensureCodexEndpoint()
+		}
 	}
 	if pool := codex.GetPool(); pool != nil {
 		pool.Reload()

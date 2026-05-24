@@ -12,6 +12,8 @@ import type {
   CodexUsageWindow,
   HeadlessLoginState,
   CodexSignupRequest,
+  CodexVerificationCodeRequest,
+  CodexVerificationCodeResult,
   SignupState
 } from '@/types/codex'
 
@@ -203,5 +205,14 @@ export const codexApi = {
     email: string; password: string; providerState: Record<string, string>
   }> {
     return App.GenerateCodexRandomEmail(provider, params)
+  },
+
+  async fetchVerificationCode(req: CodexVerificationCodeRequest): Promise<CodexVerificationCodeResult> {
+    return App.FetchCodexVerificationCode({
+      emailProvider: req.emailProvider,
+      providerParams: req.providerParams || {},
+      email: req.email,
+      timeoutSec: req.timeoutSec || 120
+    })
   }
 }

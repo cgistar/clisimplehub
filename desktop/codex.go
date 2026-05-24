@@ -131,6 +131,17 @@ type CodexSignupRequestDTO struct {
 	ClientID       string            `json:"clientId"`
 }
 
+type CodexVerificationCodeRequestDTO struct {
+	EmailProvider  string            `json:"emailProvider"`
+	ProviderParams map[string]string `json:"providerParams"`
+	Email          string            `json:"email"`
+	TimeoutSec     int               `json:"timeoutSec,omitempty"`
+}
+
+type CodexVerificationCodeResultDTO struct {
+	Code string `json:"code"`
+}
+
 func (a *App) GetCodexAccounts() (*CodexAccountsResponse, error) {
 	cp := codexProvider()
 	if cp == nil {
@@ -603,6 +614,37 @@ func (a *App) GenerateCodexRandomEmail(provider string, params map[string]string
 		return nil, err
 	}
 	var result GeneratedCredentialsDTO
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (a *App) FetchCodexVerificationCode(req CodexVerificationCodeRequestDTO) (*CodexVerificationCodeResultDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	if req.TimeoutSec <= 0 {
+		req.TimeoutSec = 120
+	}
+	if req.ProviderParams == nil {
+		req.ProviderParams = map[string]string{}
+	}
+
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rawReq, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := cp.FetchVerificationCode(ctx, rawReq)
+	if err != nil {
+		return nil, err
+	}
+	var result CodexVerificationCodeResultDTO
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}
