@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"compress/gzip"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -115,13 +116,75 @@ func webUIFS() (fs.FS, error) {
 	return fs.Sub(webUIDist, "webui/dist")
 }
 
+type webUIAssetResponseWriter struct {
+	http.ResponseWriter
+	gzipWriter *gzip.Writer
+	wrote      bool
+}
+
+func (w *webUIAssetResponseWriter) WriteHeader(statusCode int) {
+	if w.wrote {
+		return
+	}
+	w.wrote = true
+	if statusCode >= http.StatusOK && statusCode < http.StatusBadRequest {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	if w.gzipWriter != nil {
+		w.Header().Del("Content-Length")
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *webUIAssetResponseWriter) Write(data []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.gzipWriter != nil {
+		return w.gzipWriter.Write(data)
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func withWebUIAssetCaching(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assetWriter := &webUIAssetResponseWriter{ResponseWriter: w}
+		if !shouldGzipWebUIAsset(r) {
+			next.ServeHTTP(assetWriter, r)
+			return
+		}
+
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		assetWriter.gzipWriter = gz
+		next.ServeHTTP(assetWriter, r)
+	})
+}
+
+func shouldGzipWebUIAsset(r *http.Request) bool {
+	if r == nil || r.Method != http.MethodGet || r.Header.Get("Range") != "" {
+		return false
+	}
+	if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		return false
+	}
+	path := strings.ToLower(r.URL.Path)
+	return strings.HasSuffix(path, ".js") ||
+		strings.HasSuffix(path, ".css") ||
+		strings.HasSuffix(path, ".html") ||
+		strings.HasSuffix(path, ".svg")
+}
+
 func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	uiFS, err := webUIFS()
 	if err != nil {
 		return
 	}
 
-	assetHandler := http.StripPrefix("/web/", http.FileServer(http.FS(uiFS)))
+	assetHandler := withWebUIAssetCaching(http.StripPrefix("/web/", http.FileServer(http.FS(uiFS))))
 
 	r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=86400")

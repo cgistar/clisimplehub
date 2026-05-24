@@ -2518,7 +2518,6 @@ func (a *App) getDefaultCodexConfig() string {
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d/v1", settings.Port)
 
 	return fmt.Sprintf(`disable_response_storage = true
-model_provider = 'local'
 network_access = true
 sandbox_mode = "workspace-write"
 experimental_use_rmcp_client = true
@@ -2530,6 +2529,7 @@ windows_wsl_setup_acknowledged = true
 model_verbosity = "high"
 plan_mode_reasoning_effort = "high"
 supports_websockets = true
+model_provider = "local"
 
 [features]
 plan_tool = true

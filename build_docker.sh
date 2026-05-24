@@ -335,9 +335,8 @@ select_archive() {
 
 generate_dockerfile() {
   local archive_rel="$1"
-  local release_arch="$2"
   cat >"$DOCKERFILE" <<EOF
-FROM --platform=linux/${release_arch} alpine:3.22
+FROM alpine:3.22
 
 # 安装运行时依赖，并固定容器时区。
 RUN echo -e https://mirrors.ustc.edu.cn/alpine/v3.22/main/ > /etc/apk/repositories && \\

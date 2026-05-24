@@ -37,6 +37,12 @@ func ParseURIList(content string, sourceID string) ([]ProxyNode, []string) {
 			node, err = parseTrojanURI(line)
 		case strings.HasPrefix(line, "ss://"):
 			node, err = parseShadowsocksURI(line)
+		case strings.HasPrefix(line, "hysteria://"):
+			node, err = parseHysteriaURI(line)
+		case strings.HasPrefix(line, "hysteria2://"), strings.HasPrefix(line, "hy2://"):
+			node, err = parseHysteria2URI(line)
+		case strings.HasPrefix(line, "tuic://"):
+			node, err = parseTUICURI(line)
 		case strings.HasPrefix(line, "anytls://"):
 			node, err = parseAnyTLSURI(line)
 		default:
@@ -60,22 +66,43 @@ func ParseURIList(content string, sourceID string) ([]ProxyNode, []string) {
 }
 
 func tryBase64Decode(content string) []string {
-	content = strings.TrimSpace(content)
-	decoded, err := base64.StdEncoding.DecodeString(content)
+	content = compactBase64Text(content)
+	if content == "" {
+		return nil
+	}
+	decoded, err := decodeSubscriptionBase64(content)
 	if err != nil {
-		decoded, err = base64.URLEncoding.DecodeString(content)
-		if err != nil {
-			decoded, err = base64.RawStdEncoding.DecodeString(content)
-			if err != nil {
-				return nil
-			}
-		}
+		return nil
 	}
 	text := string(decoded)
 	if !strings.Contains(text, "://") {
 		return nil
 	}
 	return splitLines(text)
+}
+
+func compactBase64Text(content string) string {
+	var builder strings.Builder
+	for _, r := range content {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
+}
+
+func decodeSubscriptionBase64(content string) ([]byte, error) {
+	if d, err := base64.StdEncoding.DecodeString(content); err == nil {
+		return d, nil
+	}
+	if d, err := base64.URLEncoding.DecodeString(content); err == nil {
+		return d, nil
+	}
+	if d, err := base64.RawStdEncoding.DecodeString(content); err == nil {
+		return d, nil
+	}
+	return base64.RawURLEncoding.DecodeString(content)
 }
 
 func splitLines(s string) []string {
@@ -308,7 +335,7 @@ func parseAnyTLSURI(uri string) (*ProxyNode, error) {
 	if sni := q.Get("sni"); sni != "" {
 		node["sni"] = sni
 	}
-	if fp := firstNonEmptyQueryValue(q, "fp", "client-fingerprint", "fingerprint"); fp != "" {
+	if fp := firstNonEmptyQueryValue(q, "fp", "client-fingerprint"); fp != "" {
 		node["client-fingerprint"] = fp
 	}
 	if insecure, ok := firstBoolFromQuery(q, "allowInsecure", "insecure", "skip-cert-verify", "skipCertVerify"); ok {
@@ -331,6 +358,136 @@ func parseAnyTLSURI(uri string) (*ProxyNode, error) {
 	}
 	if value, ok := firstIntFromQuery(q, "min-idle-session"); ok {
 		node["min-idle-session"] = value
+	}
+
+	applyAnyTLSDefaults(node)
+	if nodeName(node) == "" {
+		setNodeString(node, "name", fmt.Sprintf("%s:%d", nodeServer(node), nodePort(node)))
+	}
+	if err := validateProxyNode(node); err != nil {
+		return nil, err
+	}
+	return &node, nil
+}
+
+func parseHysteriaURI(uri string) (*ProxyNode, error) {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return nil, fmt.Errorf("hysteria url parse: %w", err)
+	}
+
+	port, _ := strconv.Atoi(parsed.Port())
+	q := parsed.Query()
+	node := ProxyNode{
+		"name":     decodeFragment(parsed.Fragment),
+		"type":     "hysteria",
+		"server":   parsed.Hostname(),
+		"port":     port,
+		"auth-str": firstNonEmptyValue(parsed.User.Username(), q.Get("auth"), q.Get("auth_str"), q.Get("auth-str")),
+	}
+	applyCommonHysteriaQuery(node, q)
+
+	if nodeName(node) == "" {
+		setNodeString(node, "name", fmt.Sprintf("%s:%d", nodeServer(node), nodePort(node)))
+	}
+	if err := validateProxyNode(node); err != nil {
+		return nil, err
+	}
+	return &node, nil
+}
+
+func parseHysteria2URI(uri string) (*ProxyNode, error) {
+	if strings.HasPrefix(uri, "hy2://") {
+		uri = "hysteria2://" + strings.TrimPrefix(uri, "hy2://")
+	}
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return nil, fmt.Errorf("hysteria2 url parse: %w", err)
+	}
+
+	port, _ := strconv.Atoi(parsed.Port())
+	q := parsed.Query()
+	node := ProxyNode{
+		"name":     decodeFragment(parsed.Fragment),
+		"type":     "hysteria2",
+		"server":   parsed.Hostname(),
+		"port":     port,
+		"password": firstNonEmptyValue(parsed.User.Username(), q.Get("password"), q.Get("auth")),
+	}
+	applyCommonHysteriaQuery(node, q)
+
+	if nodeName(node) == "" {
+		setNodeString(node, "name", fmt.Sprintf("%s:%d", nodeServer(node), nodePort(node)))
+	}
+	if err := validateProxyNode(node); err != nil {
+		return nil, err
+	}
+	return &node, nil
+}
+
+func applyCommonHysteriaQuery(node ProxyNode, q url.Values) {
+	if sni := q.Get("sni"); sni != "" {
+		node["sni"] = sni
+	}
+	if insecure, ok := firstBoolFromQuery(q, "allowInsecure", "insecure", "skip-cert-verify", "skipCertVerify"); ok {
+		node["skip-cert-verify"] = insecure
+	}
+	if udp, ok := firstBoolFromQuery(q, "udp"); ok {
+		node["udp"] = udp
+	}
+	if obfs := q.Get("obfs"); obfs != "" {
+		node["obfs"] = obfs
+	}
+	if obfsPassword := firstNonEmptyQueryValue(q, "obfs-password", "obfs_password"); obfsPassword != "" {
+		node["obfs-password"] = obfsPassword
+	}
+	if up := firstNonEmptyQueryValue(q, "up", "upmbps", "up_mbps"); up != "" {
+		node["up"] = up
+	}
+	if down := firstNonEmptyQueryValue(q, "down", "downmbps", "down_mbps"); down != "" {
+		node["down"] = down
+	}
+	if alpn := queryStringList(q, "alpn"); len(alpn) > 0 {
+		node["alpn"] = alpn
+	}
+}
+
+func parseTUICURI(uri string) (*ProxyNode, error) {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return nil, fmt.Errorf("tuic url parse: %w", err)
+	}
+
+	port, _ := strconv.Atoi(parsed.Port())
+	q := parsed.Query()
+	node := ProxyNode{
+		"name":   decodeFragment(parsed.Fragment),
+		"type":   "tuic",
+		"server": parsed.Hostname(),
+		"port":   port,
+	}
+	if password, ok := parsed.User.Password(); ok {
+		node["uuid"] = parsed.User.Username()
+		node["password"] = password
+	} else {
+		node["token"] = firstNonEmptyValue(parsed.User.Username(), q.Get("token"))
+	}
+	if sni := q.Get("sni"); sni != "" {
+		node["sni"] = sni
+	}
+	if fp := firstNonEmptyQueryValue(q, "fp", "client-fingerprint", "fingerprint"); fp != "" {
+		node["client-fingerprint"] = fp
+	}
+	if insecure, ok := firstBoolFromQuery(q, "allowInsecure", "insecure", "skip-cert-verify", "skipCertVerify"); ok {
+		node["skip-cert-verify"] = insecure
+	}
+	if alpn := queryStringList(q, "alpn"); len(alpn) > 0 {
+		node["alpn"] = alpn
+	}
+	for _, key := range []string{"congestion-controller", "udp-relay-mode"} {
+		if value := q.Get(key); value != "" {
+			node[key] = value
+		}
 	}
 
 	if nodeName(node) == "" {

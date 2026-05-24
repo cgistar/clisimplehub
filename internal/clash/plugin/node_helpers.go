@@ -168,6 +168,8 @@ func validateProxyNode(node ProxyNode) error {
 	name := nodeName(node)
 
 	switch proxyType {
+	case "direct", "reject", "dns":
+		return fmt.Errorf("skipped non-proxy type: %s (%s)", proxyType, name)
 	case "trojan":
 		if nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "password") == "" {
 			return fmt.Errorf("trojan missing required fields: %s", name)
@@ -188,6 +190,49 @@ func validateProxyNode(node ProxyNode) error {
 		if nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "password") == "" {
 			return fmt.Errorf("anytls missing required fields: %s", name)
 		}
+	case "hysteria2":
+		if name == "" || nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "password") == "" {
+			return fmt.Errorf("hysteria2 missing required fields: %s", name)
+		}
+	case "tuic":
+		if name == "" || nodeServer(node) == "" || nodePort(node) == 0 ||
+			(nodeString(node, "token") == "" && (nodeString(node, "uuid") == "" || nodeString(node, "password") == "")) {
+			return fmt.Errorf("tuic missing required fields: %s", name)
+		}
+	case "ssr":
+		if name == "" || nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "cipher") == "" ||
+			nodeString(node, "password") == "" || nodeString(node, "obfs") == "" || nodeString(node, "protocol") == "" {
+			return fmt.Errorf("ssr missing required fields: %s", name)
+		}
+	case "socks5", "http":
+		if name == "" || nodeServer(node) == "" || nodePort(node) == 0 {
+			return fmt.Errorf("%s missing required fields: %s", proxyType, name)
+		}
+	case "hysteria":
+		if name == "" || nodeServer(node) == "" || nodePort(node) == 0 ||
+			(nodeString(node, "auth_str") == "" && nodeString(node, "auth-str") == "" && nodeString(node, "auth") == "") {
+			return fmt.Errorf("hysteria missing required fields: %s", name)
+		}
+	case "wireguard":
+		if name == "" || nodeString(node, "private-key") == "" {
+			return fmt.Errorf("wireguard missing required fields: %s", name)
+		}
+	case "ssh":
+		if name == "" || nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "username") == "" {
+			return fmt.Errorf("ssh missing required fields: %s", name)
+		}
+	case "mieru":
+		if name == "" || nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "username") == "" || nodeString(node, "password") == "" {
+			return fmt.Errorf("mieru missing required fields: %s", name)
+		}
+	case "snell":
+		if name == "" || nodeServer(node) == "" || nodePort(node) == 0 || nodeString(node, "psk") == "" {
+			return fmt.Errorf("snell missing required fields: %s", name)
+		}
+	case "sudoku", "masque", "openvpn":
+		if name == "" {
+			return fmt.Errorf("%s missing required fields: name", proxyType)
+		}
 	default:
 		return fmt.Errorf("skipped unsupported clash type: %s (%s)", proxyType, name)
 	}
@@ -197,9 +242,39 @@ func validateProxyNode(node ProxyNode) error {
 func normalizeProxyNode(node ProxyNode, sourceID string) ProxyNode {
 	cloned := cloneNode(node)
 	setNodeString(cloned, nodeFieldType, nodeType(cloned))
+	applyAnyTLSDefaults(cloned)
 	setNodeString(cloned, nodeFieldSourceID, sourceID)
 	if nodeLatency(cloned) == 0 {
 		setNodeInt(cloned, nodeFieldLatency, 0)
 	}
 	return cloned
+}
+
+func applyAnyTLSDefaults(node ProxyNode) {
+	if nodeType(node) != "anytls" {
+		return
+	}
+	delete(node, "username")
+	delete(node, "fingerprint")
+	if nodeString(node, "client-fingerprint") == "" {
+		node["client-fingerprint"] = "chrome"
+	}
+	if _, ok := node["udp"]; !ok {
+		node["udp"] = true
+	}
+	if len(nodeStringList(node["alpn"])) == 0 {
+		node["alpn"] = []string{"h2"}
+	}
+	if _, ok := node["idle-session-check-interval"]; !ok {
+		node["idle-session-check-interval"] = 30
+	}
+	if _, ok := node["idle-session-timeout"]; !ok {
+		node["idle-session-timeout"] = 30
+	}
+	if _, ok := node["min-idle-session"]; !ok {
+		node["min-idle-session"] = 0
+	}
+	if _, ok := node["tfo"]; !ok {
+		node["tfo"] = false
+	}
 }

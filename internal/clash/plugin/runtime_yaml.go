@@ -34,10 +34,10 @@ func defaultRuntimeDNSConfig() map[string]any {
 		"ipv6":                    false,
 		"use-system-hosts":        false,
 		"respect-rules":           true,
-		"default-nameserver":      []string{"223.5.5.5", "1.2.4.8"},
+		"default-nameserver":      []string{"223.5.5.5", "119.29.29.29", "1.2.4.8"},
 		"nameserver":              []string{"https://cloudflare-dns.com/dns-query", "https://77.88.8.8/dns-query"},
 		"direct-nameserver":       []string{"https://223.5.5.5/dns-query", "https://doh.pub/dns-query"},
-		"proxy-server-nameserver": []string{"https://223.5.5.5/dns-query", "https://doh.pub/dns-query"},
+		"proxy-server-nameserver": []string{"https://cn.ali-oss.cn:44443/dns-query/6dafe708-d9d6-48cc-a768-e6ed3018a9ec", "https://hk.ali-oss.cn:44443/dns-query/6dafe708-d9d6-48cc-a768-e6ed3018a9ec"},
 	}
 }
 
