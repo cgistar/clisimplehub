@@ -143,3 +143,35 @@ export function getCodexPlanLabel(planType?: string): string {
   if (planMap[normalized]) return planMap[normalized]
   return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }
+
+function decodeBase64Url(value: string): string {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+  const binary = atob(padded)
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+export function getCodexSubscriptionActiveUntil(idToken?: string): string {
+  if (!idToken) return ''
+
+  const parts = idToken.split('.')
+  if (parts.length < 2 || !parts[1]) return ''
+
+  try {
+    const claims: unknown = JSON.parse(decodeBase64Url(parts[1]))
+    if (!isRecord(claims)) return ''
+
+    const authClaims = claims['https://api.openai.com/auth']
+    if (!isRecord(authClaims)) return ''
+
+    const activeUntil = authClaims.chatgpt_subscription_active_until
+    return typeof activeUntil === 'string' ? activeUntil : ''
+  } catch {
+    return ''
+  }
+}

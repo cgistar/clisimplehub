@@ -1,6 +1,6 @@
 import type { CodexAccount } from '@/types'
-import { formatTokenCount, numberOrDash } from '@/lib/format'
-import { getCodexPlanLabel, getCodexStatus, getExpireInfo } from '@/lib/codex'
+import { formatDateTime, formatTokenCount } from '@/lib/format'
+import { getCodexPlanLabel, getCodexStatus, getCodexSubscriptionActiveUntil, getExpireInfo } from '@/lib/codex'
 import { ActivityIcon, CopyIcon, EditIcon, PowerIcon, RefreshIcon, TrashIcon } from '@/components/icons'
 import CodexUsageBar from './CodexUsageBar'
 
@@ -36,6 +36,7 @@ export default function CodexAccountCard({
   const usageBusy = busyAction === `codex:usage:${localId}`
   const deleteBusy = busyAction === `codex:delete:${localId}`
   const actionBusy = activateBusy || refreshBusy || usageBusy || deleteBusy
+  const subscriptionActiveUntil = getCodexSubscriptionActiveUntil(account.idToken)
 
   return (
     <article className={`codex-account-card${account.isActive ? ' active' : ''}`}>
@@ -61,8 +62,8 @@ export default function CodexAccountCard({
         <CodexUsageBar label="周限" usage={account.codexUsage?.secondary} />
 
         <div className="codex-account-meta-grid">
-          <div className="meta-pill">今日请求：{numberOrDash(account.todayRequests)}</div>
-          <div className="meta-pill">今日 Tokens：{formatTokenCount(account.todayTotalTokens)}</div>
+          <div className="meta-pill">今日请求: {Number(account.todayRequests || 0)}/{formatTokenCount(account.todayTotalTokens)}</div>
+          <div className="meta-pill">有效至{formatDateTime(subscriptionActiveUntil)}</div>
           {account.proxyUrl ? <div className="meta-pill codex-full-span">代理：{account.proxyUrl}</div> : null}
         </div>
       </div>
