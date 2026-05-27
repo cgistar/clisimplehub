@@ -304,6 +304,8 @@ jobs:
           done <<'EOF'
           linux amd64
           linux arm64
+          freebsd amd64
+          freebsd arm64
           windows amd64
           windows arm64
           darwin amd64
@@ -328,7 +330,7 @@ jobs:
             for variant in server server-proxy; do
               src="dist/headless/cliSimpleHub-${variant}-${goos}-${goarch}${ext}"
               stage="$(mktemp -d)"
-              package_bin="cliSimpleHub-${variant%-proxy}${ext}"
+              package_bin="cliSimpleHub${ext}"
               cp "$src" "$stage/${package_bin}"
 
               if [ "$goos" = "windows" ]; then
@@ -345,6 +347,8 @@ jobs:
           done <<'EOF'
           linux amd64
           linux arm64
+          freebsd amd64
+          freebsd arm64
           windows amd64
           windows arm64
           darwin amd64
