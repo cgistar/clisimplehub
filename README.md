@@ -303,7 +303,26 @@ GitHub Actions 发布构建：
 - `Clash_SOCKS_LISTEN`：Clash SOCKS 监听地址
 - `Clash_SOCKS_PORT`：Clash SOCKS 端口
 
-## 9. 目录结构（核心）
+## 9. 数据库存储
+
+默认使用 `config.json` 所在目录下的 `data.sqlite` 保存请求统计和 Codex 账号数据。
+
+如需使用 PostgreSQL，可在 `config.json` 的 `appConfig` 中配置：
+
+```json
+{
+  "appConfig": {
+    "dbDriver": "pgx",
+    "dbSource": "postgres://user:password@127.0.0.1:5432/clisimplehub?sslmode=disable"
+  }
+}
+```
+
+- `dbDriver`：支持 `sqlite`（默认）和 `pgx`。
+- `dbSource`：`pgx` 模式下为 PostgreSQL DSN；`sqlite` 模式下可为空，或配置为相对 `config.json` 所在目录的 SQLite 文件路径。
+- 切换到 `pgx` 不会自动迁移已有 `data.sqlite` 历史数据。
+
+## 10. 目录结构（核心）
 
 - `cmd/server/`：无头服务入口
 - `desktop/`：桌面程序入口与 Wails 绑定
@@ -317,7 +336,7 @@ GitHub Actions 发布构建：
 - `internal/storage/`：`config.json` 存储层
 - `internal/statsdb/`：`usage_stats` 存储层
 
-## 10. 排障建议
+## 11. 排障建议
 
 - 启动报端口占用：检查 `PORT` 或本地已有进程。
 - `No enabled endpoints available`：确认端点 `enabled=true` 且至少一个可用。

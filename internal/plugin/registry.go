@@ -3,7 +3,9 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"clisimplehub/internal/storage"
@@ -15,6 +17,10 @@ type Plugin interface {
 	Init(cfg InitConfig) error
 	RegisterRoutes(r RouteRegistrar)
 	Reload() error
+}
+
+type Closer interface {
+	Close() error
 }
 
 // InitConfig provides configuration data to plugins during initialization.
@@ -91,4 +97,26 @@ func All() []Plugin {
 	out := make([]Plugin, len(plugins))
 	copy(out, plugins)
 	return out
+}
+
+func CloseAll() error {
+	mu.RLock()
+	out := make([]Plugin, len(plugins))
+	copy(out, plugins)
+	mu.RUnlock()
+
+	var errs []string
+	for _, p := range out {
+		closer, ok := p.(Closer)
+		if !ok {
+			continue
+		}
+		if err := closer.Close(); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", p.Name(), err))
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("close plugins: %s", strings.Join(errs, "; "))
 }

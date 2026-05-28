@@ -17,6 +17,7 @@ import (
 	codex "clisimplehub/internal/codex"
 	codexAuth "clisimplehub/internal/codex/auth"
 	codexShared "clisimplehub/internal/codex/shared"
+	"clisimplehub/internal/dbconfig"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/storage"
@@ -66,13 +67,16 @@ func (p *CodexPlugin) GetAccountStore() codexShared.CodexAccountStore {
 func (p *CodexPlugin) Init(cfg plugin.InitConfig) error {
 	codexJsonPath := codexJsonPathFromConfig(cfg.ConfigPath)
 
-	// Open CodexAccountStore using same data.sqlite as usage stats
-	dataDir := filepath.Dir(cfg.ConfigPath)
-	dbPath := filepath.Join(dataDir, "data.sqlite")
-	accountStore, err := codexShared.OpenCodexAccountStore(dbPath)
+	// Open CodexAccountStore using the same configured database as usage stats.
+	dbCfg, err := dbconfig.Resolve(cfg.ConfigPath, cfg.ConfigGetter)
+	var accountStore codexShared.CodexAccountStore
 	if err != nil {
-		// Non-fatal: log and continue without store
-		fmt.Printf("[codex-plugin] Warning: failed to open account store (%s): %v\n", dbPath, err)
+		fmt.Printf("[codex-plugin] Warning: failed to resolve account store config: %v\n", err)
+	} else if store, err := codexShared.OpenCodexAccountStoreWithConfig(dbCfg); err != nil {
+		// Non-fatal: log and continue without store.
+		fmt.Printf("[codex-plugin] Warning: failed to open account store (%s): %v\n", dbconfig.DisplaySource(dbCfg), err)
+	} else {
+		accountStore = store
 	}
 
 	_ = codex.InitPool(codexJsonPath, accountStore)
@@ -133,6 +137,20 @@ func (p *CodexPlugin) Reload() error {
 		pool.Reload()
 	}
 	return nil
+}
+
+func (p *CodexPlugin) Close() error {
+	p.mu.Lock()
+	store := p.accountStore
+	p.accountStore = nil
+	if p.service != nil {
+		p.service.SetAccountStore(nil)
+	}
+	p.mu.Unlock()
+	if store == nil {
+		return nil
+	}
+	return store.Close()
 }
 
 // --- TransformerRoundTripperProvider ---

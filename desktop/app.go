@@ -83,7 +83,7 @@ type App struct {
 	router       *proxy.DefaultRouter
 	sseHub       *proxy.SSEHub
 	configLoader *config.ConfigLoader
-	usageStats   *statsdb.SQLiteUsageStatsStore
+	usageStats   statsdb.UsageStatsStore
 	logBridge    *goLogBridge
 
 	reloadMu sync.Mutex
@@ -226,6 +226,10 @@ func (a *App) SetSSEHub(hub *proxy.SSEHub) {
 
 // SetUsageStats sets the usage stats store instance for the app
 func (a *App) SetUsageStats(store *statsdb.SQLiteUsageStatsStore) {
+	a.usageStats = store
+}
+
+func (a *App) setUsageStatsStore(store statsdb.UsageStatsStore) {
 	a.usageStats = store
 }
 

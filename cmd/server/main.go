@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/config"
+	"clisimplehub/internal/dbconfig"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/sqlitequeue"
@@ -61,16 +62,17 @@ func main() {
 	defer store.Close()
 	log.Println("Storage initialized successfully")
 
-	// Initialize usage stats SQLite store (best-effort; never blocks proxy startup).
-	dataDir := filepath.Dir(configLoader.GetPath())
-	usageStatsPath := filepath.Join(dataDir, "data.sqlite")
+	// Initialize usage stats store (best-effort; never blocks proxy startup).
 	var usageStatsStore statsdb.UsageStatsStore
-	if db, err := statsdb.OpenSQLiteUsageStatsStore(usageStatsPath); err != nil {
-		log.Printf("Warning: Failed to initialize usage stats db (%s): %v", usageStatsPath, err)
+	dbCfg, err := dbconfig.Resolve(configLoader.GetPath(), store.GetConfig)
+	if err != nil {
+		log.Printf("Warning: Failed to resolve usage stats db config: %v", err)
+	} else if db, err := statsdb.OpenUsageStatsStore(dbCfg); err != nil {
+		log.Printf("Warning: Failed to initialize usage stats db (%s): %v", dbconfig.DisplaySource(dbCfg), err)
 	} else {
 		usageStatsStore = db
 		defer usageStatsStore.Close()
-		log.Printf("Usage stats db: %s", usageStatsPath)
+		log.Printf("Usage stats db (%s): %s", dbCfg.Driver, dbconfig.DisplaySource(dbCfg))
 	}
 
 	// Load port from config.json if not set via environment
@@ -228,6 +230,9 @@ shutdown:
 	sseHub.Stop()
 	if err := proxyServer.Stop(); err != nil {
 		log.Printf("Error during shutdown: %v", err)
+	}
+	if err := plugin.CloseAll(); err != nil {
+		log.Printf("Error closing plugins: %v", err)
 	}
 	if err := sqlitequeue.CloseAll(); err != nil {
 		log.Printf("Error closing sqlite backends: %v", err)
