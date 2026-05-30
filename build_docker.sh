@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
 DOCKERFILE="${DOCKERFILE:-$ROOT_DIR/Dockerfile}"
 CONTAINER_CLI="${CONTAINER_CLI:-}"
+MIRROR_URL="${MIRROR_URL:-}"
 
 SERVICE_NAME="${SERVICE_NAME:-clisimplehub-server}"
 CONTAINER_NAME="${CONTAINER_NAME:-clisimplehub-server}"
@@ -92,6 +93,11 @@ archive_relpath() {
       exit 1
       ;;
   esac
+}
+
+shell_quote() {
+  local value="$1"
+  printf "'%s'" "$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
 }
 
 detect_release_arch() {
@@ -335,12 +341,20 @@ select_archive() {
 
 generate_dockerfile() {
   local archive_rel="$1"
+  local apk_prepare_command="apk --no-cache add ca-certificates tzdata"
+  local mirror_url_quoted
+
+  if [[ -n "$MIRROR_URL" ]]; then
+    mirror_url_quoted="$(shell_quote "$MIRROR_URL")"
+    apk_prepare_command="printf '%s\n' ${mirror_url_quoted} > /etc/apk/repositories && \\
+    apk --no-cache add ca-certificates tzdata"
+  fi
+
   cat >"$DOCKERFILE" <<EOF
 FROM alpine:3.22
 
 # 安装运行时依赖，并固定容器时区。
-RUN echo -e https://mirrors.ustc.edu.cn/alpine/v3.22/main/ > /etc/apk/repositories && \\
-    apk --no-cache add ca-certificates tzdata && \\
+RUN ${apk_prepare_command} && \\
     ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \\
     echo "Asia/Shanghai" > /etc/timezone && \\
     mkdir -p /app /data
@@ -351,14 +365,14 @@ COPY ${archive_rel} /tmp/clisimplehub-server.tar.gz
 
 # 发布包中的 server/proxy 二进制名称一致，统一解压到 /app。
 RUN tar -xzf /tmp/clisimplehub-server.tar.gz -C /app && \\
-    chmod +x /app/cliSimpleHub-server && \\
+    chmod +x /app/cliSimpleHub && \\
     rm -f /tmp/clisimplehub-server.tar.gz
 
 ENV CONFIG_PATH=/data/config.json
 
 EXPOSE 5600 10808
 
-ENTRYPOINT ["/app/cliSimpleHub-server"]
+ENTRYPOINT ["/app/cliSimpleHub"]
 EOF
 }
 

@@ -710,6 +710,17 @@ export default {
     clashPathPlaceholder: 'e.g., /path/to/mihomo',
     clashPathHelp:
       'The default build shows the Clash tab only when this path is configured and exists',
+    databaseDsn: 'Database DSN',
+    databaseDsnPlaceholder:
+      'Leave empty to use default data.sqlite; use postgres:// or postgresql:// for PostgreSQL',
+    databaseDsnHelp:
+      'The backend infers database type from the protocol; PostgreSQL DSN and SQLite file paths are currently supported',
+    databaseTest: 'Test',
+    databaseApply: 'Apply',
+    databaseTestSuccess: 'Database connection successful',
+    databaseTestFailed: 'Database connection test failed',
+    databaseApplySuccess: 'Database config applied',
+    databaseApplyFailed: 'Failed to apply database config',
     fallback: 'Auto Failover',
     fallbackHelp: 'Automatically switch to next endpoint by priority on failure',
     debugMode: 'Debug Mode',

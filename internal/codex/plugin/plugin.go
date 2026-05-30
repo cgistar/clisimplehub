@@ -139,6 +139,24 @@ func (p *CodexPlugin) Reload() error {
 	return nil
 }
 
+func (p *CodexPlugin) ReplaceAccountStore(store codexShared.CodexAccountStore) (codexShared.CodexAccountStore, error) {
+	p.mu.RLock()
+	codexJsonPath := p.codexJsonPath
+	p.mu.RUnlock()
+	if err := codex.InitPool(codexJsonPath, store); err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	old := p.accountStore
+	p.accountStore = store
+	if p.service != nil {
+		p.service.SetAccountStore(store)
+	}
+	p.mu.Unlock()
+	return old, nil
+}
+
 func (p *CodexPlugin) Close() error {
 	p.mu.Lock()
 	store := p.accountStore

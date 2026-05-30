@@ -82,10 +82,19 @@ export interface SettingsPayload {
   apiKey: string
   proxyUrl?: string
   clashPath?: string
+  dbSource?: string
   fallback: boolean
   debugMode?: string
   listenAddr?: string
 }
+
+export interface DatabaseTestResult {
+  message?: string
+  dbDriver?: string
+  dbSource?: string
+}
+
+export interface DatabaseApplyResult extends DatabaseTestResult {}
 
 export interface ProxyStatusPayload {
   running: boolean

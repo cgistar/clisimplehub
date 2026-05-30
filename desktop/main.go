@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"clisimplehub/internal/appdb"
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/dbconfig"
 	"clisimplehub/internal/plugin"
@@ -41,6 +42,8 @@ const (
 	ConfigKeyAPIKey    = "apiKey"
 	ConfigKeyProxyURL  = "proxyUrl"
 	ConfigKeyClashPath = "clashPath"
+	ConfigKeyDBDriver  = "dbDriver"
+	ConfigKeyDBSource  = "dbSource"
 	ConfigKeyFallback  = "fallback"
 	ConfigKeyDebugMode = "debugMode"
 	// Temporary disable TTL for failed endpoints (minutes)
@@ -172,6 +175,13 @@ func main() {
 	proxyServer.SetListenAddr(listenAddr)
 	proxyServer.SetStorage(store)
 	proxyServer.SetUsageStatsStore(usageStatsStore)
+	proxyServer.SetDatabaseApplyFunc(func(cfg dbconfig.Config) error {
+		if err := appdb.ApplyRuntimeDatabase(cfg, proxyServer); err != nil {
+			return err
+		}
+		app.setUsageStatsStore(proxyServer.GetUsageStatsStore())
+		return nil
+	})
 	proxyServer.SetConfigPath(configPath)
 
 	// Wire up app before plugin init so plugins can trigger reload safely.
@@ -264,8 +274,8 @@ func main() {
 			if err := store.Close(); err != nil {
 				log.Printf("Error closing storage: %v", err)
 			}
-			if usageStatsStore != nil {
-				if err := usageStatsStore.Close(); err != nil {
+			if statsStore := proxyServer.ReplaceUsageStatsStore(nil); statsStore != nil {
+				if err := statsStore.Close(); err != nil {
 					log.Printf("Error closing usage stats db: %v", err)
 				}
 			}

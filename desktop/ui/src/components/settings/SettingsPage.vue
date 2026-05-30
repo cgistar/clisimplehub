@@ -30,6 +30,8 @@ const {
 
 const loading = ref(false)
 const savingGeneral = ref(false)
+const testingDatabase = ref(false)
+const applyingDatabase = ref(false)
 const testingWebdav = ref(false)
 const savingWebdav = ref(false)
 const loadingBackups = ref(false)
@@ -342,6 +344,43 @@ async function pickClashExecutable(): Promise<void> {
     feedback.error(t('settings.saveFailed') + ': ' + toErrorMessage(error))
   } finally {
     pickingClashPath.value = false
+  }
+}
+
+async function testDatabaseConnection(): Promise<void> {
+  if (testingDatabase.value) return
+
+  testingDatabase.value = true
+  try {
+    const result = await endpointApi.testDatabaseConnection(String(settingsForm.value.dbSource || '').trim())
+    feedback.success(
+      result.dbSource
+        ? `${t('settings.databaseTestSuccess')}: ${result.dbSource}`
+        : t('settings.databaseTestSuccess')
+    )
+  } catch (error) {
+    feedback.error(t('settings.databaseTestFailed') + ': ' + toErrorMessage(error))
+  } finally {
+    testingDatabase.value = false
+  }
+}
+
+async function applyDatabaseConfig(): Promise<void> {
+  if (applyingDatabase.value) return
+
+  applyingDatabase.value = true
+  try {
+    const result = await endpointApi.applyDatabaseConfig(String(settingsForm.value.dbSource || '').trim())
+    await loadGeneralData()
+    feedback.success(
+      result.dbSource
+        ? `${t('settings.databaseApplySuccess')}: ${result.dbSource}`
+        : t('settings.databaseApplySuccess')
+    )
+  } catch (error) {
+    feedback.error(t('settings.databaseApplyFailed') + ': ' + toErrorMessage(error))
+  } finally {
+    applyingDatabase.value = false
   }
 }
 
@@ -797,6 +836,30 @@ onMounted(() => {
               </n-button>
             </n-input-group>
             <small>{{ t('settings.clashPathHelp') }}</small>
+          </div>
+
+          <label>{{ t('settings.databaseDsn') }}</label>
+          <div>
+            <n-input-group>
+              <n-input
+                v-model:value="settingsForm.dbSource"
+                :placeholder="t('settings.databaseDsnPlaceholder')"
+              />
+              <n-button
+                :loading="testingDatabase"
+                @click="testDatabaseConnection"
+              >
+                {{ t('settings.databaseTest') }}
+              </n-button>
+              <n-button
+                type="primary"
+                :loading="applyingDatabase"
+                @click="applyDatabaseConfig"
+              >
+                {{ t('settings.databaseApply') }}
+              </n-button>
+            </n-input-group>
+            <small>{{ t('settings.databaseDsnHelp') }}</small>
           </div>
 
           <label>{{ t('settings.fallback') }}</label>

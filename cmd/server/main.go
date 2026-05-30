@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"clisimplehub/internal/appdb"
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/dbconfig"
 	"clisimplehub/internal/plugin"
@@ -71,7 +72,6 @@ func main() {
 		log.Printf("Warning: Failed to initialize usage stats db (%s): %v", dbconfig.DisplaySource(dbCfg), err)
 	} else {
 		usageStatsStore = db
-		defer usageStatsStore.Close()
 		log.Printf("Usage stats db (%s): %s", dbCfg.Driver, dbconfig.DisplaySource(dbCfg))
 	}
 
@@ -138,6 +138,9 @@ func main() {
 	proxyServer.SetListenAddr(listenAddr)
 	proxyServer.SetStorage(store)
 	proxyServer.SetUsageStatsStore(usageStatsStore)
+	proxyServer.SetDatabaseApplyFunc(func(cfg dbconfig.Config) error {
+		return appdb.ApplyRuntimeDatabase(cfg, proxyServer)
+	})
 	proxyServer.SetConfigPath(configPath)
 
 	// Initialize all plugins
@@ -233,6 +236,11 @@ shutdown:
 	}
 	if err := plugin.CloseAll(); err != nil {
 		log.Printf("Error closing plugins: %v", err)
+	}
+	if statsStore := proxyServer.ReplaceUsageStatsStore(nil); statsStore != nil {
+		if err := statsStore.Close(); err != nil {
+			log.Printf("Error closing usage stats db: %v", err)
+		}
 	}
 	if err := sqlitequeue.CloseAll(); err != nil {
 		log.Printf("Error closing sqlite backends: %v", err)

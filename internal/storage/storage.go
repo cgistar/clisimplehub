@@ -68,6 +68,7 @@ type Storage interface {
 	GetConfig(key string) (string, error)
 	SetConfig(key, value string) error
 	SetConfigBool(key string, value bool) error
+	SaveConfigValues(values map[string]string, boolValues map[string]bool) error
 
 	// Close closes the storage
 	Close() error

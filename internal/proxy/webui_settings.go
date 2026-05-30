@@ -295,6 +295,7 @@ func (p *ProxyServer) createWebUIBackupData() (*webUIBackupDataResponse, error) 
 		"listenAddr": settings.ListenAddr,
 		"proxyUrl":   settings.ProxyURL,
 		"clashPath":  settings.ClashPath,
+		"dbSource":   settings.DBSource,
 	}
 
 	vendorConfigs := make([]config.VendorConfig, len(vendors))
@@ -575,6 +576,26 @@ func (p *ProxyServer) applyWebUIBackupAppConfig(appConfig map[string]interface{}
 	}
 	if clashPath, ok := appConfig["clashPath"].(string); ok {
 		if err := p.store.SetConfig("clashPath", strings.TrimSpace(clashPath)); err != nil {
+			return err
+		}
+	}
+	if dbSource, ok := appConfig["dbSource"].(string); ok {
+		dbCfg, err := p.resolveWebUIDatabaseConfig(dbSource)
+		if err != nil {
+			return err
+		}
+		p.mu.RLock()
+		applyDatabase := p.databaseApplyFunc
+		p.mu.RUnlock()
+		if applyDatabase != nil {
+			if err := applyDatabase(dbCfg); err != nil {
+				return fmt.Errorf("database apply failed: %w", err)
+			}
+		}
+		if err := p.store.SetConfig("dbDriver", dbCfg.Driver); err != nil {
+			return err
+		}
+		if err := p.store.SetConfig("dbSource", strings.TrimSpace(dbSource)); err != nil {
 			return err
 		}
 	}

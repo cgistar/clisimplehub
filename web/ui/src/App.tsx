@@ -87,6 +87,7 @@ export default function App() {
       listenAddr: settingsData.listenAddr || '0.0.0.0',
       proxyUrl: settingsData.proxyUrl || '',
       clashPath: settingsData.clashPath || '',
+      dbSource: settingsData.dbSource || '',
     })
   }, [settingsData])
 

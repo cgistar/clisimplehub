@@ -65,6 +65,56 @@ func Resolve(configPath string, getter Getter) (Config, error) {
 	return cfg, nil
 }
 
+func ResolveSource(configPath, source string) (Config, error) {
+	source = strings.TrimSpace(source)
+	driver := DriverSQLite
+
+	scheme := sourceScheme(source)
+	switch scheme {
+	case "", "file":
+		driver = DriverSQLite
+	case "postgres", "postgresql":
+		driver = DriverPGX
+	case "mysql", "mysql2", "mariadb":
+		return Config{}, fmt.Errorf("unsupported database DSN scheme %q", scheme)
+	default:
+		if strings.Contains(source, "://") {
+			return Config{}, fmt.Errorf("unsupported database DSN scheme %q", scheme)
+		}
+		driver = DriverSQLite
+	}
+	return Resolve(configPath, func(key string) (string, error) {
+		switch key {
+		case KeyDriver:
+			return driver, nil
+		case KeySource:
+			return source, nil
+		default:
+			return "", nil
+		}
+	})
+}
+
+func sourceScheme(source string) string {
+	if !strings.Contains(source, ":") {
+		return ""
+	}
+	u, err := url.Parse(source)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(u.Scheme))
+}
+
+func IsPostgresDSN(source string) bool {
+	switch sourceScheme(strings.TrimSpace(source)) {
+	case "postgres", "postgresql":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeDriver(driver string) string {
 	switch strings.ToLower(strings.TrimSpace(driver)) {
 	case "", DriverSQLite:

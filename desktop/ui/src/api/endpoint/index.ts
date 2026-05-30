@@ -9,6 +9,8 @@ import type {
   LocalIPInfo,
   PingResult,
   InterfaceTypeStatsSummaryInfo,
+  DatabaseApplyResult,
+  DatabaseTestResult,
   ProcessCodexConfigResult,
   ProxyStatusPayload,
   RequestLogDetail,
@@ -308,6 +310,14 @@ export const endpointApi = {
 
   async saveSettings(settings: SettingsPayload): Promise<void> {
     await App.SaveSettings(settings)
+  },
+
+  async testDatabaseConnection(dbSource: string): Promise<DatabaseTestResult> {
+    return App.TestDatabaseConnection({ dbSource })
+  },
+
+  async applyDatabaseConfig(dbSource: string): Promise<DatabaseApplyResult> {
+    return App.ApplyDatabaseConfig({ dbSource })
   },
 
   async getProxyStatus(): Promise<ProxyStatusPayload> {

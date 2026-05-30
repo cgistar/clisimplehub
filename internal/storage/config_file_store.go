@@ -416,6 +416,42 @@ func (s *ConfigFileStore) SetConfigBool(key string, value bool) error {
 	return s.saveLocked(cfg)
 }
 
+func (s *ConfigFileStore) SaveConfigValues(values map[string]string, boolValues map[string]bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg, err := s.loadAndNormalizeLocked()
+	if err != nil {
+		return err
+	}
+	if cfg.AppConfigKV == nil {
+		cfg.AppConfigKV = make(map[string]interface{})
+	}
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			delete(cfg.AppConfigKV, key)
+			continue
+		}
+		cfg.AppConfigKV[key] = trimmed
+	}
+	for key, value := range boolValues {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		cfg.AppConfigKV[key] = value
+	}
+	if len(cfg.AppConfigKV) == 0 {
+		cfg.AppConfigKV = nil
+	}
+	return s.saveLocked(cfg)
+}
+
 func cloneServerConfigs(in []config.ServerConfig) []config.ServerConfig {
 	if len(in) == 0 {
 		return nil

@@ -20,8 +20,10 @@ import (
 	"sync"
 	"time"
 
+	"clisimplehub/internal/appdb"
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/config"
+	"clisimplehub/internal/dbconfig"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/proxy"
 	"clisimplehub/internal/statsdb"
@@ -43,9 +45,24 @@ type Settings struct {
 	APIKey     string `json:"apiKey"`
 	ProxyURL   string `json:"proxyUrl,omitempty"`
 	ClashPath  string `json:"clashPath,omitempty"`
+	DBSource   string `json:"dbSource,omitempty"`
 	Fallback   bool   `json:"fallback"`
 	DebugMode  string `json:"debugMode,omitempty"`
 	ListenAddr string `json:"listenAddr,omitempty"`
+}
+
+type DatabaseTestInput struct {
+	DBSource string `json:"dbSource"`
+}
+
+type DatabaseTestResult struct {
+	Message  string `json:"message,omitempty"`
+	DBDriver string `json:"dbDriver,omitempty"`
+	DBSource string `json:"dbSource,omitempty"`
+}
+
+type DatabaseApplyInput struct {
+	DBSource string `json:"dbSource"`
 }
 
 // EndpointInfo represents endpoint information for frontend display
@@ -254,6 +271,7 @@ func (a *App) GetSettings() (*Settings, error) {
 		APIKey:     "",
 		ProxyURL:   "",
 		ClashPath:  "",
+		DBSource:   "",
 		Fallback:   false, // Default fallback disabled
 		DebugMode:  "",
 		ListenAddr: "0.0.0.0",
@@ -281,6 +299,11 @@ func (a *App) GetSettings() (*Settings, error) {
 	clashPath, err := a.storage.GetConfig(ConfigKeyClashPath)
 	if err == nil {
 		settings.ClashPath = strings.TrimSpace(clashPath)
+	}
+
+	dbSource, err := a.storage.GetConfig(ConfigKeyDBSource)
+	if err == nil {
+		settings.DBSource = strings.TrimSpace(dbSource)
 	}
 
 	// Get fallback setting from storage
@@ -388,6 +411,85 @@ func (a *App) SaveSettings(settings *Settings) error {
 		}
 	}
 
+	return nil
+}
+
+func (a *App) ApplyDatabaseConfig(input DatabaseApplyInput) (*DatabaseTestResult, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage not initialized")
+	}
+
+	cfg, source, err := a.resolveDatabaseInput(input.DBSource)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := a.testDatabaseConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	if a.proxyServer != nil {
+		if err := appdb.ApplyRuntimeDatabase(cfg, a.proxyServer); err != nil {
+			return nil, fmt.Errorf("database apply failed: %w", err)
+		}
+		a.setUsageStatsStore(a.proxyServer.GetUsageStatsStore())
+	}
+
+	if err := a.storage.SetConfig(ConfigKeyDBDriver, cfg.Driver); err != nil {
+		return nil, fmt.Errorf("failed to save database driver: %w", err)
+	}
+	if err := a.storage.SetConfig(ConfigKeyDBSource, source); err != nil {
+		return nil, fmt.Errorf("failed to save database source: %w", err)
+	}
+
+	return &DatabaseTestResult{
+		Message:  "database config applied",
+		DBDriver: cfg.Driver,
+		DBSource: dbconfig.DisplaySource(cfg),
+	}, nil
+}
+
+func (a *App) TestDatabaseConnection(input DatabaseTestInput) (*DatabaseTestResult, error) {
+	cfg, _, err := a.resolveDatabaseInput(input.DBSource)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := a.testDatabaseConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	return &DatabaseTestResult{
+		Message:  "database connection ok",
+		DBDriver: cfg.Driver,
+		DBSource: dbconfig.DisplaySource(cfg),
+	}, nil
+}
+
+func (a *App) resolveDatabaseInput(source string) (dbconfig.Config, string, error) {
+	normalizedSource := strings.TrimSpace(source)
+	cfg, err := dbconfig.ResolveSource(a.GetConfigPath(), normalizedSource)
+	if err != nil {
+		return dbconfig.Config{}, "", err
+	}
+	if cfg.Driver == dbconfig.DriverSQLite && normalizedSource == "" {
+		normalizedSource = ""
+	}
+	return cfg, normalizedSource, nil
+}
+
+func (a *App) testDatabaseConfig(cfg dbconfig.Config) error {
+	usageStore, err := statsdb.OpenUsageStatsStore(cfg)
+	if err != nil {
+		return fmt.Errorf("open usage stats store: %w", err)
+	}
+	defer usageStore.Close()
+
+	accountStore, err := codexShared.OpenCodexAccountStoreWithConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("open codex account store: %w", err)
+	}
+	defer accountStore.Close()
 	return nil
 }
 
@@ -2703,10 +2805,19 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 
 	// Save app settings
 	if config.AppConfig != nil {
+		currentSettings, err := a.GetSettings()
+		if err != nil {
+			return fmt.Errorf("failed to get current settings: %w", err)
+		}
 		settings := &Settings{
-			Port:     5600, // Default
-			APIKey:   "",
-			Fallback: false,
+			Port:       currentSettings.Port,
+			APIKey:     currentSettings.APIKey,
+			ProxyURL:   currentSettings.ProxyURL,
+			ClashPath:  currentSettings.ClashPath,
+			DBSource:   currentSettings.DBSource,
+			Fallback:   currentSettings.Fallback,
+			DebugMode:  currentSettings.DebugMode,
+			ListenAddr: currentSettings.ListenAddr,
 		}
 
 		if port, ok := config.AppConfig["port"].(float64); ok {
@@ -2719,12 +2830,33 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 			settings.APIKey = apiKey
 		}
 
+		if proxyURL, ok := config.AppConfig["proxyUrl"].(string); ok {
+			settings.ProxyURL = proxyURL
+		}
+		if clashPath, ok := config.AppConfig["clashPath"].(string); ok {
+			settings.ClashPath = clashPath
+		}
+		if debugMode, ok := config.AppConfig["debugMode"].(string); ok {
+			settings.DebugMode = debugMode
+		}
+		if listenAddr, ok := config.AppConfig["listenAddr"].(string); ok {
+			settings.ListenAddr = listenAddr
+		}
+		if dbSource, ok := config.AppConfig["dbSource"].(string); ok {
+			settings.DBSource = dbSource
+		}
+
 		if fallback, ok := config.AppConfig["fallback"].(bool); ok {
 			settings.Fallback = fallback
 		}
 
 		if err := a.SaveSettings(settings); err != nil {
 			return fmt.Errorf("failed to save settings: %w", err)
+		}
+		if _, ok := config.AppConfig["dbSource"]; ok {
+			if _, err := a.ApplyDatabaseConfig(DatabaseApplyInput{DBSource: settings.DBSource}); err != nil {
+				return fmt.Errorf("failed to apply database config: %w", err)
+			}
 		}
 	}
 
@@ -2940,9 +3072,14 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 
 	// 2. 组装 appConfig
 	appConfig := map[string]interface{}{
-		"port":     settings.Port,
-		"apiKey":   settings.APIKey,
-		"fallback": settings.Fallback,
+		"port":       settings.Port,
+		"apiKey":     settings.APIKey,
+		"proxyUrl":   settings.ProxyURL,
+		"clashPath":  settings.ClashPath,
+		"dbSource":   settings.DBSource,
+		"fallback":   settings.Fallback,
+		"debugMode":  settings.DebugMode,
+		"listenAddr": settings.ListenAddr,
 	}
 
 	// 3. 转换 vendors
@@ -3165,9 +3302,14 @@ func (a *App) mergeBackupWithLocal(backupData *config.BackupData) (*FullConfig, 
 
 	// 2. 合并 settings (远程覆盖本地)
 	mergedAppConfig := map[string]interface{}{
-		"port":     localSettings.Port,
-		"apiKey":   localSettings.APIKey,
-		"fallback": localSettings.Fallback,
+		"port":       localSettings.Port,
+		"apiKey":     localSettings.APIKey,
+		"proxyUrl":   localSettings.ProxyURL,
+		"clashPath":  localSettings.ClashPath,
+		"dbSource":   localSettings.DBSource,
+		"fallback":   localSettings.Fallback,
+		"debugMode":  localSettings.DebugMode,
+		"listenAddr": localSettings.ListenAddr,
 	}
 	for k, v := range backupData.AppConfig {
 		mergedAppConfig[k] = v

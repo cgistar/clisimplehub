@@ -225,6 +225,8 @@ export interface SettingsData {
   listenAddr?: string
   proxyUrl?: string
   clashPath?: string
+  dbDriver?: string
+  dbSource?: string
   configPath?: string
 }
 
@@ -236,6 +238,13 @@ export interface SettingsForm {
   listenAddr: string
   proxyUrl: string
   clashPath: string
+  dbSource: string
+}
+
+export interface DatabaseTestResult {
+  message?: string
+  dbDriver?: string
+  dbSource?: string
 }
 
 export interface PathPickerEntry {

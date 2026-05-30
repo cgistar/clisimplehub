@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/config"
+	"clisimplehub/internal/dbconfig"
 	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/statsdb"
@@ -27,19 +28,20 @@ import (
 
 // ProxyServer represents the main proxy server implementation
 type ProxyServer struct {
-	port       int
-	listenAddr string
-	router     Router
-	server     *http.Server
-	running    bool
-	stats      *StatsManager
-	sseHub     *SSEHub
-	mu         sync.RWMutex
-	authKey    string
-	store      storage.Storage
-	usageStats statsdb.UsageStatsStore
-	configPath string
-	reloadFunc func() // 配置重载回调函数
+	port              int
+	listenAddr        string
+	router            Router
+	server            *http.Server
+	running           bool
+	stats             *StatsManager
+	sseHub            *SSEHub
+	mu                sync.RWMutex
+	authKey           string
+	store             storage.Storage
+	usageStats        statsdb.UsageStatsStore
+	configPath        string
+	reloadFunc        func() // 配置重载回调函数
+	databaseApplyFunc func(dbconfig.Config) error
 
 	fallbackEnabled   bool
 	exec              *proxyExecutor
@@ -110,6 +112,20 @@ func (p *ProxyServer) SetUsageStatsStore(store statsdb.UsageStatsStore) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.usageStats = store
+}
+
+func (p *ProxyServer) ReplaceUsageStatsStore(store statsdb.UsageStatsStore) statsdb.UsageStatsStore {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	old := p.usageStats
+	p.usageStats = store
+	return old
+}
+
+func (p *ProxyServer) GetUsageStatsStore() statsdb.UsageStatsStore {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.usageStats
 }
 
 // GetSSEHub returns the SSE hub.
@@ -681,6 +697,12 @@ func (p *ProxyServer) SetReloadFunc(fn func()) {
 	p.reloadFunc = fn
 }
 
+func (p *ProxyServer) SetDatabaseApplyFunc(fn func(dbconfig.Config) error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.databaseApplyFunc = fn
+}
+
 // handleReload handles config reload requests
 func (p *ProxyServer) handleReload(w http.ResponseWriter, r *http.Request) {
 	// 支持 GET 和 POST 方法
@@ -1040,6 +1062,29 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var pendingDBCfg *dbconfig.Config
+	if dbSource, ok := incoming.AppConfigKV[dbconfig.KeySource].(string); ok {
+		dbCfg, err := dbconfig.ResolveSource(configPath, dbSource)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"error": "invalid database config: " + err.Error(),
+			})
+			return
+		}
+		if err := testWebUIDatabaseConfig(dbCfg); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"error": "database test failed: " + err.Error(),
+			})
+			return
+		}
+		if incoming.AppConfigKV == nil {
+			incoming.AppConfigKV = make(map[string]interface{})
+		}
+		incoming.AppConfigKV[dbconfig.KeyDriver] = dbCfg.Driver
+		incoming.AppConfigKV[dbconfig.KeySource] = strings.TrimSpace(dbSource)
+		pendingDBCfg = &dbCfg
+	}
+
 	// Preflight plugin payload decode + plugin state snapshot for rollback.
 	pluginPlans := make([]pluginImportPlan, 0, len(pluginData))
 	pluginResults := map[string]interface{}{}
@@ -1158,6 +1203,18 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		pluginResults[plan.name] = map[string]interface{}{"synced": true}
 		if plan.name == "clash" {
 			clashSynced = true
+		}
+	}
+
+	if pendingDBCfg != nil {
+		p.mu.RLock()
+		applyDatabase := p.databaseApplyFunc
+		p.mu.RUnlock()
+		if applyDatabase != nil {
+			if err := applyDatabase(*pendingDBCfg); err != nil {
+				rollback(fmt.Errorf("database apply failed: %w", err))
+				return
+			}
 		}
 	}
 

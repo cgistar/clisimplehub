@@ -9,6 +9,7 @@ import type {
   CodexConfigForm,
   CodexEditForm,
   CodexPageData,
+  DatabaseTestResult,
   EndpointImportInput,
   EndpointImportResponse,
   HomePageData,
@@ -96,6 +97,14 @@ export const webApi = {
         listenAddr: payload.listenAddr,
         proxyUrl: payload.proxyUrl,
         clashPath: payload.clashPath,
+        dbSource: payload.dbSource,
+      }),
+    }),
+  testDatabaseConnection: (payload: Pick<SettingsForm, 'dbSource'>) =>
+    apiFetch<DatabaseTestResult>('/web/api/settings/database/test', {
+      method: 'POST',
+      body: JSON.stringify({
+        dbSource: payload.dbSource,
       }),
     }),
   getClashPathPicker: (path?: string) =>

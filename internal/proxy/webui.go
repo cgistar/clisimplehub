@@ -48,7 +48,20 @@ type webUISettings struct {
 	ListenAddr string `json:"listenAddr,omitempty"`
 	ProxyURL   string `json:"proxyUrl,omitempty"`
 	ClashPath  string `json:"clashPath,omitempty"`
+	DBDriver   string `json:"dbDriver,omitempty"`
+	DBSource   string `json:"dbSource,omitempty"`
 	ConfigPath string `json:"configPath,omitempty"`
+}
+
+type webUISettingsRequest struct {
+	Port       int     `json:"port"`
+	APIKey     string  `json:"apiKey"`
+	Fallback   bool    `json:"fallback"`
+	DebugMode  string  `json:"debugMode,omitempty"`
+	ListenAddr string  `json:"listenAddr,omitempty"`
+	ProxyURL   string  `json:"proxyUrl,omitempty"`
+	ClashPath  string  `json:"clashPath,omitempty"`
+	DBSource   *string `json:"dbSource,omitempty"`
 }
 
 type webUIPathPickerEntry struct {
@@ -212,6 +225,7 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Delete("/web/api/codex/accounts/{accountId}", p.requireWebUISession(p.handleWebUIDeleteCodexAccount))
 	r.Get("/web/api/settings", p.requireWebUISession(p.handleWebUISettings))
 	r.Post("/web/api/settings", p.requireWebUISession(p.handleWebUISaveSettings))
+	r.Post("/web/api/settings/database/test", p.requireWebUISession(p.handleWebUITestDatabase))
 	r.Get("/web/api/settings/clash/path-picker", p.requireWebUISession(p.handleWebUIClashPathPicker))
 	r.Get("/web/api/settings/webdav", p.requireWebUISession(p.handleWebUIGetWebDAVConfig))
 	r.Post("/web/api/settings/webdav", p.requireWebUISession(p.handleWebUISaveWebDAVConfig))
@@ -440,8 +454,9 @@ func (p *ProxyServer) handleWebUIHome(w http.ResponseWriter, r *http.Request) {
 	activeNameMap := make(map[string]string)
 	activeIDMap := make(map[string]int64)
 	var todayStats map[string]*statsdb.EndpointDailyStats
-	if p.usageStats != nil {
-		todayStats, _ = p.usageStats.GetTodayStatsByEndpoints(r.Context())
+	usageStats := p.GetUsageStatsStore()
+	if usageStats != nil {
+		todayStats, _ = usageStats.GetTodayStatsByEndpoints(r.Context())
 	}
 	for _, ep := range endpoints {
 		if ep == nil {
@@ -554,7 +569,8 @@ func parseWebUIStatsRange(raw string) (statsdb.TimeRange, bool) {
 }
 
 func (p *ProxyServer) handleWebUIStats(w http.ResponseWriter, r *http.Request) {
-	if p.usageStats == nil {
+	usageStats := p.GetUsageStatsStore()
+	if usageStats == nil {
 		writeJSON(w, http.StatusOK, []statsdb.InterfaceTypeStatsSummary{})
 		return
 	}
@@ -567,7 +583,7 @@ func (p *ProxyServer) handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := p.usageStats.GetStatsByInterfaceType(r.Context(), timeRange)
+	stats, err := usageStats.GetStatsByInterfaceType(r.Context(), timeRange)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
@@ -578,7 +594,8 @@ func (p *ProxyServer) handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProxyServer) handleWebUIClearStats(w http.ResponseWriter, r *http.Request) {
-	if p.usageStats == nil {
+	usageStats := p.GetUsageStatsStore()
+	if usageStats == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": "usage stats store not initialized",
 		})
@@ -593,7 +610,7 @@ func (p *ProxyServer) handleWebUIClearStats(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := p.usageStats.ClearStats(r.Context(), timeRange); err != nil {
+	if err := usageStats.ClearStats(r.Context(), timeRange); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
 		})
@@ -605,12 +622,13 @@ func (p *ProxyServer) handleWebUIClearStats(w http.ResponseWriter, r *http.Reque
 }
 
 func (p *ProxyServer) handleWebUIHourlyStats(w http.ResponseWriter, r *http.Request) {
-	if p.usageStats == nil {
+	usageStats := p.GetUsageStatsStore()
+	if usageStats == nil {
 		writeJSON(w, http.StatusOK, []statsdb.HourlyStatsSummary{})
 		return
 	}
 
-	stats, err := p.usageStats.GetTodayHourlyStats(r.Context())
+	stats, err := usageStats.GetTodayHourlyStats(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
@@ -934,8 +952,8 @@ func (p *ProxyServer) handleWebUIDeleteEndpoint(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if p.usageStats != nil {
-		if err := p.usageStats.DeleteStatsByEndpointID(r.Context(), id); err != nil {
+	if usageStats := p.GetUsageStatsStore(); usageStats != nil {
+		if err := usageStats.DeleteStatsByEndpointID(r.Context(), id); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error": err.Error(),
 			})
@@ -1298,7 +1316,7 @@ func (p *ProxyServer) handleWebUISaveSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var req webUISettings
+	var req webUISettingsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": "请求体格式无效",
@@ -1326,48 +1344,58 @@ func (p *ProxyServer) handleWebUISaveSettings(w http.ResponseWriter, r *http.Req
 	debugMode := strings.TrimSpace(req.DebugMode)
 	proxyURL := strings.TrimSpace(req.ProxyURL)
 	clashPath := strings.TrimSpace(req.ClashPath)
-
-	if err := p.store.SetConfig("port", strconv.Itoa(req.Port)); err != nil {
+	dbDriver := currentSettings.DBDriver
+	dbSource := currentSettings.DBSource
+	if req.DBSource != nil {
+		dbSource = strings.TrimSpace(*req.DBSource)
+	}
+	dbCfg, err := p.resolveWebUIDatabaseConfig(dbSource)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+	dbDriver = dbCfg.Driver
+	if dbCfg.Driver == "sqlite" && strings.TrimSpace(dbSource) == "" {
+		dbSource = currentSettings.DBSource
+		if req.DBSource != nil {
+			dbSource = ""
+		}
+	}
+	if err := p.store.SaveConfigValues(map[string]string{
+		"port":       strconv.Itoa(req.Port),
+		"apiKey":     newAPIKey,
+		"debugMode":  debugMode,
+		"listenAddr": listenAddr,
+		"proxyUrl":   proxyURL,
+		"clashPath":  clashPath,
+		"dbDriver":   dbDriver,
+		"dbSource":   dbSource,
+	}, map[string]bool{
+		"fallback": req.Fallback,
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
 		})
 		return
 	}
-	if err := p.store.SetConfig("apiKey", newAPIKey); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-	if err := p.store.SetConfigBool("fallback", req.Fallback); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-	if err := p.store.SetConfig("debugMode", debugMode); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-	if err := p.store.SetConfig("listenAddr", listenAddr); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-	if err := p.store.SetConfig("proxyUrl", proxyURL); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-	if err := p.store.SetConfig("clashPath", clashPath); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error": err.Error(),
-		})
-		return
+	if strings.TrimSpace(currentSettings.DBDriver) != dbDriver || strings.TrimSpace(currentSettings.DBSource) != dbSource {
+		p.mu.RLock()
+		applyDatabase := p.databaseApplyFunc
+		p.mu.RUnlock()
+		if applyDatabase == nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": "database apply function not configured",
+			})
+			return
+		}
+		if err := applyDatabase(dbCfg); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": "database apply failed: " + err.Error(),
+			})
+			return
+		}
 	}
 
 	oldAPIKey := strings.TrimSpace(p.getAuthKey())
@@ -1412,6 +1440,8 @@ func (p *ProxyServer) loadWebUISettings() (*webUISettings, error) {
 		ListenAddr: "0.0.0.0",
 		ProxyURL:   "",
 		ClashPath:  "",
+		DBDriver:   "sqlite",
+		DBSource:   "",
 		ConfigPath: p.getConfigPath(),
 	}
 
@@ -1437,6 +1467,12 @@ func (p *ProxyServer) loadWebUISettings() (*webUISettings, error) {
 	}
 	if clashPath, err := p.store.GetConfig("clashPath"); err == nil {
 		settings.ClashPath = strings.TrimSpace(clashPath)
+	}
+	if dbDriver, err := p.store.GetConfig("dbDriver"); err == nil && strings.TrimSpace(dbDriver) != "" {
+		settings.DBDriver = normalizeWebUIDatabaseDriver(dbDriver)
+	}
+	if dbSource, err := p.store.GetConfig("dbSource"); err == nil {
+		settings.DBSource = strings.TrimSpace(dbSource)
 	}
 	return settings, nil
 }

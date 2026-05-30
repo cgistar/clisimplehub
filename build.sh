@@ -111,6 +111,20 @@ split_platform() {
     echo "$os" "$arch"
 }
 
+is_desktop_platform() {
+    case "$1" in
+        darwin|linux|windows) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_server_platform() {
+    case "$1" in
+        darwin|linux|windows|freebsd) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Sign macOS app
 sign_macos_app() {
     local app_path=$1
@@ -343,7 +357,7 @@ package_server_variant() {
     fi
 
     local base="${variant_name}${VERSION}-${platform}-${arch}"
-    local package_bin_name="${variant_name%-proxy}${ext}"
+    local package_bin_name="cliSimpleHub${ext}"
     local bin_path="${staging_dir}/${package_bin_name}"
 
     local tags_args=()
@@ -392,6 +406,7 @@ usage() {
     echo "  macos       Build for macOS (amd64 and arm64)"
     echo "  linux       Build for Linux (amd64 and arm64)"
     echo "  windows     Build for Windows (amd64 and arm64)"
+    echo "  freebsd     Build headless server for FreeBSD (amd64 and arm64)"
     echo "  all         Build for all platforms"
     echo "  clean       Clean build artifacts"
     echo ""
@@ -449,6 +464,10 @@ build_targets() {
                 print_error "Invalid --platform: $p (expected OS/ARCH)"
                 exit 1
             fi
+            if ! is_desktop_platform "$os"; then
+                print_error "Desktop build does not support ${os}/${arch}; use '$0 server --platform ${os}/${arch}' for headless server builds"
+                exit 1
+            fi
             if [ "$os" != "${host_platform%%/*}" ]; then
                 print_warn "Desktop cross-build: host=${host_platform} target=${os}/${arch} (may require extra setup)"
             fi
@@ -461,6 +480,10 @@ build_targets() {
             read -r os arch <<<"$(split_platform "$p")"
             if [ -z "$os" ] || [ -z "$arch" ]; then
                 print_error "Invalid --platform: $p (expected OS/ARCH)"
+                exit 1
+            fi
+            if ! is_server_platform "$os"; then
+                print_error "Server build does not support ${os}/${arch}"
                 exit 1
             fi
             build_server_platform "$os" "$arch"
@@ -497,6 +520,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         windows)
             MODE="windows"
+            shift
+            ;;
+        freebsd)
+            MODE="freebsd"
             shift
             ;;
         all)
@@ -554,12 +581,19 @@ if [ "${#PLATFORMS[@]}" -eq 0 ]; then
         windows)
             PLATFORMS+=("windows/amd64" "windows/arm64")
             ;;
+        freebsd)
+            if [ "$TARGET" != "server" ]; then
+                print_error "FreeBSD is only supported for headless server builds; use: $0 server freebsd"
+                exit 1
+            fi
+            PLATFORMS+=("freebsd/amd64" "freebsd/arm64")
+            ;;
         all)
             if [ "$TARGET" = "desktop" ] || [ "$TARGET" = "both" ]; then
                 PLATFORMS+=("darwin/amd64" "darwin/arm64" "linux/amd64" "linux/arm64")
-                print_warn "Desktop 'all' excludes Windows by default (cross-build requires extra setup). Use: $0 desktop windows"
+                print_warn "Desktop 'all' excludes Windows and FreeBSD by default (cross-build/unsupported desktop target). Use: $0 desktop windows or $0 server freebsd"
             else
-                PLATFORMS+=("darwin/amd64" "darwin/arm64" "linux/amd64" "linux/arm64" "windows/amd64" "windows/arm64")
+                PLATFORMS+=("darwin/amd64" "darwin/arm64" "linux/amd64" "linux/arm64" "freebsd/amd64" "freebsd/arm64" "windows/amd64" "windows/arm64")
             fi
             ;;
         *)

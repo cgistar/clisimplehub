@@ -82,6 +82,7 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
   const [deletingFilename, setDeletingFilename] = useState<string>('')
   const [savingServer, setSavingServer] = useState<boolean>(false)
   const [testingServer, setTestingServer] = useState<boolean>(false)
+  const [testingDatabase, setTestingDatabase] = useState<boolean>(false)
   const [syncingServer, setSyncingServer] = useState<boolean>(false)
   const [copyingServerCurl, setCopyingServerCurl] = useState<boolean>(false)
   const [selectedServerIndex, setSelectedServerIndex] = useState<number>(-1)
@@ -423,6 +424,21 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
     }
   }
 
+  async function handleTestDatabase(): Promise<void> {
+    if (!form) return
+    setTestingDatabase(true)
+    try {
+      const result = await webApi.testDatabaseConnection({
+        dbSource: form.dbSource,
+      })
+      toast.success(result.dbSource ? `数据库连接成功：${result.dbSource}` : '数据库连接成功')
+    } catch (error) {
+      toast.error(`数据库连接测试失败：${toErrorMessage(error)}`)
+    } finally {
+      setTestingDatabase(false)
+    }
+  }
+
   async function handleSyncServer(): Promise<void> {
     if (!selectedServer) return
     if (!window.confirm(`确定同步配置到 ${selectedServer.name || selectedServer.url} 吗？`)) {
@@ -498,7 +514,6 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
           <div className="card-header">
             <div>
               <h2 className="card-title">基础设置</h2>
-              <div className="card-subtitle">对齐桌面版：支持监听、鉴权、调试、Fallback 与全局代理 URL</div>
             </div>
           </div>
 
@@ -536,7 +551,24 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
                     {pathPickerLoading ? '加载中...' : '选择'}
                   </button>
                 </div>
-                <div className="muted small">默认版仅在此路径已配置且文件存在时显示 Clash 页签</div>
+              </div>
+            </div>
+
+            <div className="field-row mt-14">
+              <div className="field field-span-2">
+                <label className="field-label">PostgreSQL DSN</label>
+                <div className="inline-field-action">
+                  <input
+                    className="input"
+                    value={form.dbSource}
+                    onChange={(event) => onChange({ ...form, dbSource: event.target.value })}
+                    placeholder="留空使用默认 data.sqlite；PostgreSQL 使用 postgres:// 或 postgresql:// 连接串"
+                  />
+                  <button type="button" className="btn" disabled={testingDatabase} onClick={() => void handleTestDatabase()}>
+                    {testingDatabase ? '测试中...' : '测试'}
+                  </button>
+                </div>
+                <div className="muted small">以 postgres:// 或 postgresql:// 开头时自动使用 PostgreSQL/pgx，否则使用 SQLite；Supabase/Neon 建议使用 pooler DSN。</div>
               </div>
             </div>
 
@@ -551,15 +583,15 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
 
             <div className="switch-row mt-14">
               <div>
-                <div>Fallback</div>
-                <div className="muted small">开启后，部分请求在无匹配路由时会走 fallback 逻辑</div>
+                <div>自动故障转移</div>
+                <div className="muted small">请求失败时根据端点优先级自动切换到下一个端点</div>
               </div>
               <input className="checkbox" type="checkbox" checked={!!form.fallback} onChange={(event) => updateField('fallback', event.target.checked)} />
             </div>
 
             <div className="actions mt-18">
               <button type="submit" className="btn primary" disabled={saving || !canSubmitGeneral}>
-                {saving ? '保存中...' : '保存基础设置'}
+                {saving ? '保存中...' : '保存设置'}
               </button>
             </div>
           </form>

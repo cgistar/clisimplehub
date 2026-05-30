@@ -21,6 +21,7 @@ function normalizeSettings(settings: SettingsPayload): SettingsPayload {
     apiKey: settings.apiKey || '',
     proxyUrl: settings.proxyUrl || '',
     clashPath: settings.clashPath || '',
+    dbSource: settings.dbSource || '',
     fallback: !!settings.fallback,
     debugMode: settings.debugMode || '',
     listenAddr: settings.listenAddr || ''
@@ -56,15 +57,16 @@ export function useSettings() {
   const feedback = useFeedback()
   const settingsStore = useSettingsStore()
 
-	  const settingsForm = ref<SettingsPayload>({
-	    port: 5600,
-	    apiKey: '',
-	    proxyUrl: '',
-	    clashPath: '',
-	    fallback: false,
-	    debugMode: '',
-	    listenAddr: ''
-	  })
+  const settingsForm = ref<SettingsPayload>({
+    port: 5600,
+    apiKey: '',
+    proxyUrl: '',
+    clashPath: '',
+    dbSource: '',
+    fallback: false,
+    debugMode: '',
+    listenAddr: ''
+  })
 
   const cliDirs = ref<CLIConfigDirsPayload>({
     claudeConfigDir: '',
@@ -156,6 +158,7 @@ export function useSettings() {
         ...settingsForm.value,
         proxyUrl: String(settingsForm.value.proxyUrl || '').trim(),
         clashPath: String(settingsForm.value.clashPath || '').trim(),
+        dbSource: String(settingsForm.value.dbSource || '').trim(),
         port
       })
       await endpointApi.reloadConfig()
