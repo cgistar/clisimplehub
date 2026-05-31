@@ -458,9 +458,10 @@ type codexStatsReadCloser struct {
 	store    codexShared.CodexAccountStore
 	stat     *codexShared.CodexAccountStat
 
-	lineBuf []byte
-	latest  *executor.TokenUsage
-	once    sync.Once
+	lineBuf         []byte
+	latest          *executor.TokenUsage
+	streamCompleted bool
+	once            sync.Once
 }
 
 func newCodexStatsReadCloser(upstream io.ReadCloser, store codexShared.CodexAccountStore, stat *codexShared.CodexAccountStat) io.ReadCloser {
@@ -507,6 +508,9 @@ func (r *codexStatsReadCloser) feed(chunk []byte) {
 		if tokens := tokensFromCodexStreamLine(line); tokens != nil {
 			r.latest = tokens
 		}
+		if _, ok := executor.CompletedStreamLineEvent(line); ok {
+			r.streamCompleted = true
+		}
 	}
 }
 
@@ -517,7 +521,7 @@ func (r *codexStatsReadCloser) finish(readErr error) {
 				r.latest = tokens
 			}
 		}
-		if readErr != nil && readErr != io.EOF {
+		if readErr != nil && readErr != io.EOF && !r.streamCompleted {
 			r.stat.Status = "error"
 			r.stat.ErrorType = readErr.Error()
 		}

@@ -35,6 +35,8 @@ type ForwardResult struct {
 	ResponseStream       string
 	Tokens               *TokenUsage
 	Streamed             bool
+	StreamCompleted      bool
+	StreamTerminalEvent  string
 	Error                error
 }
 

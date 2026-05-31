@@ -357,12 +357,14 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if debugLogger != nil {
 			debugLogger.SetMetadata("UpstreamURL", result.TargetURL)
 			debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", result.StatusCode))
-			if result.Error != nil {
+			if shouldReportUpstreamError(result) {
 				debugLogger.SetMetadata("UpstreamErrorStage", inferUpstreamErrorStage(result))
 				debugLogger.SetMetadata("UpstreamErrorTypeChain", formatErrorTypeChain(result.Error))
 				debugLogger.SetMetadata("UpstreamErrorIsEOF", fmt.Sprintf("%v", errors.Is(result.Error, io.EOF) || errors.Is(result.Error, io.ErrUnexpectedEOF)))
 				debugLogger.SetMetadata("UpstreamErrorIsCanceled", fmt.Sprintf("%v", isClientCanceledError(result.Error)))
 				debugLogger.SetMetadata("UpstreamErrorMessage", formatErrorMessageForMetadata(result.Error))
+			} else if result.StreamCompleted && result.StreamTerminalEvent != "" {
+				debugLogger.SetMetadata("StreamTerminalEvent", result.StreamTerminalEvent)
 			}
 		}
 	}
@@ -552,10 +554,10 @@ func statusFromExecuteResult(result *executor.ForwardResult) string {
 		return "error"
 	}
 	if result.Error != nil {
+		if isBenignCompletedStreamCancel(result) {
+			return "success"
+		}
 		if isClientCanceledError(result.Error) {
-			if isStreamCompleted(result) {
-				return "success"
-			}
 			return "canceled"
 		}
 		if result.StatusCode > 0 {
@@ -570,45 +572,24 @@ func statusFromExecuteResult(result *executor.ForwardResult) string {
 }
 
 func isClientCanceledError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.Canceled) {
-		return true
-	}
-	if errors.Is(err, io.ErrClosedPipe) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer")
+	return executor.IsClientCanceledError(err)
 }
 
-func isStreamCompleted(result *executor.ForwardResult) bool {
-	if result == nil || !result.Streamed || strings.TrimSpace(result.ResponseStream) == "" {
+func shouldReportUpstreamError(result *executor.ForwardResult) bool {
+	if result == nil || result.Error == nil {
 		return false
 	}
-	if result.StatusCode != http.StatusOK {
+	return !isBenignCompletedStreamCancel(result)
+}
+
+func isBenignCompletedStreamCancel(result *executor.ForwardResult) bool {
+	if result == nil || result.Error == nil {
 		return false
 	}
-
-	// 只检查尾部，避免全量扫描大响应
-	tail := result.ResponseStream
-	const maxTail = 8 * 1024
-	if len(tail) > maxTail {
-		tail = tail[len(tail)-maxTail:]
-	}
-
-	// OpenAI Responses SSE
-	if strings.Contains(tail, "event: response.completed") || strings.Contains(tail, "\"type\":\"response.completed\"") {
-		return true
-	}
-
-	// Chat Completions SSE
-	if strings.Contains(tail, "data: [DONE]") {
-		return true
-	}
-
-	return false
+	return result.Streamed &&
+		result.StreamCompleted &&
+		result.StatusCode == http.StatusOK &&
+		isClientCanceledError(result.Error)
 }
 
 func formatErrorMessageForMetadata(err error) string {

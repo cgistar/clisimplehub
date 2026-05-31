@@ -272,6 +272,7 @@ readLoop:
 		}
 
 		line := scanner.Bytes()
+		result.ObserveStreamLine(line)
 		if plan.Transformer == nil && shouldReverseClaudeMessagesOAuthTools(plan) {
 			line = appmiddleware.ReverseClaudeMessagesOAuthToolNamesFromStreamLineForExecutor(line)
 		}
@@ -331,6 +332,7 @@ readLoop:
 	if result.Tokens == nil {
 		result.Tokens = extractTokensFromStreamCapture(rawCapture.String())
 	}
+	normalizeCompletedStreamError(result)
 	return result
 }
 
@@ -438,6 +440,7 @@ readLoop:
 	if shouldCaptureUpstreamResponseBody(ctx) && len(rawCaptured) > 0 {
 		result.UpstreamResponseBody = capturedUpstreamResponseBody(rawCaptured)
 	}
+	normalizeCompletedStreamError(result)
 	return result
 }
 

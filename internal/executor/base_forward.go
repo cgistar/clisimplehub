@@ -98,6 +98,7 @@ func (e *BaseExecutor) handleStreamingResponse(ctx context.Context, w http.Respo
 		}
 
 		line := scanner.Bytes()
+		result.ObserveStreamLine(line)
 		capture.Write(line)
 		capture.WriteByte('\n')
 		if captureUpstream {
@@ -129,6 +130,7 @@ func (e *BaseExecutor) handleStreamingResponse(ctx context.Context, w http.Respo
 	if captureUpstream {
 		result.UpstreamResponseBody = capturedUpstreamResponseBody(upstream.Bytes())
 	}
+	normalizeCompletedStreamError(result)
 	return result
 }
 
