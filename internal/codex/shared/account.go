@@ -26,9 +26,9 @@ const (
 
 const (
 	DefaultCodexBaseURL       = "https://chatgpt.com/backend-api/codex"
-	DefaultCodexClientVersion = "0.128.0"
-	DefaultCodexOriginator    = "codex_cli_rs"
-	DefaultCodexUserAgent     = DefaultCodexOriginator + "/" + DefaultCodexClientVersion + " (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+	DefaultCodexClientVersion = "0.135.0"
+	DefaultCodexOriginator    = "codex-tui"
+	DefaultCodexUserAgent     = DefaultCodexOriginator + "/" + DefaultCodexClientVersion + " (Mac OS 26.0.1; arm64) Apple_Terminal/464(" + DefaultCodexOriginator + "; " + DefaultCodexClientVersion + ")"
 )
 
 type CodexUsageSnapshot struct {

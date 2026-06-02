@@ -4,8 +4,10 @@ package logger
 import (
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -153,6 +155,14 @@ func (r *RequestDebugLogger) SetSection(name, content string) {
 	r.sections[name] = content
 }
 
+// SetOriginalHeader 记录下游请求进入系统时的 header，敏感值会被掩码。
+func (r *RequestDebugLogger) SetOriginalHeader(headers http.Header) {
+	if r == nil {
+		return
+	}
+	r.SetSection("OriginalHeader", FormatHeaderForDebug(headers))
+}
+
 // SetRawSection 设置一个二进制段落（会 base64 编码保存）
 func (r *RequestDebugLogger) SetRawSection(name string, data []byte) {
 	if r == nil || len(data) == 0 {
@@ -267,9 +277,10 @@ func (r *RequestDebugLogger) buildContent() string {
 
 	// 写入文本段落（按固定顺序）
 	sectionOrder := []string{
-		"OriginalRequest",    // 原始访问请求
-		"TransformedRequest", // 转换器转换后的请求
-		"UpstreamRequestHeaders",
+		"OriginalHeader",         // 原始访问请求 header
+		"UpstreamRequestHeaders", // 实际发给上游的 header
+		"OriginalRequest",        // 原始访问请求
+		"TransformedRequest",     // 转换器转换后的请求
 		"UpstreamResponseHeaders",
 		"UpstreamError",
 		"UpstreamResponseBody",
@@ -309,6 +320,64 @@ func (r *RequestDebugLogger) buildContent() string {
 	}
 
 	return content.String()
+}
+
+// FormatHeaderForDebug 将 header 转成稳定文本，避免调试文件泄漏认证信息。
+func FormatHeaderForDebug(headers http.Header) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var content strings.Builder
+	for _, key := range keys {
+		values := headers.Values(key)
+		if len(values) == 0 {
+			content.WriteString(fmt.Sprintf("%s:\n", key))
+			continue
+		}
+		for _, value := range values {
+			content.WriteString(fmt.Sprintf("%s: %s\n", key, maskHeaderValueForDebug(key, value)))
+		}
+	}
+	return strings.TrimRight(content.String(), "\n")
+}
+
+func maskHeaderValueForDebug(key, value string) string {
+	if !isSensitiveHeader(key) {
+		return value
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return "***"
+}
+
+func isSensitiveHeader(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
+	case "authorization",
+		"x-api-key",
+		"api-key",
+		"openai-api-key",
+		"anthropic-auth-token",
+		"cookie",
+		"set-cookie",
+		"session",
+		"session_id",
+		"refresh-token",
+		"refresh_token",
+		"access-token",
+		"access_token":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *RequestDebugLogger) writeSection(content *strings.Builder, name, sectionContent string) {

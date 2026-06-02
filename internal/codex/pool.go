@@ -162,12 +162,12 @@ func (p *CodexAccountPool) MarkFailed(accountId string, status shared.CodexAccou
 	}
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	if p.failed == nil {
 		p.failed = make(map[string]shared.CodexAccountStatus)
 	}
 
+	shouldPersistStatus := status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused
 	if status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused {
 		p.failed[id] = status
 	}
@@ -190,20 +190,6 @@ func (p *CodexAccountPool) MarkFailed(accountId string, status shared.CodexAccou
 		}
 	}
 
-	// Async persist to store
-	if p.store != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if status == shared.CodexStatusBanned || status == shared.CodexStatusExhausted || status == shared.CodexStatusReused {
-				_ = p.store.UpdateStatus(ctx, id, status)
-			}
-			if cooldownDuration > 0 {
-				_ = p.store.UpdateCooldown(ctx, id, cooldownUntil, cooldownReason)
-			}
-		}()
-	}
-
 	mode := p.config.GetRotationMode()
 	if mode == shared.RotationFailover {
 		if p.activeAccountID == id {
@@ -216,6 +202,19 @@ func (p *CodexAccountPool) MarkFailed(accountId string, status shared.CodexAccou
 	}
 	if mode == shared.RotationLoadBalance {
 		p.resetWRR()
+	}
+	store := p.store
+	p.mu.Unlock()
+
+	if store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if shouldPersistStatus {
+			_ = store.UpdateStatus(ctx, id, status)
+		}
+		if cooldownDuration > 0 {
+			_ = store.UpdateCooldown(ctx, id, cooldownUntil, cooldownReason)
+		}
 	}
 	return nil
 }

@@ -177,7 +177,7 @@ func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Cont
 	if err != nil {
 		return nil, false, err
 	}
-	preparedBody, upstreamHeaders, err := codexBackend.PrepareWebsocket(ctx, codexBackend.Request{
+	preparedBody, upstreamHeaders, identityState, err := codexBackend.PrepareWebsocket(ctx, codexBackend.Request{
 		Path:           requestPath,
 		Source:         codexBackend.SourceCodex,
 		Model:          extractModelFromBody(requestJSON),
@@ -212,7 +212,7 @@ func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Cont
 		return nil, true, err
 	}
 
-	completedOutput, err := forwardUpstreamWebsocketToDownstream(ctx, upstreamConn, downstream, sessionKey)
+	completedOutput, err := forwardUpstreamWebsocketToDownstream(ctx, upstreamConn, downstream, sessionKey, identityState)
 	if err != nil {
 		if wsErr, ok := err.(*codexWebsocketUpstreamError); ok {
 			markCodexWebsocketUpstreamError(pool, account, wsErr)
@@ -289,7 +289,7 @@ func markCodexWebsocketAuthError(pool *codex.CodexAccountPool, account *codexSha
 		switch {
 		case strings.Contains(errStr, "refresh_token_reused"):
 			pool.MarkFailed(account.ID, codexShared.CodexStatusReused, 0, "refresh_token_reused")
-		case strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403"):
+		case strings.Contains(errStr, "invalid_grant"):
 			pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 0, "auth_failed")
 		}
 	}
@@ -300,8 +300,6 @@ func markCodexWebsocketHandshakeStatus(pool *codex.CodexAccountPool, account *co
 		return
 	}
 	switch resp.StatusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "websocket_auth_failed")
 	case http.StatusPaymentRequired:
 		pool.MarkFailed(account.ID, codexShared.CodexStatusExhausted, 0, "websocket_quota_exhausted")
 	case http.StatusTooManyRequests:
@@ -318,8 +316,6 @@ func markCodexWebsocketUpstreamError(pool *codex.CodexAccountPool, account *code
 		return
 	}
 	switch strings.ToLower(strings.TrimSpace(upstreamErr.errorType)) {
-	case "authentication_error", "permission_error":
-		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "websocket_upstream_auth_error")
 	case "rate_limit_error":
 		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, time.Minute, "websocket_upstream_rate_limit")
 	}
@@ -457,7 +453,7 @@ func isCodexWebsocketRetryableErrorType(errorType string) bool {
 	}
 }
 
-func forwardUpstreamWebsocketToDownstream(ctx context.Context, upstream, downstream *websocket.Conn, sessionKey string) ([]byte, error) {
+func forwardUpstreamWebsocketToDownstream(ctx context.Context, upstream, downstream *websocket.Conn, sessionKey string, identityState codexBackend.IdentityState) ([]byte, error) {
 	completedOutput := []byte("[]")
 	for {
 		if ctx != nil && ctx.Err() != nil {
@@ -473,6 +469,7 @@ func forwardUpstreamWebsocketToDownstream(ctx context.Context, upstream, downstr
 		}
 		if msgType == websocket.TextMessage {
 			payload = normalizeCodexWebsocketCompletion(bytes.TrimSpace(payload))
+			payload = codexBackend.ExposeIdentityPayload(payload, identityState)
 			recordResponsesWebsocketToolCallsFromPayload(sessionKey, payload)
 			if output := responseCompletedOutputFromWebsocketPayload(payload); output != nil {
 				completedOutput = output

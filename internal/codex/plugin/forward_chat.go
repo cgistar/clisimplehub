@@ -39,6 +39,7 @@ func (s *CodexService) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		debugLogger.SetMetadata("Method", r.Method)
 		debugLogger.SetMetadata("Streaming", fmt.Sprintf("%v", isStreaming))
 		debugLogger.SetMetadata("ChatConversion", "true")
+		debugLogger.SetOriginalHeader(r.Header)
 		debugLogger.SetSection("OriginalRequest", string(body))
 		defer func() { _ = debugLogger.Flush() }()
 	}

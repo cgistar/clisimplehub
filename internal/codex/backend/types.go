@@ -50,6 +50,20 @@ type Result struct {
 	Error         error
 }
 
+type IdentityState struct {
+	enabled                bool
+	authID                 string
+	originalPromptCacheKey string
+	promptCacheKey         string
+	turnIDs                []identityReplacement
+	installations          []identityReplacement
+}
+
+type identityReplacement struct {
+	original string
+	confused string
+}
+
 type StatusError struct {
 	Code       int
 	Body       []byte

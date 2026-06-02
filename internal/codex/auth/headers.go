@@ -80,7 +80,6 @@ func (b *HeaderBuilder) ApplyTo(req *http.Request) {
 
 	if b.accountID != "" {
 		req.Header.Set("Chatgpt-Account-Id", b.accountID)
-		req.Header.Set("ChatGPT-Account-ID", b.accountID)
 	}
 }
 
@@ -108,7 +107,6 @@ func (b *HeaderBuilder) BuildHeaders() map[string]string {
 
 	if b.accountID != "" {
 		headers["Chatgpt-Account-Id"] = b.accountID
-		headers["ChatGPT-Account-ID"] = b.accountID
 	}
 
 	return headers

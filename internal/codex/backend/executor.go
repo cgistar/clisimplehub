@@ -27,7 +27,7 @@ func Execute(ctx context.Context, req Request) (*Result, error) {
 	var targetURL string
 	var targetHeaders map[string]string
 	for attempt := 1; attempt <= attempts; attempt++ {
-		httpReq, body, imageMeta, err := Prepare(ctx, req)
+		httpReq, body, imageMeta, identityState, err := Prepare(ctx, req)
 		if err != nil {
 			return &Result{Error: err}, err
 		}
@@ -37,7 +37,7 @@ func Execute(ctx context.Context, req Request) (*Result, error) {
 
 		resp, err := client.Do(httpReq)
 		if err == nil {
-			return resultFromHTTPResponse(ctx, resp, req, targetURL, targetHeaders, preparedBody, imageMeta)
+			return resultFromHTTPResponse(ctx, resp, req, targetURL, targetHeaders, preparedBody, imageMeta, identityState)
 		}
 		lastErr = err
 		if attempt < attempts {
@@ -62,7 +62,7 @@ func Execute(ctx context.Context, req Request) (*Result, error) {
 	}, err
 }
 
-func resultFromHTTPResponse(ctx context.Context, resp *http.Response, req Request, targetURL string, targetHeaders map[string]string, requestBody []byte, imageMeta *imagePreparedRequest) (*Result, error) {
+func resultFromHTTPResponse(ctx context.Context, resp *http.Response, req Request, targetURL string, targetHeaders map[string]string, requestBody []byte, imageMeta *imagePreparedRequest, identityState IdentityState) (*Result, error) {
 	if resp == nil {
 		err := fmt.Errorf("nil upstream response")
 		return &Result{TargetURL: targetURL, TargetHeaders: targetHeaders, RequestBody: requestBody, Error: err}, err
@@ -76,11 +76,11 @@ func resultFromHTTPResponse(ctx context.Context, resp *http.Response, req Reques
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && req.IsStreaming && !IsCompactPath(req.Path) && !IsImagesPath(req.Path) {
-		result.Stream = resp.Body
+		result.Stream = NewIdentityExposeReadCloser(resp.Body, identityState)
 		return result, nil
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && req.IsStreaming && IsImagesPath(req.Path) {
-		result.Stream = BuildOpenAIImageStream(ctx, resp.Body, req, imageMeta)
+		result.Stream = BuildOpenAIImageStream(ctx, NewIdentityExposeReadCloser(resp.Body, identityState), req, imageMeta)
 		result.Headers.Set("Content-Type", "text/event-stream")
 		result.Headers.Del("Content-Length")
 		return result, nil
@@ -96,6 +96,7 @@ func resultFromHTTPResponse(ctx context.Context, resp *http.Response, req Reques
 		result.Error = fmt.Errorf("close response: %w", closeErr)
 		return result, result.Error
 	}
+	data = ExposeIdentityPayload(data, identityState)
 	result.Body = data
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		statusErr := NewStatusError(resp.StatusCode, data, time.Now())

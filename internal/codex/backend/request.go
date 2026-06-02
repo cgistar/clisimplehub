@@ -33,7 +33,7 @@ type promptCacheEntry struct {
 	Expire time.Time
 }
 
-func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePreparedRequest, error) {
+func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePreparedRequest, IdentityState, error) {
 	body := append([]byte(nil), req.Body...)
 	path := TargetPath(req.Path)
 	var imageMeta *imagePreparedRequest
@@ -60,7 +60,7 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 			}
 		}
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, IdentityState{}, err
 		}
 	} else {
 		body = finalizeResponsesBody(body, req.Model, req.PlanType)
@@ -68,22 +68,24 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 
 	targetURL := UpstreamURL(req.Config, path)
 	body, headers := applyPromptCache(req.Source, body, req.OriginalBody, req.Headers, req.Model, req.LocalAccountID)
+	body, headers, identityState := applyIdentityConfuse(req.LocalAccountID, body, headers)
 	httpReq, err := http.NewRequestWithContext(ctx, methodOrPost(req.Method), targetURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, IdentityState{}, err
 	}
 	ApplyHeaders(httpReq, req.AccessToken, req.AccountID, req.IsStreaming || IsImagesPath(req.Path), req.Config, headers)
-	return httpReq, body, imageMeta, nil
+	return httpReq, body, imageMeta, identityState, nil
 }
 
-func PrepareWebsocket(ctx context.Context, req Request) ([]byte, http.Header, error) {
+func PrepareWebsocket(ctx context.Context, req Request) ([]byte, http.Header, IdentityState, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	body := append([]byte(nil), req.Body...)
 	body = finalizeResponsesBody(body, req.Model, req.PlanType)
 	body, headers := applyPromptCache(req.Source, body, req.OriginalBody, req.Headers, req.Model, req.LocalAccountID)
-	return BuildWebsocketRequestBody(body), ApplyWebsocketHeaders(req.AccessToken, req.AccountID, req.Config, headers), nil
+	body, headers, identityState := applyIdentityConfuse(req.LocalAccountID, body, headers)
+	return BuildWebsocketRequestBody(body), ApplyWebsocketHeaders(req.AccessToken, req.AccountID, req.Config, headers), identityState, nil
 }
 
 func BuildWebsocketRequestBody(body []byte) []byte {
@@ -259,6 +261,10 @@ func ApplyHeaders(req *http.Request, accessToken, accountID string, isStreaming 
 	} else if val := filtered.Get("Session_id"); val != "" {
 		req.Header.Set("Session_id", val)
 	}
+	copyHeaderIfPresent(req.Header, filtered, "Session-Id")
+	copyHeaderIfPresent(req.Header, filtered, "Conversation_id")
+	copyHeaderIfPresent(req.Header, filtered, "Thread-Id")
+	copyHeaderIfPresent(req.Header, filtered, "X-Codex-Window-Id")
 
 	if isStreaming {
 		req.Header.Set("Accept", "text/event-stream")
@@ -288,8 +294,17 @@ func ApplyHeaders(req *http.Request, accessToken, accountID string, isStreaming 
 	}
 }
 
+func copyHeaderIfPresent(dst http.Header, src http.Header, key string) {
+	if dst == nil || src == nil {
+		return
+	}
+	if val := strings.TrimSpace(headerValueCaseInsensitive(src, key)); val != "" {
+		setHeaderCasePreserved(dst, key, val)
+	}
+}
+
 func ApplyWebsocketHeaders(accessToken, accountID string, config *codexShared.CodexMultiConfig, clientHeaders http.Header) http.Header {
-	req, _ := http.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", nil)
+	req, _ := http.NewRequest(http.MethodPost, UpstreamURL(config, "/responses"), nil)
 	ApplyHeaders(req, accessToken, accountID, true, config, clientHeaders)
 	headers := req.Header.Clone()
 
@@ -327,12 +342,16 @@ func FilterClientHeaders(clientHeaders http.Header) http.Header {
 	for _, key := range []string{
 		"Version",
 		"Session_id",
+		"Session-Id",
+		"Conversation_id",
 		"X-Codex-Beta-Features",
 		"X-Codex-Turn-Metadata",
 		"X-Client-Request-Id",
+		"Thread-Id",
+		"X-Codex-Window-Id",
 		"Originator",
 	} {
-		if val := strings.TrimSpace(clientHeaders.Get(key)); val != "" {
+		if val := strings.TrimSpace(headerValueCaseInsensitive(clientHeaders, key)); val != "" {
 			filtered.Set(key, val)
 		}
 	}

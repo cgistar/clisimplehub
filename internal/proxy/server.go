@@ -422,6 +422,8 @@ func detectGatewayInterfaceTypeByUserAgent(userAgent string) (InterfaceType, boo
 	switch {
 	case strings.Contains(ua, "codex_cli_rs"):
 		return InterfaceTypeCodex, true
+	case strings.Contains(ua, "claude-tui"):
+		return InterfaceTypeCodex, true
 	case strings.Contains(ua, "claude-cli"):
 		return InterfaceTypeClaude, true
 	default:

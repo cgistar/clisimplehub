@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -193,6 +194,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	requestID := uuid.New().String()
 
+	originalHeaders := r.Header.Clone()
 	reqHeaders := sanitizeHeadersForLog(r.Header)
 	interfaceType := p.detectInterfaceTypeForRequest(r)
 	isAnthropic := isAnthropicRequest(interfaceType, r.URL.Path)
@@ -320,6 +322,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		debugLogger.SetMetadata("Transformer", endpoint.Transformer)
 		debugLogger.Log("请求开始")
 		// 记录原始请求
+		debugLogger.SetOriginalHeader(originalHeaders)
 		debugLogger.SetSection("OriginalRequest", string(bodyBytes))
 	}
 
@@ -357,6 +360,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if debugLogger != nil {
 			debugLogger.SetMetadata("UpstreamURL", result.TargetURL)
 			debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", result.StatusCode))
+			if len(result.TargetHeaders) > 0 {
+				debugLogger.SetSection("UpstreamRequestHeaders", formatTargetHeadersForDebug(result.TargetHeaders))
+			}
 			if shouldReportUpstreamError(result) {
 				debugLogger.SetMetadata("UpstreamErrorStage", inferUpstreamErrorStage(result))
 				debugLogger.SetMetadata("UpstreamErrorTypeChain", formatErrorTypeChain(result.Error))
@@ -621,4 +627,21 @@ func targetHeadersFromResult(result *executor.ForwardResult) map[string]string {
 		return nil
 	}
 	return result.TargetHeaders
+}
+
+func formatTargetHeadersForDebug(headers map[string]string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	for _, key := range keys {
+		b.WriteString(fmt.Sprintf("%s: %s\n", key, headers[key]))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

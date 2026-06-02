@@ -405,22 +405,24 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		enabled = *dto.Enabled
 	}
 	account := codexShared.CodexAccount{
-		ID:           localID,
-		RefreshToken: dto.RefreshToken,
-		AccessToken:  dto.AccessToken,
-		IDToken:      dto.IDToken,
-		AccountID:    dto.AccountID,
-		Email:        dto.Email,
-		PlanType:     dto.PlanType,
-		Enabled:      enabled,
-		Websockets:   dto.Websockets,
-		Password:     dto.Password,
-		MFACode:      dto.MFACode,
-		ProxyUrl:     dto.ProxyUrl,
-		Weight:       dto.Weight,
-		Status:       codexShared.CodexStatusValid,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:             localID,
+		RefreshToken:   dto.RefreshToken,
+		AccessToken:    dto.AccessToken,
+		IDToken:        dto.IDToken,
+		AccountID:      dto.AccountID,
+		Email:          dto.Email,
+		PlanType:       dto.PlanType,
+		Enabled:        enabled,
+		Websockets:     dto.Websockets,
+		Password:       dto.Password,
+		MFACode:        dto.MFACode,
+		ProxyUrl:       dto.ProxyUrl,
+		Weight:         dto.Weight,
+		Status:         codexShared.CodexStatusValid,
+		CooldownUntil:  time.Time{},
+		CooldownReason: "",
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if dto.ExpiresAt != "" {
 		if t, err := time.Parse(time.RFC3339, dto.ExpiresAt); err == nil {
@@ -447,6 +449,7 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	}
 
 	if svc := p.GetService(); svc != nil {
+		svc.RemoveAuthManager(account.ID)
 		svc.ensureCodexEndpoint()
 	}
 

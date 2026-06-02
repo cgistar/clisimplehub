@@ -112,6 +112,7 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 	}
 
 	var lastErr error
+	excluded := make(map[string]bool)
 	for attempt := 0; attempt < maxRetryAccounts; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -123,7 +124,10 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 		if attempt == 0 {
 			account = firstAccount
 		} else {
-			account = pool.Select()
+			if mode == codexShared.RotationFixed {
+				break
+			}
+			account = pool.SelectExcluding(excluded)
 			if account == nil {
 				if debugLogger != nil {
 					debugLogger.Log("第 %d 次尝试：无可用账号", attempt+1)
@@ -147,6 +151,7 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 		if !retryable {
 			return upstream
 		}
+		excluded[strings.TrimSpace(account.ID)] = true
 		lastErr = upstream.Error
 		if debugLogger != nil {
 			debugLogger.Log("账号失败，准备重试: %v", lastErr)
@@ -202,8 +207,15 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 				TargetURL:  upstreamURL,
 			}, true
 		}
-		if strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
+		if strings.Contains(errStr, "invalid_grant") {
 			pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 0, "auth_failed")
+			return &executor.UpstreamRoundTripResult{
+				StatusCode: http.StatusUnauthorized,
+				Error:      fmt.Errorf("auth failed: %v", err),
+				TargetURL:  upstreamURL,
+			}, true
+		}
+		if strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
 			return &executor.UpstreamRoundTripResult{
 				StatusCode: http.StatusUnauthorized,
 				Error:      fmt.Errorf("auth failed: %v", err),
@@ -310,7 +322,6 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 				}
 			}
 		}
-		pool.MarkFailed(account.ID, codexShared.CodexStatusBanned, 24*time.Hour, "unauthorized")
 		return &executor.UpstreamRoundTripResult{
 			StatusCode:    backendResult.StatusCode,
 			Body:          respBody,

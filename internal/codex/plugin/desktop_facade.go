@@ -1125,7 +1125,7 @@ func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL strin
 	}
 
 	body := []byte(`{"model":"gpt-5.4-mini","reasoning":{"effort":"medium"},"instructions":"You are Codex, based on GPT-5.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Say 'OK' only"}]}],"stream":true,"store":false}`)
-	req, _, _, err := codexBackend.Prepare(ctx, codexBackend.Request{
+	req, _, _, _, err := codexBackend.Prepare(ctx, codexBackend.Request{
 		Method:      http.MethodPost,
 		Path:        "/v1/responses",
 		Source:      codexBackend.SourceCodex,

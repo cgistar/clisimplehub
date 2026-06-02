@@ -125,6 +125,7 @@ func (s *CodexService) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		debugLogger.SetMetadata("Method", r.Method)
 		debugLogger.SetMetadata("Streaming", fmt.Sprintf("%v", isStreaming))
 		debugLogger.Log("Codex 请求开始")
+		debugLogger.SetOriginalHeader(r.Header)
 		debugLogger.SetSection("OriginalRequest", string(processedBody))
 		defer func() {
 			if debugLogger != nil {
