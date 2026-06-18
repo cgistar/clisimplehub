@@ -239,6 +239,14 @@ func (a *App) UpdateCodexAccount(dto *CodexAccountDTO) error {
 	return cp.UpdateAccount(a.getCodexMultiConfigPath(), dtoJSON)
 }
 
+func (a *App) RestoreCodexAccount(accountId string) error {
+	cp := codexProvider()
+	if cp == nil {
+		return fmt.Errorf("codex plugin not available")
+	}
+	return cp.RestoreAccount(a.getCodexMultiConfigPath(), accountId)
+}
+
 func (a *App) DeleteCodexAccount(accountId string) error {
 	cp := codexProvider()
 	if cp == nil {

@@ -293,6 +293,38 @@ func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage
 	return nil
 }
 
+func (d *desktopFacade) RestoreAccount(configPath, accountId string) error {
+	accountId = strings.TrimSpace(accountId)
+	if accountId == "" {
+		return fmt.Errorf("accountId is required")
+	}
+
+	store := getStore()
+	if store == nil {
+		return fmt.Errorf("account store not initialized")
+	}
+
+	account, err := store.GetByID(context.Background(), accountId)
+	if err != nil || account == nil {
+		return fmt.Errorf("account not found: %s", accountId)
+	}
+
+	if err := store.UpdateCooldown(context.Background(), account.ID, time.Time{}, ""); err != nil {
+		return fmt.Errorf("clear cooldown failed: %w", err)
+	}
+	if err := store.UpdateStatus(context.Background(), account.ID, codexShared.CodexStatusValid); err != nil {
+		return fmt.Errorf("update account status failed: %w", err)
+	}
+
+	if svc := getService(); svc != nil {
+		svc.RemoveAuthManager(account.ID)
+	}
+	if pool := codex.GetPool(); pool != nil {
+		pool.Reload()
+	}
+	return nil
+}
+
 func (d *desktopFacade) DeleteAccount(configPath, accountId string) error {
 	accountId = strings.TrimSpace(accountId)
 	if accountId == "" {

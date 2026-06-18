@@ -78,6 +78,11 @@ export const webApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  restoreCodexAccount: (accountId: string) =>
+    apiFetch<ActionResponse>('/web/api/codex/accounts/restore', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
   deleteCodexAccount: (accountId: string) =>
     apiFetch<ActionResponse>(`/web/api/codex/accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' }),
   saveCodexConfig: (payload: CodexConfigForm) =>

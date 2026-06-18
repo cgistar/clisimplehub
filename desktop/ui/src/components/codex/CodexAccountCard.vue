@@ -44,7 +44,12 @@
         :remaining-seconds="account.codexUsage.secondary.remainingSeconds"
       />
       <div class="today-usage">
-        {{ t('codex.todayUsage') }}: {{ account.todayRequests || 0 }}{{ t('codex.requestUnit') }} / {{ formatTokens(account.todayTotalTokens || 0) }}
+        <span>
+          {{ t('codex.todayUsage') }}: {{ account.todayRequests || 0 }}{{ t('codex.requestUnit') }} / {{ formatTokens(account.todayTotalTokens || 0) }}
+        </span>
+        <span v-if="subscriptionActiveUntil" class="subscription-active-until">
+          {{ subscriptionActiveUntil }}
+        </span>
       </div>
       <div v-if="account.proxyUrl" class="proxy-info">
         {{ t('codex.proxy') }}: {{ truncateText(account.proxyUrl, 30) }}
@@ -257,6 +262,10 @@ const canActivate = computed(() =>
   props.account.status !== 'reused'
 )
 
+const subscriptionActiveUntil = computed(() => {
+  return formatSubscriptionActiveUntil(getCodexSubscriptionActiveUntil(props.account.idToken))
+})
+
 onMounted(() => {
   expireTickTimer = setInterval(() => {
     nowTick.value = Date.now()
@@ -292,6 +301,57 @@ function truncateToken(token?: string): string {
 function truncateText(text: string | undefined, maxLength: number): string {
   if (!text || text.length <= maxLength) return text || ''
   return text.substring(0, maxLength) + '...'
+}
+
+function decodeBase64Url(value: string): string {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+  const binary = atob(padded)
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function getCodexSubscriptionActiveUntil(idToken?: string): string {
+  if (!idToken) return ''
+
+  const parts = idToken.split('.')
+  if (parts.length < 2 || !parts[1]) return ''
+
+  try {
+    const claims: unknown = JSON.parse(decodeBase64Url(parts[1]))
+    if (!isRecord(claims)) return ''
+
+    const authClaims = claims['https://api.openai.com/auth']
+    if (!isRecord(authClaims)) return ''
+
+    const activeUntil = authClaims.chatgpt_subscription_active_until
+    return typeof activeUntil === 'string' ? activeUntil : ''
+  } catch {
+    return ''
+  }
+}
+
+function formatSubscriptionActiveUntil(value: string): string {
+  const raw = value.trim()
+  if (!raw) return ''
+
+  const normalized = raw.replace(' ', 'T')
+  const matched = normalized.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})/)
+  if (matched) return `${matched[1]}T${matched[2]}`
+
+  const ms = Date.parse(raw)
+  if (!Number.isFinite(ms)) return ''
+
+  const date = new Date(ms)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hour}`
 }
 
 function formatTokens(tokens: number | undefined): string {
@@ -375,9 +435,19 @@ function formatTokens(tokens: number | undefined): string {
 }
 
 .today-usage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   color: var(--text-secondary);
   margin-top: 4px;
+}
+
+.subscription-active-until {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .proxy-info {

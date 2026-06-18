@@ -50,6 +50,14 @@ function isCodexChatGPTAuth(auth: Record<string, unknown>): boolean {
   return typeof auth.auth_mode === 'string' && auth.auth_mode.trim().toLowerCase() === 'chatgpt'
 }
 
+function setCodexOpenAIAPIKey(auth: Record<string, unknown>, apiKey: string): void {
+  if (isCodexChatGPTAuth(auth)) {
+    auth.OPENAI_API_KEY = null
+    return
+  }
+  auth.OPENAI_API_KEY = apiKey
+}
+
 function tomlLineKey(line: string): string {
   const separatorIndex = line.indexOf('=')
   if (separatorIndex < 0) return ''
@@ -185,7 +193,7 @@ async function applyCodexEndpointUrl(apiUrl: string, apiKey?: string): Promise<v
   )
 
   if (apiKey) {
-    auth.OPENAI_API_KEY = apiKey
+    setCodexOpenAIAPIKey(auth, apiKey)
   }
 
   await App.SaveCodexConfig(newConfigToml, JSON.stringify(auth, null, 2))

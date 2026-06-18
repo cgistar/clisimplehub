@@ -339,6 +339,26 @@ export default function App() {
     }
   }
 
+  async function handleRestoreCodexAccount(accountId: string): Promise<void> {
+    setCodexEditSaving(true)
+    try {
+      const result = await webApi.restoreCodexAccount(accountId)
+      toast.success(result.message || '账号已恢复正常')
+      setCodexEditDialogOpen(false)
+      await refreshCurrentPage('codex')
+    } catch (error) {
+      const apiError = error as ApiError
+      if (apiError.status === 401 || apiError.status === 403) {
+        setAuthenticated(false)
+        setGlobalError('登录状态已失效，请重新登录')
+      } else {
+        toast.error(apiError.message || '恢复 Codex 账号失败')
+      }
+    } finally {
+      setCodexEditSaving(false)
+    }
+  }
+
   async function handleSaveSettings(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (!settingsForm) return
@@ -459,7 +479,7 @@ export default function App() {
       </main>
 
       <CodexConfigDialog open={codexConfigDialogOpen} form={codexConfigForm} saving={codexConfigSaving} onClose={handleCloseCodexConfig} onChange={setCodexConfigForm} onSubmit={handleSaveCodexConfig} />
-      <CodexEditDialog open={codexEditDialogOpen} form={codexEditForm} saving={codexEditSaving} onClose={handleCloseCodexEdit} onChange={setCodexEditForm} onSubmit={handleSaveCodexEdit} />
+      <CodexEditDialog open={codexEditDialogOpen} form={codexEditForm} saving={codexEditSaving} onClose={handleCloseCodexEdit} onChange={setCodexEditForm} onRestore={handleRestoreCodexAccount} onSubmit={handleSaveCodexEdit} />
       <CodexImportDialog open={codexImportDialogOpen} onClose={handleCloseCodexImport} onSuccess={() => refreshCurrentPage('codex')} />
       <HomeStatsDialog open={homeStatsDialogOpen} onClose={() => setHomeStatsDialogOpen(false)} onCleared={() => refreshCurrentPage('home')} onAuthExpired={handleAuthExpired} />
       <EndpointImportDialog open={endpointImportDialogOpen} onClose={() => setEndpointImportDialogOpen(false)} onSuccess={() => refreshCurrentPage('home')} onAuthExpired={handleAuthExpired} />

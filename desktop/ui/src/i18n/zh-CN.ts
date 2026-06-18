@@ -245,6 +245,9 @@ export default {
     enabledLabel: '启用账号',
     disabledLabel: '已禁用',
     websocketsLabel: 'WebSockets 支持',
+    restoreAccountStatus: '恢复正常',
+    accountRestored: '账号已恢复正常',
+    restoreAccountFailed: '恢复账号失败',
     // OAuth 登录
     oauthLoginModalTitle: 'OpenAI OAuth 登录',
     openaiLogin: 'OpenAI 登录',

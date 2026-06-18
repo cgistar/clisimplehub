@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,7 +16,9 @@ import (
 
 const DefaultCodexUserAgent = codexShared.DefaultCodexUserAgent
 
-var codexCliPattern = regexp.MustCompile(`(?i)^(codex)/[\d.]+`)
+var codexCliPattern = regexp.MustCompile(`(?i)^codex(?:-cli|-tui)?/[\d.]+`)
+
+type originalHeaderContextKey struct{}
 
 var ErrCompactStreamingNotSupported = errors.New("streaming not supported for compact responses")
 
@@ -144,7 +147,13 @@ var fieldsToRemoveForCodexUpstream = []string{
 // CodexResponsesAdaptMiddleware 在网关入口统一规范化 /responses 请求。
 func CodexResponsesAdaptMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !IsResponsesPath(r.URL.Path) || IsCodexCLI(r.Header.Get("User-Agent")) {
+		if !IsResponsesPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		r = r.WithContext(context.WithValue(r.Context(), originalHeaderContextKey{}, r.Header.Clone()))
+		if IsCodexCLI(r.Header.Get("User-Agent")) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -172,6 +181,17 @@ func CodexResponsesAdaptMiddleware(next http.Handler) http.Handler {
 		r.Header.Set("User-Agent", adaptedUserAgent)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func OriginalHeadersFromContext(ctx context.Context) (http.Header, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	headers, ok := ctx.Value(originalHeaderContextKey{}).(http.Header)
+	if !ok || headers == nil {
+		return nil, false
+	}
+	return headers.Clone(), true
 }
 
 func readRequestBody(r *http.Request) ([]byte, error) {

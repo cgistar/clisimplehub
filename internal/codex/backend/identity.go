@@ -36,6 +36,12 @@ func applyIdentityConfuse(authID string, body []byte, headers http.Header) ([]by
 		body, _ = sjson.SetBytes(body, "client_metadata.x-codex-turn-metadata", applyTurnMetadataIdentityConfuse(turnMetadata, &state))
 	}
 	if state.promptCacheKey != "" {
+		if sessionID := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.session_id").String()); sessionID != "" {
+			body, _ = sjson.SetBytes(body, "client_metadata.session_id", state.promptCacheKey)
+		}
+		if threadID := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.thread_id").String()); threadID != "" {
+			body, _ = sjson.SetBytes(body, "client_metadata.thread_id", state.promptCacheKey)
+		}
 		if windowID := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-window-id").String()); windowID != "" {
 			body, _ = sjson.SetBytes(body, "client_metadata.x-codex-window-id", state.promptCacheKey+":0")
 		}
@@ -55,10 +61,8 @@ func applyIdentityConfuseHeaders(headers http.Header, state *IdentityState) {
 	if state.promptCacheKey == "" {
 		return
 	}
-	setHeaderCasePreserved(headers, "Session-Id", state.promptCacheKey)
-	if headerValueCaseInsensitive(headers, "session_id") != "" {
-		setHeaderCasePreserved(headers, "session_id", state.promptCacheKey)
-	}
+	removeHeaderCaseInsensitive(headers, "Session-Id")
+	setHeaderCasePreserved(headers, "Session_id", state.promptCacheKey)
 	if headerValueCaseInsensitive(headers, "Conversation_id") != "" {
 		setHeaderCasePreserved(headers, "Conversation_id", state.promptCacheKey)
 	}
@@ -79,6 +83,12 @@ func applyTurnMetadataIdentityConfuse(rawTurnMetadata string, state *IdentitySta
 	}
 	if turnID := strings.TrimSpace(gjson.Get(rawTurnMetadata, "turn_id").String()); turnID != "" {
 		updated, _ = sjson.Set(updated, "turn_id", state.confuseTurnID(turnID))
+	}
+	if state.promptCacheKey != "" && gjson.Get(rawTurnMetadata, "session_id").Exists() {
+		updated, _ = sjson.Set(updated, "session_id", state.promptCacheKey)
+	}
+	if state.promptCacheKey != "" && gjson.Get(rawTurnMetadata, "thread_id").Exists() {
+		updated, _ = sjson.Set(updated, "thread_id", state.promptCacheKey)
 	}
 	if state.promptCacheKey != "" && gjson.Get(rawTurnMetadata, "window_id").Exists() {
 		updated, _ = sjson.Set(updated, "window_id", state.promptCacheKey+":0")
@@ -124,6 +134,18 @@ func replaceIdentityPayload(payload []byte, from string, to string) []byte {
 		return payload
 	}
 	return bytes.ReplaceAll(payload, []byte(from), []byte(to))
+}
+
+func removeHeaderCaseInsensitive(headers http.Header, key string) {
+	key = strings.TrimSpace(key)
+	if headers == nil || key == "" {
+		return
+	}
+	for existingKey := range headers {
+		if strings.EqualFold(existingKey, key) {
+			delete(headers, existingKey)
+		}
+	}
 }
 
 func NewIdentityExposeReadCloser(upstream io.ReadCloser, state IdentityState) io.ReadCloser {

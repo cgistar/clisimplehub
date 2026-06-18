@@ -245,6 +245,9 @@ export default {
     enabledLabel: 'Enabled',
     disabledLabel: 'Disabled',
     websocketsLabel: 'Enable WebSockets',
+    restoreAccountStatus: 'Restore Normal',
+    accountRestored: 'Account restored',
+    restoreAccountFailed: 'Failed to restore account',
     // OAuth login
     oauthLoginModalTitle: 'OpenAI OAuth Login',
     openaiLogin: 'OpenAI Login',

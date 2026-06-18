@@ -2385,6 +2385,14 @@ func isCodexChatGPTAuth(auth map[string]interface{}) bool {
 	return ok && strings.EqualFold(strings.TrimSpace(authMode), "chatgpt")
 }
 
+func setCodexOpenAIAPIKey(auth map[string]interface{}, apiKey string) {
+	if isCodexChatGPTAuth(auth) {
+		auth["OPENAI_API_KEY"] = nil
+		return
+	}
+	auth["OPENAI_API_KEY"] = apiKey
+}
+
 func tomlLineKey(line string) string {
 	key, _, found := strings.Cut(strings.TrimSpace(line), "=")
 	if !found {
@@ -2520,7 +2528,7 @@ func (a *App) ProcessCodexConfigWithIP(configToml, authJson, ip string) (*Proces
 	}
 	newConfigToml := updateCodexLocalProviderConfig(configToml, proxyURL, experimentalBearerToken)
 
-	auth["OPENAI_API_KEY"] = apiKey
+	setCodexOpenAIAPIKey(auth, apiKey)
 
 	newAuthJson, err := json.MarshalIndent(auth, "", "  ")
 	if err != nil {
@@ -2635,7 +2643,7 @@ windows_wsl_setup_acknowledged = true
 model_verbosity = "high"
 plan_mode_reasoning_effort = "high"
 supports_websockets = true
-model_provider = "local"
+model_provider = "shub"
 
 [features]
 plan_tool = true
@@ -2650,8 +2658,8 @@ multi_agent = true
 steer = true
 goals = true
 
-[model_providers.local]
-name = "local"
+[model_providers.shub]
+name = "shub"
 base_url = "%s"
 requires_openai_auth = true
 wire_api = "responses"

@@ -215,6 +215,8 @@ export interface CodexEditForm {
   weight: number
   enabled: boolean
   websockets: boolean
+  status?: string
+  cooldownRemaining?: number
 }
 
 export interface SettingsData {

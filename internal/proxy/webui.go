@@ -222,6 +222,7 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Post("/web/api/codex/config", p.requireWebUISession(p.handleWebUISaveCodexConfig))
 	r.Post("/web/api/codex/accounts", p.requireWebUISession(p.handleWebUIAddCodexAccount))
 	r.Post("/web/api/codex/accounts/update", p.requireWebUISession(p.handleWebUIUpdateCodexAccount))
+	r.Post("/web/api/codex/accounts/restore", p.requireWebUISession(p.handleWebUIRestoreCodexAccount))
 	r.Delete("/web/api/codex/accounts/{accountId}", p.requireWebUISession(p.handleWebUIDeleteCodexAccount))
 	r.Get("/web/api/settings", p.requireWebUISession(p.handleWebUISettings))
 	r.Post("/web/api/settings", p.requireWebUISession(p.handleWebUISaveSettings))
@@ -1286,6 +1287,24 @@ func (p *ProxyServer) handleWebUIUpdateCodexAccount(w http.ResponseWriter, r *ht
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message": "codex account updated",
+	})
+}
+
+func (p *ProxyServer) handleWebUIRestoreCodexAccount(w http.ResponseWriter, r *http.Request) {
+	provider, accountID, codexPath, ok := p.parseWebUICodexAccountAction(w, r)
+	if !ok {
+		return
+	}
+
+	if err := provider.RestoreAccount(codexPath, accountID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "codex account restored",
 	})
 }
 

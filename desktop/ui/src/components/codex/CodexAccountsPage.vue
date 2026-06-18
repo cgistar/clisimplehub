@@ -26,7 +26,9 @@
     <CodexAccountEditModal
       v-model:show="showEditModal"
       :account="editingAccount"
+      :restoring="editRestoring"
       @success="handleEditSuccess"
+      @restore="handleRestoreAccount"
     />
 
     <CodexJsonImportModal
@@ -85,6 +87,7 @@ const showBulkDeleteModal = ref(false)
 const showGlobalConfigModal = ref(false)
 const showGetTokenModal = ref(false)
 const showSignupModal = ref(false)
+const editRestoring = ref(false)
 const editingAccount = ref<CodexAccount | null>(null)
 const getTokenAccount = ref<CodexAccount | null>(null)
 const accountListRef = ref<InstanceType<typeof CodexAccountList> | null>(null)
@@ -127,6 +130,22 @@ async function handleEditSuccess(accountData: CodexAccountInput) {
     }
   } catch (error) {
     message.error(t('codex.updateAccountFailed') + ': ' + toErrorMessage(error))
+  }
+}
+
+async function handleRestoreAccount(accountId: string) {
+  editRestoring.value = true
+  try {
+    await codexStore.restoreAccount(accountId)
+    message.success(t('codex.accountRestored'))
+    showEditModal.value = false
+    if (accountListRef.value?.restoreScrollPosition) {
+      accountListRef.value.restoreScrollPosition()
+    }
+  } catch (error) {
+    message.error(t('codex.restoreAccountFailed') + ': ' + toErrorMessage(error))
+  } finally {
+    editRestoring.value = false
   }
 }
 

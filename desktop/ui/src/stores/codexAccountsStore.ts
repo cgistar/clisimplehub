@@ -227,6 +227,23 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     }
   }
 
+  async function restoreAccount(accountId: string): Promise<void> {
+    clearError()
+
+    try {
+      await codexApi.restoreAccount(accountId)
+      patchAccountById(accountId, {
+        status: 'valid',
+        cooldownUntil: '',
+        cooldownReason: '',
+        cooldownRemaining: 0
+      })
+    } catch (cause) {
+      error.value = String(cause)
+      throw cause
+    }
+  }
+
   async function deleteAccount(accountId: string, options?: { reload?: boolean }): Promise<void> {
     clearError()
 
@@ -329,6 +346,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     setActiveAccount,
     addAccount,
     updateAccount,
+    restoreAccount,
     deleteAccount,
     deleteAccounts,
     testAccount,

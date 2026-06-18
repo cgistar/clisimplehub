@@ -44,6 +44,8 @@ export function createCodexEditForm(account: CodexAccount | null = null): CodexE
     weight: Number(account?.weight || 0),
     enabled: account?.enabled !== false,
     websockets: Boolean(account?.websockets),
+    status: account?.status || 'valid',
+    cooldownRemaining: Number(account?.cooldownRemaining || 0),
   }
 }
 

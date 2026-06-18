@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/logger"
@@ -21,6 +22,8 @@ import (
 
 	"github.com/google/uuid"
 )
+
+const maxResponseBodyLogBytes = 1 << 20
 
 type anthropicErrorResponse struct {
 	Error anthropicErrorDetail `json:"error"`
@@ -40,6 +43,24 @@ func writeAnthropicError(w http.ResponseWriter, statusCode int, errorType, messa
 			Message: message,
 		},
 	})
+}
+
+func responseBodyForDetailLog(result *executor.ForwardResult) string {
+	if result == nil || result.Streamed || len(result.Body) == 0 {
+		return ""
+	}
+	if !utf8.Valid(result.Body) {
+		return ""
+	}
+
+	body := string(result.Body)
+	if len(result.Body) <= maxResponseBodyLogBytes {
+		return body
+	}
+
+	truncated := string(result.Body[:maxResponseBodyLogBytes])
+	truncated = strings.ToValidUTF8(truncated, "")
+	return truncated + "\n\n[response body truncated for request log]"
 }
 
 // logRequestToConsole 输出请求日志到控制台（无头模式）
@@ -195,7 +216,10 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	requestID := uuid.New().String()
 
 	originalHeaders := r.Header.Clone()
-	reqHeaders := sanitizeHeadersForLog(r.Header)
+	if inboundHeaders, ok := appmiddleware.OriginalHeadersFromContext(r.Context()); ok {
+		originalHeaders = inboundHeaders
+	}
+	reqHeaders := sanitizeHeadersForLog(originalHeaders)
 	interfaceType := p.detectInterfaceTypeForRequest(r)
 	isAnthropic := isAnthropicRequest(interfaceType, r.URL.Path)
 
@@ -349,6 +373,9 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		detail.TargetURL = result.TargetURL
 		detail.StatusCode = result.StatusCode
 		detail.ResponseStream = result.ResponseStream
+		if detail.ResponseStream == "" {
+			detail.ResponseStream = responseBodyForDetailLog(result)
+		}
 		if detail.ResponseStream == "" && shouldCaptureErrorResponse(result) {
 			if len(result.Body) > 0 {
 				detail.ResponseStream = string(result.Body)

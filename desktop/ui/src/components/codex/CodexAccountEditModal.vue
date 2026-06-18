@@ -68,6 +68,9 @@
 
     <template #footer>
       <n-space justify="end">
+        <n-button v-if="canRestore" :loading="props.restoring" @click="handleRestore">
+          {{ t('codex.restoreAccountStatus') }}
+        </n-button>
         <n-button @click="handleCancel">{{ t('common.cancel') }}</n-button>
         <n-button type="primary" @click="handleSave">{{ t('common.save') }}</n-button>
       </n-space>
@@ -76,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
 import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSpace, NSwitch } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
@@ -100,14 +103,17 @@ type EditFormData = CodexAccountInput & {
 const props = withDefaults(defineProps<{
   show: boolean
   account: CodexAccount | null
+  restoring?: boolean
 }>(), {
   show: false,
-  account: null
+  account: null,
+  restoring: false
 })
 
 const emit = defineEmits<{
   'update:show': [show: boolean]
   success: [payload: CodexAccountInput]
+  restore: [accountId: string]
 }>()
 
 const visible = ref(false)
@@ -127,6 +133,12 @@ const formData = ref<EditFormData>({
 
 const rules: FormRules = {}
 let totpTimer: ReturnType<typeof setInterval> | null = null
+
+const canRestore = computed(() => {
+  const account = props.account
+  if (!account?.id) return false
+  return account.status !== 'valid' || Number(account.cooldownRemaining || 0) > 0
+})
 
 async function refreshTotpValue() {
   const secret = String(formData.value.mfaCode || '').trim()
@@ -191,6 +203,11 @@ onBeforeUnmount(() => {
 
 function handleCancel() {
   visible.value = false
+}
+
+function handleRestore() {
+  if (!props.account?.id || props.restoring) return
+  emit('restore', props.account.id)
 }
 
 async function handleSave() {

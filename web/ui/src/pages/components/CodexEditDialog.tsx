@@ -8,13 +8,15 @@ interface CodexEditDialogProps {
   saving: boolean
   onClose: () => void
   onChange: (form: CodexEditForm) => void
+  onRestore: (accountId: string) => void | Promise<void>
   onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
 }
 
-export default function CodexEditDialog({ open, form, saving, onClose, onChange, onSubmit }: CodexEditDialogProps) {
+export default function CodexEditDialog({ open, form, saving, onClose, onChange, onRestore, onSubmit }: CodexEditDialogProps) {
   if (!open || !form) return null
 
   const updateField = <K extends keyof CodexEditForm>(key: K, value: CodexEditForm[K]) => onChange({ ...form, [key]: value })
+  const canRestore = Boolean(form.id) && (form.status !== 'valid' || Number(form.cooldownRemaining || 0) > 0)
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => {
@@ -76,6 +78,11 @@ export default function CodexEditDialog({ open, form, saving, onClose, onChange,
           </DialogBody>
 
           <DialogFooter>
+            {canRestore ? (
+              <button type="button" className="btn" onClick={() => onRestore(form.id)} disabled={saving}>
+                恢复正常
+              </button>
+            ) : null}
             <button type="button" className="btn" onClick={onClose} disabled={saving}>
               取消
             </button>
