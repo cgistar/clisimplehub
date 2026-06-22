@@ -281,6 +281,7 @@ func (r *RequestDebugLogger) buildContent() string {
 		"UpstreamRequestHeaders", // 实际发给上游的 header
 		"OriginalRequest",        // 原始访问请求
 		"TransformedRequest",     // 转换器转换后的请求
+		"UpstreamRequestBody",    // 实际发给上游的 body
 		"UpstreamResponseHeaders",
 		"UpstreamError",
 		"UpstreamResponseBody",

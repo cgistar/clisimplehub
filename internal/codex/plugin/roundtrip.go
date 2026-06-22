@@ -293,6 +293,9 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 		debugLogger.SetMetadata("UpstreamURL", backendResult.TargetURL)
 		debugLogger.SetMetadata("StatusCode", fmt.Sprintf("%d", backendResult.StatusCode))
 		debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(backendResult.TargetHeaders))
+		if len(backendResult.RequestBody) > 0 {
+			debugLogger.SetSection("UpstreamRequestBody", string(backendResult.RequestBody))
+		}
 		debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaderDebug(backendResult.StatusCode, backendResult.Headers))
 	}
 	if err != nil && backendResult.StatusCode == 0 {

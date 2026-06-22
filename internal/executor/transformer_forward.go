@@ -85,6 +85,9 @@ func (c *ExecutionContext) FinalizeTransformation(ctx context.Context, w http.Re
 		if len(result.TargetHeaders) > 0 {
 			debugLogger.SetSection("UpstreamRequestHeaders", formatHeaderMap(result.TargetHeaders))
 		}
+		if len(requestBody) > 0 {
+			debugLogger.SetSection("UpstreamRequestBody", string(requestBody))
+		}
 		if result.StatusCode > 0 || len(result.Headers) > 0 {
 			debugLogger.SetSection("UpstreamResponseHeaders", formatHTTPHeaders(httpStatusLine(result.StatusCode), result.Headers))
 		}
