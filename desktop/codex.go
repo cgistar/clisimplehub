@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/plugin"
@@ -222,6 +224,69 @@ func (a *App) AddCodexAccount(dto *CodexAccountDTO) (*CodexAccountDTO, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (a *App) WriteCodexAccountToAuthJSON(dto *CodexAccountDTO) error {
+	if dto == nil {
+		return fmt.Errorf("account data is required")
+	}
+
+	missing := make([]string, 0, 4)
+	if strings.TrimSpace(dto.AccountID) == "" {
+		missing = append(missing, "accountId")
+	}
+	if strings.TrimSpace(dto.AccessToken) == "" {
+		missing = append(missing, "accessToken")
+	}
+	if strings.TrimSpace(dto.IDToken) == "" {
+		missing = append(missing, "idToken")
+	}
+	if strings.TrimSpace(dto.RefreshToken) == "" {
+		missing = append(missing, "refreshToken")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("account missing required token fields: %s", strings.Join(missing, ", "))
+	}
+
+	dirs, err := a.GetCLIConfigDirs()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dirs.CodexConfigDir, 0755); err != nil {
+		return fmt.Errorf("failed to create codex config directory: %w", err)
+	}
+
+	authPath := filepath.Join(dirs.CodexConfigDir, "auth.json")
+	auth := make(map[string]interface{})
+	if data, err := os.ReadFile(authPath); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		if err := json.Unmarshal(data, &auth); err != nil {
+			return fmt.Errorf("invalid JSON format in auth.json: %w", err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read auth.json: %w", err)
+	}
+
+	tokens, ok := auth["tokens"].(map[string]interface{})
+	if !ok {
+		tokens = make(map[string]interface{})
+		auth["tokens"] = tokens
+	}
+	tokens["account_id"] = strings.TrimSpace(dto.AccountID)
+	tokens["access_token"] = strings.TrimSpace(dto.AccessToken)
+	tokens["id_token"] = strings.TrimSpace(dto.IDToken)
+	tokens["refresh_token"] = strings.TrimSpace(dto.RefreshToken)
+	auth["OPENAI_API_KEY"] = nil
+	auth["auth_mode"] = "chatgpt"
+	auth["last_refresh"] = time.Now().UTC().Format(time.RFC3339Nano)
+
+	data, err := json.MarshalIndent(auth, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to encode auth.json: %w", err)
+	}
+	if err := os.WriteFile(authPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write auth.json: %w", err)
+	}
+	return nil
 }
 
 func (a *App) UpdateCodexAccount(dto *CodexAccountDTO) error {
@@ -707,8 +772,9 @@ func (a *App) SaveCodexGlobalConfig(dto *CodexGlobalConfigDTO) error {
 }
 
 type CodexUsageResult struct {
-	Primary   *CodexUsageWindow `json:"primary,omitempty"`
-	Secondary *CodexUsageWindow `json:"secondary,omitempty"`
+	Primary                    *CodexUsageWindow `json:"primary,omitempty"`
+	Secondary                  *CodexUsageWindow `json:"secondary,omitempty"`
+	ResetCreditsAvailableCount int               `json:"resetCreditsAvailableCount,omitempty"`
 }
 
 type CodexUsageWindow struct {
@@ -716,7 +782,39 @@ type CodexUsageWindow struct {
 	RemainingSeconds int     `json:"remainingSeconds"`
 }
 
+type CodexResetResponseDTO struct {
+	Code         string               `json:"code"`
+	Credit       *CodexResetCreditDTO `json:"credit"`
+	WindowsReset int                  `json:"windows_reset"`
+}
+
+type CodexResetCreditDTO struct {
+	ID              string  `json:"id"`
+	ResetType       string  `json:"reset_type"`
+	Status          string  `json:"status"`
+	GrantedAt       string  `json:"granted_at"`
+	ExpiresAt       string  `json:"expires_at"`
+	RedeemStartedAt string  `json:"redeem_started_at"`
+	RedeemedAt      string  `json:"redeemed_at"`
+	ProfileImageURL *string `json:"profile_image_url"`
+	ProfileUserID   *string `json:"profile_user_id"`
+	Title           *string `json:"title"`
+	Description     *string `json:"description"`
+}
+
 func (a *App) GetCodexAccountUsage(accountId string) (*CodexUsageResult, error) {
+	return a.getCodexAccountUsage(accountId, func(ctx context.Context, cp plugin.CodexDesktopProvider, configPath, accountId string) (json.RawMessage, error) {
+		return cp.GetAccountUsage(ctx, configPath, accountId)
+	})
+}
+
+func (a *App) GetCodexAccountPrimaryUsage(accountId string) (*CodexUsageResult, error) {
+	return a.getCodexAccountUsage(accountId, func(ctx context.Context, cp plugin.CodexDesktopProvider, configPath, accountId string) (json.RawMessage, error) {
+		return cp.GetAccountPrimaryUsage(ctx, configPath, accountId)
+	})
+}
+
+func (a *App) getCodexAccountUsage(accountId string, fetch func(context.Context, plugin.CodexDesktopProvider, string, string) (json.RawMessage, error)) (*CodexUsageResult, error) {
 	cp := codexProvider()
 	if cp == nil {
 		return nil, fmt.Errorf("codex plugin not available")
@@ -725,11 +823,31 @@ func (a *App) GetCodexAccountUsage(accountId string) (*CodexUsageResult, error) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	raw, err := cp.GetAccountUsage(ctx, a.getCodexMultiConfigPath(), accountId)
+	raw, err := fetch(ctx, cp, a.getCodexMultiConfigPath(), accountId)
 	if err != nil {
 		return nil, err
 	}
 	var result CodexUsageResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (a *App) ConsumeCodexAccountResetCredit(accountId string) (*CodexResetResponseDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := cp.ConsumeAccountResetCredit(ctx, a.getCodexMultiConfigPath(), accountId)
+	if err != nil {
+		return nil, err
+	}
+	var result CodexResetResponseDTO
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}

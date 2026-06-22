@@ -1,15 +1,21 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (
-	UsageAPIURL = "https://chatgpt.com/backend-api/wham/usage"
+	UsageAPIURL             = "https://chatgpt.com/backend-api/wham/usage"
+	CODEX_RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 )
 
 // UsageRateLimit represents rate limit information
@@ -28,6 +34,147 @@ type UsageRateLimitWindow struct {
 	ResetAt            int64   `json:"reset_at"`
 }
 
+// UsageCredits 表示账户额度和近似消息容量。
+type UsageCredits struct {
+	HasCredits          bool     `json:"has_credits"`
+	Unlimited           bool     `json:"unlimited"`
+	OverageLimitReached bool     `json:"overage_limit_reached"`
+	Balance             *float64 `json:"balance"`
+	ApproxLocalMessages *int     `json:"approx_local_messages"`
+	ApproxCloudMessages *int     `json:"approx_cloud_messages"`
+}
+
+func (c *UsageCredits) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		HasCredits          bool            `json:"has_credits"`
+		Unlimited           bool            `json:"unlimited"`
+		OverageLimitReached bool            `json:"overage_limit_reached"`
+		Balance             json.RawMessage `json:"balance"`
+		ApproxLocalMessages json.RawMessage `json:"approx_local_messages"`
+		ApproxCloudMessages json.RawMessage `json:"approx_cloud_messages"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	balance, err := optionalFloat64(raw.Balance)
+	if err != nil {
+		return fmt.Errorf("credits.balance: %w", err)
+	}
+	approxLocalMessages, err := optionalInt(raw.ApproxLocalMessages)
+	if err != nil {
+		return fmt.Errorf("credits.approx_local_messages: %w", err)
+	}
+	approxCloudMessages, err := optionalInt(raw.ApproxCloudMessages)
+	if err != nil {
+		return fmt.Errorf("credits.approx_cloud_messages: %w", err)
+	}
+
+	c.HasCredits = raw.HasCredits
+	c.Unlimited = raw.Unlimited
+	c.OverageLimitReached = raw.OverageLimitReached
+	c.Balance = balance
+	c.ApproxLocalMessages = approxLocalMessages
+	c.ApproxCloudMessages = approxCloudMessages
+	return nil
+}
+
+// UsageSpendControl 表示消费限制状态。
+type UsageSpendControl struct {
+	Reached         bool     `json:"reached"`
+	IndividualLimit *float64 `json:"individual_limit"`
+}
+
+func (s *UsageSpendControl) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Reached         bool            `json:"reached"`
+		IndividualLimit json.RawMessage `json:"individual_limit"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	individualLimit, err := optionalFloat64(raw.IndividualLimit)
+	if err != nil {
+		return fmt.Errorf("spend_control.individual_limit: %w", err)
+	}
+
+	s.Reached = raw.Reached
+	s.IndividualLimit = individualLimit
+	return nil
+}
+
+func optionalFloat64(raw json.RawMessage) (*float64, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil, nil
+	}
+
+	var num float64
+	if err := json.Unmarshal(raw, &num); err == nil {
+		return &num, nil
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return nil, err
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+	num, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &num, nil
+}
+
+func optionalInt(raw json.RawMessage) (*int, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil, nil
+	}
+
+	var num int
+	if err := json.Unmarshal(raw, &num); err == nil {
+		return &num, nil
+	}
+
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err == nil {
+		for _, value := range values {
+			parsed, err := optionalInt(value)
+			if err != nil {
+				return nil, err
+			}
+			if parsed != nil {
+				return parsed, nil
+			}
+		}
+		return nil, nil
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return nil, err
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.Atoi(text)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+// UsageRateLimitResetCredits 表示可用的限流重置次数。
+type UsageRateLimitResetCredits struct {
+	AvailableCount int `json:"available_count"`
+}
+
 // UsagePromo represents promotional information
 type UsagePromo struct {
 	CampaignID string `json:"campaign_id"`
@@ -36,15 +183,19 @@ type UsagePromo struct {
 
 // UsageResponse represents the full response from the usage API
 type UsageResponse struct {
-	UserID               string          `json:"user_id"`
-	AccountID            string          `json:"account_id"`
-	Email                string          `json:"email"`
-	PlanType             string          `json:"plan_type"`
-	RateLimit            *UsageRateLimit `json:"rate_limit"`
-	CodeReviewRateLimit  *UsageRateLimit `json:"code_review_rate_limit"`
-	AdditionalRateLimits json.RawMessage `json:"additional_rate_limits"`
-	Credits              json.RawMessage `json:"credits"`
-	Promo                *UsagePromo     `json:"promo"`
+	UserID                string                      `json:"user_id"`
+	AccountID             string                      `json:"account_id"`
+	Email                 string                      `json:"email"`
+	PlanType              string                      `json:"plan_type"`
+	RateLimit             *UsageRateLimit             `json:"rate_limit"`
+	CodeReviewRateLimit   *UsageRateLimit             `json:"code_review_rate_limit"`
+	AdditionalRateLimits  json.RawMessage             `json:"additional_rate_limits"`
+	Credits               *UsageCredits               `json:"credits"`
+	SpendControl          *UsageSpendControl          `json:"spend_control"`
+	RateLimitReachedType  *string                     `json:"rate_limit_reached_type"`
+	Promo                 *UsagePromo                 `json:"promo"`
+	ReferralBeacon        json.RawMessage             `json:"referral_beacon"`
+	RateLimitResetCredits *UsageRateLimitResetCredits `json:"rate_limit_reset_credits"`
 }
 
 // UsageQuery contains parameters for fetching usage
@@ -55,6 +206,115 @@ type UsageQuery struct {
 	Originator  string
 	SessionID   string
 	ProxyURL    string
+}
+
+type ResetQuery struct {
+	AccessToken string
+	AccountID   string
+	UserAgent   string
+	Originator  string
+	RedeemID    string
+	ProxyURL    string
+}
+
+// CodexResetResponse represents the response from the reset credits API
+type CodexResetResponse struct {
+	Code         string            `json:"code"`
+	Credit       *CodexResetCredit `json:"credit"`
+	WindowsReset int               `json:"windows_reset"`
+}
+
+type CodexResetCredit struct {
+	ID              string  `json:"id"`
+	ResetType       string  `json:"reset_type"`
+	Status          string  `json:"status"`
+	GrantedAt       string  `json:"granted_at"`
+	ExpiresAt       string  `json:"expires_at"`
+	RedeemStartedAt string  `json:"redeem_started_at"`
+	RedeemedAt      string  `json:"redeemed_at"`
+	ProfileImageURL *string `json:"profile_image_url"`
+	ProfileUserID   *string `json:"profile_user_id"`
+	Title           *string `json:"title"`
+	Description     *string `json:"description"`
+}
+
+func PostCodexReset(ctx context.Context, client *http.Client, query ResetQuery) (*CodexResetResponse, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	accessToken := query.AccessToken
+	if accessToken == "" {
+		return nil, fmt.Errorf("accessToken is required")
+	}
+	redeemID := strings.TrimSpace(query.RedeemID)
+	if redeemID == "" {
+		redeemID = uuid.NewString()
+	}
+
+	// Build request body
+	body := map[string]string{
+		"redeem_request_id": redeemID,
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, CODEX_RESET_CREDITS_URL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	builder := NewHeaderBuilder(accessToken, query.AccountID)
+	if query.UserAgent != "" {
+		builder.WithUserAgent(query.UserAgent)
+	}
+	if query.Originator != "" {
+		builder.WithOriginator(query.Originator)
+	}
+	builder.ApplyTo(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		snippet := strings.TrimSpace(string(bodyBytes))
+		if snippet == "" {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateRunes(snippet, 200))
+	}
+
+	var resetResp CodexResetResponse
+	if err := json.Unmarshal(bodyBytes, &resetResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &resetResp, nil
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
 }
 
 // FetchUsage fetches usage information from the Codex API
@@ -78,17 +338,27 @@ func FetchUsage(ctx context.Context, client *http.Client, query UsageQuery) (*Us
 	}
 
 	// Use HeaderBuilder for consistent header construction
-	builder := NewHeaderBuilder(accessToken, query.AccountID)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	if query.AccountID != "" {
+		req.Header.Set("ChatGPT-Account-Id", query.AccountID)
+	}
 	if query.UserAgent != "" {
-		builder.WithUserAgent(query.UserAgent)
+		req.Header.Set("User-Agent", query.UserAgent)
 	}
-	if query.Originator != "" {
-		builder.WithOriginator(query.Originator)
-	}
-	if query.SessionID != "" {
-		builder.WithSessionID(query.SessionID)
-	}
-	builder.ApplyTo(req)
+	// builder := NewHeaderBuilder(accessToken, query.AccountID)
+	// if query.UserAgent != "" {
+	// 	builder.WithUserAgent(query.UserAgent)
+	// }
+	// if query.Originator != "" {
+	// 	builder.WithOriginator(query.Originator)
+	// }
+	// if query.SessionID != "" {
+	// 	builder.WithSessionID(query.SessionID)
+	// }
+	// builder.ApplyTo(req)
 
 	resp, err := client.Do(req)
 	if err != nil {

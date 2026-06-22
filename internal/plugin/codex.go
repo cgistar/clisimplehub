@@ -27,6 +27,8 @@ type CodexDesktopProvider interface {
 	CancelLogin() error
 	TestAccount(configPath, refreshToken string) (json.RawMessage, error)
 	GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
+	GetAccountPrimaryUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
+	ConsumeAccountResetCredit(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
 	GetCodexAccountStats(ctx context.Context, timeRange string) (json.RawMessage, error)
 	StartHeadlessLogin(ctx context.Context, email, password, clientID, proxyURL string, onStep func(string)) (json.RawMessage, error)
 	StartHeadlessLoginWithProvider(ctx context.Context, req json.RawMessage, onStep func(string)) (json.RawMessage, error)

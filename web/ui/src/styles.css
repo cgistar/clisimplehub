@@ -1130,11 +1130,50 @@ code {
 
 .codex-usage-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   font-size: 12px;
   margin-bottom: 8px;
   color: var(--text);
+}
+
+.codex-usage-label {
+  min-width: 0;
+}
+
+.codex-usage-percent {
+  margin-left: auto;
+}
+
+.codex-usage-refresh-btn {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.codex-usage-refresh-btn:hover:not(:disabled) {
+  color: var(--primary);
+  background: #e2e8f0;
+}
+
+.codex-usage-refresh-btn:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.codex-usage-refresh-btn svg {
+  width: 12px;
+  height: 12px;
 }
 
 .codex-usage-track {

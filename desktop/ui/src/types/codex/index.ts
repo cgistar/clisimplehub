@@ -16,6 +16,7 @@ export interface CodexUsageWindow {
 export interface CodexUsage {
   primary?: CodexUsageWindow
   secondary?: CodexUsageWindow
+  resetCreditsAvailableCount?: number
 }
 
 export type CodexAccount = Omit<main.CodexAccountDTO, 'status' | 'codexUsage'> & {
@@ -81,6 +82,26 @@ export interface CodexPagination {
 export type CodexLoginResult = main.CodexLoginResultDTO
 export type CodexTestResult = main.CodexTestResult
 export type CodexUsageResult = main.CodexUsageResult
+
+export interface CodexResetCredit {
+  id: string
+  reset_type: string
+  status: string
+  granted_at: string
+  expires_at: string
+  redeem_started_at: string
+  redeemed_at: string
+  profile_image_url: string | null
+  profile_user_id: string | null
+  title: string | null
+  description: string | null
+}
+
+export interface CodexResetResult {
+  code: string
+  credit: CodexResetCredit
+  windows_reset: number
+}
 
 export interface HeadlessLoginState {
   state: number

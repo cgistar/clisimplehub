@@ -45,13 +45,6 @@
       v-model:show="showGlobalConfigModal"
     />
 
-    <CodexGetTokenModal
-      v-model:show="showGetTokenModal"
-      :account="getTokenAccount"
-      @success="handleGetTokenSuccess"
-      @status-update="handleGetTokenStatusUpdate"
-    />
-
     <CodexSignupModal
       v-model:show="showSignupModal"
       @success="handleSignupSuccess"
@@ -61,9 +54,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useCodexAccountsStore } from '../../stores/codexAccountsStore'
+import { codexApi } from '@/api/codex'
 import type { CodexAccount, CodexAccountInput } from '@/types/codex'
 import '@/styles/pages/codex.css'
 import CodexAccountToolbar from './CodexAccountToolbar.vue'
@@ -73,11 +67,11 @@ import CodexAccountEditModal from './CodexAccountEditModal.vue'
 import CodexJsonImportModal from './CodexJsonImportModal.vue'
 import CodexBulkDeleteModal from './CodexBulkDeleteModal.vue'
 import CodexGlobalConfigModal from './CodexGlobalConfigModal.vue'
-import CodexGetTokenModal from './CodexGetTokenModal.vue'
 import CodexSignupModal from './CodexSignupModal.vue'
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 const codexStore = useCodexAccountsStore()
 
 const showOAuthModal = ref(false)
@@ -85,11 +79,9 @@ const showEditModal = ref(false)
 const showJsonImportModal = ref(false)
 const showBulkDeleteModal = ref(false)
 const showGlobalConfigModal = ref(false)
-const showGetTokenModal = ref(false)
 const showSignupModal = ref(false)
 const editRestoring = ref(false)
 const editingAccount = ref<CodexAccount | null>(null)
-const getTokenAccount = ref<CodexAccount | null>(null)
 const accountListRef = ref<InstanceType<typeof CodexAccountList> | null>(null)
 
 function toErrorMessage(error: unknown): string {
@@ -160,34 +152,35 @@ async function handleBulkDeleteSuccess() {
 }
 
 function handleGetToken(account: CodexAccount): void {
-  getTokenAccount.value = account
-  showGetTokenModal.value = true
-}
+  const missingFields = [
+    ['accountId', account.accountId],
+    ['accessToken', account.accessToken],
+    ['idToken', account.idToken],
+    ['refreshToken', account.refreshToken]
+  ]
+    .filter(([, value]) => !String(value || '').trim())
+    .map(([field]) => field)
 
-async function handleGetTokenSuccess(payload: CodexAccountInput) {
-  try {
-    await codexStore.updateAccount(payload)
-    message.success(t('codex.getTokenSuccess'))
-    // Restore scroll position after update
-    if (accountListRef.value?.restoreScrollPosition) {
-      accountListRef.value.restoreScrollPosition()
-    }
-  } catch (error) {
-    message.error(t('codex.updateAccountFailed') + ': ' + toErrorMessage(error))
+  if (missingFields.length > 0) {
+    message.error(`当前账号缺少字段：${missingFields.join(', ')}`)
+    return
   }
-}
 
-async function handleGetTokenStatusUpdate(payload: CodexAccountInput) {
-  try {
-    await codexStore.updateAccount(payload)
-    message.warning(t('codex.accountUpdated'))
-    // Restore scroll position after update
-    if (accountListRef.value?.restoreScrollPosition) {
-      accountListRef.value.restoreScrollPosition()
+  const displayName = account.email || account.accountId || account.id || '(未命名账号)'
+  dialog.warning({
+    title: '写入 auth.json',
+    content: `确定将 ${displayName} 的 accountId/accessToken/idToken/refreshToken 写入 Codex auth.json 的 tokens 字段？这会覆盖现有 tokens 中对应字段。`,
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      try {
+        await codexApi.writeAccountToAuthJson(account)
+        message.success('已写入 Codex auth.json')
+      } catch (error) {
+        message.error('写入 Codex auth.json 失败：' + toErrorMessage(error))
+      }
     }
-  } catch (error) {
-    message.error(t('codex.updateAccountFailed') + ': ' + toErrorMessage(error))
-  }
+  })
 }
 
 async function handleSignupSuccess(accountData: CodexAccountInput) {

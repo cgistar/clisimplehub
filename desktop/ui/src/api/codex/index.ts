@@ -8,6 +8,7 @@ import type {
   CodexLoginResult,
   CodexTestResult,
   CodexUsage,
+  CodexResetResult,
   CodexUsageResult,
   CodexUsageWindow,
   HeadlessLoginState,
@@ -18,6 +19,26 @@ import type {
 } from '@/types/codex'
 
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
+
+function hasWailsMethod(name: string): boolean {
+  return typeof window !== 'undefined' && typeof window.go?.main?.App?.[name] === 'function'
+}
+
+async function postWebCodexAccountAction<T>(path: string, accountId: string): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ accountId })
+  })
+  const payload = await response.json().catch(() => ({})) as Record<string, unknown>
+  if (!response.ok) {
+    throw new Error(String(payload.error || response.statusText || 'request failed'))
+  }
+  return payload as T
+}
 
 function toUsageWindow(raw: unknown): CodexUsageWindow | undefined {
   if (!raw || typeof raw !== 'object') return undefined
@@ -37,12 +58,14 @@ function normalizeUsage(raw: unknown): CodexUsage | undefined {
 
   const primary = toUsageWindow(value.primary)
   const secondary = toUsageWindow(value.secondary)
+  const resetCreditsAvailableCount = Number(value.resetCreditsAvailableCount ?? 0)
 
-  if (!primary && !secondary) return undefined
+  if (!primary && !secondary && resetCreditsAvailableCount <= 0) return undefined
 
   return {
     primary,
-    secondary
+    secondary,
+    resetCreditsAvailableCount
   }
 }
 
@@ -96,6 +119,10 @@ export const codexApi = {
     await App.UpdateCodexAccount(toCodexDto(input))
   },
 
+  async writeAccountToAuthJson(account: CodexAccount): Promise<void> {
+    await App.WriteCodexAccountToAuthJSON(toCodexDto(account))
+  },
+
   async restoreAccount(accountId: string): Promise<void> {
     await App.RestoreCodexAccount(accountId)
   },
@@ -114,6 +141,20 @@ export const codexApi = {
 
   async getAccountUsage(accountId: string): Promise<CodexUsageResult> {
     return App.GetCodexAccountUsage(accountId)
+  },
+
+  async getAccountPrimaryUsage(accountId: string): Promise<CodexUsageResult> {
+    if (!hasWailsMethod('GetCodexAccountPrimaryUsage')) {
+      return postWebCodexAccountAction<CodexUsageResult>('/web/api/codex/usage/primary', accountId)
+    }
+    return App.GetCodexAccountPrimaryUsage(accountId)
+  },
+
+  async consumeAccountResetCredit(accountId: string): Promise<CodexResetResult> {
+    if (!hasWailsMethod('ConsumeCodexAccountResetCredit')) {
+      return postWebCodexAccountAction<CodexResetResult>('/web/api/codex/reset', accountId)
+    }
+    return window.go.main.App.ConsumeCodexAccountResetCredit(accountId) as Promise<CodexResetResult>
   },
 
   async getGlobalConfig(): Promise<CodexGlobalConfig> {

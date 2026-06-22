@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,6 +17,8 @@ import (
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
+
+	"github.com/google/uuid"
 )
 
 type desktopFacade struct{}
@@ -633,6 +634,98 @@ func (d *desktopFacade) CancelLogin() error {
 }
 
 func (d *desktopFacade) GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error) {
+	return d.getAccountUsage(ctx, configPath, accountId, fetchCodexUsage)
+}
+
+func (d *desktopFacade) GetAccountPrimaryUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error) {
+	return d.getAccountUsage(ctx, configPath, accountId, fetchCodexUsageFromHeaders)
+}
+
+func (d *desktopFacade) ConsumeAccountResetCredit(ctx context.Context, configPath, accountId string) (json.RawMessage, error) {
+	accountId = strings.TrimSpace(accountId)
+	if accountId == "" {
+		return nil, fmt.Errorf("accountId is required")
+	}
+
+	store := getStore()
+	if store == nil {
+		return nil, fmt.Errorf("account store not initialized")
+	}
+
+	account, err := store.GetByID(ctx, accountId)
+	if err != nil || account == nil {
+		return nil, fmt.Errorf("account not found: %s", accountId)
+	}
+
+	proxyURL := strings.TrimSpace(account.ProxyUrl)
+	mc, _ := codexShared.LoadCodexMultiConfig(configPath)
+	if proxyURL == "" && mc != nil {
+		proxyURL = mc.ProxyUrl
+	}
+	if mc == nil {
+		mc = &codexShared.CodexMultiConfig{}
+	}
+
+	svc := getService()
+	if svc == nil {
+		return nil, fmt.Errorf("codex service not available")
+	}
+	mgr := svc.GetOrCreateAuthManager(accountId, configPath, proxyURL)
+	accessToken, acctID, err := mgr.GetAccessToken()
+	if err != nil {
+		if strings.TrimSpace(account.AccessToken) == "" {
+			return nil, fmt.Errorf("auth failed: %v", err)
+		}
+		accessToken = strings.TrimSpace(account.AccessToken)
+		acctID = strings.TrimSpace(account.AccountID)
+	}
+	if strings.TrimSpace(acctID) == "" {
+		acctID = strings.TrimSpace(account.AccountID)
+	}
+
+	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
+	redeemID := uuid.NewString()
+	reset, err := codexAuth.PostCodexReset(ctx, client, codexAuth.ResetQuery{
+		AccessToken: accessToken,
+		AccountID:   acctID,
+		UserAgent:   mc.Config.UserAgent,
+		Originator:  mc.Config.Originator,
+		RedeemID:    redeemID,
+		ProxyURL:    proxyURL,
+	})
+	if err != nil && isCodexResetUnauthorized(err) {
+		if refreshErr := mgr.ForceRefresh(); refreshErr != nil {
+			return nil, fmt.Errorf("reset failed and token refresh failed: %w", refreshErr)
+		}
+		accessToken, acctID, err = mgr.GetAccessToken()
+		if err != nil {
+			return nil, fmt.Errorf("auth failed after token refresh: %w", err)
+		}
+		reset, err = codexAuth.PostCodexReset(ctx, client, codexAuth.ResetQuery{
+			AccessToken: accessToken,
+			AccountID:   acctID,
+			UserAgent:   mc.Config.UserAgent,
+			Originator:  mc.Config.Originator,
+			RedeemID:    redeemID,
+			ProxyURL:    proxyURL,
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(reset)
+}
+
+func isCodexResetUnauthorized(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "HTTP 401") || strings.Contains(message, "HTTP 403")
+}
+
+func (d *desktopFacade) getAccountUsage(ctx context.Context, configPath, accountId string, fetch func(context.Context, string, string, string, *codexShared.CodexMultiConfig) (*codexShared.CodexUsageSnapshot, string, error)) (json.RawMessage, error) {
 	accountId = strings.TrimSpace(accountId)
 	if accountId == "" {
 		return nil, fmt.Errorf("accountId is required")
@@ -726,6 +819,9 @@ func formatUsageResult(usage *codexShared.CodexUsageSnapshot) map[string]any {
 	}
 	if usage.PrimaryOverSecondaryPercent > 0 {
 		result["primaryOverSecondaryPercent"] = usage.PrimaryOverSecondaryPercent
+	}
+	if usage.ResetCreditsAvailableCount > 0 {
+		result["resetCreditsAvailableCount"] = usage.ResetCreditsAvailableCount
 	}
 	return result
 }
@@ -1155,6 +1251,63 @@ func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL strin
 	if config == nil {
 		config = &codexShared.CodexMultiConfig{}
 	}
+	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
+	usage, err := codexAuth.FetchUsage(ctx, client, codexAuth.UsageQuery{
+		AccessToken: accessToken,
+		AccountID:   accountID,
+		UserAgent:   config.Config.UserAgent,
+		Originator:  config.Config.Originator,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	if usage == nil {
+		return nil, "", nil
+	}
+
+	snapshot := usageResponseToSnapshot(usage)
+	return snapshot, usage.PlanType, nil
+}
+
+func usageResponseToSnapshot(usage *codexAuth.UsageResponse) *codexShared.CodexUsageSnapshot {
+	if usage == nil {
+		return nil
+	}
+
+	snapshot := &codexShared.CodexUsageSnapshot{
+		UpdatedAt: time.Now(),
+	}
+	if usage.RateLimit != nil {
+		if primary := usage.RateLimit.PrimaryWindow; primary != nil {
+			snapshot.PrimaryUsedPercent = primary.UsedPercent
+			snapshot.PrimaryResetAfterSeconds = primary.ResetAfterSeconds
+			snapshot.PrimaryWindowMinutes = primary.LimitWindowSeconds / 60
+		}
+		if secondary := usage.RateLimit.SecondaryWindow; secondary != nil {
+			snapshot.SecondaryUsedPercent = secondary.UsedPercent
+			snapshot.SecondaryResetAfterSeconds = secondary.ResetAfterSeconds
+			snapshot.SecondaryWindowMinutes = secondary.LimitWindowSeconds / 60
+		}
+	}
+	if usage.RateLimitResetCredits != nil {
+		snapshot.ResetCreditsAvailableCount = usage.RateLimitResetCredits.AvailableCount
+		snapshot.ResetCreditsAvailable = true
+	}
+
+	if snapshot.PrimaryUsedPercent == 0 &&
+		snapshot.PrimaryResetAfterSeconds == 0 &&
+		snapshot.SecondaryUsedPercent == 0 &&
+		snapshot.SecondaryResetAfterSeconds == 0 &&
+		snapshot.ResetCreditsAvailableCount == 0 {
+		return nil
+	}
+	return snapshot
+}
+
+func fetchCodexUsageFromHeaders(ctx context.Context, accessToken, accountID, proxyURL string, config *codexShared.CodexMultiConfig) (*codexShared.CodexUsageSnapshot, string, error) {
+	if config == nil {
+		config = &codexShared.CodexMultiConfig{}
+	}
 
 	body := []byte(`{"model":"gpt-5.4-mini","reasoning":{"effort":"medium"},"instructions":"You are Codex, based on GPT-5.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Say 'OK' only"}]}],"stream":true,"store":false}`)
 	req, _, _, _, err := codexBackend.Prepare(ctx, codexBackend.Request{
@@ -1179,8 +1332,6 @@ func fetchCodexUsage(ctx context.Context, accessToken, accountID, proxyURL strin
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
-
-	log.Printf("[codex-usage] status=%d headers=%v", resp.StatusCode, resp.Header)
 
 	if resp.StatusCode >= 400 {
 		return nil, "", fmt.Errorf("upstream %d: %s", resp.StatusCode, string(respBody))

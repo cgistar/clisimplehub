@@ -68,6 +68,16 @@ export const webApi = {
       method: 'POST',
       body: JSON.stringify({ accountId }),
     }),
+  fetchCodexPrimaryUsage: (accountId: string) =>
+    apiFetch<ActionResponse>('/web/api/codex/usage/primary', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
+  consumeCodexResetCredit: (accountId: string) =>
+    apiFetch<ActionResponse>('/web/api/codex/reset', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
   addCodexAccount: (payload: CodexAccountInput) =>
     apiFetch<CodexAccount & ActionResponse>('/web/api/codex/accounts', {
       method: 'POST',

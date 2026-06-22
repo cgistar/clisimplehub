@@ -10,6 +10,8 @@ interface CodexAccountCardProps {
   onActivate: (accountId: string) => void
   onRefreshToken: (accountId: string) => void
   onFetchUsage: (accountId: string) => void
+  onFetchPrimaryUsage: (accountId: string) => void
+  onResetCredit: (accountId: string) => void
   onCopy: (account: CodexAccount) => void
   onEdit: (account: CodexAccount) => void
   onDelete: (accountId: string) => void
@@ -21,6 +23,8 @@ export default function CodexAccountCard({
   onActivate,
   onRefreshToken,
   onFetchUsage,
+  onFetchPrimaryUsage,
+  onResetCredit,
   onCopy,
   onEdit,
   onDelete,
@@ -34,9 +38,19 @@ export default function CodexAccountCard({
   const activateBusy = busyAction === `codex:activate:${localId}`
   const refreshBusy = busyAction === `codex:refresh:${localId}`
   const usageBusy = busyAction === `codex:usage:${localId}`
+  const primaryUsageBusy = busyAction === `codex:usage-primary:${localId}`
+  const resetBusy = busyAction === `codex:reset:${localId}`
   const deleteBusy = busyAction === `codex:delete:${localId}`
-  const actionBusy = activateBusy || refreshBusy || usageBusy || deleteBusy
+  const actionBusy = activateBusy || refreshBusy || usageBusy || primaryUsageBusy || resetBusy || deleteBusy
   const subscriptionActiveUntil = getCodexSubscriptionActiveUntil(account.idToken)
+  const resetCreditsAvailableCount = Number(account.codexUsage?.resetCreditsAvailableCount || 0)
+
+  function confirmResetCredit() {
+    if (actionBusy || resetCreditsAvailableCount <= 0) return
+    if (window.confirm(`确定重置账号 ${displayName} 的周限吗？当前可用次数：${resetCreditsAvailableCount}`)) {
+      onResetCredit(localId)
+    }
+  }
 
   return (
     <article className={`codex-account-card${account.isActive ? ' active' : ''}`}>
@@ -50,6 +64,11 @@ export default function CodexAccountCard({
 
         <div className="codex-card-tags">
           {planLabel ? <span className="badge info">{planLabel}</span> : null}
+          {resetCreditsAvailableCount > 0 ? (
+            <span className="badge success" title="rate_limit_reset_credits.available_count">
+              {resetCreditsAvailableCount}
+            </span>
+          ) : null}
           {!account.refreshToken ? <span className="badge warning">临时 Token</span> : null}
           {account.enabled === false ? <span className="badge danger">已禁用</span> : null}
           {account.websockets ? <span className="badge success">WS</span> : null}
@@ -58,8 +77,22 @@ export default function CodexAccountCard({
       </div>
 
       <div className="codex-account-card-body">
-        <CodexUsageBar label="5 小时限" usage={account.codexUsage?.primary} />
-        <CodexUsageBar label="周限" usage={account.codexUsage?.secondary} />
+        <CodexUsageBar
+          label="5 小时限"
+          usage={account.codexUsage?.primary}
+          refreshable
+          refreshDisabled={actionBusy || !localId}
+          refreshTitle={primaryUsageBusy ? '刷新 5 小时用量中...' : '刷新 5 小时用量'}
+          onRefresh={() => onFetchPrimaryUsage(localId)}
+        />
+        <CodexUsageBar
+          label="周限"
+          usage={account.codexUsage?.secondary}
+          refreshable
+          refreshDisabled={actionBusy || !localId || resetCreditsAvailableCount <= 0}
+          refreshTitle={resetCreditsAvailableCount > 0 ? (resetBusy ? '重置周限中...' : '重置周限') : '没有可用重置次数'}
+          onRefresh={confirmResetCredit}
+        />
 
         <div className="codex-account-meta-grid">
           <div className="meta-pill">今日请求: {Number(account.todayRequests || 0)}/{formatTokenCount(account.todayTotalTokens)}</div>

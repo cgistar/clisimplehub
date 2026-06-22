@@ -14,6 +14,8 @@
         @activate="handleActivate"
         @test="handleTest"
         @fetch-usage="handleFetchUsage"
+        @fetch-primary-usage="handleFetchPrimaryUsage"
+        @reset-credit="handleResetCredit"
         @copy="handleCopy"
         @get-token="(account: CodexAccount) => emit('get-token', account)"
         @edit="handleEdit"
@@ -152,6 +154,32 @@ async function handleFetchUsage(accountId: string): Promise<void> {
       restoreScrollPosition()
     } catch (error) {
       message.error(t('codex.usageFailedPrefix') + ': ' + toErrorMessage(error))
+    }
+  })
+}
+
+async function handleFetchPrimaryUsage(accountId: string): Promise<void> {
+  await runWithAccountPending(accountId, async () => {
+    try {
+      saveScrollPosition()
+      await codexStore.fetchPrimaryUsage(accountId)
+      message.success(t('codex.usageSuccess'))
+      restoreScrollPosition()
+    } catch (error) {
+      message.error(t('codex.usageFailedPrefix') + ': ' + toErrorMessage(error))
+    }
+  })
+}
+
+async function handleResetCredit(accountId: string): Promise<void> {
+  await runWithAccountPending(accountId, async () => {
+    try {
+      saveScrollPosition()
+      const result = await codexStore.consumeResetCredit(accountId)
+      message.success(t('codex.resetRateLimitSuccess', { count: result.windows_reset || 0 }))
+      restoreScrollPosition()
+    } catch (error) {
+      message.error(t('codex.resetRateLimitFailed') + ': ' + toErrorMessage(error))
     }
   })
 }

@@ -240,6 +240,14 @@ export default function App() {
     await runCodexAction(`codex:usage:${accountId}`, () => webApi.fetchCodexUsage(accountId), '账号用量已更新', '获取 Codex 用量失败')
   }
 
+  async function handleFetchCodexPrimaryUsage(accountId: string): Promise<void> {
+    await runCodexAction(`codex:usage-primary:${accountId}`, () => webApi.fetchCodexPrimaryUsage(accountId), '5 小时用量已更新', '获取 Codex 5 小时用量失败')
+  }
+
+  async function handleConsumeCodexResetCredit(accountId: string): Promise<void> {
+    await runCodexAction(`codex:reset:${accountId}`, () => webApi.consumeCodexResetCredit(accountId), '周限已重置', '重置 Codex 周限失败')
+  }
+
   async function handleDeleteCodexAccount(accountId: string): Promise<void> {
     await runCodexAction(`codex:delete:${accountId}`, () => webApi.deleteCodexAccount(accountId), '账号已删除', '删除 Codex 账号失败')
   }
@@ -461,6 +469,8 @@ export default function App() {
             onActivateAccount={handleActivateAccount}
             onRefreshToken={handleRefreshCodexToken}
             onFetchUsage={handleFetchCodexUsage}
+            onFetchPrimaryUsage={handleFetchCodexPrimaryUsage}
+            onResetCredit={handleConsumeCodexResetCredit}
             onCopyAccount={handleCopyCodexAccount}
             onEditAccount={handleOpenCodexEdit}
             onDeleteAccount={handleDeleteCodexAccount}

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS codex_accounts (
     usage_secondary_reset_secs       INTEGER NOT NULL DEFAULT 0,
     usage_secondary_window_mins      INTEGER NOT NULL DEFAULT 0,
     usage_primary_over_secondary_pct REAL NOT NULL DEFAULT 0,
+    usage_reset_credits_available_count INTEGER NOT NULL DEFAULT 0,
     usage_updated_at                 DATETIME,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

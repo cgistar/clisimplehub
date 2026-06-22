@@ -16,6 +16,9 @@
       <n-tag v-if="account.planType" type="info" size="small">
         {{ planTypeLabel }}
       </n-tag>
+      <n-tag v-if="resetCreditsAvailableCount > 0" type="success" size="small" title="rate_limit_reset_credits.available_count">
+        {{ resetCreditsAvailableCount }}
+      </n-tag>
       <n-tag v-if="!hasRefreshToken" type="warning" size="small" :title="t('codex.noRefreshToken')">
         {{ t('codex.tempToken') }}
       </n-tag>
@@ -32,16 +35,22 @@
 
     <div class="card-body">
       <CodexUsageBar
-        v-if="account.codexUsage?.primary"
         :label="t('codex.usage5h')"
-        :used-percent="account.codexUsage.primary.usedPercent"
-        :remaining-seconds="account.codexUsage.primary.remainingSeconds"
+        :used-percent="account.codexUsage?.primary?.usedPercent ?? 0"
+        :remaining-seconds="account.codexUsage?.primary?.remainingSeconds ?? 0"
+        refreshable
+        :refresh-disabled="busy"
+        :refresh-title="t('codex.fetchUsage')"
+        @refresh="emit('fetch-primary-usage', account.id)"
       />
       <CodexUsageBar
-        v-if="account.codexUsage?.secondary"
         :label="t('codex.usageWeek')"
-        :used-percent="account.codexUsage.secondary.usedPercent"
-        :remaining-seconds="account.codexUsage.secondary.remainingSeconds"
+        :used-percent="account.codexUsage?.secondary?.usedPercent ?? 0"
+        :remaining-seconds="account.codexUsage?.secondary?.remainingSeconds ?? 0"
+        refreshable
+        :refresh-disabled="busy || resetCreditsAvailableCount <= 0"
+        :refresh-title="t('codex.resetRateLimit')"
+        @refresh="confirmReset"
       />
       <div class="today-usage">
         <span>
@@ -80,7 +89,7 @@
           class="codex-action-btn"
           :title="t('codex.test')"
           :aria-label="t('codex.test')"
-          :disabled="busy || !hasRefreshToken || isCoolingDown"
+          :disabled="busy || !hasRefreshToken"
           @click="emit('test', account.id)"
         >
           <RefreshCw class="codex-action-icon" />
@@ -90,7 +99,7 @@
           class="codex-action-btn"
           :title="t('codex.fetchUsage')"
           :aria-label="t('codex.fetchUsage')"
-          :disabled="busy || isCoolingDown"
+          :disabled="busy"
           @click="emit('fetch-usage', account.id)"
         >
           <Activity class="codex-action-icon" />
@@ -164,6 +173,8 @@ const emit = defineEmits<{
   activate: [accountId: string]
   test: [accountId: string]
   'fetch-usage': [accountId: string]
+  'fetch-primary-usage': [accountId: string]
+  'reset-credit': [accountId: string]
   copy: [account: CodexAccount]
   'get-token': [account: CodexAccount]
   edit: [account: CodexAccount]
@@ -186,6 +197,11 @@ const planTypeLabel = computed(() => {
   const planType = props.account.planType
   if (!planType) return ''
   return planType.charAt(0).toUpperCase() + planType.slice(1)
+})
+
+const resetCreditsAvailableCount = computed(() => {
+  const count = Number(props.account.codexUsage?.resetCreditsAvailableCount ?? 0)
+  return Number.isFinite(count) ? count : 0
 })
 
 const statusType = computed<'default' | 'success' | 'warning' | 'error'>(() => {
@@ -289,6 +305,23 @@ function confirmDelete() {
     negativeText: t('common.cancel'),
     onPositiveClick: () => {
       emit('delete', props.account.id)
+    }
+  })
+}
+
+function confirmReset() {
+  if (props.busy || resetCreditsAvailableCount.value <= 0) return
+
+  dialog.warning({
+    title: t('common.confirm'),
+    content: t('codex.resetRateLimitConfirm', {
+      account: displayName.value,
+      count: resetCreditsAvailableCount.value
+    }),
+    positiveText: t('codex.resetRateLimit'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      emit('reset-credit', props.account.id)
     }
   })
 }

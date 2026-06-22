@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS codex_accounts (
     usage_secondary_reset_secs       INTEGER NOT NULL DEFAULT 0,
     usage_secondary_window_mins      INTEGER NOT NULL DEFAULT 0,
     usage_primary_over_secondary_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+    usage_reset_credits_available_count INTEGER NOT NULL DEFAULT 0,
     usage_updated_at                 TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -98,6 +99,7 @@ CREATE TABLE codex_accounts (
     usage_secondary_reset_secs       INTEGER NOT NULL DEFAULT 0,
     usage_secondary_window_mins      INTEGER NOT NULL DEFAULT 0,
     usage_primary_over_secondary_pct REAL NOT NULL DEFAULT 0,
+    usage_reset_credits_available_count INTEGER NOT NULL DEFAULT 0,
     usage_updated_at                 DATETIME,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -269,7 +271,7 @@ func (s *SQLiteCodexAccountStore) migrateCodexAccountsLocalID(ctx context.Contex
 			       cooldown_until, cooldown_reason,
 			       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 			       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
-			       usage_primary_over_secondary_pct, usage_updated_at,
+			       usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
 			       created_at, updated_at
 			FROM codex_accounts_legacy_account_id_pk`)
 		if err != nil {
@@ -333,7 +335,7 @@ func insertCodexAccountTx(ctx context.Context, tx *sql.Tx, a *CodexAccount) erro
 	}
 
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
-	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin, usageResetCredits int
 	var usageUpdatedAt any
 	if a.CodexUsage != nil {
 		usagePrimPct = a.CodexUsage.PrimaryUsedPercent
@@ -343,6 +345,7 @@ func insertCodexAccountTx(ctx context.Context, tx *sql.Tx, a *CodexAccount) erro
 		usageSecReset = a.CodexUsage.SecondaryResetAfterSeconds
 		usageSecWin = a.CodexUsage.SecondaryWindowMinutes
 		usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
+		usageResetCredits = a.CodexUsage.ResetCreditsAvailableCount
 		if !a.CodexUsage.UpdatedAt.IsZero() {
 			usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
 		}
@@ -355,9 +358,9 @@ func insertCodexAccountTx(ctx context.Context, tx *sql.Tx, a *CodexAccount) erro
 			cooldown_until, cooldown_reason,
 			usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 			usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
-			usage_primary_over_secondary_pct, usage_updated_at,
+			usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
 		boolToInt(a.Enabled), boolToInt(a.Websockets),
 		a.Password, a.MFACode,
@@ -365,7 +368,7 @@ func insertCodexAccountTx(ctx context.Context, tx *sql.Tx, a *CodexAccount) erro
 		nullTime(a.CooldownUntil), a.CooldownReason,
 		usagePrimPct, usagePrimReset, usagePrimWin,
 		usageSecPct, usageSecReset, usageSecWin,
-		usagePriOverSec, usageUpdatedAt,
+		usagePriOverSec, usageResetCredits, usageUpdatedAt,
 		sqliteTime(a.CreatedAt), sqliteTime(a.UpdatedAt),
 	)
 	return err
@@ -384,6 +387,11 @@ func (s *SQLiteCodexAccountStore) ensureAccountCapabilityColumns(ctx context.Con
 	if !columns["websockets"] {
 		if _, err := s.execWrite(ctx, `ALTER TABLE codex_accounts ADD COLUMN websockets INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("add codex_accounts.websockets: %w", err)
+		}
+	}
+	if !columns["usage_reset_credits_available_count"] {
+		if _, err := s.execWrite(ctx, `ALTER TABLE codex_accounts ADD COLUMN usage_reset_credits_available_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add codex_accounts.usage_reset_credits_available_count: %w", err)
 		}
 	}
 	return nil
@@ -455,7 +463,7 @@ func (s *SQLiteCodexAccountStore) ListAccounts(ctx context.Context) ([]CodexAcco
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
-		       usage_primary_over_secondary_pct, usage_updated_at,
+		       usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
 		       created_at, updated_at
 		FROM codex_accounts ORDER BY weight DESC, created_at ASC`)
 	if err != nil {
@@ -488,7 +496,7 @@ func (s *SQLiteCodexAccountStore) ListAccountsPage(ctx context.Context, offset, 
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
-		       usage_primary_over_secondary_pct, usage_updated_at,
+		       usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
 		       created_at, updated_at
 		FROM codex_accounts
 		ORDER BY weight DESC, created_at ASC
@@ -524,7 +532,7 @@ func (s *SQLiteCodexAccountStore) GetByID(ctx context.Context, accountID string)
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
-		       usage_primary_over_secondary_pct, usage_updated_at,
+		       usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
 		       created_at, updated_at
 		FROM codex_accounts WHERE id = ?`, accountID)
 	return scanAccountRow(row)
@@ -537,7 +545,7 @@ func (s *SQLiteCodexAccountStore) GetByRefreshToken(ctx context.Context, rt stri
 		       cooldown_until, cooldown_reason,
 		       usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 		       usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
-		       usage_primary_over_secondary_pct, usage_updated_at,
+		       usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
 		       created_at, updated_at
 		FROM codex_accounts WHERE refresh_token = ?`, rt)
 	return scanAccountRow(row)
@@ -563,7 +571,7 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 	}
 
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
-	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin, usageResetCredits int
 	var usageUpdatedAt any
 	if a.CodexUsage != nil {
 		usagePrimPct = a.CodexUsage.PrimaryUsedPercent
@@ -573,6 +581,7 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 		usageSecReset = a.CodexUsage.SecondaryResetAfterSeconds
 		usageSecWin = a.CodexUsage.SecondaryWindowMinutes
 		usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
+		usageResetCredits = a.CodexUsage.ResetCreditsAvailableCount
 		if !a.CodexUsage.UpdatedAt.IsZero() {
 			usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
 		}
@@ -585,9 +594,9 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 			cooldown_until, cooldown_reason,
 			usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 			usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
-			usage_primary_over_secondary_pct, usage_updated_at,
+			usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
 		boolToInt(a.Enabled), boolToInt(a.Websockets),
 		a.Password, a.MFACode,
@@ -595,7 +604,7 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 		nullTime(a.CooldownUntil), a.CooldownReason,
 		usagePrimPct, usagePrimReset, usagePrimWin,
 		usageSecPct, usageSecReset, usageSecWin,
-		usagePriOverSec, usageUpdatedAt,
+		usagePriOverSec, usageResetCredits, usageUpdatedAt,
 		sqliteTime(a.CreatedAt), sqliteTime(a.UpdatedAt),
 	)
 	return err
@@ -615,7 +624,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 	a.UpdatedAt = time.Now()
 
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
-	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin, usageResetCredits int
 	var usageUpdatedAt any
 	if a.CodexUsage != nil {
 		usagePrimPct = a.CodexUsage.PrimaryUsedPercent
@@ -625,6 +634,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 		usageSecReset = a.CodexUsage.SecondaryResetAfterSeconds
 		usageSecWin = a.CodexUsage.SecondaryWindowMinutes
 		usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
+		usageResetCredits = a.CodexUsage.ResetCreditsAvailableCount
 		if !a.CodexUsage.UpdatedAt.IsZero() {
 			usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
 		}
@@ -638,7 +648,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 			cooldown_until = ?, cooldown_reason = ?,
 			usage_primary_used_pct = ?, usage_primary_reset_secs = ?, usage_primary_window_mins = ?,
 			usage_secondary_used_pct = ?, usage_secondary_reset_secs = ?, usage_secondary_window_mins = ?,
-			usage_primary_over_secondary_pct = ?, usage_updated_at = ?,
+			usage_primary_over_secondary_pct = ?, usage_reset_credits_available_count = ?, usage_updated_at = ?,
 			updated_at = ?
 		WHERE id = ?`,
 		a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
@@ -648,7 +658,7 @@ func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) e
 		nullTime(a.CooldownUntil), a.CooldownReason,
 		usagePrimPct, usagePrimReset, usagePrimWin,
 		usageSecPct, usageSecReset, usageSecWin,
-		usagePriOverSec, usageUpdatedAt,
+		usagePriOverSec, usageResetCredits, usageUpdatedAt,
 		sqliteTime(a.UpdatedAt),
 		a.ID,
 	)
@@ -732,7 +742,7 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 			}
 
 			var usagePrimPct, usageSecPct, usagePriOverSec float64
-			var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+			var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin, usageResetCredits int
 			var usageUpdatedAt any
 			if a.CodexUsage != nil {
 				usagePrimPct = a.CodexUsage.PrimaryUsedPercent
@@ -742,6 +752,7 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 				usageSecReset = a.CodexUsage.SecondaryResetAfterSeconds
 				usageSecWin = a.CodexUsage.SecondaryWindowMinutes
 				usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
+				usageResetCredits = a.CodexUsage.ResetCreditsAvailableCount
 				if !a.CodexUsage.UpdatedAt.IsZero() {
 					usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
 				}
@@ -754,9 +765,9 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 					cooldown_until, cooldown_reason,
 					usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
 					usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
-					usage_primary_over_secondary_pct, usage_updated_at,
+					usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
 					created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 				a.ID, a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
 				boolToInt(a.Enabled), boolToInt(a.Websockets),
 				a.Password, a.MFACode,
@@ -764,7 +775,7 @@ func (s *SQLiteCodexAccountStore) ReplaceAllAccounts(ctx context.Context, accoun
 				nullTime(a.CooldownUntil), a.CooldownReason,
 				usagePrimPct, usagePrimReset, usagePrimWin,
 				usageSecPct, usageSecReset, usageSecWin,
-				usagePriOverSec, usageUpdatedAt,
+				usagePriOverSec, usageResetCredits, usageUpdatedAt,
 				sqliteTime(a.CreatedAt), sqliteTime(a.UpdatedAt),
 			); err != nil {
 				return fmt.Errorf("insert account %q: %w", a.AccountID, err)
@@ -833,12 +844,15 @@ func (s *SQLiteCodexAccountStore) UpdateUsageSnapshot(ctx context.Context, accou
 		UPDATE codex_accounts SET
 			usage_primary_used_pct = ?, usage_primary_reset_secs = ?, usage_primary_window_mins = ?,
 			usage_secondary_used_pct = ?, usage_secondary_reset_secs = ?, usage_secondary_window_mins = ?,
-			usage_primary_over_secondary_pct = ?, usage_updated_at = ?,
+			usage_primary_over_secondary_pct = ?,
+			usage_reset_credits_available_count = CASE WHEN ? != 0 THEN ? ELSE usage_reset_credits_available_count END,
+			usage_updated_at = ?,
 			updated_at = ?
 		WHERE id = ?`,
 		snapshot.PrimaryUsedPercent, snapshot.PrimaryResetAfterSeconds, snapshot.PrimaryWindowMinutes,
 		snapshot.SecondaryUsedPercent, snapshot.SecondaryResetAfterSeconds, snapshot.SecondaryWindowMinutes,
-		snapshot.PrimaryOverSecondaryPercent, nullTime(snapshot.UpdatedAt),
+		snapshot.PrimaryOverSecondaryPercent,
+		boolToInt(snapshot.ResetCreditsAvailable), snapshot.ResetCreditsAvailableCount, nullTime(snapshot.UpdatedAt),
 		sqliteTime(time.Now()), accountID)
 	return err
 }
@@ -1033,7 +1047,7 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 	var status string
 	var enabled, websockets int
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
-	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin, usageResetCredits int
 
 	err := s.Scan(
 		&a.ID, &a.AccountID, &a.RefreshToken, &a.AccessToken, &a.IDToken, &a.Email, &a.PlanType,
@@ -1042,7 +1056,7 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 		&cooldownUntil, &a.CooldownReason,
 		&usagePrimPct, &usagePrimReset, &usagePrimWin,
 		&usageSecPct, &usageSecReset, &usageSecWin,
-		&usagePriOverSec, &usageUpdatedAt,
+		&usagePriOverSec, &usageResetCredits, &usageUpdatedAt,
 		&createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -1065,7 +1079,7 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 		a.UpdatedAt = t
 	}
 	usageUpdatedAtTime, hasUsageUpdatedAt := parseSQLiteTime(usageUpdatedAt)
-	if hasUsageUpdatedAt || usagePrimPct > 0 || usageSecPct > 0 {
+	if hasUsageUpdatedAt || usagePrimPct > 0 || usageSecPct > 0 || usageResetCredits > 0 {
 		a.CodexUsage = &CodexUsageSnapshot{
 			PrimaryUsedPercent:          usagePrimPct,
 			PrimaryResetAfterSeconds:    usagePrimReset,
@@ -1074,6 +1088,8 @@ func scanFromScanner(s rowScanner) (*CodexAccount, error) {
 			SecondaryResetAfterSeconds:  usageSecReset,
 			SecondaryWindowMinutes:      usageSecWin,
 			PrimaryOverSecondaryPercent: usagePriOverSec,
+			ResetCreditsAvailableCount:  usageResetCredits,
+			ResetCreditsAvailable:       usageResetCredits > 0,
 		}
 		if hasUsageUpdatedAt {
 			a.CodexUsage.UpdatedAt = usageUpdatedAtTime
@@ -1088,7 +1104,7 @@ func scanLegacyAccount(rows *sql.Rows) (*CodexAccount, error) {
 	var status string
 	var enabled, websockets int
 	var usagePrimPct, usageSecPct, usagePriOverSec float64
-	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin int
+	var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin, usageResetCredits int
 
 	err := rows.Scan(
 		&a.AccountID, &a.RefreshToken, &a.AccessToken, &a.IDToken, &a.Email, &a.PlanType,
@@ -1097,7 +1113,7 @@ func scanLegacyAccount(rows *sql.Rows) (*CodexAccount, error) {
 		&cooldownUntil, &a.CooldownReason,
 		&usagePrimPct, &usagePrimReset, &usagePrimWin,
 		&usageSecPct, &usageSecReset, &usageSecWin,
-		&usagePriOverSec, &usageUpdatedAt,
+		&usagePriOverSec, &usageResetCredits, &usageUpdatedAt,
 		&createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -1119,7 +1135,7 @@ func scanLegacyAccount(rows *sql.Rows) (*CodexAccount, error) {
 		a.UpdatedAt = t
 	}
 	usageUpdatedAtTime, hasUsageUpdatedAt := parseSQLiteTime(usageUpdatedAt)
-	if hasUsageUpdatedAt || usagePrimPct > 0 || usageSecPct > 0 {
+	if hasUsageUpdatedAt || usagePrimPct > 0 || usageSecPct > 0 || usageResetCredits > 0 {
 		a.CodexUsage = &CodexUsageSnapshot{
 			PrimaryUsedPercent:          usagePrimPct,
 			PrimaryResetAfterSeconds:    usagePrimReset,
@@ -1128,6 +1144,8 @@ func scanLegacyAccount(rows *sql.Rows) (*CodexAccount, error) {
 			SecondaryResetAfterSeconds:  usageSecReset,
 			SecondaryWindowMinutes:      usageSecWin,
 			PrimaryOverSecondaryPercent: usagePriOverSec,
+			ResetCreditsAvailableCount:  usageResetCredits,
+			ResetCreditsAvailable:       usageResetCredits > 0,
 		}
 		if hasUsageUpdatedAt {
 			a.CodexUsage.UpdatedAt = usageUpdatedAtTime

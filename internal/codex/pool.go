@@ -237,6 +237,12 @@ func (p *CodexAccountPool) UpdateUsageSnapshot(accountId string, snapshot *share
 
 	for i := range p.accounts {
 		if accountLocalID(&p.accounts[i]) == accountId {
+			if !snapshot.ResetCreditsAvailable && p.accounts[i].CodexUsage != nil {
+				snapshotCopy := *snapshot
+				snapshotCopy.ResetCreditsAvailableCount = p.accounts[i].CodexUsage.ResetCreditsAvailableCount
+				snapshotCopy.ResetCreditsAvailable = p.accounts[i].CodexUsage.ResetCreditsAvailable || p.accounts[i].CodexUsage.ResetCreditsAvailableCount > 0
+				snapshot = &snapshotCopy
+			}
 			p.accounts[i].CodexUsage = snapshot
 			break
 		}

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"compress/gzip"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -219,6 +220,8 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Post("/web/api/codex/active", p.requireWebUISession(p.handleWebUIActiveCodexAccount))
 	r.Post("/web/api/codex/refresh-token", p.requireWebUISession(p.handleWebUIRefreshCodexToken))
 	r.Post("/web/api/codex/usage", p.requireWebUISession(p.handleWebUIFetchCodexUsage))
+	r.Post("/web/api/codex/usage/primary", p.requireWebUISession(p.handleWebUIFetchCodexPrimaryUsage))
+	r.Post("/web/api/codex/reset", p.requireWebUISession(p.handleWebUIConsumeCodexResetCredit))
 	r.Post("/web/api/codex/config", p.requireWebUISession(p.handleWebUISaveCodexConfig))
 	r.Post("/web/api/codex/accounts", p.requireWebUISession(p.handleWebUIAddCodexAccount))
 	r.Post("/web/api/codex/accounts/update", p.requireWebUISession(p.handleWebUIUpdateCodexAccount))
@@ -1092,12 +1095,49 @@ func (p *ProxyServer) handleWebUIRefreshCodexToken(w http.ResponseWriter, r *htt
 }
 
 func (p *ProxyServer) handleWebUIFetchCodexUsage(w http.ResponseWriter, r *http.Request) {
+	p.handleWebUIFetchCodexUsageWith(w, r, func(ctx context.Context, provider plugin.CodexDesktopProvider, codexPath, accountID string) (json.RawMessage, error) {
+		return provider.GetAccountUsage(ctx, codexPath, accountID)
+	})
+}
+
+func (p *ProxyServer) handleWebUIFetchCodexPrimaryUsage(w http.ResponseWriter, r *http.Request) {
+	p.handleWebUIFetchCodexUsageWith(w, r, func(ctx context.Context, provider plugin.CodexDesktopProvider, codexPath, accountID string) (json.RawMessage, error) {
+		return provider.GetAccountPrimaryUsage(ctx, codexPath, accountID)
+	})
+}
+
+func (p *ProxyServer) handleWebUIConsumeCodexResetCredit(w http.ResponseWriter, r *http.Request) {
 	provider, accountID, codexPath, ok := p.parseWebUICodexAccountAction(w, r)
 	if !ok {
 		return
 	}
 
-	result, err := provider.GetAccountUsage(r.Context(), codexPath, accountID)
+	result, err := provider.ConsumeAccountResetCredit(r.Context(), codexPath, accountID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "failed to parse reset payload",
+		})
+		return
+	}
+	payload["message"] = "reset credit consumed"
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (p *ProxyServer) handleWebUIFetchCodexUsageWith(w http.ResponseWriter, r *http.Request, fetch func(context.Context, plugin.CodexDesktopProvider, string, string) (json.RawMessage, error)) {
+	provider, accountID, codexPath, ok := p.parseWebUICodexAccountAction(w, r)
+	if !ok {
+		return
+	}
+
+	result, err := fetch(r.Context(), provider, codexPath, accountID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),

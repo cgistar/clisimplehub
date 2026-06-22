@@ -261,6 +261,10 @@ export default {
     // Usage related
     usage: 'Usage',
     usageFailedPrefix: 'Failed to fetch usage: ',
+    resetRateLimit: 'Reset Rate Limit',
+    resetRateLimitConfirm: 'Consume 1 reset credit for {account} and reset Codex rate-limit windows? Available: {count}.',
+    resetRateLimitSuccess: 'Rate-limit windows reset: {count}',
+    resetRateLimitFailed: 'Failed to reset rate limit',
     tokenExpiredClickTest: 'Token expired, please click refresh token button',
     // JSON file import
     selectJsonFiles: 'Select JSON Files',
@@ -273,7 +277,7 @@ export default {
     noRefreshToken: 'This account has no refresh token and cannot auto-refresh',
     noRefreshTokenHint: 'No refresh token, cannot refresh',
     // Headless login (get token)
-    getToken: 'Get Token',
+    getToken: 'Write auth.json',
     getTokenTitle: 'Get Token (Headless Login)',
     getTokenSuccess: 'Token obtained successfully',
     getTokenFailed: 'Token acquisition failed: ',

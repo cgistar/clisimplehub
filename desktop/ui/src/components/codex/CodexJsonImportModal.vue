@@ -157,6 +157,11 @@ function parseCodexJsonFile(data: unknown): CodexAccountInput | null {
     account.refreshToken = refreshToken
   }
 
+  const weight = getIntegerField(data, ['weight', 'Weight'])
+  if (weight !== undefined) {
+    account.weight = weight
+  }
+
   if (!account.accessToken || !account.email) {
     return null
   }
@@ -372,8 +377,8 @@ function buildCodexImportDTOs(rawJsonText: string): BuildImportResult {
       proxyUrl: getStringField(item, ['proxyUrl', 'proxy_url', 'ProxyUrl'])
     }
 
-    const weightStr = getStringField(item, ['weight', 'Weight'])
-    if (weightStr) dto.weight = parseInt(weightStr, 10) || 0
+    const weight = getIntegerField(item, ['weight', 'Weight'])
+    if (weight !== undefined) dto.weight = weight
 
     removeEmptyFields(dto)
     dtos.push(dto)
@@ -409,6 +414,18 @@ function getStringField(item: Record<string, unknown>, keys: string[]): string {
     }
   }
   return ''
+}
+
+function getIntegerField(item: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = item[key]
+    const numericValue = typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() ? Number(value.trim()) : NaN
+
+    if (Number.isFinite(numericValue)) return Math.trunc(numericValue)
+  }
+  return undefined
 }
 
 function removeEmptyFields(dto: CodexAccountInput): void {

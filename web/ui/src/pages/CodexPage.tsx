@@ -15,6 +15,8 @@ interface CodexPageProps {
   onActivateAccount: (accountId: string) => void
   onRefreshToken: (accountId: string) => void
   onFetchUsage: (accountId: string) => void
+  onFetchPrimaryUsage: (accountId: string) => void
+  onResetCredit: (accountId: string) => void
   onCopyAccount: (account: CodexAccount) => void
   onEditAccount: (account: CodexAccount) => void
   onDeleteAccount: (accountId: string) => void
@@ -31,6 +33,8 @@ export default function CodexPage({
   onActivateAccount,
   onRefreshToken,
   onFetchUsage,
+  onFetchPrimaryUsage,
+  onResetCredit,
   onCopyAccount,
   onEditAccount,
   onDeleteAccount,
@@ -111,6 +115,8 @@ export default function CodexPage({
                 onActivate={onActivateAccount}
                 onRefreshToken={onRefreshToken}
                 onFetchUsage={onFetchUsage}
+                onFetchPrimaryUsage={onFetchPrimaryUsage}
+                onResetCredit={onResetCredit}
                 onCopy={onCopyAccount}
                 onEdit={onEditAccount}
                 onDelete={onDeleteAccount}

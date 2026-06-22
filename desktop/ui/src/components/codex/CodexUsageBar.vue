@@ -1,6 +1,17 @@
 <template>
   <div class="codex-usage-bar">
     <span class="usage-label">{{ label }}</span>
+    <button
+      v-if="refreshable"
+      type="button"
+      class="usage-refresh-btn"
+      :title="refreshTitle"
+      :aria-label="refreshTitle"
+      :disabled="refreshDisabled"
+      @click="emit('refresh')"
+    >
+      <RefreshCw class="usage-refresh-icon" />
+    </button>
     <div class="usage-track">
       <div class="usage-fill" :class="`usage-fill-${usageTone}`" :style="{ width: `${percentage}%` }"></div>
     </div>
@@ -11,16 +22,27 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { RefreshCw } from 'lucide-vue-next'
 
 const props = withDefaults(defineProps<{
   label?: string
   usedPercent?: number
   remainingSeconds?: number
+  refreshable?: boolean
+  refreshDisabled?: boolean
+  refreshTitle?: string
 }>(), {
   label: '',
   usedPercent: 0,
-  remainingSeconds: 0
+  remainingSeconds: 0,
+  refreshable: false,
+  refreshDisabled: false,
+  refreshTitle: 'Refresh'
 })
+
+const emit = defineEmits<{
+  refresh: []
+}>()
 
 const percentage = computed(() => {
   const value = Number(props.usedPercent) || 0
@@ -57,6 +79,35 @@ const resetText = computed(() => {
   font-size: 10px;
   color: var(--text-tertiary);
   min-width: 24px;
+}
+
+.usage-refresh-btn {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+
+.usage-refresh-btn:hover:not(:disabled) {
+  color: var(--accent, #0284c7);
+  background: var(--bg-tertiary, #e2e8f0);
+}
+
+.usage-refresh-btn:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.usage-refresh-icon {
+  width: 12px;
+  height: 12px;
 }
 
 .usage-track {

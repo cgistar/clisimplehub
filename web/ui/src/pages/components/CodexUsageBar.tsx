@@ -1,22 +1,48 @@
 import type { CodexUsageWindow } from '@/types'
 import { formatCompactRemainingSeconds } from '@/lib/format'
+import { RefreshIcon } from '@/components/icons'
 
 interface CodexUsageBarProps {
   label: string
   usage?: CodexUsageWindow
+  refreshable?: boolean
+  refreshDisabled?: boolean
+  refreshTitle?: string
+  onRefresh?: () => void
 }
 
-export default function CodexUsageBar({ label, usage }: CodexUsageBarProps) {
-  if (!usage) return null
+export default function CodexUsageBar({
+  label,
+  usage,
+  refreshable = false,
+  refreshDisabled = false,
+  refreshTitle = '刷新',
+  onRefresh,
+}: CodexUsageBarProps) {
+  if (!usage && !refreshable) return null
 
-  const usedPercent = Math.max(0, Math.min(100, Number(usage.usedPercent || 0)))
+  const usedPercent = Math.max(0, Math.min(100, Number(usage?.usedPercent || 0)))
   const tone = usedPercent >= 90 ? 'error' : usedPercent >= 70 ? 'warning' : 'primary'
 
   return (
     <div className="codex-usage-block">
       <div className="codex-usage-head">
-        <span>{label}: {formatCompactRemainingSeconds(usage.remainingSeconds)}</span>
-        <span>{usedPercent.toFixed(1)}%</span>
+        <span className="codex-usage-label">
+          {label}: {formatCompactRemainingSeconds(usage?.remainingSeconds)}
+        </span>
+        {refreshable ? (
+          <button
+            className="codex-usage-refresh-btn"
+            type="button"
+            title={refreshTitle}
+            aria-label={refreshTitle}
+            disabled={refreshDisabled}
+            onClick={onRefresh}
+          >
+            <RefreshIcon />
+          </button>
+        ) : null}
+        <span className="codex-usage-percent">{usedPercent.toFixed(1)}%</span>
       </div>
       <div className="codex-usage-track">
         <div className={`codex-usage-fill codex-usage-fill-${tone}`} style={{ width: `${usedPercent}%` }} />

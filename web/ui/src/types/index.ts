@@ -140,6 +140,7 @@ export interface CodexUsageWindow {
 export interface CodexUsage {
   primary?: CodexUsageWindow
   secondary?: CodexUsageWindow
+  resetCreditsAvailableCount?: number
 }
 
 export interface CodexAccount {

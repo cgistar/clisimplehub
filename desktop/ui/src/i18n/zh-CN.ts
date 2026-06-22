@@ -261,6 +261,10 @@ export default {
     // 用量相关
     usage: '用量',
     usageFailedPrefix: '获取用量失败：',
+    resetRateLimit: '重置限流',
+    resetRateLimitConfirm: '确定为 {account} 消耗 1 次主动重置次数并重置 Codex 限流窗口？当前可用 {count} 次。',
+    resetRateLimitSuccess: '限流窗口已重置：{count} 个窗口',
+    resetRateLimitFailed: '重置限流失败',
     tokenExpiredClickTest: 'Token 已过期，请点击“刷新 Token”按钮',
     // JSON文件导入
     selectJsonFiles: '选择JSON文件',
@@ -273,7 +277,7 @@ export default {
     noRefreshToken: '此账号没有refresh token，无法自动刷新',
     noRefreshTokenHint: '无refresh token，无法刷新',
     // 无头登录（获取Token）
-    getToken: '获取Token',
+    getToken: '写入auth.json',
     getTokenTitle: '获取Token（无头登录）',
     getTokenSuccess: 'Token获取成功',
     getTokenFailed: 'Token获取失败：',

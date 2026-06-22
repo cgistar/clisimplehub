@@ -39,6 +39,8 @@ type CodexUsageSnapshot struct {
 	SecondaryResetAfterSeconds  int       `json:"secondaryResetAfterSeconds,omitempty"`
 	SecondaryWindowMinutes      int       `json:"secondaryWindowMinutes,omitempty"`
 	PrimaryOverSecondaryPercent float64   `json:"primaryOverSecondaryPercent,omitempty"`
+	ResetCreditsAvailableCount  int       `json:"resetCreditsAvailableCount,omitempty"`
+	ResetCreditsAvailable       bool      `json:"-"`
 	UpdatedAt                   time.Time `json:"updatedAt,omitempty"`
 }
 
@@ -285,7 +287,7 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 	if a.CodexUsage != nil && !a.CodexUsage.UpdatedAt.IsZero() {
 		primaryResetAt, primaryRemaining := ComputeResetMeta(a.CodexUsage.UpdatedAt, a.CodexUsage.PrimaryResetAfterSeconds)
 		secondaryResetAt, secondaryRemaining := ComputeResetMeta(a.CodexUsage.UpdatedAt, a.CodexUsage.SecondaryResetAfterSeconds)
-		m["codexUsage"] = map[string]any{
+		usage := map[string]any{
 			"primary": map[string]any{
 				"usedPercent":      a.CodexUsage.PrimaryUsedPercent,
 				"windowMinutes":    a.CodexUsage.PrimaryWindowMinutes,
@@ -301,6 +303,10 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 			"primaryOverSecondaryPercent": a.CodexUsage.PrimaryOverSecondaryPercent,
 			"updatedAt":                   a.CodexUsage.UpdatedAt.Format(time.RFC3339),
 		}
+		if a.CodexUsage.ResetCreditsAvailableCount > 0 {
+			usage["resetCreditsAvailableCount"] = a.CodexUsage.ResetCreditsAvailableCount
+		}
+		m["codexUsage"] = usage
 	}
 	return m
 }

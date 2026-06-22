@@ -6,6 +6,7 @@ import type {
   CodexAccountInput,
   CodexAccountStatus,
   CodexPagination,
+  CodexResetResult,
   CodexTestResult,
   CodexUsageResult
 } from '@/types/codex'
@@ -61,12 +62,14 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
           remainingSeconds: toSafeNumber(result.secondary.remainingSeconds)
         }
       : undefined
+    const resetCreditsAvailableCount = toSafeNumber(result?.resetCreditsAvailableCount)
 
-    if (!primary && !secondary) return undefined
+    if (!primary && !secondary && resetCreditsAvailableCount <= 0) return undefined
 
     return {
       primary,
-      secondary
+      secondary,
+      resetCreditsAvailableCount
     }
   }
 
@@ -323,6 +326,38 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     }
   }
 
+  async function fetchPrimaryUsage(accountId: string): Promise<CodexUsageResult> {
+    clearError()
+
+    try {
+      const result = await codexApi.getAccountPrimaryUsage(accountId)
+      patchAccountById(accountId, {
+        codexUsage: normalizeUsage(result)
+      })
+      return result
+    } catch (cause) {
+      error.value = String(cause)
+      throw cause
+    }
+  }
+
+  async function consumeResetCredit(accountId: string): Promise<CodexResetResult> {
+    clearError()
+
+    try {
+      const result = await codexApi.consumeAccountResetCredit(accountId)
+      try {
+        await fetchUsage(accountId)
+      } catch {
+        // 重置已经成功；用量刷新失败不应覆盖主操作结果。
+      }
+      return result
+    } catch (cause) {
+      error.value = String(cause)
+      throw cause
+    }
+  }
+
   function setSearchQuery(query: string): void {
     searchQuery.value = query
   }
@@ -351,6 +386,8 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     deleteAccounts,
     testAccount,
     fetchUsage,
+    fetchPrimaryUsage,
+    consumeResetCredit,
     setSearchQuery,
     setFilterStatus,
     clearError
