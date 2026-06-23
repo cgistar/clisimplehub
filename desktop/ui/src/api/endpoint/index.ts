@@ -91,12 +91,12 @@ function updateCodexLocalProviderConfig(
     const trimmed = line.trim()
     const isSection = trimmed.startsWith('[')
 
-    if (isSection && inLocalProvider && !trimmed.startsWith('[model_providers.local]')) {
+    if (isSection && inLocalProvider && !trimmed.startsWith('[model_providers.shub]')) {
       appendMissingLocalProviderFields()
       inLocalProvider = false
     }
 
-    if (trimmed.startsWith('[model_providers.local]')) {
+    if (trimmed.startsWith('[model_providers.shub]')) {
       inLocalProvider = true
       localProviderFound = true
     }
@@ -120,7 +120,7 @@ function updateCodexLocalProviderConfig(
     if (newLines.length > 0 && newLines[newLines.length - 1].trim() !== '') {
       newLines.push('')
     }
-    newLines.push('[model_providers.local]')
+    newLines.push('[model_providers.shub]')
     newLines.push(`base_url = '${apiUrl}'`)
     if (experimentalBearerToken) {
       newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken)}`)

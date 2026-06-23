@@ -192,7 +192,7 @@ type UsageResponse struct {
 	AdditionalRateLimits  json.RawMessage             `json:"additional_rate_limits"`
 	Credits               *UsageCredits               `json:"credits"`
 	SpendControl          *UsageSpendControl          `json:"spend_control"`
-	RateLimitReachedType  *string                     `json:"rate_limit_reached_type"`
+	RateLimitReachedType  *json.RawMessage            `json:"rate_limit_reached_type"`
 	Promo                 *UsagePromo                 `json:"promo"`
 	ReferralBeacon        json.RawMessage             `json:"referral_beacon"`
 	RateLimitResetCredits *UsageRateLimitResetCredits `json:"rate_limit_reset_credits"`

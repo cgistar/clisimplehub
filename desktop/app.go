@@ -2424,12 +2424,12 @@ func updateCodexLocalProviderConfig(configToml, baseURL, experimentalBearerToken
 		trimmed := strings.TrimSpace(line)
 		isSection := strings.HasPrefix(trimmed, "[")
 
-		if isSection && inLocalProvider && !strings.HasPrefix(trimmed, "[model_providers.local]") {
+		if isSection && inLocalProvider && !strings.HasPrefix(trimmed, "[model_providers.shub]") {
 			appendMissingFields()
 			inLocalProvider = false
 		}
 
-		if strings.HasPrefix(trimmed, "[model_providers.local]") {
+		if strings.HasPrefix(trimmed, "[model_providers.shub]") {
 			inLocalProvider = true
 			localProviderFound = true
 		}
@@ -2454,7 +2454,7 @@ func updateCodexLocalProviderConfig(configToml, baseURL, experimentalBearerToken
 		if len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) != "" {
 			newLines = append(newLines, "")
 		}
-		newLines = append(newLines, "[model_providers.local]")
+		newLines = append(newLines, "[model_providers.shub]")
 		newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
 		if experimentalBearerToken != "" {
 			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
