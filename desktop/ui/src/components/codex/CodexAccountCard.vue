@@ -54,7 +54,9 @@
       />
       <div class="today-usage">
         <span>
-          {{ t('codex.todayUsage') }}: {{ account.todayRequests || 0 }}{{ t('codex.requestUnit') }} / {{ formatTokens(account.todayTotalTokens || 0) }}
+          {{ account.todayRequests || 0 }}{{ t('codex.requestUnit') }} / {{ formatTokens(account.todayTotalTokens || 0) }}
+          · {{ t('codex.cachedTokens') }} {{ formatTokens(account.todayCachedTokens || 0) }}
+          · {{ t('codex.reasoningTokens') }} {{ formatTokens(account.todayReasoningTokens || 0) }}
         </span>
         <span v-if="subscriptionActiveUntil" class="subscription-active-until">
           {{ subscriptionActiveUntil }}

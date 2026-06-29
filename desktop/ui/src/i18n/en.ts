@@ -184,6 +184,8 @@ export default {
     scrollLoadMore: 'Scroll to load more',
     todayUsage: 'Today',
     requestUnit: 'req',
+    cachedTokens: 'Cached',
+    reasoningTokens: 'Reasoning',
     // Bulk operations
     bulkDeleteTitle: 'Bulk Delete Codex Accounts',
     selectBannedAccounts: 'Select Banned',

@@ -59,6 +59,9 @@ func ExtractFromResponse(body []byte) *TokenStats {
 	if usageMeta, ok := payload["usageMetadata"].(map[string]any); ok {
 		return extractGeminiUsage(usageMeta)
 	}
+	if usageMeta, ok := payload["usage_metadata"].(map[string]any); ok {
+		return extractGeminiUsage(usageMeta)
+	}
 
 	return nil
 }
@@ -141,6 +144,12 @@ func extractGeminiUsage(usageMeta map[string]any) *TokenStats {
 	}
 	if v, ok := parseInt64(usageMeta["totalTokenCount"]); ok {
 		tokens.TotalTokens = v
+	}
+	if v, ok := parseInt64(usageMeta["cachedContentTokenCount"]); ok {
+		tokens.CachedRead = v
+	}
+	if v, ok := parseInt64(usageMeta["thoughtsTokenCount"]); ok {
+		tokens.Reasoning = v
 	}
 	// Fallback: 如果只有 totalTokenCount
 	if v, ok := parseInt64(usageMeta["totalTokenCount"]); ok && tokens.InputTokens == 0 && tokens.OutputTokens == 0 {

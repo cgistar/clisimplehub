@@ -6,32 +6,40 @@ import (
 )
 
 type CodexAccountStat struct {
-	AccountID        string
-	AccountEmail     string
-	Model            string
-	Date             string
-	Hour             int
-	InputTokens      int64
-	OutputTokens     int64
-	TotalTokens      int64
-	StatusCode       int
-	Status           string
-	ErrorType        string
-	DurationMs       int64
-	PrimaryUsedPct   *float64
-	SecondaryUsedPct *float64
-	RequestPath      string
+	AccountID           string
+	AccountEmail        string
+	Model               string
+	Date                string
+	Hour                int
+	InputTokens         int64
+	OutputTokens        int64
+	TotalTokens         int64
+	CachedTokens        int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	ReasoningTokens     int64
+	StatusCode          int
+	Status              string
+	ErrorType           string
+	DurationMs          int64
+	PrimaryUsedPct      *float64
+	SecondaryUsedPct    *float64
+	RequestPath         string
 }
 
 type CodexAccountStatsSummary struct {
-	AccountID     string  `json:"accountId"`
-	AccountEmail  string  `json:"accountEmail"`
-	RequestCount  int64   `json:"requestCount"`
-	InputTokens   int64   `json:"inputTokens"`
-	OutputTokens  int64   `json:"outputTokens"`
-	TotalTokens   int64   `json:"totalTokens"`
-	ErrorCount    int64   `json:"errorCount"`
-	AvgDurationMs float64 `json:"avgDurationMs"`
+	AccountID           string  `json:"accountId"`
+	AccountEmail        string  `json:"accountEmail"`
+	RequestCount        int64   `json:"requestCount"`
+	InputTokens         int64   `json:"inputTokens"`
+	OutputTokens        int64   `json:"outputTokens"`
+	TotalTokens         int64   `json:"totalTokens"`
+	CachedTokens        int64   `json:"cachedTokens"`
+	CacheReadTokens     int64   `json:"cacheReadTokens"`
+	CacheCreationTokens int64   `json:"cacheCreationTokens"`
+	ReasoningTokens     int64   `json:"reasoningTokens"`
+	ErrorCount          int64   `json:"errorCount"`
+	AvgDurationMs       float64 `json:"avgDurationMs"`
 }
 
 type CodexAccountStore interface {

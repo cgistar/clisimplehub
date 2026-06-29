@@ -161,6 +161,8 @@ export interface CodexAccount {
   isActive?: boolean
   todayRequests?: number
   todayTotalTokens?: number
+  todayCachedTokens?: number
+  todayReasoningTokens?: number
   expiresAt?: string
   cooldownUntil?: string
   cooldownReason?: string

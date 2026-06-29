@@ -72,6 +72,8 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 		if summary, ok := statsByAccount[accounts[i].ID]; ok {
 			accounts[i].TodayRequests = summary.RequestCount
 			accounts[i].TodayTokens = summary.TotalTokens
+			accounts[i].TodayCachedTokens = summary.CachedTokens
+			accounts[i].TodayReasoningTokens = summary.ReasoningTokens
 		}
 	}
 
@@ -134,6 +136,8 @@ func (d *desktopFacade) GetAccountsPage(configPath string, offset, limit int) (j
 		if summary, ok := statsByAccount[a.ID]; ok {
 			a.TodayRequests = summary.RequestCount
 			a.TodayTokens = summary.TotalTokens
+			a.TodayCachedTokens = summary.CachedTokens
+			a.TodayReasoningTokens = summary.ReasoningTokens
 		}
 		isActive := activeID != "" && strings.TrimSpace(a.ID) == strings.TrimSpace(activeID)
 		list = append(list, codexShared.MarshalAccountForFrontend(a, isActive))

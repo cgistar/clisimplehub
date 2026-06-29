@@ -95,7 +95,11 @@ export default function CodexAccountCard({
         />
 
         <div className="codex-account-meta-grid">
-          <div className="meta-pill">今日请求: {Number(account.todayRequests || 0)}/{formatTokenCount(account.todayTotalTokens)}</div>
+          <div className="meta-pill">
+            今日请求: {Number(account.todayRequests || 0)}/{formatTokenCount(account.todayTotalTokens)}
+            {' '}缓存: {formatTokenCount(account.todayCachedTokens)}
+            {' '}推理: {formatTokenCount(account.todayReasoningTokens)}
+          </div>
           <div className="meta-pill">有效至{formatDateTime(subscriptionActiveUntil)}</div>
           {account.proxyUrl ? <div className="meta-pill codex-full-span">代理：{account.proxyUrl}</div> : null}
         </div>

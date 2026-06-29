@@ -39,30 +39,32 @@ func (a *App) getCodexMultiConfigPath() string {
 
 // CodexAccountDTO represents a Codex account for frontend
 type CodexAccountDTO struct {
-	ID                string         `json:"id,omitempty"`
-	RefreshToken      string         `json:"refreshToken"`
-	Email             string         `json:"email,omitempty"`
-	PlanType          string         `json:"planType,omitempty"`
-	AccessToken       string         `json:"accessToken,omitempty"`
-	IDToken           string         `json:"idToken,omitempty"`
-	AccountID         string         `json:"accountId,omitempty"`
-	Enabled           bool           `json:"enabled"`
-	Websockets        bool           `json:"websockets,omitempty"`
-	Status            string         `json:"status"`
-	Weight            int            `json:"weight,omitempty"`
-	ProxyUrl          string         `json:"proxyUrl,omitempty"`
-	Password          string         `json:"password,omitempty"`
-	MFACode           string         `json:"mfaCode,omitempty"`
-	ExpiresAt         string         `json:"expiresAt,omitempty"`
-	CooldownUntil     string         `json:"cooldownUntil,omitempty"`
-	CooldownReason    string         `json:"cooldownReason,omitempty"`
-	CooldownRemaining int            `json:"cooldownRemaining,omitempty"`
-	CodexUsage        map[string]any `json:"codexUsage,omitempty"`
-	CreatedAt         string         `json:"createdAt,omitempty"`
-	UpdatedAt         string         `json:"updatedAt,omitempty"`
-	TodayRequests     int64          `json:"todayRequests,omitempty"`
-	TodayTotalTokens  int64          `json:"todayTotalTokens,omitempty"`
-	IsActive          bool           `json:"isActive"`
+	ID                   string         `json:"id,omitempty"`
+	RefreshToken         string         `json:"refreshToken"`
+	Email                string         `json:"email,omitempty"`
+	PlanType             string         `json:"planType,omitempty"`
+	AccessToken          string         `json:"accessToken,omitempty"`
+	IDToken              string         `json:"idToken,omitempty"`
+	AccountID            string         `json:"accountId,omitempty"`
+	Enabled              bool           `json:"enabled"`
+	Websockets           bool           `json:"websockets,omitempty"`
+	Status               string         `json:"status"`
+	Weight               int            `json:"weight,omitempty"`
+	ProxyUrl             string         `json:"proxyUrl,omitempty"`
+	Password             string         `json:"password,omitempty"`
+	MFACode              string         `json:"mfaCode,omitempty"`
+	ExpiresAt            string         `json:"expiresAt,omitempty"`
+	CooldownUntil        string         `json:"cooldownUntil,omitempty"`
+	CooldownReason       string         `json:"cooldownReason,omitempty"`
+	CooldownRemaining    int            `json:"cooldownRemaining,omitempty"`
+	CodexUsage           map[string]any `json:"codexUsage,omitempty"`
+	CreatedAt            string         `json:"createdAt,omitempty"`
+	UpdatedAt            string         `json:"updatedAt,omitempty"`
+	TodayRequests        int64          `json:"todayRequests,omitempty"`
+	TodayTotalTokens     int64          `json:"todayTotalTokens,omitempty"`
+	TodayCachedTokens    int64          `json:"todayCachedTokens,omitempty"`
+	TodayReasoningTokens int64          `json:"todayReasoningTokens,omitempty"`
+	IsActive             bool           `json:"isActive"`
 }
 
 type CodexAccountsResponse struct {
@@ -855,14 +857,18 @@ func (a *App) ConsumeCodexAccountResetCredit(accountId string) (*CodexResetRespo
 }
 
 type CodexAccountStatsDTO struct {
-	AccountID    string  `json:"accountId"`
-	AccountEmail string  `json:"accountEmail"`
-	RequestCount int64   `json:"requestCount"`
-	InputTokens  int64   `json:"inputTokens"`
-	OutputTokens int64   `json:"outputTokens"`
-	TotalTokens  int64   `json:"totalTokens"`
-	ErrorCount   int64   `json:"errorCount"`
-	AvgDuration  float64 `json:"avgDurationMs"`
+	AccountID           string  `json:"accountId"`
+	AccountEmail        string  `json:"accountEmail"`
+	RequestCount        int64   `json:"requestCount"`
+	InputTokens         int64   `json:"inputTokens"`
+	OutputTokens        int64   `json:"outputTokens"`
+	TotalTokens         int64   `json:"totalTokens"`
+	CachedTokens        int64   `json:"cachedTokens"`
+	CacheReadTokens     int64   `json:"cacheReadTokens"`
+	CacheCreationTokens int64   `json:"cacheCreationTokens"`
+	ReasoningTokens     int64   `json:"reasoningTokens"`
+	ErrorCount          int64   `json:"errorCount"`
+	AvgDuration         float64 `json:"avgDurationMs"`
 }
 
 func (a *App) GetCodexAccountStats(timeRange string) ([]CodexAccountStatsDTO, error) {

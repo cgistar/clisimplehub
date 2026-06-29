@@ -62,9 +62,7 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 			stat.Status = "success"
 		}
 		if ret.Tokens != nil {
-			stat.InputTokens = ret.Tokens.InputTokens
-			stat.OutputTokens = ret.Tokens.OutputTokens
-			stat.TotalTokens = tokenUsageTotal(ret.Tokens)
+			applyCodexAccountStatTokens(stat, ret.Tokens)
 		}
 		if ret.Stream != nil {
 			// 流式响应的 token 只能在下游读取到 completed 事件后确定。
@@ -540,12 +538,26 @@ func (r *codexStatsReadCloser) finish(readErr error) {
 			r.stat.ErrorType = readErr.Error()
 		}
 		if r.latest != nil {
-			r.stat.InputTokens = r.latest.InputTokens
-			r.stat.OutputTokens = r.latest.OutputTokens
-			r.stat.TotalTokens = tokenUsageTotal(r.latest)
+			applyCodexAccountStatTokens(r.stat, r.latest)
 		}
 		insertCodexAccountStatAsync(r.store, r.stat)
 	})
+}
+
+func applyCodexAccountStatTokens(stat *codexShared.CodexAccountStat, tokens *executor.TokenUsage) {
+	if stat == nil || tokens == nil {
+		return
+	}
+	stat.InputTokens = tokens.InputTokens
+	stat.OutputTokens = tokens.OutputTokens
+	stat.TotalTokens = tokenUsageTotal(tokens)
+	stat.CacheReadTokens = tokens.CachedRead
+	stat.CacheCreationTokens = tokens.CachedCreate
+	stat.CachedTokens = tokens.CachedRead
+	if stat.CachedTokens == 0 {
+		stat.CachedTokens = tokens.CachedCreate
+	}
+	stat.ReasoningTokens = tokens.Reasoning
 }
 
 func tokensFromCodexStreamLine(line []byte) *executor.TokenUsage {

@@ -47,6 +47,8 @@ export interface CodexAccountInput {
   updatedAt?: string
   todayRequests?: number
   todayTotalTokens?: number
+  todayCachedTokens?: number
+  todayReasoningTokens?: number
   isActive?: boolean
 }
 

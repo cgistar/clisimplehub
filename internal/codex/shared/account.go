@@ -54,28 +54,30 @@ func ComputeResetMeta(updatedAt time.Time, resetAfterSeconds int) (resetAt time.
 }
 
 type CodexAccount struct {
-	ID             string              `json:"id,omitempty"`
-	RefreshToken   string              `json:"refreshToken"`
-	AccessToken    string              `json:"accessToken,omitempty"`
-	IDToken        string              `json:"idToken,omitempty"`
-	AccountID      string              `json:"accountId,omitempty"`
-	Email          string              `json:"email,omitempty"`
-	PlanType       string              `json:"planType,omitempty"`
-	Enabled        bool                `json:"enabled"`
-	Websockets     bool                `json:"websockets,omitempty"`
-	Password       string              `json:"password,omitempty"`
-	MFACode        string              `json:"mfaCode,omitempty"`
-	ExpiresAt      time.Time           `json:"expiresAt,omitempty"`
-	Status         CodexAccountStatus  `json:"status,omitempty"`
-	Weight         int                 `json:"weight,omitempty"`
-	ProxyUrl       string              `json:"proxyUrl,omitempty"`
-	CooldownUntil  time.Time           `json:"cooldownUntil,omitempty"`
-	CooldownReason string              `json:"cooldownReason,omitempty"`
-	CodexUsage     *CodexUsageSnapshot `json:"codexUsage,omitempty"`
-	CreatedAt      time.Time           `json:"createdAt,omitempty"`
-	UpdatedAt      time.Time           `json:"updatedAt,omitempty"`
-	TodayRequests  int64               `json:"todayRequests,omitempty"`
-	TodayTokens    int64               `json:"todayTotalTokens,omitempty"`
+	ID                   string              `json:"id,omitempty"`
+	RefreshToken         string              `json:"refreshToken"`
+	AccessToken          string              `json:"accessToken,omitempty"`
+	IDToken              string              `json:"idToken,omitempty"`
+	AccountID            string              `json:"accountId,omitempty"`
+	Email                string              `json:"email,omitempty"`
+	PlanType             string              `json:"planType,omitempty"`
+	Enabled              bool                `json:"enabled"`
+	Websockets           bool                `json:"websockets,omitempty"`
+	Password             string              `json:"password,omitempty"`
+	MFACode              string              `json:"mfaCode,omitempty"`
+	ExpiresAt            time.Time           `json:"expiresAt,omitempty"`
+	Status               CodexAccountStatus  `json:"status,omitempty"`
+	Weight               int                 `json:"weight,omitempty"`
+	ProxyUrl             string              `json:"proxyUrl,omitempty"`
+	CooldownUntil        time.Time           `json:"cooldownUntil,omitempty"`
+	CooldownReason       string              `json:"cooldownReason,omitempty"`
+	CodexUsage           *CodexUsageSnapshot `json:"codexUsage,omitempty"`
+	CreatedAt            time.Time           `json:"createdAt,omitempty"`
+	UpdatedAt            time.Time           `json:"updatedAt,omitempty"`
+	TodayRequests        int64               `json:"todayRequests,omitempty"`
+	TodayTokens          int64               `json:"todayTotalTokens,omitempty"`
+	TodayCachedTokens    int64               `json:"todayCachedTokens,omitempty"`
+	TodayReasoningTokens int64               `json:"todayReasoningTokens,omitempty"`
 }
 
 func GenerateCodexLocalID(accountID, email string) string {
@@ -251,23 +253,25 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 		return nil
 	}
 	m := map[string]interface{}{
-		"id":               a.ID,
-		"refreshToken":     a.RefreshToken,
-		"accessToken":      a.AccessToken,
-		"idToken":          a.IDToken,
-		"email":            a.Email,
-		"planType":         a.PlanType,
-		"accountId":        a.AccountID,
-		"enabled":          a.Enabled,
-		"websockets":       a.Websockets,
-		"status":           string(a.Status),
-		"weight":           a.Weight,
-		"proxyUrl":         a.ProxyUrl,
-		"password":         a.Password,
-		"mfaCode":          a.MFACode,
-		"isActive":         isActive,
-		"todayRequests":    a.TodayRequests,
-		"todayTotalTokens": a.TodayTokens,
+		"id":                   a.ID,
+		"refreshToken":         a.RefreshToken,
+		"accessToken":          a.AccessToken,
+		"idToken":              a.IDToken,
+		"email":                a.Email,
+		"planType":             a.PlanType,
+		"accountId":            a.AccountID,
+		"enabled":              a.Enabled,
+		"websockets":           a.Websockets,
+		"status":               string(a.Status),
+		"weight":               a.Weight,
+		"proxyUrl":             a.ProxyUrl,
+		"password":             a.Password,
+		"mfaCode":              a.MFACode,
+		"isActive":             isActive,
+		"todayRequests":        a.TodayRequests,
+		"todayTotalTokens":     a.TodayTokens,
+		"todayCachedTokens":    a.TodayCachedTokens,
+		"todayReasoningTokens": a.TodayReasoningTokens,
 	}
 	if !a.ExpiresAt.IsZero() {
 		m["expiresAt"] = a.ExpiresAt.Format(time.RFC3339)

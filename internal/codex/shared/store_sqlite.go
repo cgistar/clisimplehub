@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS codex_account_stats (
     input_tokens    BIGINT NOT NULL DEFAULT 0,
     output_tokens   BIGINT NOT NULL DEFAULT 0,
     total_tokens    BIGINT NOT NULL DEFAULT 0,
+    cached_tokens   BIGINT NOT NULL DEFAULT 0,
+    cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+    cache_creation_tokens BIGINT NOT NULL DEFAULT 0,
+    reasoning_tokens BIGINT NOT NULL DEFAULT 0,
     status_code     INTEGER NOT NULL DEFAULT 0,
     status          TEXT NOT NULL DEFAULT 'unknown',
     error_type      TEXT NOT NULL DEFAULT '',
@@ -174,6 +178,9 @@ func (s *SQLiteCodexAccountStore) initSchema(ctx context.Context) error {
 		return fmt.Errorf("apply codex schema: %w", err)
 	}
 	if err := s.ensureAccountCapabilityColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureCodexAccountStatsUsageColumns(ctx); err != nil {
 		return err
 	}
 	if s.driver == dbconfig.DriverSQLite {
@@ -375,7 +382,7 @@ func insertCodexAccountTx(ctx context.Context, tx *sql.Tx, a *CodexAccount) erro
 }
 
 func (s *SQLiteCodexAccountStore) ensureAccountCapabilityColumns(ctx context.Context) error {
-	columns, err := s.codexAccountColumns(ctx)
+	columns, err := s.tableColumns(ctx, "codex_accounts")
 	if err != nil {
 		return err
 	}
@@ -398,15 +405,39 @@ func (s *SQLiteCodexAccountStore) ensureAccountCapabilityColumns(ctx context.Con
 }
 
 func (s *SQLiteCodexAccountStore) codexAccountColumns(ctx context.Context) (map[string]bool, error) {
+	return s.tableColumns(ctx, "codex_accounts")
+}
+
+func (s *SQLiteCodexAccountStore) ensureCodexAccountStatsUsageColumns(ctx context.Context) error {
+	columns, err := s.tableColumns(ctx, "codex_account_stats")
+	if err != nil {
+		return err
+	}
+	columnType := "INTEGER"
+	if s.driver == dbconfig.DriverPGX {
+		columnType = "BIGINT"
+	}
+	for _, column := range []string{"cached_tokens", "cache_read_tokens", "cache_creation_tokens", "reasoning_tokens"} {
+		if columns[column] {
+			continue
+		}
+		if _, err := s.execWrite(ctx, fmt.Sprintf(`ALTER TABLE codex_account_stats ADD COLUMN %s %s NOT NULL DEFAULT 0`, column, columnType)); err != nil {
+			return fmt.Errorf("add codex_account_stats.%s: %w", column, err)
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteCodexAccountStore) tableColumns(ctx context.Context, tableName string) (map[string]bool, error) {
 	columns := make(map[string]bool)
 	if s.driver == dbconfig.DriverPGX {
 		rows, err := s.db.QueryContext(ctx, `
 SELECT column_name
 FROM information_schema.columns
 WHERE table_schema = current_schema()
-  AND table_name = 'codex_accounts'`)
+  AND table_name = $1`, tableName)
 		if err != nil {
-			return nil, fmt.Errorf("inspect codex_accounts columns: %w", err)
+			return nil, fmt.Errorf("inspect %s columns: %w", tableName, err)
 		}
 		defer rows.Close()
 
@@ -420,9 +451,9 @@ WHERE table_schema = current_schema()
 		return columns, rows.Err()
 	}
 
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(codex_accounts)`)
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
-		return nil, fmt.Errorf("inspect codex_accounts columns: %w", err)
+		return nil, fmt.Errorf("inspect %s columns: %w", tableName, err)
 	}
 	defer rows.Close()
 
@@ -874,11 +905,13 @@ func (s *SQLiteCodexAccountStore) InsertStat(ctx context.Context, stat *CodexAcc
 		INSERT INTO codex_account_stats (
 			account_id, account_email, model, date, hour,
 			input_tokens, output_tokens, total_tokens,
+			cached_tokens, cache_read_tokens, cache_creation_tokens, reasoning_tokens,
 			status_code, status, error_type, duration_ms,
 			primary_used_pct, secondary_used_pct, request_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		stat.AccountID, stat.AccountEmail, stat.Model, stat.Date, stat.Hour,
 		stat.InputTokens, stat.OutputTokens, stat.TotalTokens,
+		stat.CachedTokens, stat.CacheReadTokens, stat.CacheCreationTokens, stat.ReasoningTokens,
 		stat.StatusCode, stat.Status, stat.ErrorType, stat.DurationMs,
 		stat.PrimaryUsedPct, stat.SecondaryUsedPct, stat.RequestPath,
 	)
@@ -895,6 +928,10 @@ func (s *SQLiteCodexAccountStore) GetStatsSummary(ctx context.Context, accountID
 			COALESCE(SUM(input_tokens), 0) as input_tokens,
 			COALESCE(SUM(output_tokens), 0) as output_tokens,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,
+			COALESCE(SUM(cached_tokens), 0) as cached_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
 			SUM(CASE WHEN status_code >= 400 OR status = 'error' THEN 1 ELSE 0 END) as error_count,
 			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
 		FROM codex_account_stats
@@ -904,6 +941,7 @@ func (s *SQLiteCodexAccountStore) GetStatsSummary(ctx context.Context, accountID
 	var sum CodexAccountStatsSummary
 	err := row.Scan(&sum.AccountID, &sum.AccountEmail, &sum.RequestCount,
 		&sum.InputTokens, &sum.OutputTokens, &sum.TotalTokens,
+		&sum.CachedTokens, &sum.CacheReadTokens, &sum.CacheCreationTokens, &sum.ReasoningTokens,
 		&sum.ErrorCount, &sum.AvgDurationMs)
 	if err == sql.ErrNoRows {
 		return &CodexAccountStatsSummary{AccountID: accountID}, nil
@@ -947,6 +985,10 @@ func (s *SQLiteCodexAccountStore) GetStatsSummaryMap(ctx context.Context, accoun
 			COALESCE(SUM(input_tokens), 0) as input_tokens,
 			COALESCE(SUM(output_tokens), 0) as output_tokens,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,
+			COALESCE(SUM(cached_tokens), 0) as cached_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
 			SUM(CASE WHEN status_code >= 400 OR status = 'error' THEN 1 ELSE 0 END) as error_count,
 			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
 		FROM codex_account_stats
@@ -968,6 +1010,7 @@ func (s *SQLiteCodexAccountStore) GetStatsSummaryMap(ctx context.Context, accoun
 		var sum CodexAccountStatsSummary
 		if err := rows.Scan(&sum.AccountID, &sum.AccountEmail, &sum.RequestCount,
 			&sum.InputTokens, &sum.OutputTokens, &sum.TotalTokens,
+			&sum.CachedTokens, &sum.CacheReadTokens, &sum.CacheCreationTokens, &sum.ReasoningTokens,
 			&sum.ErrorCount, &sum.AvgDurationMs); err != nil {
 			return nil, err
 		}
@@ -995,6 +1038,10 @@ func (s *SQLiteCodexAccountStore) GetAllStatsSummary(ctx context.Context, timeRa
 			COALESCE(SUM(input_tokens), 0) as input_tokens,
 			COALESCE(SUM(output_tokens), 0) as output_tokens,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,
+			COALESCE(SUM(cached_tokens), 0) as cached_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
 			SUM(CASE WHEN status_code >= 400 OR status = 'error' THEN 1 ELSE 0 END) as error_count,
 			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
 		FROM codex_account_stats
@@ -1011,6 +1058,7 @@ func (s *SQLiteCodexAccountStore) GetAllStatsSummary(ctx context.Context, timeRa
 		var sum CodexAccountStatsSummary
 		if err := rows.Scan(&sum.AccountID, &sum.AccountEmail, &sum.RequestCount,
 			&sum.InputTokens, &sum.OutputTokens, &sum.TotalTokens,
+			&sum.CachedTokens, &sum.CacheReadTokens, &sum.CacheCreationTokens, &sum.ReasoningTokens,
 			&sum.ErrorCount, &sum.AvgDurationMs); err != nil {
 			return nil, err
 		}

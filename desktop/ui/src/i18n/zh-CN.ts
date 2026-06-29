@@ -184,6 +184,8 @@ export default {
     scrollLoadMore: '下滑加载更多',
     todayUsage: '今日使用',
     requestUnit: '次',
+    cachedTokens: '缓存',
+    reasoningTokens: '推理',
     // 批量操作
     bulkDeleteTitle: '批量删除 Codex 账号',
     selectBannedAccounts: '选择封禁账号',
