@@ -41,14 +41,15 @@ const (
 
 // Settings represents the application settings exposed to frontend
 type Settings struct {
-	Port       int    `json:"port"`
-	APIKey     string `json:"apiKey"`
-	ProxyURL   string `json:"proxyUrl,omitempty"`
-	ClashPath  string `json:"clashPath,omitempty"`
-	DBSource   string `json:"dbSource,omitempty"`
-	Fallback   bool   `json:"fallback"`
-	DebugMode  string `json:"debugMode,omitempty"`
-	ListenAddr string `json:"listenAddr,omitempty"`
+	Port                   int    `json:"port"`
+	APIKey                 string `json:"apiKey"`
+	ProxyURL               string `json:"proxyUrl,omitempty"`
+	ClashPath              string `json:"clashPath,omitempty"`
+	DBSource               string `json:"dbSource,omitempty"`
+	Fallback               bool   `json:"fallback"`
+	DebugMode              string `json:"debugMode,omitempty"`
+	ListenAddr             string `json:"listenAddr,omitempty"`
+	DisableImageGeneration string `json:"disableImageGeneration,omitempty"`
 }
 
 type DatabaseTestInput struct {
@@ -267,14 +268,15 @@ func (a *App) GetSettings() (*Settings, error) {
 	}
 
 	settings := &Settings{
-		Port:       5600, // Default port
-		APIKey:     "",
-		ProxyURL:   "",
-		ClashPath:  "",
-		DBSource:   "",
-		Fallback:   false, // Default fallback disabled
-		DebugMode:  "",
-		ListenAddr: "0.0.0.0",
+		Port:                   5600, // Default port
+		APIKey:                 "",
+		ProxyURL:               "",
+		ClashPath:              "",
+		DBSource:               "",
+		Fallback:               false, // Default fallback disabled
+		DebugMode:              "",
+		ListenAddr:             "0.0.0.0",
+		DisableImageGeneration: "passthrough",
 	}
 
 	// Get port from storage
@@ -322,6 +324,11 @@ func (a *App) GetSettings() (*Settings, error) {
 	listenAddr, err := a.storage.GetConfig(ConfigKeyListenAddr)
 	if err == nil && listenAddr != "" {
 		settings.ListenAddr = listenAddr
+	}
+
+	// Get disable-image-generation 配置（默认 passthrough）
+	if v, err := a.storage.GetConfig(ConfigKeyDisableImageGeneration); err == nil && strings.TrimSpace(v) != "" {
+		settings.DisableImageGeneration = strings.TrimSpace(v)
 	}
 
 	return settings, nil
@@ -389,6 +396,15 @@ func (a *App) SaveSettings(settings *Settings) error {
 	// Save debug mode to storage (empty will remove key)
 	if err := a.storage.SetConfig(ConfigKeyDebugMode, strings.TrimSpace(settings.DebugMode)); err != nil {
 		return fmt.Errorf("failed to save debug mode: %w", err)
+	}
+
+	// Save disable-image-generation 配置
+	imageGenMode := strings.TrimSpace(settings.DisableImageGeneration)
+	if imageGenMode == "" {
+		imageGenMode = "passthrough"
+	}
+	if err := a.storage.SetConfig(ConfigKeyDisableImageGeneration, imageGenMode); err != nil {
+		return fmt.Errorf("failed to save disable-image-generation: %w", err)
 	}
 
 	// Save listen address to storage

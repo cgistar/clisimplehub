@@ -730,6 +730,13 @@ export default {
     debugModeDb: '记录到数据库',
     debugModeFile: '记录到文件',
     debugModeHelp: '选择调试日志记录方式：db记录上游请求体用于调试/重放，file记录完整请求响应到文件',
+    disableImageGeneration: '禁用图像生成',
+    disableImageGenerationHelp:
+      '控制 openai/codex 转换器 /v1/responses 路径的 image_generation 工具：passthrough=透传不改动(默认)，off=注入工具，chat=非 images 端点剥离，all=全部剥离',
+    imageGenPassthrough: '透传',
+    imageGenOff: '关闭(注入工具)',
+    imageGenChat: 'Chat(非 images 端点剥离)',
+    imageGenAll: '全部剥离',
     claudeConfigDir: 'Claude Code 配置目录',
     claudeConfigDirHelp: 'Claude Code CLI 的配置文件目录',
     codexConfigDir: 'Codex 配置目录',

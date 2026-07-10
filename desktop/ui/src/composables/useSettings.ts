@@ -24,7 +24,8 @@ function normalizeSettings(settings: SettingsPayload): SettingsPayload {
     dbSource: settings.dbSource || '',
     fallback: !!settings.fallback,
     debugMode: settings.debugMode || '',
-    listenAddr: settings.listenAddr || ''
+    listenAddr: settings.listenAddr || '',
+    disableImageGeneration: settings.disableImageGeneration || 'passthrough'
   }
 }
 
@@ -65,7 +66,8 @@ export function useSettings() {
     dbSource: '',
     fallback: false,
     debugMode: '',
-    listenAddr: ''
+    listenAddr: '',
+    disableImageGeneration: 'passthrough'
   })
 
   const cliDirs = ref<CLIConfigDirsPayload>({
@@ -87,6 +89,12 @@ export function useSettings() {
     { label: t('settings.debugModeNone'), value: '' },
     { label: t('settings.debugModeDb'), value: 'db' },
     { label: t('settings.debugModeFile'), value: 'file' }
+  ])
+  const disableImageGenOptions = computed<Array<{ label: string; value: string }>>(() => [
+    { label: t('settings.imageGenPassthrough'), value: 'passthrough' },
+    { label: t('settings.imageGenOff'), value: 'off' },
+    { label: t('settings.imageGenChat'), value: 'chat' },
+    { label: t('settings.imageGenAll'), value: 'all' }
   ])
   const currentLanguage = computed(() =>
     resolveLanguageCode(String(locale.value), languageOptions.value) ||
@@ -230,6 +238,7 @@ export function useSettings() {
     webdavForm,
     languageOptions,
     debugModeOptions,
+    disableImageGenOptions,
     currentLanguage,
     getWebDAVConfigFromForm,
     loadGeneralData,

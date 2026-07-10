@@ -29,7 +29,12 @@ func Execute(ctx context.Context, req Request) (*Result, error) {
 	for attempt := 1; attempt <= attempts; attempt++ {
 		httpReq, body, imageMeta, identityState, err := Prepare(ctx, req)
 		if err != nil {
-			return &Result{Error: err}, err
+			result := &Result{Error: err}
+			if statusErr, ok := err.(StatusError); ok {
+				result.StatusCode = statusErr.Code
+				result.Body = statusErr.Body
+			}
+			return result, err
 		}
 		preparedBody = body
 		targetURL = httpReq.URL.String()

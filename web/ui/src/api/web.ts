@@ -113,6 +113,7 @@ export const webApi = {
         proxyUrl: payload.proxyUrl,
         clashPath: payload.clashPath,
         dbSource: payload.dbSource,
+        disableImageGeneration: payload.disableImageGeneration,
       }),
     }),
   testDatabaseConnection: (payload: Pick<SettingsForm, 'dbSource'>) =>

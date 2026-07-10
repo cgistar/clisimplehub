@@ -233,6 +233,7 @@ export interface SettingsData {
   dbDriver?: string
   dbSource?: string
   configPath?: string
+  disableImageGeneration?: string
 }
 
 export interface SettingsForm {
@@ -244,6 +245,7 @@ export interface SettingsForm {
   proxyUrl: string
   clashPath: string
   dbSource: string
+  disableImageGeneration: string
 }
 
 export interface DatabaseTestResult {

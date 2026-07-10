@@ -42,27 +42,29 @@ type webUISession struct {
 }
 
 type webUISettings struct {
-	Port       int    `json:"port"`
-	APIKey     string `json:"apiKey"`
-	Fallback   bool   `json:"fallback"`
-	DebugMode  string `json:"debugMode,omitempty"`
-	ListenAddr string `json:"listenAddr,omitempty"`
-	ProxyURL   string `json:"proxyUrl,omitempty"`
-	ClashPath  string `json:"clashPath,omitempty"`
-	DBDriver   string `json:"dbDriver,omitempty"`
-	DBSource   string `json:"dbSource,omitempty"`
-	ConfigPath string `json:"configPath,omitempty"`
+	Port                   int    `json:"port"`
+	APIKey                 string `json:"apiKey"`
+	Fallback               bool   `json:"fallback"`
+	DebugMode              string `json:"debugMode,omitempty"`
+	ListenAddr             string `json:"listenAddr,omitempty"`
+	ProxyURL               string `json:"proxyUrl,omitempty"`
+	ClashPath              string `json:"clashPath,omitempty"`
+	DBDriver               string `json:"dbDriver,omitempty"`
+	DBSource               string `json:"dbSource,omitempty"`
+	ConfigPath             string `json:"configPath,omitempty"`
+	DisableImageGeneration string `json:"disableImageGeneration,omitempty"`
 }
 
 type webUISettingsRequest struct {
-	Port       int     `json:"port"`
-	APIKey     string  `json:"apiKey"`
-	Fallback   bool    `json:"fallback"`
-	DebugMode  string  `json:"debugMode,omitempty"`
-	ListenAddr string  `json:"listenAddr,omitempty"`
-	ProxyURL   string  `json:"proxyUrl,omitempty"`
-	ClashPath  string  `json:"clashPath,omitempty"`
-	DBSource   *string `json:"dbSource,omitempty"`
+	Port                   int     `json:"port"`
+	APIKey                 string  `json:"apiKey"`
+	Fallback               bool    `json:"fallback"`
+	DebugMode              string  `json:"debugMode,omitempty"`
+	ListenAddr             string  `json:"listenAddr,omitempty"`
+	ProxyURL               string  `json:"proxyUrl,omitempty"`
+	ClashPath              string  `json:"clashPath,omitempty"`
+	DBSource               *string `json:"dbSource,omitempty"`
+	DisableImageGeneration string  `json:"disableImageGeneration,omitempty"`
 }
 
 type webUIPathPickerEntry struct {
@@ -1422,15 +1424,20 @@ func (p *ProxyServer) handleWebUISaveSettings(w http.ResponseWriter, r *http.Req
 			dbSource = ""
 		}
 	}
+	imageGenMode := strings.TrimSpace(req.DisableImageGeneration)
+	if imageGenMode == "" {
+		imageGenMode = "passthrough"
+	}
 	if err := p.store.SaveConfigValues(map[string]string{
-		"port":       strconv.Itoa(req.Port),
-		"apiKey":     newAPIKey,
-		"debugMode":  debugMode,
-		"listenAddr": listenAddr,
-		"proxyUrl":   proxyURL,
-		"clashPath":  clashPath,
-		"dbDriver":   dbDriver,
-		"dbSource":   dbSource,
+		"port":                   strconv.Itoa(req.Port),
+		"apiKey":                 newAPIKey,
+		"debugMode":              debugMode,
+		"listenAddr":             listenAddr,
+		"proxyUrl":               proxyURL,
+		"clashPath":              clashPath,
+		"dbDriver":               dbDriver,
+		"dbSource":               dbSource,
+		"disableImageGeneration": imageGenMode,
 	}, map[string]bool{
 		"fallback": req.Fallback,
 	}); err != nil {
@@ -1492,16 +1499,17 @@ func (p *ProxyServer) loadWebUISettings() (*webUISettings, error) {
 	}
 
 	settings := &webUISettings{
-		Port:       5600,
-		APIKey:     "",
-		Fallback:   false,
-		DebugMode:  "",
-		ListenAddr: "0.0.0.0",
-		ProxyURL:   "",
-		ClashPath:  "",
-		DBDriver:   "sqlite",
-		DBSource:   "",
-		ConfigPath: p.getConfigPath(),
+		Port:                   5600,
+		APIKey:                 "",
+		Fallback:               false,
+		DebugMode:              "",
+		ListenAddr:             "0.0.0.0",
+		ProxyURL:               "",
+		ClashPath:              "",
+		DBDriver:               "sqlite",
+		DBSource:               "",
+		ConfigPath:             p.getConfigPath(),
+		DisableImageGeneration: "passthrough",
 	}
 
 	if portStr, err := p.store.GetConfig("port"); err == nil && strings.TrimSpace(portStr) != "" {
@@ -1532,6 +1540,9 @@ func (p *ProxyServer) loadWebUISettings() (*webUISettings, error) {
 	}
 	if dbSource, err := p.store.GetConfig("dbSource"); err == nil {
 		settings.DBSource = strings.TrimSpace(dbSource)
+	}
+	if v, err := p.store.GetConfig("disableImageGeneration"); err == nil && strings.TrimSpace(v) != "" {
+		settings.DisableImageGeneration = strings.TrimSpace(v)
 	}
 	return settings, nil
 }

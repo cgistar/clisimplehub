@@ -46,6 +46,8 @@ const (
 	ConfigKeyDBSource  = "dbSource"
 	ConfigKeyFallback  = "fallback"
 	ConfigKeyDebugMode = "debugMode"
+	// disable-image-generation 四态配置
+	ConfigKeyDisableImageGeneration = "disableImageGeneration"
 	// Temporary disable TTL for failed endpoints (minutes)
 	ConfigKeyTempDisableMinutes = "tempDisableMinutes"
 	// CLI config directories

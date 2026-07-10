@@ -86,6 +86,7 @@ export interface SettingsPayload {
   fallback: boolean
   debugMode?: string
   listenAddr?: string
+  disableImageGeneration?: string
 }
 
 export interface DatabaseTestResult {

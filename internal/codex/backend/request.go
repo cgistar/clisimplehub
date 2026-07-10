@@ -23,6 +23,30 @@ const defaultImageToolModel = "gpt-image-2"
 var imageGenToolJSON = []byte(`{"type":"image_generation","output_format":"png"}`)
 var imageGenToolArrayJSON = []byte(`[{"type":"image_generation","output_format":"png"}]`)
 
+// disable-image-generation 四态配置。
+const (
+	ImageGenOff         = "off"         // 注入 image_generation 工具（启用）
+	ImageGenAll         = "all"         // 全部剥离（含 /v1/images/* 端点）
+	ImageGenChat        = "chat"        // 非 images 端点剥离
+	ImageGenPassthrough = "passthrough" // 透传，不注入不剥离（默认）
+)
+
+// resolveImageGenMode 归一化配置值，空值/未知值兜底为 passthrough。
+func resolveImageGenMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ImageGenOff:
+		return ImageGenOff
+	case ImageGenAll:
+		return ImageGenAll
+	case ImageGenChat:
+		return ImageGenChat
+	case ImageGenPassthrough:
+		return ImageGenPassthrough
+	default:
+		return ImageGenPassthrough
+	}
+}
+
 var promptCacheStore = struct {
 	sync.Mutex
 	items map[string]promptCacheEntry
@@ -43,8 +67,14 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 
 	if IsCompactPath(req.Path) {
 		req.IsStreaming = false
-		body = finalizeCompactBody(body, req.Model)
+		body = finalizeCompactBody(body, req.Model, resolveImageGenMode(req.DisableImageGeneration))
 	} else if IsImagesPath(req.Path) {
+		if resolveImageGenMode(req.DisableImageGeneration) == ImageGenAll {
+			return nil, nil, nil, IdentityState{}, StatusError{
+				Code: http.StatusNotFound,
+				Body: []byte(`{"error":{"message":"image generation is disabled (disable-image-generation=all)","type":"invalid_request_error"}}`),
+			}
+		}
 		var err error
 		if gjson.GetBytes(body, "tool_choice.type").String() == "image_generation" {
 			body, err = PrepareOpenAIImageBody(body)
@@ -63,7 +93,7 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 			return nil, nil, nil, IdentityState{}, err
 		}
 	} else {
-		body = finalizeResponsesBody(body, req.Model, req.PlanType)
+		body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration))
 	}
 
 	targetURL := UpstreamURL(req.Config, path)
@@ -82,7 +112,7 @@ func PrepareWebsocket(ctx context.Context, req Request) ([]byte, http.Header, Id
 		ctx = context.Background()
 	}
 	body := append([]byte(nil), req.Body...)
-	body = finalizeResponsesBody(body, req.Model, req.PlanType)
+	body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration))
 	body, headers := applyPromptCache(req.Source, body, req.OriginalBody, req.Headers, req.Model, req.LocalAccountID)
 	body, headers, identityState := applyIdentityConfuse(req.LocalAccountID, body, headers)
 	return BuildWebsocketRequestBody(body), ApplyWebsocketHeaders(req.AccessToken, req.AccountID, req.Config, headers), identityState, nil
@@ -153,7 +183,7 @@ func methodOrPost(method string) string {
 	return method
 }
 
-func finalizeResponsesBody(body []byte, model string, planType string) []byte {
+func finalizeResponsesBody(body []byte, model string, planType string, imageGenMode string) []byte {
 	baseModel := BaseModelName(model)
 	if baseModel == "" {
 		baseModel = BaseModelName(gjson.GetBytes(body, "model").String())
@@ -164,10 +194,10 @@ func finalizeResponsesBody(body []byte, model string, planType string) []byte {
 	body, _ = sjson.SetBytes(body, "stream", true)
 	body = deleteUnsupportedFields(body)
 	body = normalizeInstructions(body)
-	return ensureImageGenerationTool(body, baseModel, planType)
+	return applyImageGenerationPolicy(body, baseModel, planType, imageGenMode)
 }
 
-func finalizeCompactBody(body []byte, model string) []byte {
+func finalizeCompactBody(body []byte, model string, imageGenMode string) []byte {
 	baseModel := BaseModelName(model)
 	if baseModel == "" {
 		baseModel = BaseModelName(gjson.GetBytes(body, "model").String())
@@ -177,7 +207,21 @@ func finalizeCompactBody(body []byte, model string) []byte {
 	}
 	body, _ = sjson.DeleteBytes(body, "stream")
 	body = deleteUnsupportedFields(body)
-	return normalizeInstructions(body)
+	body = normalizeInstructions(body)
+	return applyImageGenerationPolicy(body, baseModel, "", imageGenMode)
+}
+
+// applyImageGenerationPolicy 根据四态配置处理 image_generation 工具：
+// off 注入、all/chat 剥离、passthrough 透传。
+func applyImageGenerationPolicy(body []byte, baseModel string, planType string, imageGenMode string) []byte {
+	switch imageGenMode {
+	case ImageGenOff:
+		return ensureImageGenerationTool(body, baseModel, planType)
+	case ImageGenAll, ImageGenChat:
+		return stripImageGenerationTools(body)
+	default:
+		return body
+	}
 }
 
 func deleteUnsupportedFields(body []byte) []byte {
@@ -219,6 +263,41 @@ func ensureImageGenerationTool(body []byte, baseModel string, planType string) [
 		}
 	}
 	body, _ = sjson.SetRawBytes(body, "tools.-1", imageGenToolJSON)
+	return body
+}
+
+// stripImageGenerationTools 从 tools 数组移除 image_generation 条目，
+// 并清除 tool_choice（当其 type 为 image_generation 时）。
+func stripImageGenerationTools(body []byte) []byte {
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.IsArray() {
+		return body
+	}
+	var kept []json.RawMessage
+	changed := false
+	tools.ForEach(func(_, tool gjson.Result) bool {
+		if tool.Get("type").String() == "image_generation" {
+			changed = true
+			return true
+		}
+		kept = append(kept, json.RawMessage(tool.Raw))
+		return true
+	})
+	if !changed {
+		return body
+	}
+	if len(kept) == 0 {
+		body, _ = sjson.DeleteBytes(body, "tools")
+	} else {
+		keptBytes, err := json.Marshal(kept)
+		if err != nil {
+			return body
+		}
+		body, _ = sjson.SetRawBytes(body, "tools", keptBytes)
+	}
+	if tc := gjson.GetBytes(body, "tool_choice"); tc.Exists() && tc.Get("type").String() == "image_generation" {
+		body, _ = sjson.DeleteBytes(body, "tool_choice")
+	}
 	return body
 }
 

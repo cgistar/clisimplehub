@@ -39,6 +39,11 @@ var openAIModelsCatalog = []staticOpenAIModel{
 	{ID: "gpt-5.3-codex", Created: 1770307200, OwnedBy: "openai"},
 	{ID: "gpt-5.3-codex-spark", Created: 1770912000, OwnedBy: "openai"},
 	{ID: "gpt-5.4", Created: 1772668800, OwnedBy: "openai"},
+	{ID: "gpt-5.4-mini", Created: 1773705600, OwnedBy: "openai"},
+	{ID: "gpt-5.5", Created: 1776902400, OwnedBy: "openai"},
+	{ID: "gpt-5.6-sol", Created: 1783616400, OwnedBy: "openai"},
+	{ID: "gpt-5.6-terra", Created: 1783616400, OwnedBy: "openai"},
+	{ID: "gpt-5.6-luna", Created: 1783616400, OwnedBy: "openai"},
 }
 
 var claudeModelsCatalog = []staticClaudeModel{

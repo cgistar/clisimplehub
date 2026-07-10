@@ -581,6 +581,17 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
               </select>
             </div>
 
+            <div className="field mt-14">
+              <label className="field-label">禁用图像生成</label>
+              <select className="select" value={form.disableImageGeneration} onChange={(event) => updateField('disableImageGeneration', event.target.value)}>
+                <option value="passthrough">透传(默认)</option>
+                <option value="off">关闭(注入工具)</option>
+                <option value="chat">Chat(非 images 端点剥离)</option>
+                <option value="all">全部剥离</option>
+              </select>
+              <div className="muted small">控制 openai/codex 转换器 /v1/responses 路径的 image_generation 工具</div>
+            </div>
+
             <div className="switch-row mt-14">
               <div>
                 <div>自动故障转移</div>

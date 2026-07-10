@@ -738,6 +738,13 @@ export default {
     debugModeFile: 'Log to File',
     debugModeHelp:
       'Select debug logging mode: db logs upstream request bodies for debugging/replay, file logs full request/response to files',
+    disableImageGeneration: 'Disable Image Generation',
+    disableImageGenerationHelp:
+      'Controls image_generation tool for openai/codex transformer responses path: passthrough = forward unchanged (default), off = inject tool, chat = strip on non-images endpoints, all = strip everywhere',
+    imageGenPassthrough: 'Passthrough',
+    imageGenOff: 'Off (Inject Tool)',
+    imageGenChat: 'Chat (Strip on non-images)',
+    imageGenAll: 'All (Strip Everywhere)',
     claudeConfigDir: 'Claude Code Config Dir',
     claudeConfigDirHelp: 'Configuration directory for Claude Code CLI',
     codexConfigDir: 'Codex Config Dir',

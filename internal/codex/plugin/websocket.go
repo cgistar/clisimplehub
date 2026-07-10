@@ -178,17 +178,18 @@ func (s *CodexService) forwardResponsesWebsocketTurnViaUpstream(ctx context.Cont
 		return nil, false, err
 	}
 	preparedBody, upstreamHeaders, identityState, err := codexBackend.PrepareWebsocket(ctx, codexBackend.Request{
-		Path:           requestPath,
-		Source:         codexBackend.SourceCodex,
-		Model:          extractModelFromBody(requestJSON),
-		Body:           requestJSON,
-		OriginalBody:   requestJSON,
-		Headers:        clientHeaders,
-		Config:         config,
-		AccessToken:    accessToken,
-		AccountID:      accountID,
-		LocalAccountID: account.ID,
-		PlanType:       account.PlanType,
+		Path:                   requestPath,
+		Source:                 codexBackend.SourceCodex,
+		Model:                  extractModelFromBody(requestJSON),
+		Body:                   requestJSON,
+		OriginalBody:           requestJSON,
+		Headers:                clientHeaders,
+		Config:                 config,
+		AccessToken:            accessToken,
+		AccountID:              accountID,
+		LocalAccountID:         account.ID,
+		PlanType:               account.PlanType,
+		DisableImageGeneration: plugin.GetAppDisableImageGeneration(),
 	})
 	if err != nil {
 		return nil, false, err

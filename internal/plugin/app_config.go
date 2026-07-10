@@ -41,3 +41,12 @@ func GetAppClashPath() string {
 	}
 	return strings.TrimSpace(value)
 }
+
+// GetAppDisableImageGeneration 读取 disable-image-generation 四态配置。
+func GetAppDisableImageGeneration() string {
+	value, err := GetConfigValue("disableImageGeneration")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}

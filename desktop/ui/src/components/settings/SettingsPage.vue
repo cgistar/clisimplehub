@@ -18,6 +18,7 @@ const {
   webdavForm,
   languageOptions,
   debugModeOptions,
+  disableImageGenOptions,
   currentLanguage,
   getWebDAVConfigFromForm,
   loadGeneralData,
@@ -263,6 +264,7 @@ function getGeneralSnapshot(): string {
     fallback: !!settingsForm.value.fallback,
     debugMode: String(settingsForm.value.debugMode || ''),
     listenAddr: String(settingsForm.value.listenAddr || ''),
+    disableImageGeneration: String(settingsForm.value.disableImageGeneration || 'passthrough'),
     claudeConfigDir: String(cliDirs.value.claudeConfigDir || '').trim(),
     codexConfigDir: String(cliDirs.value.codexConfigDir || '').trim()
   })
@@ -414,6 +416,7 @@ watch(
     settingsForm.value.fallback,
     settingsForm.value.debugMode,
     settingsForm.value.listenAddr,
+    settingsForm.value.disableImageGeneration,
     cliDirs.value.claudeConfigDir,
     cliDirs.value.codexConfigDir
   ],
@@ -886,6 +889,16 @@ onMounted(() => {
               :options="debugModeOptions"
             />
             <small>{{ t('settings.debugModeHelp') }}</small>
+          </div>
+
+          <label>{{ t('settings.disableImageGeneration') }}</label>
+          <div>
+            <n-select
+              v-model:value="settingsForm.disableImageGeneration"
+              class="form-control"
+              :options="disableImageGenOptions"
+            />
+            <small>{{ t('settings.disableImageGenerationHelp') }}</small>
           </div>
 
           <label>{{ t('settings.claudeConfigDir') }}</label>

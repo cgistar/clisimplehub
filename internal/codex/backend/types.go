@@ -30,10 +30,11 @@ type Request struct {
 	Config *codexShared.CodexMultiConfig
 	Client *http.Client
 
-	AccessToken    string
-	AccountID      string
-	LocalAccountID string
-	PlanType       string
+	AccessToken            string
+	AccountID              string
+	LocalAccountID         string
+	PlanType               string
+	DisableImageGeneration string
 
 	Attempts   int
 	RetryDelay time.Duration
