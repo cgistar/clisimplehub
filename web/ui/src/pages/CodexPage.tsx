@@ -1,8 +1,12 @@
+import { useRef, useState } from 'react'
+import { toast } from 'sonner'
 import KpiCard from '@/components/KpiCard'
 import { createCodexConfigForm } from '@/lib/codex'
 import { formatTokenCount } from '@/lib/format'
-import type { CodexAccount, CodexPageData } from '@/types'
+import type { CodexAccount, CodexModelPrice, CodexPageData } from '@/types'
+import { webApi } from '@/api/web'
 import CodexAccountCard from './components/CodexAccountCard'
+import CodexModelPricesDialog from './components/CodexModelPricesDialog'
 
 interface CodexPageProps {
   data: CodexPageData | null
@@ -39,6 +43,51 @@ export default function CodexPage({
   onEditAccount,
   onDeleteAccount,
 }: CodexPageProps) {
+  const [modelPricesOpen, setModelPricesOpen] = useState(false)
+  const [modelPrices, setModelPrices] = useState<CodexModelPrice[]>([])
+  const [modelPricesLoading, setModelPricesLoading] = useState(false)
+  const [modelPricesSaving, setModelPricesSaving] = useState(false)
+  const modelPricesLoaded = useRef(false)
+  const modelPricesLoadPromise = useRef<Promise<CodexModelPrice[]> | null>(null)
+
+  async function openModelPrices(): Promise<void> {
+    setModelPricesOpen(true)
+    if (modelPricesLoaded.current) return
+    if (!modelPricesLoadPromise.current) {
+      setModelPricesLoading(true)
+      modelPricesLoadPromise.current = webApi.getCodexModelPrices()
+        .then((prices) => {
+          setModelPrices(prices)
+          modelPricesLoaded.current = true
+          return prices
+        })
+        .finally(() => {
+          setModelPricesLoading(false)
+          modelPricesLoadPromise.current = null
+        })
+    }
+    try {
+      await modelPricesLoadPromise.current
+    } catch (error) {
+      setModelPricesOpen(false)
+      toast.error(error instanceof Error ? error.message : '加载模型单价失败')
+    }
+  }
+
+  async function saveModelPrices(prices: CodexModelPrice[]): Promise<void> {
+    setModelPricesSaving(true)
+    try {
+      const saved = await webApi.saveCodexModelPrices(prices)
+      setModelPrices(saved)
+      modelPricesLoaded.current = true
+      setModelPricesOpen(false)
+      await onRefreshCodex()
+      toast.success('模型单价已保存')
+    } finally {
+      setModelPricesSaving(false)
+    }
+  }
+
   if (loading && !data) return <div className="card empty-state">正在加载 Codex 数据...</div>
   if (!data) return <div className="card empty-state">暂无 Codex 数据</div>
   if (!data.available) {
@@ -100,6 +149,9 @@ export default function CodexPage({
             <button className="btn" type="button" onClick={onOpenConfig}>
               配置
             </button>
+            <button className="btn" type="button" onClick={() => void openModelPrices()}>
+              模型单价
+            </button>
           </div>
         </div>
 
@@ -125,6 +177,15 @@ export default function CodexPage({
           </div>
         )}
       </section>
+
+      <CodexModelPricesDialog
+        open={modelPricesOpen}
+        prices={modelPrices}
+        loading={modelPricesLoading}
+        saving={modelPricesSaving}
+        onOpenChange={setModelPricesOpen}
+        onSave={saveModelPrices}
+      />
     </div>
   )
 }

@@ -8,6 +8,7 @@ import type {
   BackupDataResponse,
   CodexConfigForm,
   CodexEditForm,
+  CodexModelPrice,
   CodexPageData,
   DatabaseTestResult,
   EndpointImportInput,
@@ -53,6 +54,12 @@ export const webApi = {
       body: JSON.stringify(endpoints),
     }),
   getCodex: () => apiFetch<CodexPageData>('/web/api/codex'),
+  getCodexModelPrices: () => apiFetch<CodexModelPrice[]>('/web/api/codex/model-prices'),
+  saveCodexModelPrices: (prices: CodexModelPrice[]) =>
+    apiFetch<CodexModelPrice[]>('/web/api/codex/model-prices', {
+      method: 'PUT',
+      body: JSON.stringify(prices),
+    }),
   activateCodexAccount: (accountId: string) =>
     apiFetch<ActionResponse>('/web/api/codex/active', {
       method: 'POST',

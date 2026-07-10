@@ -58,6 +58,7 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 	}
 
 	statsByAccount := map[string]codexShared.CodexAccountStatsSummary{}
+	costByAccount := map[string]*float64{}
 	if len(accounts) > 0 {
 		accountIDs := make([]string, 0, len(accounts))
 		for i := range accounts {
@@ -65,6 +66,9 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 		}
 		if statsMap, err := store.GetStatsSummaryMap(context.Background(), accountIDs, "today"); err == nil && statsMap != nil {
 			statsByAccount = statsMap
+		}
+		if costMap, err := store.GetTodayEstimatedCostMap(context.Background(), accountIDs); err == nil && costMap != nil {
+			costByAccount = costMap
 		}
 	}
 
@@ -75,6 +79,7 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 			accounts[i].TodayCachedTokens = summary.CachedTokens
 			accounts[i].TodayReasoningTokens = summary.ReasoningTokens
 		}
+		accounts[i].TodayEstimatedCost = costByAccount[accounts[i].ID]
 	}
 
 	return codexShared.MarshalAccountsResponse(activeID, accounts)
@@ -120,6 +125,7 @@ func (d *desktopFacade) GetAccountsPage(configPath string, offset, limit int) (j
 	}
 
 	statsByAccount := map[string]codexShared.CodexAccountStatsSummary{}
+	costByAccount := map[string]*float64{}
 	if len(accounts) > 0 {
 		accountIDs := make([]string, 0, len(accounts))
 		for i := range accounts {
@@ -127,6 +133,9 @@ func (d *desktopFacade) GetAccountsPage(configPath string, offset, limit int) (j
 		}
 		if statsMap, err := store.GetStatsSummaryMap(context.Background(), accountIDs, "today"); err == nil && statsMap != nil {
 			statsByAccount = statsMap
+		}
+		if costMap, err := store.GetTodayEstimatedCostMap(context.Background(), accountIDs); err == nil && costMap != nil {
+			costByAccount = costMap
 		}
 	}
 
@@ -139,6 +148,7 @@ func (d *desktopFacade) GetAccountsPage(configPath string, offset, limit int) (j
 			a.TodayCachedTokens = summary.CachedTokens
 			a.TodayReasoningTokens = summary.ReasoningTokens
 		}
+		a.TodayEstimatedCost = costByAccount[a.ID]
 		isActive := activeID != "" && strings.TrimSpace(a.ID) == strings.TrimSpace(activeID)
 		list = append(list, codexShared.MarshalAccountForFrontend(a, isActive))
 	}
@@ -505,6 +515,56 @@ func (d *desktopFacade) GetCodexGlobalConfig(configPath string) (json.RawMessage
 		"originator":    strings.TrimSpace(mc.Config.Originator),
 		"customHeaders": codexShared.NormalizeCustomHeadersForStorage(mc.Config.CustomHeaders),
 	})
+}
+
+func (d *desktopFacade) GetCodexModelPrices() (json.RawMessage, error) {
+	store := getStore()
+	if store == nil {
+		return nil, fmt.Errorf("account store not initialized")
+	}
+	prices, err := store.ListModelPrices(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(prices)
+}
+
+func (d *desktopFacade) SaveCodexModelPrices(dto json.RawMessage) (json.RawMessage, error) {
+	if strings.TrimSpace(string(dto)) == "null" {
+		return nil, fmt.Errorf("model prices must be an array")
+	}
+	var input []struct {
+		Model            *string  `json:"model"`
+		InputPer1M       *float64 `json:"inputPer1M"`
+		CachedInputPer1M *float64 `json:"cachedInputPer1M"`
+		CacheWritePer1M  *float64 `json:"cacheWritePer1M"`
+		OutputPer1M      *float64 `json:"outputPer1M"`
+	}
+	if err := json.Unmarshal(dto, &input); err != nil {
+		return nil, fmt.Errorf("invalid model prices: %w", err)
+	}
+	prices := make([]codexShared.CodexModelPrice, len(input))
+	for i, price := range input {
+		if price.Model == nil || price.InputPer1M == nil || price.CachedInputPer1M == nil || price.CacheWritePer1M == nil || price.OutputPer1M == nil {
+			return nil, fmt.Errorf("model price at index %d is missing a required field", i)
+		}
+		prices[i] = codexShared.CodexModelPrice{
+			Model:            *price.Model,
+			InputPer1M:       *price.InputPer1M,
+			CachedInputPer1M: *price.CachedInputPer1M,
+			CacheWritePer1M:  *price.CacheWritePer1M,
+			OutputPer1M:      *price.OutputPer1M,
+		}
+	}
+	store := getStore()
+	if store == nil {
+		return nil, fmt.Errorf("account store not initialized")
+	}
+	saved, err := store.ReplaceModelPrices(context.Background(), prices)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(saved)
 }
 
 func (d *desktopFacade) SaveCodexGlobalConfig(configPath string, dtoJSON json.RawMessage) error {
@@ -1313,12 +1373,12 @@ func fetchCodexUsageFromHeaders(ctx context.Context, accessToken, accountID, pro
 		config = &codexShared.CodexMultiConfig{}
 	}
 
-	body := []byte(`{"model":"gpt-5.4-mini","reasoning":{"effort":"medium"},"instructions":"You are Codex, based on GPT-5.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Say 'OK' only"}]}],"stream":true,"store":false}`)
+	body := []byte(`{"model":"gpt-5.6-luna","reasoning":{"effort":"medium"},"instructions":"You are Codex, based on GPT-5.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Say 'OK' only"}]}],"stream":true,"store":false}`)
 	req, _, _, _, err := codexBackend.Prepare(ctx, codexBackend.Request{
 		Method:      http.MethodPost,
 		Path:        "/v1/responses",
 		Source:      codexBackend.SourceCodex,
-		Model:       "gpt-5.4-mini",
+		Model:       "gpt-5.6-luna",
 		Body:        body,
 		IsStreaming: true,
 		Config:      config,

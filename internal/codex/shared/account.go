@@ -78,6 +78,17 @@ type CodexAccount struct {
 	TodayTokens          int64               `json:"todayTotalTokens,omitempty"`
 	TodayCachedTokens    int64               `json:"todayCachedTokens,omitempty"`
 	TodayReasoningTokens int64               `json:"todayReasoningTokens,omitempty"`
+	TodayEstimatedCost   *float64            `json:"todayEstimatedCost"`
+}
+
+// CodexModelPrice uses USD per one million tokens for every billable token category.
+type CodexModelPrice struct {
+	Model            string    `json:"model"`
+	InputPer1M       float64   `json:"inputPer1M"`
+	CachedInputPer1M float64   `json:"cachedInputPer1M"`
+	CacheWritePer1M  float64   `json:"cacheWritePer1M"`
+	OutputPer1M      float64   `json:"outputPer1M"`
+	UpdatedAt        time.Time `json:"updatedAt,omitempty"`
 }
 
 func GenerateCodexLocalID(accountID, email string) string {
@@ -272,6 +283,7 @@ func MarshalAccountForFrontend(a *CodexAccount, isActive bool) map[string]interf
 		"todayTotalTokens":     a.TodayTokens,
 		"todayCachedTokens":    a.TodayCachedTokens,
 		"todayReasoningTokens": a.TodayReasoningTokens,
+		"todayEstimatedCost":   a.TodayEstimatedCost,
 	}
 	if !a.ExpiresAt.IsZero() {
 		m["expiresAt"] = a.ExpiresAt.Format(time.RFC3339)

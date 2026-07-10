@@ -7,6 +7,7 @@
         @signup="showSignupModal = true"
         @bulk-delete="showBulkDeleteModal = true"
         @open-config="showGlobalConfigModal = true"
+        @open-model-prices="showModelPricesModal = true"
       />
 
       <div class="codex-accounts-body">
@@ -45,6 +46,11 @@
       v-model:show="showGlobalConfigModal"
     />
 
+    <CodexModelPricesModal
+      v-model:show="showModelPricesModal"
+      @saved="handleModelPricesSaved"
+    />
+
     <CodexSignupModal
       v-model:show="showSignupModal"
       @success="handleSignupSuccess"
@@ -67,6 +73,7 @@ import CodexAccountEditModal from './CodexAccountEditModal.vue'
 import CodexJsonImportModal from './CodexJsonImportModal.vue'
 import CodexBulkDeleteModal from './CodexBulkDeleteModal.vue'
 import CodexGlobalConfigModal from './CodexGlobalConfigModal.vue'
+import CodexModelPricesModal from './CodexModelPricesModal.vue'
 import CodexSignupModal from './CodexSignupModal.vue'
 
 const { t } = useI18n()
@@ -79,6 +86,7 @@ const showEditModal = ref(false)
 const showJsonImportModal = ref(false)
 const showBulkDeleteModal = ref(false)
 const showGlobalConfigModal = ref(false)
+const showModelPricesModal = ref(false)
 const showSignupModal = ref(false)
 const editRestoring = ref(false)
 const editingAccount = ref<CodexAccount | null>(null)
@@ -149,6 +157,14 @@ async function handleJsonImportSuccess() {
 async function handleBulkDeleteSuccess() {
   message.success(t('codex.bulkDeleteSuccess'))
   await codexStore.loadAccounts(true)
+}
+
+async function handleModelPricesSaved(): Promise<void> {
+  try {
+    await codexStore.loadAccounts(true)
+  } catch (error) {
+    message.error(`刷新预估成本失败：${toErrorMessage(error)}`)
+  }
 }
 
 function handleGetToken(account: CodexAccount): void {

@@ -52,6 +52,15 @@ export interface CodexAccountInput {
   isActive?: boolean
 }
 
+export interface CodexModelPrice {
+  model: string
+  inputPer1M: number
+  cachedInputPer1M: number
+  cacheWritePer1M: number
+  outputPer1M: number
+  updatedAt?: string
+}
+
 export interface CodexGlobalConfig {
   rotationMode: 'fixed' | 'failover' | 'loadbalance' | string
   proxyUrl: string

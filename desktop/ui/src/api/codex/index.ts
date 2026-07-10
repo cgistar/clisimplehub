@@ -6,6 +6,8 @@ import type {
   CodexAccountsPage,
   CodexGlobalConfig,
   CodexLoginResult,
+
+  CodexModelPrice,
   CodexTestResult,
   CodexUsage,
   CodexResetResult,
@@ -180,6 +182,14 @@ export const codexApi = {
       originator: config.originator || '',
       customHeaders: config.customHeaders || {}
     })
+  },
+
+  async getModelPrices(): Promise<CodexModelPrice[]> {
+    return App.GetCodexModelPrices()
+  },
+
+  async saveModelPrices(prices: CodexModelPrice[]): Promise<CodexModelPrice[]> {
+    return App.SaveCodexModelPrices(prices)
   },
 
   async startLoginWithURL(): Promise<string> {

@@ -261,6 +261,25 @@ code {
   border: 1px solid transparent;
 }
 
+.codex-reset-credit-badge {
+  appearance: none;
+  cursor: pointer;
+}
+
+.codex-reset-credit-badge:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.codex-reset-credit-badge:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.codex-reset-credit-badge:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .badge.success {
   color: #166534;
   background: rgba(22, 163, 74, 0.12);
@@ -1334,6 +1353,33 @@ code {
 
 .stats-dialog-card {
   width: min(1180px, calc(100vw - 48px));
+}
+
+.model-prices-dialog {
+  width: min(1120px, calc(100vw - 48px));
+}
+
+.model-prices-table-wrap {
+  overflow-x: auto;
+}
+
+.model-prices-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+}
+
+.model-prices-table th,
+.model-prices-table td {
+  padding: 9px 8px;
+  border-top: 1px solid #e6edf4;
+  text-align: left;
+}
+
+.model-prices-table th {
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .stats-dialog-body {

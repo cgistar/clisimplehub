@@ -66,5 +66,10 @@ type CodexAccountStore interface {
 	GetAllStatsSummary(ctx context.Context, timeRange string) ([]CodexAccountStatsSummary, error)
 	DeleteStats(ctx context.Context, accountID string) error
 
+	// Model prices and derived daily cost.
+	ListModelPrices(ctx context.Context) ([]CodexModelPrice, error)
+	ReplaceModelPrices(ctx context.Context, prices []CodexModelPrice) ([]CodexModelPrice, error)
+	GetTodayEstimatedCostMap(ctx context.Context, accountIDs []string) (map[string]*float64, error)
+
 	Close() error
 }

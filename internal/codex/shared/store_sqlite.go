@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -69,6 +70,21 @@ CREATE TABLE IF NOT EXISTS codex_account_stats (
     secondary_used_pct   DOUBLE PRECISION,
     request_path    TEXT NOT NULL DEFAULT '',
     create_time     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS codex_model_prices (
+    model                   TEXT PRIMARY KEY,
+    input_per_1m            DOUBLE PRECISION NOT NULL,
+    cached_input_per_1m     DOUBLE PRECISION NOT NULL,
+    cache_write_per_1m      DOUBLE PRECISION NOT NULL,
+    output_per_1m           DOUBLE PRECISION NOT NULL,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS codex_store_metadata (
+    meta_key                TEXT PRIMARY KEY,
+    value                   TEXT NOT NULL DEFAULT '',
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_codex_accounts_refresh_token ON codex_accounts(refresh_token);
@@ -181,6 +197,9 @@ func (s *SQLiteCodexAccountStore) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureCodexAccountStatsUsageColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.initializeDefaultModelPrices(ctx); err != nil {
 		return err
 	}
 	if s.driver == dbconfig.DriverSQLite {
@@ -1070,6 +1089,227 @@ func (s *SQLiteCodexAccountStore) GetAllStatsSummary(ctx context.Context, timeRa
 func (s *SQLiteCodexAccountStore) DeleteStats(ctx context.Context, accountID string) error {
 	_, err := s.execWrite(ctx, `DELETE FROM codex_account_stats WHERE account_id = ?`, accountID)
 	return err
+}
+
+// --- Model prices and estimated cost ---
+
+const codexModelPricesInitializedKey = "model_prices_initialized_v1"
+
+var defaultCodexModelPrices = []CodexModelPrice{
+	{Model: "gpt-5.6-sol", InputPer1M: 10, CachedInputPer1M: 1, CacheWritePer1M: 12.5, OutputPer1M: 60},
+	{Model: "gpt-5.6-terra", InputPer1M: 5, CachedInputPer1M: 0.5, CacheWritePer1M: 6.25, OutputPer1M: 30},
+	{Model: "gpt-5.6-luna", InputPer1M: 2, CachedInputPer1M: 0.2, CacheWritePer1M: 2.5, OutputPer1M: 12},
+	{Model: "gpt-5.5", InputPer1M: 12.5, CachedInputPer1M: 1.25, CacheWritePer1M: 0, OutputPer1M: 75},
+	{Model: "gpt-5.4", InputPer1M: 5, CachedInputPer1M: 0.5, CacheWritePer1M: 0, OutputPer1M: 30},
+	{Model: "gpt-5.4-mini", InputPer1M: 1.5, CachedInputPer1M: 0.15, CacheWritePer1M: 0, OutputPer1M: 9},
+}
+
+func (s *SQLiteCodexAccountStore) initializeDefaultModelPrices(ctx context.Context) error {
+	return s.withTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		var marker string
+		err := tx.QueryRowContext(txCtx, s.rebind(`SELECT value FROM codex_store_metadata WHERE meta_key = ?`), codexModelPricesInitializedKey).Scan(&marker)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read model price initialization marker: %w", err)
+		}
+
+		var count int
+		if err := tx.QueryRowContext(txCtx, `SELECT COUNT(*) FROM codex_model_prices`).Scan(&count); err != nil {
+			return fmt.Errorf("count model prices: %w", err)
+		}
+		if count == 0 {
+			now := sqliteTime(time.Now())
+			for _, price := range defaultCodexModelPrices {
+				if _, err := tx.ExecContext(txCtx, s.rebind(`
+					INSERT INTO codex_model_prices (
+						model, input_per_1m, cached_input_per_1m, cache_write_per_1m, output_per_1m, updated_at
+					) VALUES (?, ?, ?, ?, ?, ?)`),
+					price.Model, price.InputPer1M, price.CachedInputPer1M, price.CacheWritePer1M, price.OutputPer1M, now); err != nil {
+					return fmt.Errorf("insert default model price %q: %w", price.Model, err)
+				}
+			}
+		}
+
+		_, err = tx.ExecContext(txCtx, s.rebind(`
+			INSERT INTO codex_store_metadata (meta_key, value, updated_at) VALUES (?, ?, ?)`),
+			codexModelPricesInitializedKey, "1", sqliteTime(time.Now()))
+		if err != nil {
+			return fmt.Errorf("write model price initialization marker: %w", err)
+		}
+		return nil
+	})
+}
+
+func validateCodexModelPrices(prices []CodexModelPrice) ([]CodexModelPrice, error) {
+	normalized := make([]CodexModelPrice, len(prices))
+	seen := make(map[string]struct{}, len(prices))
+	for i, price := range prices {
+		price.Model = strings.TrimSpace(price.Model)
+		if price.Model == "" {
+			return nil, fmt.Errorf("model price at index %d has an empty model", i)
+		}
+		if _, ok := seen[price.Model]; ok {
+			return nil, fmt.Errorf("duplicate model price: %s", price.Model)
+		}
+		seen[price.Model] = struct{}{}
+		for _, amount := range []float64{price.InputPer1M, price.CachedInputPer1M, price.CacheWritePer1M, price.OutputPer1M} {
+			if math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 {
+				return nil, fmt.Errorf("model price %q contains an invalid amount", price.Model)
+			}
+		}
+		normalized[i] = price
+	}
+	return normalized, nil
+}
+
+func (s *SQLiteCodexAccountStore) ListModelPrices(ctx context.Context) ([]CodexModelPrice, error) {
+	rows, err := s.queryContext(ctx, `
+		SELECT model, input_per_1m, cached_input_per_1m, cache_write_per_1m, output_per_1m, updated_at
+		FROM codex_model_prices
+		ORDER BY model`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	prices := make([]CodexModelPrice, 0)
+	for rows.Next() {
+		var price CodexModelPrice
+		var updatedAt any
+		if err := rows.Scan(&price.Model, &price.InputPer1M, &price.CachedInputPer1M, &price.CacheWritePer1M, &price.OutputPer1M, &updatedAt); err != nil {
+			return nil, err
+		}
+		if parsed, ok := parseSQLiteTime(updatedAt); ok {
+			price.UpdatedAt = parsed
+		}
+		prices = append(prices, price)
+	}
+	return prices, rows.Err()
+}
+
+func (s *SQLiteCodexAccountStore) ReplaceModelPrices(ctx context.Context, prices []CodexModelPrice) ([]CodexModelPrice, error) {
+	normalized, err := validateCodexModelPrices(prices)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.withTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(txCtx, `DELETE FROM codex_model_prices`); err != nil {
+			return err
+		}
+		now := sqliteTime(time.Now())
+		for _, price := range normalized {
+			if _, err := tx.ExecContext(txCtx, s.rebind(`
+				INSERT INTO codex_model_prices (
+					model, input_per_1m, cached_input_per_1m, cache_write_per_1m, output_per_1m, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?)`),
+				price.Model, price.InputPer1M, price.CachedInputPer1M, price.CacheWritePer1M, price.OutputPer1M, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return s.ListModelPrices(ctx)
+}
+
+func (s *SQLiteCodexAccountStore) GetTodayEstimatedCostMap(ctx context.Context, accountIDs []string) (map[string]*float64, error) {
+	result := make(map[string]*float64, len(accountIDs))
+	uniqueIDs := make([]string, 0, len(accountIDs))
+	seen := make(map[string]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		accountID = strings.TrimSpace(accountID)
+		if accountID == "" {
+			continue
+		}
+		if _, ok := seen[accountID]; ok {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, accountID)
+	}
+	if len(uniqueIDs) == 0 {
+		return result, nil
+	}
+
+	prices, err := s.ListModelPrices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(prices) == 0 {
+		for _, accountID := range uniqueIDs {
+			result[accountID] = nil
+		}
+		return result, nil
+	}
+	priceByModel := make(map[string]CodexModelPrice, len(prices))
+	for _, price := range prices {
+		priceByModel[price.Model] = price
+	}
+
+	for _, accountID := range uniqueIDs {
+		zero := 0.0
+		result[accountID] = &zero
+	}
+	costs := make(map[string]float64, len(uniqueIDs))
+	missingPrice := make(map[string]bool, len(uniqueIDs))
+	placeholders := s.placeholders(len(uniqueIDs))
+	query := fmt.Sprintf(`
+		SELECT account_id, model,
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(cache_creation_tokens), 0),
+			COALESCE(SUM(output_tokens), 0)
+		FROM codex_account_stats
+		WHERE account_id IN (%s) AND %s
+		GROUP BY account_id, model`, placeholders, codexStatsDateCondition("today"))
+	args := make([]any, 0, len(uniqueIDs))
+	for _, accountID := range uniqueIDs {
+		args = append(args, accountID)
+	}
+	rows, err := s.queryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var accountID, model string
+		var inputTokens, cacheReadTokens, cacheCreationTokens, outputTokens int64
+		if err := rows.Scan(&accountID, &model, &inputTokens, &cacheReadTokens, &cacheCreationTokens, &outputTokens); err != nil {
+			return nil, err
+		}
+		if inputTokens == 0 && cacheReadTokens == 0 && cacheCreationTokens == 0 && outputTokens == 0 {
+			continue
+		}
+		price, ok := priceByModel[strings.TrimSpace(model)]
+		if !ok {
+			missingPrice[accountID] = true
+			continue
+		}
+		uncachedInput := inputTokens - cacheReadTokens - cacheCreationTokens
+		if uncachedInput < 0 {
+			uncachedInput = 0
+		}
+		costs[accountID] += float64(uncachedInput)*price.InputPer1M/1_000_000 +
+			float64(cacheReadTokens)*price.CachedInputPer1M/1_000_000 +
+			float64(cacheCreationTokens)*price.CacheWritePer1M/1_000_000 +
+			float64(outputTokens)*price.OutputPer1M/1_000_000
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, accountID := range uniqueIDs {
+		if missingPrice[accountID] {
+			result[accountID] = nil
+			continue
+		}
+		cost := costs[accountID]
+		result[accountID] = &cost
+	}
+	return result, nil
 }
 
 // --- Helpers ---

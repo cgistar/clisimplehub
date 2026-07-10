@@ -53,6 +53,21 @@ CREATE TABLE IF NOT EXISTS codex_account_stats (
     create_time     DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS codex_model_prices (
+    model                   TEXT PRIMARY KEY,
+    input_per_1m            REAL NOT NULL,
+    cached_input_per_1m     REAL NOT NULL,
+    cache_write_per_1m      REAL NOT NULL,
+    output_per_1m           REAL NOT NULL,
+    updated_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS codex_store_metadata (
+    meta_key                TEXT PRIMARY KEY,
+    value                   TEXT NOT NULL DEFAULT '',
+    updated_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_codex_accounts_refresh_token ON codex_accounts(refresh_token);
 CREATE INDEX IF NOT EXISTS idx_codex_accounts_account_id ON codex_accounts(account_id);
 CREATE INDEX IF NOT EXISTS idx_codex_stats_account_date ON codex_account_stats(account_id, date);

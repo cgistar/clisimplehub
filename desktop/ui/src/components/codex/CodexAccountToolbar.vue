@@ -39,6 +39,7 @@
         <template #icon><n-icon><Settings /></n-icon></template>
         {{ t('codex.config') }}
       </n-button>
+      <n-button @click="emit('open-model-prices')">模型单价</n-button>
       <n-button type="error" ghost @click="emit('bulk-delete')">
         <template #icon><n-icon><Trash2 /></n-icon></template>
         {{ t('codex.bulkDelete') }}
@@ -80,6 +81,7 @@ const emit = defineEmits<{
   'signup': []
   'bulk-delete': []
   'open-config': []
+  'open-model-prices': []
 }>()
 
 const statusOptions = computed(() => [

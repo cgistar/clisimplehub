@@ -64,7 +64,17 @@ type CodexAccountDTO struct {
 	TodayTotalTokens     int64          `json:"todayTotalTokens,omitempty"`
 	TodayCachedTokens    int64          `json:"todayCachedTokens,omitempty"`
 	TodayReasoningTokens int64          `json:"todayReasoningTokens,omitempty"`
+	TodayEstimatedCost   *float64       `json:"todayEstimatedCost"`
 	IsActive             bool           `json:"isActive"`
+}
+
+type CodexModelPriceDTO struct {
+	Model            string  `json:"model"`
+	InputPer1M       float64 `json:"inputPer1M"`
+	CachedInputPer1M float64 `json:"cachedInputPer1M"`
+	CacheWritePer1M  float64 `json:"cacheWritePer1M"`
+	OutputPer1M      float64 `json:"outputPer1M"`
+	UpdatedAt        string  `json:"updatedAt,omitempty"`
 }
 
 type CodexAccountsResponse struct {
@@ -771,6 +781,42 @@ func (a *App) SaveCodexGlobalConfig(dto *CodexGlobalConfigDTO) error {
 		return err
 	}
 	return cp.SaveCodexGlobalConfig(a.getCodexMultiConfigPath(), dtoJSON)
+}
+
+func (a *App) GetCodexModelPrices() ([]CodexModelPriceDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	raw, err := cp.GetCodexModelPrices()
+	if err != nil {
+		return nil, err
+	}
+	var prices []CodexModelPriceDTO
+	if err := json.Unmarshal(raw, &prices); err != nil {
+		return nil, err
+	}
+	return prices, nil
+}
+
+func (a *App) SaveCodexModelPrices(prices []CodexModelPriceDTO) ([]CodexModelPriceDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	raw, err := json.Marshal(prices)
+	if err != nil {
+		return nil, err
+	}
+	savedRaw, err := cp.SaveCodexModelPrices(raw)
+	if err != nil {
+		return nil, err
+	}
+	var saved []CodexModelPriceDTO
+	if err := json.Unmarshal(savedRaw, &saved); err != nil {
+		return nil, err
+	}
+	return saved, nil
 }
 
 type CodexUsageResult struct {

@@ -82,6 +82,25 @@ compose() {
   exit 1
 }
 
+compose_up_build() {
+  case "$COMPOSE_DRIVER" in
+    docker-compose-v2)
+      BUILDKIT_PROGRESS=plain docker compose -f "$COMPOSE_FILE" up -d --build
+      return
+      ;;
+    docker-compose-v1)
+      docker-compose -f "$COMPOSE_FILE" up -d --build
+      return
+      ;;
+    nerdctl-compose)
+      nerdctl compose -f "$COMPOSE_FILE" up -d --build
+      return
+      ;;
+  esac
+  echo "unsupported compose driver: $COMPOSE_DRIVER" >&2
+  exit 1
+}
+
 archive_relpath() {
   local archive_path="$1"
   case "$archive_path" in
@@ -383,11 +402,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     image: ${IMAGE_NAME}
     container_name: ${CONTAINER_NAME}
-    ports:
-      - '\${HOST_PORT:-5600}:\${PORT:-5600}'
-      - '\${CLASH_SOCKS_HOST_PORT:-10808}:\${CLASH_SOCKS_PORT:-10808}'
+    network_mode: host
     environment:
       PORT: '\${PORT:-5600}'
       LISTEN_ADDR: '\${LISTEN_ADDR:-0.0.0.0}'
@@ -460,7 +478,7 @@ remove_named_container
 remove_old_image
 
 echo "building and starting compose service..."
-compose up -d --build
+compose_up_build
 
 echo "service started:"
 compose ps

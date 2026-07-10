@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -219,6 +220,8 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Post("/web/api/home/endpoints/import", p.requireWebUISession(p.handleWebUIImportEndpoints))
 	r.Delete("/web/api/home/endpoints/{endpointId}", p.requireWebUISession(p.handleWebUIDeleteEndpoint))
 	r.Get("/web/api/codex", p.requireWebUISession(p.handleWebUICodex))
+	r.Get("/web/api/codex/model-prices", p.requireWebUISession(p.handleWebUICodexModelPrices))
+	r.Put("/web/api/codex/model-prices", p.requireWebUISession(p.handleWebUISaveCodexModelPrices))
 	r.Post("/web/api/codex/active", p.requireWebUISession(p.handleWebUIActiveCodexAccount))
 	r.Post("/web/api/codex/refresh-token", p.requireWebUISession(p.handleWebUIRefreshCodexToken))
 	r.Post("/web/api/codex/usage", p.requireWebUISession(p.handleWebUIFetchCodexUsage))
@@ -1030,6 +1033,42 @@ func (p *ProxyServer) handleWebUICodex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (p *ProxyServer) handleWebUICodexModelPrices(w http.ResponseWriter, r *http.Request) {
+	provider := plugin.GetCodexDesktopProviderCached()
+	if provider == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "codex-accounts 插件不可用"})
+		return
+	}
+	prices, err := provider.GetCodexModelPrices()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(prices)
+}
+
+func (p *ProxyServer) handleWebUISaveCodexModelPrices(w http.ResponseWriter, r *http.Request) {
+	provider := plugin.GetCodexDesktopProviderCached()
+	if provider == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "codex-accounts 插件不可用"})
+		return
+	}
+	defer r.Body.Close()
+	prices, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "读取模型单价失败"})
+		return
+	}
+	saved, err := provider.SaveCodexModelPrices(prices)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(saved)
 }
 
 func (p *ProxyServer) handleWebUIActiveCodexAccount(w http.ResponseWriter, r *http.Request) {

@@ -16,7 +16,20 @@
       <n-tag v-if="account.planType" type="info" size="small">
         {{ planTypeLabel }}
       </n-tag>
-      <n-tag v-if="resetCreditsAvailableCount > 0" type="success" size="small" title="rate_limit_reset_credits.available_count">
+      <n-tag
+        v-if="resetCreditsAvailableCount > 0"
+        class="codex-reset-credit-badge"
+        type="success"
+        size="small"
+        role="button"
+        :tabindex="busy ? -1 : 0"
+        :aria-disabled="busy"
+        :title="t('codex.resetRateLimit')"
+        :aria-label="t('codex.resetRateLimit')"
+        @click="confirmReset"
+        @keydown.enter.prevent="confirmReset"
+        @keydown.space.prevent="confirmReset"
+      >
         {{ resetCreditsAvailableCount }}
       </n-tag>
       <n-tag v-if="!hasRefreshToken" type="warning" size="small" :title="t('codex.noRefreshToken')">
@@ -47,16 +60,12 @@
         :label="t('codex.usageWeek')"
         :used-percent="account.codexUsage?.secondary?.usedPercent ?? 0"
         :remaining-seconds="account.codexUsage?.secondary?.remainingSeconds ?? 0"
-        refreshable
-        :refresh-disabled="busy || resetCreditsAvailableCount <= 0"
-        :refresh-title="t('codex.resetRateLimit')"
-        @refresh="confirmReset"
       />
       <div class="today-usage">
         <span>
-          {{ account.todayRequests || 0 }}{{ t('codex.requestUnit') }} / {{ formatTokens(account.todayTotalTokens || 0) }}
+          {{ account.todayRequests || 0 }}{{ t('codex.requestUnit') }}/{{ todayEstimatedCostText }} T:{{ formatTokens(account.todayTotalTokens || 0) }}
           · {{ t('codex.cachedTokens') }} {{ formatTokens(account.todayCachedTokens || 0) }}
-          · {{ t('codex.reasoningTokens') }} {{ formatTokens(account.todayReasoningTokens || 0) }}
+          <!-- · {{ t('codex.reasoningTokens') }} {{ formatTokens(account.todayReasoningTokens || 0) }} -->
         </span>
         <span v-if="subscriptionActiveUntil" class="subscription-active-until">
           {{ subscriptionActiveUntil }}
@@ -205,6 +214,8 @@ const resetCreditsAvailableCount = computed(() => {
   const count = Number(props.account.codexUsage?.resetCreditsAvailableCount ?? 0)
   return Number.isFinite(count) ? count : 0
 })
+
+const todayEstimatedCostText = computed(() => formatEstimatedCost(props.account.todayEstimatedCost))
 
 const statusType = computed<'default' | 'success' | 'warning' | 'error'>(() => {
   if (isCoolingDown.value) return 'warning'
@@ -395,6 +406,11 @@ function formatTokens(tokens: number | undefined): string {
   if (num >= 1000) return (num / 1000).toFixed(1) + 'K'
   return num.toString()
 }
+
+function formatEstimatedCost(cost: number | null | undefined): string {
+  if (cost == null || !Number.isFinite(cost)) return '--'
+  return `$${cost.toFixed(1)}`
+}
 </script>
 
 <style scoped>
@@ -458,6 +474,24 @@ function formatTokens(tokens: number | undefined): string {
   gap: 6px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+}
+
+.codex-reset-credit-badge {
+  cursor: pointer;
+}
+
+.codex-reset-credit-badge:hover:not([aria-disabled='true']) {
+  filter: brightness(0.96);
+}
+
+.codex-reset-credit-badge:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #0284c7) 50%, transparent);
+  outline-offset: 2px;
+}
+
+.codex-reset-credit-badge[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .codex-badge-active {

@@ -44,6 +44,7 @@ export default function CodexAccountCard({
   const actionBusy = activateBusy || refreshBusy || usageBusy || primaryUsageBusy || resetBusy || deleteBusy
   const subscriptionActiveUntil = getCodexSubscriptionActiveUntil(account.idToken)
   const resetCreditsAvailableCount = Number(account.codexUsage?.resetCreditsAvailableCount || 0)
+  const estimatedCost = formatEstimatedCost(account.todayEstimatedCost)
 
   function confirmResetCredit() {
     if (actionBusy || resetCreditsAvailableCount <= 0) return
@@ -65,9 +66,16 @@ export default function CodexAccountCard({
         <div className="codex-card-tags">
           {planLabel ? <span className="badge info">{planLabel}</span> : null}
           {resetCreditsAvailableCount > 0 ? (
-            <span className="badge success" title="rate_limit_reset_credits.available_count">
+            <button
+              className="badge success codex-reset-credit-badge"
+              type="button"
+              title={resetBusy ? '重置周限中...' : '重置周限'}
+              aria-label={resetBusy ? '重置周限中...' : '重置周限'}
+              disabled={actionBusy || !localId}
+              onClick={confirmResetCredit}
+            >
               {resetCreditsAvailableCount}
-            </span>
+            </button>
           ) : null}
           {!account.refreshToken ? <span className="badge warning">临时 Token</span> : null}
           {account.enabled === false ? <span className="badge danger">已禁用</span> : null}
@@ -87,20 +95,17 @@ export default function CodexAccountCard({
         />
         <CodexUsageBar
           label="周限"
-          usage={account.codexUsage?.secondary}
-          refreshable
-          refreshDisabled={actionBusy || !localId || resetCreditsAvailableCount <= 0}
-          refreshTitle={resetCreditsAvailableCount > 0 ? (resetBusy ? '重置周限中...' : '重置周限') : '没有可用重置次数'}
-          onRefresh={confirmResetCredit}
+          usage={account.codexUsage?.secondary ?? {}}
         />
 
         <div className="codex-account-meta-grid">
           <div className="meta-pill">
-            今日请求: {Number(account.todayRequests || 0)}/{formatTokenCount(account.todayTotalTokens)}
-            {' '}缓存: {formatTokenCount(account.todayCachedTokens)}
-            {' '}推理: {formatTokenCount(account.todayReasoningTokens)}
+            {Number(account.todayRequests || 0)}/{estimatedCost}
+            {' '}{formatTokenCount(account.todayCachedTokens)}/{formatTokenCount(account.todayTotalTokens)}
+
+            {/* {' '}推{formatTokenCount(account.todayReasoningTokens)} */}
           </div>
-          <div className="meta-pill">有效至{formatDateTime(subscriptionActiveUntil)}</div>
+          <div className="meta-pill">{formatDateTime(subscriptionActiveUntil)}过期</div>
           {account.proxyUrl ? <div className="meta-pill codex-full-span">代理：{account.proxyUrl}</div> : null}
         </div>
       </div>
@@ -161,4 +166,9 @@ export default function CodexAccountCard({
       </div>
     </article>
   )
+}
+
+function formatEstimatedCost(cost: number | null | undefined): string {
+  if (cost == null || !Number.isFinite(cost)) return '--'
+  return `$${cost.toFixed(1)}`
 }
