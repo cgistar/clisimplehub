@@ -16,14 +16,15 @@ interface XaiAccountCardProps {
 
 function poolLabel(pool?: string): string {
   switch (String(pool || '').toLowerCase()) {
-    case 'basic':
-      return 'Basic'
     case 'super':
       return 'Super'
     case 'heavy':
       return 'Heavy'
+    case 'basic':
+      return 'Basic'
     default:
-      return ''
+      // 空 pool 与后端 console 一致，视为 Basic
+      return 'Basic'
   }
 }
 
@@ -89,7 +90,7 @@ export default function XaiAccountCard({
           {account.enabled === false ? <span className="badge danger">已禁用</span> : null}
           {account.websockets ? <span className="badge success">WS</span> : null}
           {account.usingApi ? <span className="badge warning">官方API</span> : null}
-          {account.sso ? <span className="badge info">SSO</span> : null}
+          {String(account.sso || '').trim() ? <span className="badge info">SSO</span> : null}
           {account.isActive ? <span className="badge success">正在使用</span> : null}
         </div>
       </div>

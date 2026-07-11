@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sync"
 )
 
@@ -30,6 +31,11 @@ type XaiDesktopProvider interface {
 	RefreshAccountToken(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
 	// RefreshAccountQuota 拉取 grok.com rate-limits，更新 pool + 额度。
 	RefreshAccountQuota(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
+}
+
+// XaiResponsesWebsocketProvider /v1/responses WebSocket 统一入口用。
+type XaiResponsesWebsocketProvider interface {
+	HandleResponsesWebsocket(w http.ResponseWriter, r *http.Request)
 }
 
 func GetXaiDesktopProvider() XaiDesktopProvider {

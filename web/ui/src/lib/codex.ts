@@ -76,9 +76,13 @@ export function buildCodexAccountsCopyJson(accounts: CodexAccount[]): string {
 export function getCodexStatus(account: CodexAccount): { label: string; variant: string } {
   const cooldownRemaining = Number(account.cooldownRemaining || 0)
   if (cooldownRemaining > 0) {
-    const reason = account.cooldownReason === 'rate_limit' ? '限流' : account.cooldownReason || '冷却'
+    const reasonKey = String(account.cooldownReason || '')
+    const isRateLimit = reasonKey === 'rate_limit'
+      || reasonKey === 'websocket_rate_limit'
+      || reasonKey === 'websocket_upstream_rate_limit'
+    const label = isRateLimit ? '限流' : '冷却中'
     return {
-      label: `${reason} ${formatRemainingSeconds(cooldownRemaining)}`,
+      label: `${label} ${formatRemainingSeconds(cooldownRemaining)}`,
       variant: 'warning',
     }
   }

@@ -49,18 +49,8 @@ export default function XaiEditDialog({ open, form, saving, onClose, onChange, o
             </div>
 
             <div className="field mt-14">
-              <label className="field-label">Access Token</label>
-              <textarea
-                className="textarea"
-                rows={3}
-                value={form.accessToken}
-                onChange={(event) => updateField('accessToken', event.target.value)}
-              />
-            </div>
-
-            <div className="field mt-14">
               <label className="field-label">API Key</label>
-              <input className="input" value={form.apiKey} onChange={(event) => updateField('apiKey', event.target.value)} placeholder="可选" />
+              <input className="input" value={form.apiKey} onChange={(event) => updateField('apiKey', event.target.value)} placeholder="可选，API Key 账号填写" />
             </div>
 
             <div className="field mt-14">
@@ -72,6 +62,7 @@ export default function XaiEditDialog({ open, form, saving, onClose, onChange, o
                 onChange={(event) => updateField('sso', event.target.value)}
                 placeholder="粘贴 grok.com / accounts.x.ai 的 sso Cookie 值（JWT）"
               />
+              <div className="field-help mt-8">用于 /xai/console 与额度刷新；有 SSO 时卡片会显示 SSO 标签</div>
             </div>
 
             <div className="field mt-14">
@@ -99,7 +90,7 @@ export default function XaiEditDialog({ open, form, saving, onClose, onChange, o
                 官方 API (using_api)
               </label>
               <div className="field-help mt-8">
-                开启：文本走 api.x.ai；关闭：走 cli-chat-proxy（OAuth 默认关，适合 Build 额度）
+                开启：文本走 api.x.ai；关闭：走 cli-chat-proxy（OAuth 账号默认关，适合 Build 额度）
               </div>
             </div>
           </DialogBody>

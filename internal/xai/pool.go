@@ -16,9 +16,11 @@ type XaiAccountPool struct {
 	config          *shared.XaiMultiConfig
 	configPath      string
 	activeAccountID string
-	// rrCursor：loadbalance
+	// rrCursor：主池 loadbalance
 	rrCursor int
-	failed   map[string]shared.XaiAccountStatus
+	// consoleRRCursor：/xai/console 独立 loadbalance，不影响主池
+	consoleRRCursor int
+	failed          map[string]shared.XaiAccountStatus
 }
 
 var (
@@ -161,7 +163,51 @@ func (p *XaiAccountPool) MarkFailed(accountID string, status shared.XaiAccountSt
 		}
 		break
 	}
-	_ = shared.SaveXaiMultiConfig(p.configPath, p.config)
+	// 与 Codex 一致：failover 下当前 active 失败时，立即切换到下一个可用账号
+	if p.config.GetRotationMode() == shared.RotationFailover && strings.TrimSpace(p.activeAccountID) == accountID {
+		if next := p.findNextAvailable(accountID, nil); next != nil {
+			_ = p.promoteActive(next)
+		}
+	}
+	p.persistIfPathSet()
+}
+
+// CooldownAccount 仅设置冷却窗口，不写入 failed map / 不改 status。
+// 用于 console 429 等短暂限流，避免账号被永久踢出选号。
+// failover 下若冷却的是当前 active，立即切到下一个可用账号，便于同请求/后续请求继续。
+func (p *XaiAccountPool) CooldownAccount(accountID string, cooldown time.Duration, reason string) {
+	if p == nil || cooldown <= 0 {
+		return
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		return
+	}
+	for i := range p.config.Accounts {
+		if strings.TrimSpace(p.config.Accounts[i].ID) != accountID {
+			continue
+		}
+		p.config.Accounts[i].CooldownUntil = time.Now().Add(cooldown)
+		p.config.Accounts[i].CooldownReason = strings.TrimSpace(reason)
+		// 若此前被误标 exhausted，冷却场景恢复为 valid
+		if p.config.Accounts[i].Status == shared.XaiStatusExhausted {
+			p.config.Accounts[i].Status = shared.XaiStatusValid
+		}
+		delete(p.failed, accountID)
+		// Cooldown 仅 console 路径使用：优先切到下一个 console 可用账号
+		if p.config.GetRotationMode() == shared.RotationFailover && strings.TrimSpace(p.activeAccountID) == accountID {
+			if next := p.findNextAvailable(accountID, consoleMatch); next != nil {
+				_ = p.promoteActive(next)
+			}
+		}
+		p.persistIfPathSet()
+		return
+	}
 }
 
 func (p *XaiAccountPool) ReportSuccess(accountID string) {
@@ -188,30 +234,12 @@ func (p *XaiAccountPool) ReportSuccess(accountID string) {
 }
 
 func (p *XaiAccountPool) SelectExcluding(excluded map[string]bool) *shared.XaiAccount {
-	if p == nil {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.config == nil {
-		return nil
-	}
-	for i := range p.config.Accounts {
-		acc := &p.config.Accounts[i]
-		acc.ClearCooldownIfExpired()
-		id := strings.TrimSpace(acc.ID)
-		if id == "" || !acc.IsEnabled() || acc.IsCoolingDown() {
-			continue
+	return p.selectMatching(func(a *shared.XaiAccount) bool {
+		if a == nil || len(excluded) == 0 {
+			return true
 		}
-		if excluded[id] {
-			continue
-		}
-		if _, failed := p.failed[id]; failed {
-			continue
-		}
-		return acc
-	}
-	return nil
+		return !excluded[accountLocalID(a)]
+	}, false)
 }
 
 func (p *XaiAccountPool) SelectWebsocket() *shared.XaiAccount {
@@ -526,6 +554,64 @@ func (p *XaiAccountPool) Reload() error {
 }
 
 func (p *XaiAccountPool) Select() *shared.XaiAccount {
+	return p.selectMatching(func(*shared.XaiAccount) bool { return true }, false)
+}
+
+// SelectConsole 仅选择 basic + 有 SSO 的可用账号；轮询模式与主池相同但游标独立。
+func (p *XaiAccountPool) SelectConsole() *shared.XaiAccount {
+	return p.selectMatching(consoleMatch, true)
+}
+
+// SelectConsoleExcluding 在 console 候选中排除已失败账号后继续选（尊重轮询模式）。
+func (p *XaiAccountPool) SelectConsoleExcluding(excluded map[string]bool) *shared.XaiAccount {
+	return p.selectMatching(func(a *shared.XaiAccount) bool {
+		if !consoleMatch(a) {
+			return false
+		}
+		if a == nil || len(excluded) == 0 {
+			return true
+		}
+		return !excluded[accountLocalID(a)]
+	}, true)
+}
+
+func accountLocalID(acc *shared.XaiAccount) string {
+	if acc == nil {
+		return ""
+	}
+	return strings.TrimSpace(acc.ID)
+}
+
+// consoleMatch：console 池约束（basic + SSO）；可用性由 isAccountAvailable 另判。
+func consoleMatch(acc *shared.XaiAccount) bool {
+	if acc == nil {
+		return false
+	}
+	if strings.TrimSpace(acc.SSO) == "" {
+		return false
+	}
+	pool := strings.ToLower(strings.TrimSpace(acc.Pool))
+	// 空 pool 视为 basic（导入默认）；仅 basic 参与 console 免费额度池
+	if pool != "" && pool != shared.PoolBasic {
+		return false
+	}
+	return true
+}
+
+// consoleAccountSelectable basic 池 + 非空 SSO + 主池可选条件。
+func consoleAccountSelectable(acc *shared.XaiAccount, failed map[string]shared.XaiAccountStatus) bool {
+	return consoleMatch(acc) && accountSelectable(acc, failed)
+}
+
+func accountMatches(a *shared.XaiAccount, match func(*shared.XaiAccount) bool) bool {
+	if match == nil {
+		return true
+	}
+	return match(a)
+}
+
+// selectMatching 按轮询模式选号；console=true 时 loadbalance 使用独立游标。
+func (p *XaiAccountPool) selectMatching(match func(*shared.XaiAccount) bool, console bool) *shared.XaiAccount {
 	if p == nil {
 		return nil
 	}
@@ -536,14 +622,19 @@ func (p *XaiAccountPool) Select() *shared.XaiAccount {
 	}
 	switch p.config.GetRotationMode() {
 	case shared.RotationFailover:
-		// failover
-		return p.selectFillFirst()
+		return p.selectFailover(match)
 	case shared.RotationLoadBalance:
-		// loadbalance
-		return p.selectRoundRobin()
+		return p.selectRoundRobin(match, console)
 	default:
-		return p.selectFixed()
+		return p.selectFixed(match)
 	}
+}
+
+func (p *XaiAccountPool) isAccountAvailable(a *shared.XaiAccount, match func(*shared.XaiAccount) bool) bool {
+	if a == nil || !accountMatches(a, match) {
+		return false
+	}
+	return accountSelectable(a, p.failed)
 }
 
 func accountSelectable(acc *shared.XaiAccount, failed map[string]shared.XaiAccountStatus) bool {
@@ -570,74 +661,136 @@ func accountSelectable(acc *shared.XaiAccount, failed map[string]shared.XaiAccou
 	return true
 }
 
-func (p *XaiAccountPool) collectAvailable() []*shared.XaiAccount {
-	available := make([]*shared.XaiAccount, 0, len(p.config.Accounts))
-	for i := range p.config.Accounts {
-		acc := &p.config.Accounts[i]
-		if accountSelectable(acc, p.failed) {
-			available = append(available, acc)
-		}
+// promoteActive 写回 active；changed 表示是否发生变化。
+func (p *XaiAccountPool) promoteActive(acc *shared.XaiAccount) (changed bool) {
+	id := accountLocalID(acc)
+	if id == "" || id == strings.TrimSpace(p.activeAccountID) {
+		return false
 	}
-	if len(available) > 1 {
-		sort.SliceStable(available, func(i, j int) bool {
-			return strings.TrimSpace(available[i].ID) < strings.TrimSpace(available[j].ID)
-		})
+	p.activeAccountID = id
+	if p.config != nil {
+		p.config.ActiveAccountID = id
 	}
-	return available
+	return true
 }
 
-func (p *XaiAccountPool) selectFixed() *shared.XaiAccount {
+func (p *XaiAccountPool) persistIfPathSet() {
+	if p == nil || strings.TrimSpace(p.configPath) == "" || p.config == nil {
+		return
+	}
+	_ = shared.SaveXaiMultiConfig(p.configPath, p.config)
+}
+
+// resolveActiveAccount 优先返回配置的 active；若不存在或不匹配 match，则取下一个可用并提升为 active。
+func (p *XaiAccountPool) resolveActiveAccount(match func(*shared.XaiAccount) bool) *shared.XaiAccount {
 	activeID := strings.TrimSpace(p.activeAccountID)
-	for i := range p.config.Accounts {
-		acc := &p.config.Accounts[i]
-		if strings.TrimSpace(acc.ID) == activeID && accountSelectable(acc, p.failed) {
-			return acc
+	if activeID != "" {
+		for i := range p.config.Accounts {
+			acc := &p.config.Accounts[i]
+			if accountLocalID(acc) == activeID && accountMatches(acc, match) {
+				return acc
+			}
 		}
 	}
-	// active 不可用时回退第一个可用账号（不切换 active，保持 fixed 语义）
-	for i := range p.config.Accounts {
-		acc := &p.config.Accounts[i]
-		if accountSelectable(acc, p.failed) {
+	next := p.findNextAvailable("", match)
+	if next == nil {
+		return nil
+	}
+	if p.promoteActive(next) {
+		p.persistIfPathSet()
+	}
+	return next
+}
+
+// findNextAvailable 从 current 之后环形扫描 accounts 顺序中的下一个可用账号。
+func (p *XaiAccountPool) findNextAvailable(currentAccountID string, match func(*shared.XaiAccount) bool) *shared.XaiAccount {
+	if p.config == nil || len(p.config.Accounts) == 0 {
+		return nil
+	}
+	startIdx := 0
+	currentAccountID = strings.TrimSpace(currentAccountID)
+	if currentAccountID != "" {
+		for i := range p.config.Accounts {
+			if accountLocalID(&p.config.Accounts[i]) == currentAccountID {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+	n := len(p.config.Accounts)
+	for offset := 0; offset < n; offset++ {
+		acc := &p.config.Accounts[(startIdx+offset)%n]
+		if p.isAccountAvailable(acc, match) {
 			return acc
 		}
 	}
 	return nil
 }
 
-// 始终选择当前可用集合中的第一个（按 ID 排序），把一个账号“用尽/冷却”后再用下一个。
-func (p *XaiAccountPool) selectFillFirst() *shared.XaiAccount {
-	available := p.collectAvailable()
-	if len(available) == 0 {
-		return nil
+func (p *XaiAccountPool) collectAvailable(match func(*shared.XaiAccount) bool) []*shared.XaiAccount {
+	available := make([]*shared.XaiAccount, 0, len(p.config.Accounts))
+	for i := range p.config.Accounts {
+		acc := &p.config.Accounts[i]
+		if p.isAccountAvailable(acc, match) {
+			available = append(available, acc)
+		}
 	}
-	return available[0]
+	return available
 }
 
-// 在可用账号间简单轮询（等权），不使用加权 WRR。
-func (p *XaiAccountPool) selectRoundRobin() *shared.XaiAccount {
-	available := p.collectAvailable()
+func (p *XaiAccountPool) selectFixed(match func(*shared.XaiAccount) bool) *shared.XaiAccount {
+	activeID := strings.TrimSpace(p.activeAccountID)
+	for i := range p.config.Accounts {
+		acc := &p.config.Accounts[i]
+		if accountLocalID(acc) == activeID && p.isAccountAvailable(acc, match) {
+			return acc
+		}
+	}
+	// active 不可用时回退第一个可用账号（不切换 active，保持 fixed 语义）
+	return p.findNextAvailable("", match)
+}
+
+// selectFailover 与 Codex 一致：优先 active；不可用时切到下一个并写回 active。
+func (p *XaiAccountPool) selectFailover(match func(*shared.XaiAccount) bool) *shared.XaiAccount {
+	active := p.resolveActiveAccount(match)
+	if p.isAccountAvailable(active, match) {
+		return active
+	}
+
+	currentID := ""
+	if active != nil {
+		currentID = accountLocalID(active)
+	}
+	next := p.findNextAvailable(currentID, match)
+	if next != nil && (active == nil || accountLocalID(next) != accountLocalID(active)) {
+		if p.promoteActive(next) {
+			p.persistIfPathSet()
+		}
+	}
+	return next
+}
+
+// selectRoundRobin 在可用账号间简单轮询（等权）；console 使用独立游标。
+func (p *XaiAccountPool) selectRoundRobin(match func(*shared.XaiAccount) bool, console bool) *shared.XaiAccount {
+	available := p.collectAvailable(match)
 	if len(available) == 0 {
 		return nil
 	}
-	if p.rrCursor < 0 || p.rrCursor >= 2_147_483_640 {
-		p.rrCursor = 0
+	cursor := &p.rrCursor
+	if console {
+		cursor = &p.consoleRRCursor
 	}
-	idx := p.rrCursor % len(available)
-	p.rrCursor++
+	if *cursor < 0 || *cursor >= 2_147_483_640 {
+		*cursor = 0
+	}
+	idx := *cursor % len(available)
+	*cursor++
 	return available[idx]
-}
-
-// 兼容旧调用名
-func (p *XaiAccountPool) selectFailover() *shared.XaiAccount {
-	return p.selectFillFirst()
-}
-
-func (p *XaiAccountPool) selectLoadBalance() *shared.XaiAccount {
-	return p.selectRoundRobin()
 }
 
 func (p *XaiAccountPool) resetRR() {
 	p.rrCursor = 0
+	p.consoleRRCursor = 0
 }
 
 // Deprecated: use resetRR

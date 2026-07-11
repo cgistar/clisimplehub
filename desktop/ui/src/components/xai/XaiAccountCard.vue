@@ -46,10 +46,7 @@
     </div>
 
     <div class="card-footer">
-      <div v-if="isCoolingDown" class="cooldown-info">
-        {{ cooldownText }}
-      </div>
-      <div v-else class="expire-info" :class="{ expired: isExpired }">
+      <div class="expire-info" :class="{ expired: isExpired }">
         {{ expireText }}
       </div>
       <div class="card-actions">
@@ -190,14 +187,17 @@ const statusText = computed(() => {
 const cooldownText = computed(() => {
   const remaining = props.account.cooldownRemaining
   if (!remaining || remaining <= 0) return ''
+  const label = t('xai.cooling')
+  if (remaining < 60) {
+    return `${label} ${remaining}s`
+  }
   const mins = Math.ceil(remaining / 60)
-  const reason = props.account.cooldownReason || t('xai.cooldown')
   if (mins >= 60) {
     const h = Math.floor(mins / 60)
     const m = mins % 60
-    return `${reason} ${h}h${m > 0 ? m + 'm' : ''}`
+    return `${label} ${h}h${m > 0 ? m + 'm' : ''}`
   }
-  return `${reason} ${mins}m`
+  return `${label} ${mins}m`
 })
 
 const expireInfo = computed(() => {
@@ -223,14 +223,15 @@ const canRefreshQuota = computed(() => Boolean(String(props.account.sso || '').t
 
 const poolLabel = computed(() => {
   switch (String(props.account.pool || '').toLowerCase()) {
-    case 'basic':
-      return t('xai.poolBasic')
     case 'super':
       return t('xai.poolSuper')
     case 'heavy':
       return t('xai.poolHeavy')
+    case 'basic':
+      return t('xai.poolBasic')
     default:
-      return ''
+      // 空 pool 与后端 console 一致，视为 Basic
+      return t('xai.poolBasic')
   }
 })
 
@@ -389,12 +390,6 @@ function truncateText(text: string | undefined, maxLength: number): string {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-}
-
-.cooldown-info {
-  font-size: 12px;
-  color: #f59e0b;
-  font-weight: 500;
 }
 
 .expire-info {

@@ -192,6 +192,7 @@ func (s *XaiService) roundTripWithAccount(
 
 	// 官方 API 路径（compact / images / videos）上 free OAuth 常 402/403 spending-limit，
 	// 但同一账号在 cli-chat-proxy 的 free chat 仍可用。勿因此把账号永久 exhausted。
+	// 仍应 retryable=true，让 failover 换其它账号继续。
 	paidOnlyPath := xaiBackend.IsCompactPath(path) || xaiBackend.IsMediaPath(path)
 
 	switch backendResult.StatusCode {
@@ -210,20 +211,18 @@ func (s *XaiService) roundTripWithAccount(
 		return toUpstreamResult(backendResult), true
 	case http.StatusForbidden:
 		// spending-limit / personal-team-blocked 属于额度问题
-		if isQuotaLikeBody(backendResult.Body) {
-			if paidOnlyPath {
-				return toUpstreamResult(backendResult), false
+		if isQuotaLikeBody(backendResult.Body) || isFreeUsageExhaustedBody(backendResult.Body) {
+			if !paidOnlyPath {
+				pool.MarkFailed(account.ID, xaiShared.XaiStatusExhausted, 0, "quota_or_subscription")
 			}
-			pool.MarkFailed(account.ID, xaiShared.XaiStatusExhausted, 0, "quota_or_subscription")
 			return toUpstreamResult(backendResult), true
 		}
 		pool.MarkFailed(account.ID, xaiShared.XaiStatusBanned, 24*time.Hour, "forbidden")
 		return toUpstreamResult(backendResult), true
 	case http.StatusPaymentRequired:
-		if paidOnlyPath {
-			return toUpstreamResult(backendResult), false
+		if !paidOnlyPath {
+			pool.MarkFailed(account.ID, xaiShared.XaiStatusExhausted, 0, "quota_exhausted")
 		}
-		pool.MarkFailed(account.ID, xaiShared.XaiStatusExhausted, 0, "quota_exhausted")
 		return toUpstreamResult(backendResult), true
 	case http.StatusTooManyRequests:
 		cooldown := parseRetryAfter(backendResult.Headers)
@@ -242,6 +241,13 @@ func (s *XaiService) roundTripWithAccount(
 		return toUpstreamResult(backendResult), true
 	}
 	if backendResult.StatusCode >= 400 {
+		// 其它 4xx 若 body 明确是额度用尽，同样换号继续
+		if isQuotaLikeBody(backendResult.Body) || isFreeUsageExhaustedBody(backendResult.Body) {
+			if !paidOnlyPath {
+				pool.MarkFailed(account.ID, xaiShared.XaiStatusExhausted, 0, "quota_exhausted")
+			}
+			return toUpstreamResult(backendResult), true
+		}
 		return toUpstreamResult(backendResult), false
 	}
 	return toUpstreamResult(backendResult), false
@@ -347,13 +353,18 @@ func isQuotaLikeBody(body []byte) bool {
 	return strings.Contains(s, "spending-limit") ||
 		strings.Contains(s, "run out of credits") ||
 		strings.Contains(s, "need a grok subscription") ||
-		strings.Contains(s, "personal-team-blocked")
+		strings.Contains(s, "personal-team-blocked") ||
+		strings.Contains(s, "quota") && (strings.Contains(s, "exceed") || strings.Contains(s, "exhaust") || strings.Contains(s, "limit")) ||
+		strings.Contains(s, "usage limit") ||
+		strings.Contains(s, "out of credits") ||
+		strings.Contains(s, "insufficient") && strings.Contains(s, "credit")
 }
 
 func isFreeUsageExhaustedBody(body []byte) bool {
 	s := strings.ToLower(string(body))
 	return strings.Contains(s, "free-usage-exhausted") ||
-		strings.Contains(s, "included free usage")
+		strings.Contains(s, "included free usage") ||
+		strings.Contains(s, "free usage") && strings.Contains(s, "exhaust")
 }
 
 func mustJSON(v any) []byte {

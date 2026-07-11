@@ -46,6 +46,95 @@ func (p *XaiPlugin) handleXaiRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// API 转发
+	// ── console 独立体系：SSO + basic，不影响 /xai/v1/* ──
+	if strings.HasPrefix(path, "/xai/console") {
+		switch {
+		case path == "/xai/console/v1/models":
+			if r.Method != http.MethodGet {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+				return
+			}
+			writeJSON(w, http.StatusOK, xaiBackend.ConsoleModelsResponse())
+			return
+		case path == "/xai/console/v1/chat/completions":
+			if r.Method != http.MethodPost {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+				return
+			}
+			svc.HandleConsoleChatCompletions(w, r)
+			return
+		case path == "/xai/console/v1/responses":
+			if r.Method != http.MethodPost {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+				return
+			}
+			svc.HandleConsoleResponses(w, r)
+			return
+		case path == "/xai/console/v1/messages":
+			if r.Method != http.MethodPost {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+				return
+			}
+			svc.HandleConsoleMessages(w, r)
+			return
+		case path == "/xai/console/v1/images/generations":
+			if r.Method != http.MethodPost {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+				return
+			}
+			svc.HandleConsoleImagesGenerations(w, r)
+			return
+		case path == "/xai/console/v1/images/edits":
+			if r.Method != http.MethodPost {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+				return
+			}
+			svc.HandleConsoleImagesEdits(w, r)
+			return
+		case path == "/xai/console/v1/videos", path == "/xai/console/v1/videos/generations":
+			if r.Method != http.MethodPost {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+				return
+			}
+			svc.HandleConsoleVideosCreate(w, r)
+			return
+		case strings.HasPrefix(path, "/xai/console/v1/videos/"):
+			// GET /videos/{id}/content — 最终文件
+			// GET /videos/{id}         — 任务状态
+			if strings.HasSuffix(path, "/content") {
+				if r.Method != http.MethodGet {
+					writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+					return
+				}
+				svc.HandleConsoleVideosContent(w, r)
+				return
+			}
+			if r.Method != http.MethodGet {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+				return
+			}
+			svc.HandleConsoleVideosGet(w, r)
+			return
+		case path == "/xai/console/v1/files/video", path == "/xai/console/v1/files/image",
+			strings.HasPrefix(path, "/xai/console/v1/files/"):
+			// grok2api 的 /v1/files/* 本地缓存接口：本路径明确不支持
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"error": map[string]any{
+					"type":    "not_supported",
+					"message": "local file cache endpoints are not supported under /xai/console; use GET /xai/console/v1/videos/{id}/content for video bytes",
+					"path":    r.URL.Path,
+				},
+			})
+			return
+		default:
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"error": "xai console route not found",
+				"path":  r.URL.Path,
+			})
+			return
+		}
+	}
+
 	switch {
 	case path == "/xai/v1/responses":
 		if isWebsocketRequest(r) {

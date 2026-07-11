@@ -426,7 +426,7 @@ export default {
     dynamicStatsig: '动态 Statsig',
     dynamicStatsigHelp: '开启后为 grok.com 请求动态生成 x-statsig-id（对齐 grok2api，默认开）',
     cooldown: '冷却',
-    tokenExpired: '已过期',
+    tokenExpired: '过期',
   },
   kiro: {
     title: 'Kiro 配置',

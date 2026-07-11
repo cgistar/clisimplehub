@@ -270,7 +270,14 @@ export function parseXaiImportAccounts(raw: unknown): XaiAccountInput[] {
 export function getXaiStatus(account: XaiAccount): { label: string; variant: string } {
   const cooldown = Number(account.cooldownRemaining || 0)
   if (cooldown > 0) {
-    return { label: account.cooldownReason || '冷却中', variant: 'warning' }
+    if (cooldown < 60) return { label: `冷却中 ${cooldown}s`, variant: 'warning' }
+    const mins = Math.ceil(cooldown / 60)
+    if (mins >= 60) {
+      const h = Math.floor(mins / 60)
+      const m = mins % 60
+      return { label: `冷却中 ${h}h${m > 0 ? m + 'm' : ''}`, variant: 'warning' }
+    }
+    return { label: `冷却中 ${mins}m`, variant: 'warning' }
   }
   switch (account.status) {
     case 'valid':
@@ -291,11 +298,11 @@ export function getXaiExpireInfo(account: XaiAccount, nowMs: number = Date.now()
   const expiresDate = new Date(raw)
   if (Number.isNaN(expiresDate.getTime())) return { text: '', expired: false }
   const diffMs = expiresDate.getTime() - nowMs
-  if (diffMs <= 0) return { text: 'Token 已过期', expired: true }
+  if (diffMs <= 0) return { text: '过期', expired: true }
   const diffMinutes = Math.floor(diffMs / (1000 * 60))
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-  if (diffDays > 0) return { text: `Token ${diffDays}d`, expired: false }
-  if (diffHours > 0) return { text: `Token ${diffHours}h`, expired: false }
-  return { text: `Token ${diffMinutes}m`, expired: false }
+  if (diffDays > 0) return { text: `${diffDays}d`, expired: false }
+  if (diffHours > 0) return { text: `${diffHours}h`, expired: false }
+  return { text: `${diffMinutes}m`, expired: false }
 }

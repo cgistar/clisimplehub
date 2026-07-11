@@ -77,10 +77,7 @@
     </div>
 
     <div class="card-footer">
-      <div v-if="isCoolingDown" class="cooldown-info">
-        {{ cooldownText }}
-      </div>
-      <div v-else class="expire-info" :class="{ expired: isExpired }">
+      <div class="expire-info" :class="{ expired: isExpired }">
         {{ expireText }}
       </div>
       <div class="card-actions">
@@ -246,17 +243,21 @@ const statusText = computed(() => {
 const cooldownText = computed(() => {
   const remaining = props.account.cooldownRemaining
   if (!remaining || remaining <= 0) return ''
+  const reasonKey = String(props.account.cooldownReason || '')
+  const isRateLimit = reasonKey === 'rate_limit'
+    || reasonKey === 'websocket_rate_limit'
+    || reasonKey === 'websocket_upstream_rate_limit'
+  const label = isRateLimit ? t('codex.rateLimit') : t('codex.cooling')
+  if (remaining < 60) {
+    return `${label} ${remaining}s`
+  }
   const mins = Math.ceil(remaining / 60)
-  const reason = props.account.cooldownReason === 'rate_limit'
-    ? t('codex.rateLimit')
-    : props.account.cooldownReason || t('codex.cooldown')
-
   if (mins >= 60) {
     const h = Math.floor(mins / 60)
     const m = mins % 60
-    return `${reason} ${h}h${m > 0 ? m + 'm' : ''}`
+    return `${label} ${h}h${m > 0 ? m + 'm' : ''}`
   }
-  return `${reason} ${mins}m`
+  return `${label} ${mins}m`
 })
 
 const expireInfo = computed(() => {
@@ -533,12 +534,6 @@ function formatEstimatedCost(cost: number | null | undefined): string {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-}
-
-.cooldown-info {
-  font-size: 12px;
-  color: #f59e0b;
-  font-weight: 500;
 }
 
 .expire-info {

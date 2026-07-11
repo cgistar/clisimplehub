@@ -98,6 +98,19 @@ func (p *XaiPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	r.HandleFunc("/xai/*", r.RequireAuth(p.handleXaiRoute))
 }
 
+func (p *XaiPlugin) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Request) {
+	p.mu.RLock()
+	svc := p.service
+	p.mu.RUnlock()
+	if svc == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "xai plugin not initialized",
+		})
+		return
+	}
+	svc.HandleResponsesWebsocket(w, r)
+}
+
 func (p *XaiPlugin) Reload() error {
 	pool := xai.GetPool()
 	if pool != nil {

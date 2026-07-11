@@ -168,27 +168,51 @@ func (p *ProxyServer) handleV1ResponsesWebsocketRoute(w http.ResponseWriter, r *
 	exec := p.ensureExecutor()
 	forwardReq := executor.ForwardRequestFromHTTP(r, nil, true)
 	endpoint, resolvedType := p.resolveEndpointForRequest(exec, r, forwardReq)
+	// /responses 路径归 codex 接口类型；其下 openai/codex 与 openai/xai 均可挂 WS。
 	if resolvedType != "" && !strings.EqualFold(resolvedType, string(InterfaceTypeCodex)) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "responses websocket requires codex endpoint",
+			"error": "responses websocket requires codex interface path",
 		})
 		return
 	}
-	if endpoint == nil || !strings.EqualFold(strings.TrimSpace(endpoint.Transformer), "openai/codex") {
+	if endpoint == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "responses websocket requires active codex endpoint with openai/codex transformer",
+			"error": "responses websocket requires active endpoint with openai/codex or openai/xai transformer",
 		})
 		return
 	}
 
-	provider, ok := plugin.ByName("codex-accounts").(plugin.CodexResponsesWebsocketProvider)
-	if !ok || provider == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"error": "codex websocket provider not available",
+	switch strings.ToLower(strings.TrimSpace(endpoint.Transformer)) {
+	case "openai/codex":
+		provider, ok := plugin.ByName("codex-accounts").(plugin.CodexResponsesWebsocketProvider)
+		if !ok || provider == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error": "codex websocket provider not available",
+			})
+			return
+		}
+		provider.HandleResponsesWebsocket(w, r)
+	case "openai/xai":
+		provider, ok := plugin.ByName("xai-accounts").(plugin.XaiResponsesWebsocketProvider)
+		if !ok || provider == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error": "xai websocket provider not available",
+			})
+			return
+		}
+		// MapInboundPath 只识别 /xai/v1/...；统一入口需改写为插件路径。
+		req := r.Clone(r.Context())
+		if req.URL != nil {
+			u := *req.URL
+			u.Path = "/xai/v1/responses"
+			req.URL = &u
+		}
+		provider.HandleResponsesWebsocket(w, req)
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "responses websocket requires active endpoint with openai/codex or openai/xai transformer",
 		})
-		return
 	}
-	provider.HandleResponsesWebsocket(w, r)
 }
 
 func (p *ProxyServer) resolveEndpointForRequest(exec *proxyExecutor, r *http.Request, req *executor.ForwardRequest) (*executor.EndpointConfig, string) {
