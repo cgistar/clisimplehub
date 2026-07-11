@@ -6,4 +6,5 @@ import (
 	_ "clisimplehub/internal/clash/plugin" // activate Clash plugin
 	_ "clisimplehub/internal/codex/plugin" // activate Codex accounts plugin
 	_ "clisimplehub/internal/kiro/plugin"  // activate Kiro plugin
+	_ "clisimplehub/internal/xai/plugin"   // activate xAI accounts plugin
 )

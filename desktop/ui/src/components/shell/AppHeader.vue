@@ -7,9 +7,9 @@ import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settingsStore'
 
-type TabKey = 'home' | 'kiro-accounts' | 'codex-accounts' | 'clash' | 'settings'
-type LabelKey = 'home' | 'kiro' | 'codex' | 'clash' | 'settings'
-type VisibleProp = 'showKiro' | 'showCodex' | 'showClash'
+type TabKey = 'home' | 'kiro-accounts' | 'codex-accounts' | 'xai-accounts' | 'clash' | 'settings'
+type LabelKey = 'home' | 'kiro' | 'codex' | 'xai' | 'clash' | 'settings'
+type VisibleProp = 'showKiro' | 'showCodex' | 'showXai' | 'showClash'
 type IconKey = 'home' | 'users' | 'network' | 'settings'
 
 interface HeaderTab {
@@ -23,11 +23,13 @@ const props = withDefaults(defineProps<{
   activeTab?: TabKey
   showKiro?: boolean
   showCodex?: boolean
+  showXai?: boolean
   showClash?: boolean
 }>(), {
   activeTab: 'home',
   showKiro: false,
   showCodex: false,
+  showXai: false,
   showClash: false
 })
 
@@ -51,6 +53,7 @@ const tabs: HeaderTab[] = [
   { key: 'home', icon: 'home', labelKey: 'home' },
   { key: 'kiro-accounts', icon: 'users', labelKey: 'kiro', visibleProp: 'showKiro' },
   { key: 'codex-accounts', icon: 'users', labelKey: 'codex', visibleProp: 'showCodex' },
+  { key: 'xai-accounts', icon: 'users', labelKey: 'xai', visibleProp: 'showXai' },
   { key: 'clash', icon: 'network', labelKey: 'clash', visibleProp: 'showClash' },
   { key: 'settings', icon: 'settings', labelKey: 'settings' },
 ]
@@ -59,6 +62,7 @@ const tabLabels = computed<Record<LabelKey, string>>(() => ({
   home: t('header.home'),
   kiro: t('header.kiro'),
   codex: t('header.codex'),
+  xai: t('header.xai'),
   clash: t('header.clash'),
   settings: t('header.settings')
 }))
@@ -71,6 +75,7 @@ function isTabKey(value: string): value is TabKey {
   return value === 'home' ||
     value === 'kiro-accounts' ||
     value === 'codex-accounts' ||
+    value === 'xai-accounts' ||
     value === 'clash' ||
     value === 'settings'
 }

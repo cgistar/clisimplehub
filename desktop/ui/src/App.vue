@@ -9,6 +9,7 @@ import AppHeader from './components/shell/AppHeader.vue'
 import ConsolePanel from './components/shell/ConsolePanel.vue'
 import GlobalProxyStatusNotifier from './components/shell/GlobalProxyStatusNotifier.vue'
 import CodexAccountsPage from './components/codex/CodexAccountsPage.vue'
+import XaiAccountsPage from './components/xai/XaiAccountsPage.vue'
 import HomePage from './components/home/HomePage.vue'
 import KiroAccountsPage from './components/kiro/KiroAccountsPage.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
@@ -20,6 +21,7 @@ const {
   activeTab,
   showKiro,
   showCodex,
+  showXai,
   showClash,
   switchMainTab
 } = useMainTabs()
@@ -57,6 +59,7 @@ onMounted(() => {
             :active-tab="activeTab"
             :show-kiro="showKiro"
             :show-codex="showCodex"
+            :show-xai="showXai"
             :show-clash="showClash"
             @tab-change="onTabChange"
           />
@@ -86,6 +89,15 @@ onMounted(() => {
             id="codexAccountsView"
           >
             <CodexAccountsPage />
+          </div>
+
+          <!-- xAI Accounts (Vue) -->
+          <div
+            v-show="activeTab === 'xai-accounts'"
+            class="main-container"
+            id="xaiAccountsView"
+          >
+            <XaiAccountsPage />
           </div>
 
           <!-- Clash (Vue) -->

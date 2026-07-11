@@ -12,6 +12,7 @@ import { useHomeEndpointsStore } from './stores/homeEndpointsStore'
 import { useKiroAccountsStore } from './stores/kiroAccountsStore'
 import { useKiroConfigStore } from './stores/kiroConfigStore'
 import { useCodexAccountsStore } from './stores/codexAccountsStore'
+import { useXaiAccountsStore } from './stores/xaiAccountsStore'
 import { useClashStore } from './stores/clashStore'
 
 import { waitForWails } from './utils/helper'
@@ -19,17 +20,18 @@ import { waitForWails } from './utils/helper'
 // --- Bootstrap ---
 
 let settingsStore: ReturnType<typeof useSettingsStore> | null = null
-const { setTabVisibility, showKiro, showCodex, showClash } = useMainTabs()
+const { setTabVisibility, showKiro, showCodex, showXai, showClash } = useMainTabs()
 
 const refreshTabVisibility = async (): Promise<void> => {
     try {
         const safeBool = async (fn: () => Promise<boolean>) => { try { return !!(await fn()) } catch { return false } }
-        const [kiro, codex, clash] = await Promise.all([
+        const [kiro, codex, xai, clash] = await Promise.all([
             safeBool(() => window.go.main.App.IsKiroAvailable()),
             safeBool(() => window.go.main.App.IsCodexAccountsAvailable()),
+            safeBool(() => window.go.main.App.IsXaiAccountsAvailable()),
             safeBool(() => window.go.main.App.IsClashAvailable()),
         ])
-        setTabVisibility({ kiro, codex, clash })
+        setTabVisibility({ kiro, codex, xai, clash })
     } catch (e) {
         console.error('Tab visibility check failed:', e)
     }
@@ -51,6 +53,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const kiroAccountsStore = useKiroAccountsStore(pinia)
     const kiroConfigStore = useKiroConfigStore(pinia)
     const codexAccountsStore = useCodexAccountsStore(pinia)
+    const xaiAccountsStore = useXaiAccountsStore(pinia)
     const clashStore = useClashStore(pinia)
 
     const refreshAfterConfigReload = async (): Promise<void> => {
@@ -77,6 +80,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (showCodex.value) {
             try {
                 await codexAccountsStore.loadAccounts(true)
+            } catch {
+                // ignore
+            }
+        }
+
+        if (showXai.value) {
+            try {
+                await xaiAccountsStore.loadAccounts(true)
             } catch {
                 // ignore
             }
