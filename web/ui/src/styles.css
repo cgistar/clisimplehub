@@ -1086,6 +1086,32 @@ code {
   box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
 }
 
+/* xAI 卡片更紧凑，不影响 Codex */
+.codex-account-card.xai-account-card {
+  min-height: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  gap: 8px;
+}
+
+.codex-account-card.xai-account-card .codex-account-card-header {
+  margin-bottom: 0;
+}
+
+.codex-account-card.xai-account-card .codex-card-tags {
+  margin-top: 6px;
+  gap: 6px;
+}
+
+.codex-account-card.xai-account-card .codex-account-card-body {
+  flex: 0 0 auto;
+}
+
+.codex-account-card.xai-account-card .codex-account-card-footer {
+  margin-top: auto;
+  padding-top: 8px;
+}
+
 .codex-account-card.active {
   border-color: rgba(2, 132, 199, 0.38);
   box-shadow:

@@ -15,6 +15,18 @@
       <n-form-item :label="t('xai.baseURL')">
         <n-input v-model:value="form.baseURL" :placeholder="t('xai.baseURLPlaceholder')" />
       </n-form-item>
+      <n-form-item :label="t('xai.clientVersion')">
+        <n-input v-model:value="form.clientVersion" :placeholder="t('xai.clientVersionPlaceholder')" />
+      </n-form-item>
+      <n-form-item :label="t('xai.userAgent')">
+        <n-input v-model:value="form.userAgent" :placeholder="t('xai.userAgentPlaceholder')" />
+      </n-form-item>
+      <n-form-item :label="t('xai.dynamicStatsig')">
+        <div class="dynamic-statsig-row">
+          <n-switch v-model:value="form.dynamicStatsig" />
+          <span class="dynamic-statsig-help">{{ t('xai.dynamicStatsigHelp') }}</span>
+        </div>
+      </n-form-item>
     </n-form>
     <template #footer>
       <n-space justify="end">
@@ -27,7 +39,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { NModal, NForm, NFormItem, NSelect, NInput, NButton, NSpace, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NSelect, NInput, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { xaiApi } from '@/api/xai'
 
@@ -42,7 +54,12 @@ const saving = ref(false)
 const form = reactive({
   rotationMode: 'fixed',
   proxyUrl: '',
-  baseURL: 'https://api.x.ai/v1'
+  baseURL: 'https://api.x.ai/v1',
+  clientVersion: '',
+  userAgent: '',
+  tokenAuth: '',
+  clientSurface: '',
+  dynamicStatsig: true
 })
 
 const rotationModeOptions = computed(() => [
@@ -65,6 +82,11 @@ async function loadConfig() {
     form.rotationMode = config.rotationMode || 'fixed'
     form.proxyUrl = config.proxyUrl || ''
     form.baseURL = config.baseURL || 'https://api.x.ai/v1'
+    form.clientVersion = config.clientVersion || ''
+    form.userAgent = config.userAgent || ''
+    form.tokenAuth = config.tokenAuth || ''
+    form.clientSurface = config.clientSurface || ''
+    form.dynamicStatsig = config.dynamicStatsig !== false
   } catch (error) {
     message.error(t('xai.loadConfigFailed') + (error instanceof Error ? error.message : String(error)))
   }
@@ -76,7 +98,12 @@ async function save() {
     await xaiApi.saveGlobalConfig({
       rotationMode: form.rotationMode,
       proxyUrl: form.proxyUrl,
-      baseURL: form.baseURL
+      baseURL: form.baseURL,
+      clientVersion: form.clientVersion,
+      userAgent: form.userAgent,
+      tokenAuth: form.tokenAuth,
+      clientSurface: form.clientSurface,
+      dynamicStatsig: form.dynamicStatsig !== false
     })
     message.success(t('xai.globalConfigSaved'))
     visible.value = false
@@ -87,3 +114,17 @@ async function save() {
   }
 }
 </script>
+
+<style scoped>
+.dynamic-statsig-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.dynamic-statsig-help {
+  font-size: 12px;
+  color: var(--text-tertiary, #8a97a8);
+  line-height: 1.4;
+}
+</style>

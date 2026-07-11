@@ -1,6 +1,7 @@
 package xaiplugin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,9 +10,14 @@ import (
 	"sync"
 
 	xai "clisimplehub/internal/xai"
+	xaiBackend "clisimplehub/internal/xai/backend"
 	xaiShared "clisimplehub/internal/xai/shared"
+	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/storage"
+	"clisimplehub/internal/transformer"
+
+	"github.com/tidwall/gjson"
 )
 
 func init() {
@@ -32,9 +38,9 @@ func (a *pluginStorageAccessor) TriggerReload() {
 
 type XaiPlugin struct {
 	desktopFacade
-	service      *XaiService
-	xaiJsonPath  string
-	mu           sync.RWMutex
+	service     *XaiService
+	xaiJsonPath string
+	mu          sync.RWMutex
 }
 
 func (p *XaiPlugin) Name() string { return "xai-accounts" }
@@ -49,6 +55,20 @@ func (p *XaiPlugin) Init(cfg plugin.InitConfig) error {
 	xaiJsonPath := xaiJsonPathFromConfig(cfg.ConfigPath)
 	_ = xai.InitPool(xaiJsonPath)
 
+	xai.SetOnAccountsDeleted(func(accountIDs []string) {
+		for _, id := range accountIDs {
+			CloseWebsocketSessionsForAccount(id)
+		}
+	})
+
+	transformer.RegisterAvailability("xai", func() map[string][]string {
+		return map[string][]string{
+			"codex":  {"openai/xai"},
+			"chat":   {"openai/xai"},
+			"claude": {"openai/xai"},
+		}
+	})
+
 	p.mu.Lock()
 	p.xaiJsonPath = xaiJsonPath
 	p.service = NewXaiService()
@@ -59,6 +79,10 @@ func (p *XaiPlugin) Init(cfg plugin.InitConfig) error {
 			store:  cfg.Storage,
 			reload: cfg.TriggerReload,
 		})
+		// 已有账号时补建 endpoints
+		if pool := xai.GetPool(); pool != nil && len(pool.ListAccounts()) > 0 {
+			p.service.ensureXaiEndpoints()
+		}
 	}
 	return nil
 }
@@ -108,44 +132,18 @@ func (p *XaiPlugin) SyncImport(configPath string, data json.RawMessage) error {
 		return err
 	}
 	if pool := xai.GetPool(); pool != nil {
-		return pool.Reload()
+		if err := pool.Reload(); err != nil {
+			return err
+		}
+	} else if err := xai.InitPool(path); err != nil {
+		return err
 	}
-	return xai.InitPool(path)
+	if p.service != nil && len(cfg.Accounts) > 0 {
+		p.service.ensureXaiEndpoints()
+	}
+	return nil
 }
 
-func (p *XaiPlugin) handleXaiRoute(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/xai")
-	path = strings.Trim(path, "/")
-	switch {
-	case path == "" || path == "accounts":
-		if r.Method == http.MethodGet {
-			raw, err := p.GetAccounts(p.xaiJsonPath)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(raw)
-			return
-		}
-	case path == "config":
-		if r.Method == http.MethodGet {
-			raw, err := p.GetXaiGlobalConfig(p.xaiJsonPath)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(raw)
-			return
-		}
-	}
-	writeJSON(w, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("unknown xai route: %s", path)})
-}
-
-// ensure config dir helper used by facade when path is relative
 func resolveConfigPath(configPath string) string {
 	configPath = strings.TrimSpace(configPath)
 	if configPath == "" {
@@ -155,4 +153,62 @@ func resolveConfigPath(configPath string) string {
 		return configPath
 	}
 	return configPath
+}
+
+// --- TransformerRoundTripperProvider ---
+
+func (p *XaiPlugin) TransformerRoundTripperSpecs() []string {
+	return []string{"openai/xai"}
+}
+
+// --- executor.UpstreamRoundTripper ---
+
+func (p *XaiPlugin) RoundTrip(ctx context.Context, req *executor.UpstreamRequest) *executor.UpstreamRoundTripResult {
+	p.mu.RLock()
+	svc := p.service
+	p.mu.RUnlock()
+	if svc == nil {
+		return &executor.UpstreamRoundTripResult{
+			StatusCode: http.StatusInternalServerError,
+			Error:      fmt.Errorf("xai plugin not initialized"),
+		}
+	}
+	return svc.RoundTrip(ctx, req)
+}
+
+// --- TokenEstimator：Claude /v1/messages/count_tokens ---
+
+func (p *XaiPlugin) EstimateInputTokens(body []byte) int {
+	if len(body) == 0 {
+		return 0
+	}
+	// 若已是 Responses 或 Claude messages，都尝试 prepare 后估算
+	model := xaiBackend.ExtractModelForCount(body)
+	// Claude messages 需先转 Responses 才能对齐上游计费形态；无转换器时退回 body 启发式
+	countBody := body
+	if gjson.GetBytes(body, "messages").Exists() && !gjson.GetBytes(body, "input").Exists() {
+		// 尽量走 claude→responses 转换在 transformer 层；此处用 messages 文本粗估
+		// 为与 prepare 一致：若 body 已是 responses 则直接 prepare
+		n, _ := xaiBackend.CountTokensForRequest(countBody, model, true, "")
+		if n > 0 {
+			return n
+		}
+	}
+	n, _ := xaiBackend.CountTokensForRequest(body, model, false, "")
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// AddAccount 包装 facade，成功后 ensure endpoints。
+func (p *XaiPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (json.RawMessage, error) {
+	raw, err := p.desktopFacade.AddAccount(configPath, dtoJSON)
+	if err != nil {
+		return nil, err
+	}
+	if svc := p.GetService(); svc != nil {
+		svc.ensureXaiEndpoints()
+	}
+	return raw, nil
 }

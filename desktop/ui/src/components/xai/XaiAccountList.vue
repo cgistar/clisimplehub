@@ -13,6 +13,8 @@
         :busy="isAccountPending(item.id || '')"
         @activate="handleActivate"
         @test="handleTest"
+        @refresh-quota="handleRefreshQuota"
+        @refresh-token="handleRefreshToken"
         @copy="handleCopy"
         @edit="handleEdit"
         @delete="handleDelete"
@@ -33,7 +35,7 @@ import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useXaiAccountsStore } from '../../stores/xaiAccountsStore'
 import type { XaiAccount } from '@/types/xai'
-import { buildXaiAccountCopyData } from '@/utils/xaiAccountCopy'
+import { buildXaiAccountCopyJson } from '@/utils/xaiAccountCopy'
 import XaiAccountCard from './XaiAccountCard.vue'
 
 const { t } = useI18n()
@@ -89,6 +91,19 @@ async function handleTest(accountId: string): Promise<void> {
   if (!accountId || isAccountPending(accountId)) return
   setAccountPending(accountId, true)
   try {
+    await xaiStore.probeAccountStream(accountId)
+    message.success(t('xai.probeStreamSuccess'))
+  } catch (error) {
+    message.error(t('xai.probeStreamFailed') + toErrorMessage(error))
+  } finally {
+    setAccountPending(accountId, false)
+  }
+}
+
+async function handleRefreshToken(accountId: string): Promise<void> {
+  if (!accountId || isAccountPending(accountId)) return
+  setAccountPending(accountId, true)
+  try {
     await xaiStore.testAccount(accountId)
     message.success(t('xai.testSuccess'))
   } catch (error) {
@@ -98,9 +113,22 @@ async function handleTest(accountId: string): Promise<void> {
   }
 }
 
+async function handleRefreshQuota(accountId: string): Promise<void> {
+  if (!accountId || isAccountPending(accountId)) return
+  setAccountPending(accountId, true)
+  try {
+    await xaiStore.refreshAccountQuota(accountId)
+    message.success(t('xai.refreshQuotaSuccess'))
+  } catch (error) {
+    message.error(t('xai.refreshQuotaFailed') + toErrorMessage(error))
+  } finally {
+    setAccountPending(accountId, false)
+  }
+}
+
 async function handleCopy(account: XaiAccount): Promise<void> {
   try {
-    await navigator.clipboard.writeText(JSON.stringify(buildXaiAccountCopyData(account), null, 2))
+    await navigator.clipboard.writeText(buildXaiAccountCopyJson(account))
     message.success(t('xai.copySuccess'))
   } catch (error) {
     message.error(t('xai.copyFailed') + toErrorMessage(error))
@@ -163,8 +191,8 @@ defineExpose({
   min-height: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
   align-content: start;
   padding-bottom: 8px;
 }

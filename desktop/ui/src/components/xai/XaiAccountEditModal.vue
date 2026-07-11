@@ -27,12 +27,22 @@
         <n-input v-model:value="formData.proxyUrl" :placeholder="t('xai.proxyUrlPlaceholder')" />
       </n-form-item>
 
-      <n-form-item :label="t('xai.weight')">
-        <n-input-number v-model:value="formData.weight" :min="1" :max="100" style="width: 100%" />
+      <n-form-item :label="t('xai.ssoLabel')">
+        <n-input
+          v-model:value="formData.sso"
+          type="textarea"
+          :rows="2"
+          :placeholder="t('xai.ssoPlaceholder')"
+        />
       </n-form-item>
 
-      <n-form-item :label="t('xai.baseURL')">
-        <n-input v-model:value="formData.baseURL" :placeholder="t('xai.baseURLPlaceholder')" />
+      <n-form-item :label="t('xai.customHeadersLabel')">
+        <n-input
+          v-model:value="formData.customHeadersText"
+          type="textarea"
+          :rows="3"
+          :placeholder="t('xai.customHeadersPlaceholder')"
+        />
       </n-form-item>
 
       <n-form-item :label="t('xai.accountCapabilityLabel')">
@@ -45,6 +55,11 @@
             <span>{{ t('xai.websocketsLabel') }}</span>
             <n-switch v-model:value="formData.websockets" />
           </n-space>
+          <n-space align="center" justify="space-between">
+            <span>{{ t('xai.usingApiLabel') }}</span>
+            <n-switch v-model:value="formData.usingApi" />
+          </n-space>
+          <div class="using-api-help">{{ t('xai.usingApiHelp') }}</div>
         </n-space>
       </n-form-item>
     </n-form>
@@ -60,7 +75,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
-import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { XaiAccount, XaiAccountInput } from '@/types/xai'
 
@@ -90,12 +105,14 @@ const formData = reactive({
   email: '',
   refreshToken: '',
   apiKey: '',
+  sso: '',
   authKind: 'oauth',
   proxyUrl: '',
-  baseURL: '',
+  customHeadersText: '',
   weight: 1,
   enabled: true,
-  websockets: false
+  websockets: true,
+  usingApi: false
 })
 
 watch(() => props.show, (newVal) => {
@@ -114,12 +131,39 @@ function resetForm() {
   formData.email = account?.email || ''
   formData.refreshToken = account?.refreshToken || ''
   formData.apiKey = account?.apiKey || ''
+  formData.sso = account?.sso || ''
   formData.authKind = isCreate.value ? 'api_key' : (account?.authKind || 'oauth')
   formData.proxyUrl = account?.proxyUrl || ''
-  formData.baseURL = account?.baseURL || ''
+  formData.customHeadersText = account?.customHeaders
+    ? JSON.stringify(account.customHeaders, null, 2)
+    : ''
   formData.weight = account?.weight || 1
   formData.enabled = account?.enabled !== false
-  formData.websockets = Boolean(account?.websockets)
+  // 缺省默认开启 websockets
+  formData.websockets = account?.websockets !== false
+  // 缺省：api_key=true 官方 API；oauth=false chat-proxy
+  if (account?.usingApi !== undefined) {
+    formData.usingApi = account.usingApi
+  } else {
+    formData.usingApi = formData.authKind === 'api_key'
+  }
+}
+
+function parseCustomHeaders(text: string): Record<string, string> | undefined {
+  const raw = text.trim()
+  if (!raw) return undefined
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(obj || {})) {
+      const key = String(k || '').trim()
+      const val = String(v ?? '').trim()
+      if (key && val) out[key] = val
+    }
+    return Object.keys(out).length ? out : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function handleCancel() {
@@ -131,6 +175,13 @@ async function handleSave() {
     message.error(t('xai.apiKeyRequired'))
     return
   }
+  if (formData.customHeadersText.trim()) {
+    const parsed = parseCustomHeaders(formData.customHeadersText)
+    if (!parsed && formData.customHeadersText.trim()) {
+      message.error(t('xai.customHeadersInvalid'))
+      return
+    }
+  }
   saving.value = true
   try {
     emit('success', {
@@ -138,12 +189,14 @@ async function handleSave() {
       email: formData.email,
       refreshToken: formData.refreshToken,
       apiKey: formData.apiKey,
+      sso: formData.sso,
       authKind: formData.authKind,
       proxyUrl: formData.proxyUrl,
-      baseURL: formData.baseURL,
+      customHeaders: parseCustomHeaders(formData.customHeadersText),
       weight: formData.weight,
       enabled: formData.enabled,
       websockets: formData.websockets,
+      usingApi: formData.usingApi,
       status: 'valid'
     })
     visible.value = false
@@ -152,3 +205,11 @@ async function handleSave() {
   }
 }
 </script>
+
+<style scoped>
+.using-api-help {
+  font-size: 12px;
+  color: var(--text-tertiary, #94a3b8);
+  line-height: 1.4;
+}
+</style>

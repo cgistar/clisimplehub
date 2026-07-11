@@ -102,8 +102,9 @@ func (a *XAIAuth) Discover(ctx context.Context) (*Discovery, error) {
 		return nil, fmt.Errorf("xai discovery failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var payload struct {
-		AuthorizationEndpoint string `json:"authorization_endpoint"`
-		TokenEndpoint         string `json:"token_endpoint"`
+		AuthorizationEndpoint       string `json:"authorization_endpoint"`
+		TokenEndpoint               string `json:"token_endpoint"`
+		DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
 	}
 	if err = json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("xai discovery: parse response: %w", err)
@@ -116,7 +117,18 @@ func (a *XAIAuth) Discover(ctx context.Context) (*Discovery, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Discovery{AuthorizationEndpoint: authorizationEndpoint, TokenEndpoint: tokenEndpoint}, nil
+	deviceAuthEndpoint := ""
+	if strings.TrimSpace(payload.DeviceAuthorizationEndpoint) != "" {
+		deviceAuthEndpoint, err = ValidateOAuthEndpoint(payload.DeviceAuthorizationEndpoint, "device_authorization_endpoint")
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &Discovery{
+		AuthorizationEndpoint:       authorizationEndpoint,
+		TokenEndpoint:               tokenEndpoint,
+		DeviceAuthorizationEndpoint: deviceAuthEndpoint,
+	}, nil
 }
 
 func (a *XAIAuth) ExchangeCodeForTokens(ctx context.Context, code, redirectURI string, pkceCodes *PKCECodes, tokenEndpoint string) (*AuthBundle, error) {

@@ -13,8 +13,11 @@
     </div>
 
     <div class="card-tags">
-      <n-tag v-if="account.authKind" type="info" size="small">
-        {{ authKindLabel }}
+      <n-tag v-if="poolLabel" type="info" size="small">
+        {{ poolLabel }}
+      </n-tag>
+      <n-tag v-if="account.authKind === 'api_key'" type="info" size="small">
+        {{ t('xai.authApiKey') }}
       </n-tag>
       <n-tag v-if="account.enabled === false" type="error" size="small">
         {{ t('xai.disabledLabel') }}
@@ -22,14 +25,20 @@
       <n-tag v-if="account.websockets" type="success" size="small">
         WS
       </n-tag>
+      <n-tag v-if="account.usingApi" type="warning" size="small">
+        {{ t('xai.usingApiBadge') }}
+      </n-tag>
+      <n-tag v-if="account.sso" type="info" size="small">
+        SSO
+      </n-tag>
       <n-tag v-if="isActive" size="tiny" type="success" round class="xai-badge-active">
         {{ t('xai.active') }}
       </n-tag>
     </div>
 
-    <div class="card-body">
-      <div class="meta-line">
-        {{ t('xai.weight') }}: {{ account.weight || 1 }}
+    <div v-if="quotaSummary || account.proxyUrl" class="card-body">
+      <div v-if="quotaSummary" class="quota-info" :title="quotaSummary">
+        {{ quotaSummary }}
       </div>
       <div v-if="account.proxyUrl" class="proxy-info">
         {{ t('xai.proxy') }}: {{ truncateText(account.proxyUrl, 30) }}
@@ -58,10 +67,30 @@
         <button
           type="button"
           class="xai-action-btn"
+          :title="t('xai.probeStream')"
+          :aria-label="t('xai.probeStream')"
+          :disabled="busy"
+          @click="emit('test', account.id || '')"
+        >
+          <Activity class="xai-action-icon" />
+        </button>
+        <button
+          type="button"
+          class="xai-action-btn"
+          :title="t('xai.refreshQuota')"
+          :aria-label="t('xai.refreshQuota')"
+          :disabled="busy || !canRefreshQuota"
+          @click="emit('refresh-quota', account.id || '')"
+        >
+          <Gauge class="xai-action-icon" />
+        </button>
+        <button
+          type="button"
+          class="xai-action-btn"
           :title="t('xai.test')"
           :aria-label="t('xai.test')"
           :disabled="busy"
-          @click="emit('test', account.id || '')"
+          @click="emit('refresh-token', account.id || '')"
         >
           <RefreshCw class="xai-action-icon" />
         </button>
@@ -103,9 +132,9 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { NTag, useDialog } from 'naive-ui'
-import { Power, RefreshCw, Copy, Edit, Trash } from 'lucide-vue-next'
+import { Power, RefreshCw, Copy, Edit, Trash, Activity, Gauge } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import type { XaiAccount } from '@/types/xai'
+import type { XaiAccount, XaiQuotaWindow } from '@/types/xai'
 
 const { t } = useI18n()
 const dialog = useDialog()
@@ -122,6 +151,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   activate: [accountId: string]
   test: [accountId: string]
+  'refresh-quota': [accountId: string]
+  'refresh-token': [accountId: string]
   copy: [account: XaiAccount]
   edit: [account: XaiAccount]
   delete: [accountId: string]
@@ -135,11 +166,6 @@ let expireTickTimer: ReturnType<typeof setInterval> | null = null
 const displayName = computed(() =>
   props.account.email || props.account.subject || props.account.id || truncateToken(props.account.refreshToken || props.account.apiKey)
 )
-
-const authKindLabel = computed(() => {
-  if (props.account.authKind === 'api_key') return t('xai.authApiKey')
-  return t('xai.authOAuth')
-})
 
 const statusType = computed<'default' | 'success' | 'warning' | 'error'>(() => {
   if (isCoolingDown.value) return 'warning'
@@ -190,9 +216,41 @@ const expireInfo = computed(() => {
   return { text: `${diffMinutes}m`, isExpired: false }
 })
 
-const expireText = computed(() => (expireInfo.value.text ? `Token ${expireInfo.value.text}` : ''))
+const expireText = computed(() => (expireInfo.value.text ? expireInfo.value.text : ''))
 const isExpired = computed(() => expireInfo.value.isExpired)
 const canActivate = computed(() => !props.isActive && props.account.status !== 'banned')
+const canRefreshQuota = computed(() => Boolean(String(props.account.sso || '').trim()))
+
+const poolLabel = computed(() => {
+  switch (String(props.account.pool || '').toLowerCase()) {
+    case 'basic':
+      return t('xai.poolBasic')
+    case 'super':
+      return t('xai.poolSuper')
+    case 'heavy':
+      return t('xai.poolHeavy')
+    default:
+      return ''
+  }
+})
+
+function formatQuotaPart(label: string, win?: XaiQuotaWindow): string {
+  if (!win || win.total == null || win.total <= 0) return ''
+  const remaining = Math.max(0, Number(win.remaining ?? 0))
+  return `${label} ${remaining}/${win.total}`
+}
+
+const quotaSummary = computed(() => {
+  const q = props.account.quota
+  if (!q) return ''
+  const parts = [
+    formatQuotaPart(t('xai.quotaFast'), q.fast),
+    formatQuotaPart(t('xai.quotaAuto'), q.auto),
+    formatQuotaPart(t('xai.quotaExpert'), q.expert),
+    formatQuotaPart(t('xai.quotaHeavy'), q.heavy)
+  ].filter(Boolean)
+  return parts.join(' · ')
+})
 
 onMounted(() => {
   expireTickTimer = setInterval(() => {
@@ -236,13 +294,14 @@ function truncateText(text: string | undefined, maxLength: number): string {
   background: var(--bg-primary);
   border: 2px solid var(--border-color);
   border-radius: var(--radius-lg, 8px);
-  padding: 12px;
+  padding: 10px 12px;
   transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
-  min-height: 220px;
+  min-height: 0;
   position: relative;
   justify-content: space-between;
+  gap: 6px;
 }
 
 .xai-account-card:hover {
@@ -271,7 +330,7 @@ function truncateText(text: string | undefined, maxLength: number): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .account-email {
@@ -290,7 +349,7 @@ function truncateText(text: string | undefined, maxLength: number): string {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
   flex-wrap: wrap;
 }
 
@@ -299,20 +358,32 @@ function truncateText(text: string | undefined, maxLength: number): string {
 }
 
 .card-body {
-  margin-bottom: 12px;
-  flex: 1;
+  margin-bottom: 0;
+  flex: 0 0 auto;
 }
 
-.meta-line,
+.quota-info {
+  font-size: 11px;
+  color: var(--text-secondary, #536173);
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .proxy-info {
   font-size: 11px;
   color: var(--text-tertiary);
-  margin-top: 4px;
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-footer {
-  margin-top: 6px;
-  padding-top: 8px;
+  margin-top: 4px;
+  padding-top: 6px;
   border-top: 1px solid var(--border-color, #e0e0e0);
   display: flex;
   justify-content: space-between;

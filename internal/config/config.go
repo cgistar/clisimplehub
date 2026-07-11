@@ -382,6 +382,7 @@ type BackupData struct {
 	KiroMultiConfig interface{}            `json:"kiroMultiConfig,omitempty"`
 	ClashConfig     interface{}            `json:"clashConfig,omitempty"`
 	CodexConfig     interface{}            `json:"codexConfig,omitempty"`
+	XaiConfig       interface{}            `json:"xaiConfig,omitempty"`
 }
 
 // BackupMergeMode 表示备份恢复模式

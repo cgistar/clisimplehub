@@ -988,6 +988,8 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		ClashConfig        json.RawMessage `json:"clashConfig,omitempty"`
 		CodexConfigEncoded string          `json:"codexConfigEncoded,omitempty"`
 		CodexConfig        json.RawMessage `json:"codexConfig,omitempty"`
+		XaiConfigEncoded   string          `json:"xaiConfigEncoded,omitempty"`
+		XaiConfig          json.RawMessage `json:"xaiConfig,omitempty"`
 	}
 
 	var req syncConfigRequest
@@ -1054,6 +1056,7 @@ func (p *ProxyServer) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 		"kiro":           {req.KiroConfigEncoded, req.KiroConfig},
 		"clash":          {req.ClashConfigEncoded, req.ClashConfig},
 		"codex-accounts": {req.CodexConfigEncoded, req.CodexConfig},
+		"xai-accounts":   {req.XaiConfigEncoded, req.XaiConfig},
 	}
 
 	configPath := strings.TrimSpace(p.getConfigPath())

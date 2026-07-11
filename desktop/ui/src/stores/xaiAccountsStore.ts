@@ -148,6 +148,28 @@ export const useXaiAccountsStore = defineStore('xaiAccounts', () => {
     }
   }
 
+  async function probeAccountStream(accountId: string): Promise<void> {
+    const result = await xaiApi.probeAccountStream(accountId)
+    if (!result.success) {
+      throw new Error(result.error || 'probe stream failed')
+    }
+    if (result.account?.id) {
+      patchAccountById(result.account.id, result.account)
+    }
+  }
+
+  async function refreshAccountQuota(accountId: string): Promise<void> {
+    const result = await xaiApi.refreshAccountQuota(accountId)
+    if (!result.success) {
+      throw new Error(result.error || 'refresh quota failed')
+    }
+    if (result.account?.id) {
+      patchAccountById(result.account.id, result.account)
+    } else {
+      await loadAccounts(true)
+    }
+  }
+
   return {
     accounts,
     activeAccountId,
@@ -165,6 +187,8 @@ export const useXaiAccountsStore = defineStore('xaiAccounts', () => {
     updateAccount,
     deleteAccount,
     deleteAccounts,
-    testAccount
+    testAccount,
+    probeAccountStream,
+    refreshAccountQuota
   }
 })

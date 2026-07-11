@@ -1,4 +1,4 @@
-export type RouteKey = 'home' | 'codex' | 'settings'
+export type RouteKey = 'home' | 'codex' | 'xai' | 'settings'
 
 export interface AuthSessionResponse {
   authenticated: boolean
@@ -218,6 +218,104 @@ export interface CodexConfigForm {
   customHeaders: Record<string, string>
 }
 
+export interface XaiQuotaWindow {
+  remaining?: number
+  total?: number
+  windowSeconds?: number
+  resetAt?: number
+  syncedAt?: number
+}
+
+export interface XaiQuota {
+  auto?: XaiQuotaWindow
+  fast?: XaiQuotaWindow
+  expert?: XaiQuotaWindow
+  heavy?: XaiQuotaWindow
+  grok43?: XaiQuotaWindow
+}
+
+export interface XaiAccount {
+  id?: string
+  email?: string
+  subject?: string
+  accessToken?: string
+  refreshToken?: string
+  idToken?: string
+  authKind?: string
+  apiKey?: string
+  sso?: string
+  enabled?: boolean
+  websockets?: boolean
+  usingApi?: boolean
+  pool?: string
+  quota?: XaiQuota
+  lastQuotaSync?: string
+  status?: string
+  weight?: number
+  proxyUrl?: string
+  expiresAt?: string
+  cooldownRemaining?: number
+  cooldownReason?: string
+  isActive?: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface XaiAccountInput {
+  id?: string
+  email?: string
+  subject?: string
+  accessToken?: string
+  refreshToken?: string
+  idToken?: string
+  authKind?: string
+  apiKey?: string
+  sso?: string
+  enabled?: boolean
+  websockets?: boolean
+  usingApi?: boolean
+  status?: string
+  weight?: number
+  proxyUrl?: string
+  expiresAt?: string
+}
+
+export interface XaiConfigForm {
+  rotationMode: string
+  proxyUrl: string
+  baseURL: string
+  clientVersion: string
+  userAgent: string
+  tokenAuth: string
+  clientSurface: string
+  dynamicStatsig: boolean
+  customHeaders: Record<string, string>
+}
+
+export interface XaiPageData {
+  available: boolean
+  message?: string
+  configPath?: string
+  activeAccountId?: string
+  accounts?: XaiAccount[]
+  globalConfig?: Partial<XaiConfigForm>
+}
+
+export interface XaiEditForm {
+  id: string
+  email: string
+  refreshToken: string
+  accessToken: string
+  apiKey: string
+  sso: string
+  proxyUrl: string
+  weight: number
+  enabled: boolean
+  websockets: boolean
+  usingApi: boolean
+  status?: string
+}
+
 export interface CodexEditForm {
   id: string
   accountId: string
@@ -323,6 +421,7 @@ export interface BackupData {
   kiroMultiConfig?: unknown
   clashConfig?: unknown
   codexConfig?: unknown
+  xaiConfig?: unknown
 }
 
 export interface BackupDataResponse {

@@ -16,8 +16,9 @@ type XaiAccountPool struct {
 	config          *shared.XaiMultiConfig
 	configPath      string
 	activeAccountID string
-	wrrCounters     []int
-	failed          map[string]shared.XaiAccountStatus
+	// rrCursor：loadbalance
+	rrCursor int
+	failed   map[string]shared.XaiAccountStatus
 }
 
 var (
@@ -54,7 +55,9 @@ func InitPool(xaiJsonPath string) error {
 	}
 	pool.activeAccountID = resolveConfiguredActiveID(pool.activeAccountID, cfg.Accounts)
 	pool.config.ActiveAccountID = pool.activeAccountID
-	pool.resetWRR()
+	pool.resetRR()
+	// 迁移：账号级 baseURL/tokenEndpoint/redirectURI 已废弃，启动时写回以剔除旧字段
+	_ = shared.SaveXaiMultiConfig(xaiJsonPath, pool.config)
 	globalPool = pool
 	return nil
 }
@@ -101,6 +104,172 @@ func (p *XaiAccountPool) ConfigPath() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.configPath
+}
+
+func (p *XaiAccountPool) ProxyURL() string {
+	if p == nil {
+		return ""
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.config == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.config.ProxyUrl)
+}
+
+func (p *XaiAccountPool) Mode() string {
+	if p == nil {
+		return shared.RotationFixed
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.config == nil {
+		return shared.RotationFixed
+	}
+	return p.config.GetRotationMode()
+}
+
+func (p *XaiAccountPool) MarkFailed(accountID string, status shared.XaiAccountStatus, cooldown time.Duration, reason string) {
+	if p == nil {
+		return
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		return
+	}
+	if p.failed == nil {
+		p.failed = make(map[string]shared.XaiAccountStatus)
+	}
+	if status == "" {
+		status = shared.XaiStatusUnknown
+	}
+	p.failed[accountID] = status
+	for i := range p.config.Accounts {
+		if strings.TrimSpace(p.config.Accounts[i].ID) != accountID {
+			continue
+		}
+		p.config.Accounts[i].Status = status
+		p.config.Accounts[i].CooldownReason = strings.TrimSpace(reason)
+		if cooldown > 0 {
+			p.config.Accounts[i].CooldownUntil = time.Now().Add(cooldown)
+		}
+		break
+	}
+	_ = shared.SaveXaiMultiConfig(p.configPath, p.config)
+}
+
+func (p *XaiAccountPool) ReportSuccess(accountID string) {
+	if p == nil {
+		return
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.failed, accountID)
+	for i := range p.config.Accounts {
+		if strings.TrimSpace(p.config.Accounts[i].ID) != accountID {
+			continue
+		}
+		if p.config.Accounts[i].Status != shared.XaiStatusValid {
+			p.config.Accounts[i].Status = shared.XaiStatusValid
+			_ = shared.SaveXaiMultiConfig(p.configPath, p.config)
+		}
+		break
+	}
+}
+
+func (p *XaiAccountPool) SelectExcluding(excluded map[string]bool) *shared.XaiAccount {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		return nil
+	}
+	for i := range p.config.Accounts {
+		acc := &p.config.Accounts[i]
+		acc.ClearCooldownIfExpired()
+		id := strings.TrimSpace(acc.ID)
+		if id == "" || !acc.IsEnabled() || acc.IsCoolingDown() {
+			continue
+		}
+		if excluded[id] {
+			continue
+		}
+		if _, failed := p.failed[id]; failed {
+			continue
+		}
+		return acc
+	}
+	return nil
+}
+
+func (p *XaiAccountPool) SelectWebsocket() *shared.XaiAccount {
+	return p.SelectWebsocketStrict()
+}
+
+// SelectWebsocketStrict 仅选择 websockets=true 且可用的账号（无回退）。
+func (p *XaiAccountPool) SelectWebsocketStrict() *shared.XaiAccount {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		return nil
+	}
+	for i := range p.config.Accounts {
+		acc := &p.config.Accounts[i]
+		if !acc.WebsocketsEnabled() || !accountSelectable(acc, p.failed) {
+			continue
+		}
+		return acc
+	}
+	return nil
+}
+
+func (p *XaiAccountPool) UpdateTokens(accountID string, accessToken, refreshToken, idToken string, expiresAt time.Time) error {
+	if p == nil {
+		return fmt.Errorf("pool is nil")
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return fmt.Errorf("accountId is required")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.config.Accounts {
+		if strings.TrimSpace(p.config.Accounts[i].ID) != accountID {
+			continue
+		}
+		if accessToken != "" {
+			p.config.Accounts[i].AccessToken = accessToken
+		}
+		if refreshToken != "" {
+			p.config.Accounts[i].RefreshToken = refreshToken
+		}
+		if idToken != "" {
+			p.config.Accounts[i].IDToken = idToken
+		}
+		if !expiresAt.IsZero() {
+			p.config.Accounts[i].ExpiresAt = expiresAt
+		}
+		p.config.Accounts[i].LastRefresh = time.Now().UTC()
+		p.config.Accounts[i].Status = shared.XaiStatusValid
+		p.config.Accounts[i].UpdatedAt = time.Now()
+		return shared.SaveXaiMultiConfig(p.configPath, p.config)
+	}
+	return fmt.Errorf("account not found: %s", accountID)
 }
 
 func (p *XaiAccountPool) Snapshot() *shared.XaiMultiConfig {
@@ -242,10 +411,12 @@ func (p *XaiAccountPool) DeleteAccounts(accountIDs []string) (int, error) {
 	next := make([]shared.XaiAccount, 0, len(p.config.Accounts))
 	deleted := 0
 	activeDeleted := false
+	deletedIDs := make([]string, 0, len(targets))
 	for i := range p.config.Accounts {
 		id := strings.TrimSpace(p.config.Accounts[i].ID)
 		if _, ok := targets[id]; ok {
 			deleted++
+			deletedIDs = append(deletedIDs, id)
 			if id == p.activeAccountID {
 				activeDeleted = true
 			}
@@ -269,7 +440,19 @@ func (p *XaiAccountPool) DeleteAccounts(accountIDs []string) (int, error) {
 	if err := shared.SaveXaiMultiConfig(p.configPath, p.config); err != nil {
 		return deleted, err
 	}
+	// 锁外回调关 WS（由 plugin 注册，避免包循环）
+	if onAccountsDeleted != nil {
+		ids := append([]string(nil), deletedIDs...)
+		go onAccountsDeleted(ids)
+	}
 	return deleted, nil
+}
+
+// OnAccountsDeleted 注册账号删除后的钩子（如关闭 WebSocket）。
+var onAccountsDeleted func(accountIDs []string)
+
+func SetOnAccountsDeleted(fn func(accountIDs []string)) {
+	onAccountsDeleted = fn
 }
 
 func (p *XaiAccountPool) SaveGlobalConfig(rotationMode, proxyURL string, cfg shared.XaiConfig) error {
@@ -289,11 +472,25 @@ func (p *XaiAccountPool) SaveGlobalConfig(rotationMode, proxyURL string, cfg sha
 		p.config.RotationMode = shared.RotationFixed
 	}
 	p.config.ProxyUrl = strings.TrimSpace(proxyURL)
-	if strings.TrimSpace(cfg.BaseURL) == "" {
-		cfg.BaseURL = shared.DefaultXaiConfig().BaseURL
+	// 保留未在本次写入中提供的字段（如 customHeaders）
+	existing := p.config.Config
+	baseURL := strings.TrimSpace(cfg.BaseURL)
+	if baseURL == "" {
+		baseURL = shared.DefaultXaiConfig().BaseURL
 	}
-	p.config.Config = cfg
-	p.resetWRR()
+	existing.BaseURL = baseURL
+	existing.ClientVersion = strings.TrimSpace(cfg.ClientVersion)
+	existing.UserAgent = strings.TrimSpace(cfg.UserAgent)
+	existing.TokenAuth = strings.TrimSpace(cfg.TokenAuth)
+	existing.ClientSurface = strings.TrimSpace(cfg.ClientSurface)
+	if cfg.DynamicStatsig != nil {
+		existing.DynamicStatsig = cfg.DynamicStatsig
+	}
+	if cfg.CustomHeaders != nil {
+		existing.CustomHeaders = cfg.CustomHeaders
+	}
+	p.config.Config = existing
+	p.resetRR()
 	return shared.SaveXaiMultiConfig(p.configPath, p.config)
 }
 
@@ -324,7 +521,7 @@ func (p *XaiAccountPool) Reload() error {
 	p.activeAccountID = resolveConfiguredActiveID(cfg.ActiveAccountID, cfg.Accounts)
 	p.config.ActiveAccountID = p.activeAccountID
 	p.failed = make(map[string]shared.XaiAccountStatus)
-	p.resetWRR()
+	p.resetRR()
 	return nil
 }
 
@@ -339,93 +536,111 @@ func (p *XaiAccountPool) Select() *shared.XaiAccount {
 	}
 	switch p.config.GetRotationMode() {
 	case shared.RotationFailover:
-		return p.selectFailover()
+		// failover
+		return p.selectFillFirst()
 	case shared.RotationLoadBalance:
-		return p.selectLoadBalance()
+		// loadbalance
+		return p.selectRoundRobin()
 	default:
 		return p.selectFixed()
 	}
+}
+
+func accountSelectable(acc *shared.XaiAccount, failed map[string]shared.XaiAccountStatus) bool {
+	if acc == nil {
+		return false
+	}
+	acc.ClearCooldownIfExpired()
+	if !acc.IsEnabled() || acc.IsCoolingDown() {
+		return false
+	}
+	switch acc.Status {
+	case shared.XaiStatusBanned, shared.XaiStatusExhausted:
+		return false
+	}
+	id := strings.TrimSpace(acc.ID)
+	if id == "" {
+		return false
+	}
+	if failed != nil {
+		if _, ok := failed[id]; ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *XaiAccountPool) collectAvailable() []*shared.XaiAccount {
+	available := make([]*shared.XaiAccount, 0, len(p.config.Accounts))
+	for i := range p.config.Accounts {
+		acc := &p.config.Accounts[i]
+		if accountSelectable(acc, p.failed) {
+			available = append(available, acc)
+		}
+	}
+	if len(available) > 1 {
+		sort.SliceStable(available, func(i, j int) bool {
+			return strings.TrimSpace(available[i].ID) < strings.TrimSpace(available[j].ID)
+		})
+	}
+	return available
 }
 
 func (p *XaiAccountPool) selectFixed() *shared.XaiAccount {
 	activeID := strings.TrimSpace(p.activeAccountID)
 	for i := range p.config.Accounts {
 		acc := &p.config.Accounts[i]
-		acc.ClearCooldownIfExpired()
-		if strings.TrimSpace(acc.ID) == activeID && acc.IsEnabled() && !acc.IsCoolingDown() {
+		if strings.TrimSpace(acc.ID) == activeID && accountSelectable(acc, p.failed) {
 			return acc
 		}
 	}
+	// active 不可用时回退第一个可用账号（不切换 active，保持 fixed 语义）
 	for i := range p.config.Accounts {
 		acc := &p.config.Accounts[i]
-		acc.ClearCooldownIfExpired()
-		if acc.IsEnabled() && !acc.IsCoolingDown() {
+		if accountSelectable(acc, p.failed) {
 			return acc
 		}
 	}
 	return nil
 }
 
-func (p *XaiAccountPool) selectFailover() *shared.XaiAccount {
-	if acc := p.selectFixed(); acc != nil {
-		if _, failed := p.failed[strings.TrimSpace(acc.ID)]; !failed {
-			return acc
-		}
-	}
-	for i := range p.config.Accounts {
-		acc := &p.config.Accounts[i]
-		acc.ClearCooldownIfExpired()
-		id := strings.TrimSpace(acc.ID)
-		if !acc.IsEnabled() || acc.IsCoolingDown() {
-			continue
-		}
-		if _, failed := p.failed[id]; failed {
-			continue
-		}
-		return acc
-	}
-	return nil
-}
-
-func (p *XaiAccountPool) selectLoadBalance() *shared.XaiAccount {
-	available := make([]*shared.XaiAccount, 0, len(p.config.Accounts))
-	for i := range p.config.Accounts {
-		acc := &p.config.Accounts[i]
-		acc.ClearCooldownIfExpired()
-		id := strings.TrimSpace(acc.ID)
-		if !acc.IsEnabled() || acc.IsCoolingDown() {
-			continue
-		}
-		if _, failed := p.failed[id]; failed {
-			continue
-		}
-		available = append(available, acc)
-	}
+// 始终选择当前可用集合中的第一个（按 ID 排序），把一个账号“用尽/冷却”后再用下一个。
+func (p *XaiAccountPool) selectFillFirst() *shared.XaiAccount {
+	available := p.collectAvailable()
 	if len(available) == 0 {
 		return nil
 	}
-	if len(p.wrrCounters) != len(available) {
-		p.wrrCounters = make([]int, len(available))
-	}
-	totalWeight := 0
-	selected := 0
-	max := -1
-	for i, acc := range available {
-		w := acc.EffectiveWeight()
-		totalWeight += w
-		p.wrrCounters[i] += w
-		if p.wrrCounters[i] > max {
-			max = p.wrrCounters[i]
-			selected = i
-		}
-	}
-	if totalWeight <= 0 {
-		return available[0]
-	}
-	p.wrrCounters[selected] -= totalWeight
-	return available[selected]
+	return available[0]
 }
 
+// 在可用账号间简单轮询（等权），不使用加权 WRR。
+func (p *XaiAccountPool) selectRoundRobin() *shared.XaiAccount {
+	available := p.collectAvailable()
+	if len(available) == 0 {
+		return nil
+	}
+	if p.rrCursor < 0 || p.rrCursor >= 2_147_483_640 {
+		p.rrCursor = 0
+	}
+	idx := p.rrCursor % len(available)
+	p.rrCursor++
+	return available[idx]
+}
+
+// 兼容旧调用名
+func (p *XaiAccountPool) selectFailover() *shared.XaiAccount {
+	return p.selectFillFirst()
+}
+
+func (p *XaiAccountPool) selectLoadBalance() *shared.XaiAccount {
+	return p.selectRoundRobin()
+}
+
+func (p *XaiAccountPool) resetRR() {
+	p.rrCursor = 0
+}
+
+// Deprecated: use resetRR
 func (p *XaiAccountPool) resetWRR() {
-	p.wrrCounters = nil
+	p.resetRR()
 }

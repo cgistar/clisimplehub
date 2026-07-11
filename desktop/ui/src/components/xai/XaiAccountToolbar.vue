@@ -1,54 +1,58 @@
 <template>
   <div class="xai-account-toolbar">
-    <div class="toolbar-left">
-      <n-input
-        v-model:value="searchQuery"
-        :placeholder="t('xai.searchPlaceholder')"
-        clearable
-        style="width: 240px"
-      >
-        <template #prefix>
-          <n-icon><Search /></n-icon>
-        </template>
-      </n-input>
+    <div class="toolbar-row toolbar-row-primary">
+      <div class="toolbar-left">
+        <n-input
+          v-model:value="searchQuery"
+          :placeholder="t('xai.searchPlaceholder')"
+          clearable
+          style="width: 240px"
+        >
+          <template #prefix>
+            <n-icon><Search /></n-icon>
+          </template>
+        </n-input>
 
-      <n-select
-        v-model:value="filterStatus"
-        :options="statusOptions"
-        style="width: 150px"
-      />
+        <n-select
+          v-model:value="filterStatus"
+          :options="statusOptions"
+          style="width: 150px"
+        />
+      </div>
 
+      <div class="toolbar-right">
+        <n-button @click="handleRefresh" :loading="loading">
+          <template #icon><n-icon><RefreshCw /></n-icon></template>
+          {{ t('common.refresh') }}
+        </n-button>
+        <n-button @click="handleCopyVisibleAccounts" :disabled="filteredAccounts.length === 0">
+          <template #icon><n-icon><Copy /></n-icon></template>
+          {{ t('xai.copyVisibleAccounts') }}
+        </n-button>
+        <n-button @click="emit('open-config')">
+          <template #icon><n-icon><Settings /></n-icon></template>
+          {{ t('xai.config') }}
+        </n-button>
+        <n-button type="error" ghost @click="emit('bulk-delete')">
+          <template #icon><n-icon><Trash2 /></n-icon></template>
+          {{ t('xai.bulkDelete') }}
+        </n-button>
+        <n-dropdown :options="addAccountOptions" @select="handleAddAccountSelect">
+          <n-button type="primary">
+            <template #icon><n-icon><Plus /></n-icon></template>
+            {{ t('xai.addAccount') }}
+          </n-button>
+        </n-dropdown>
+      </div>
+    </div>
+
+    <div class="toolbar-row toolbar-row-meta">
       <n-space>
         <n-tag>{{ t('xai.total') }}: {{ accountCount.total }}</n-tag>
         <n-tag type="success">{{ t('xai.valid') }}: {{ accountCount.valid }}</n-tag>
         <n-tag type="error">{{ t('xai.banned') }}: {{ accountCount.banned }}</n-tag>
         <n-tag type="warning">{{ t('xai.exhausted') }}: {{ accountCount.exhausted }}</n-tag>
       </n-space>
-    </div>
-
-    <div class="toolbar-right">
-      <n-button @click="handleRefresh" :loading="loading">
-        <template #icon><n-icon><RefreshCw /></n-icon></template>
-        {{ t('common.refresh') }}
-      </n-button>
-      <n-button @click="handleCopyVisibleAccounts" :disabled="filteredAccounts.length === 0">
-        <template #icon><n-icon><Copy /></n-icon></template>
-        {{ t('xai.copyVisibleAccounts') }}
-      </n-button>
-      <n-button @click="emit('open-config')">
-        <template #icon><n-icon><Settings /></n-icon></template>
-        {{ t('xai.config') }}
-      </n-button>
-      <n-button type="error" ghost @click="emit('bulk-delete')">
-        <template #icon><n-icon><Trash2 /></n-icon></template>
-        {{ t('xai.bulkDelete') }}
-      </n-button>
-      <n-dropdown :options="addAccountOptions" @select="handleAddAccountSelect">
-        <n-button type="primary">
-          <template #icon><n-icon><Plus /></n-icon></template>
-          {{ t('xai.addAccount') }}
-        </n-button>
-      </n-dropdown>
     </div>
   </div>
 </template>
@@ -132,26 +136,45 @@ function handleAddAccountSelect(key: string | number): void {
 <style scoped>
 .xai-account-toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 10px;
   padding: 16px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  gap: 16px;
-  flex-wrap: wrap;
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.toolbar-row-primary {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .toolbar-left {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .toolbar-right {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  flex-wrap: nowrap;
+}
+
+.toolbar-row-meta {
   flex-wrap: wrap;
 }
 </style>

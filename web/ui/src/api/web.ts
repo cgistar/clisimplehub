@@ -25,6 +25,11 @@ import type {
   WebDAVConfig,
   WebDAVRequestPayload,
   WebDAVResponse,
+  XaiAccount,
+  XaiAccountInput,
+  XaiConfigForm,
+  XaiEditForm,
+  XaiPageData,
 } from '@/types'
 
 export const webApi = {
@@ -54,6 +59,44 @@ export const webApi = {
       body: JSON.stringify(endpoints),
     }),
   getCodex: () => apiFetch<CodexPageData>('/web/api/codex'),
+  getXai: () => apiFetch<XaiPageData>('/web/api/xai'),
+  activateXaiAccount: (accountId: string) =>
+    apiFetch<ActionResponse>('/web/api/xai/active', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
+  refreshXaiToken: (accountId: string) =>
+    apiFetch<ActionResponse>('/web/api/xai/refresh-token', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
+  probeXaiStream: (accountId: string) =>
+    apiFetch<ActionResponse>('/web/api/xai/probe-stream', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
+  refreshXaiQuota: (accountId: string) =>
+    apiFetch<ActionResponse & { account?: XaiAccount }>('/web/api/xai/refresh-quota', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
+  addXaiAccount: (payload: XaiAccountInput) =>
+    apiFetch<XaiAccount & ActionResponse>('/web/api/xai/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateXaiAccount: (payload: XaiEditForm) =>
+    apiFetch<ActionResponse>('/web/api/xai/accounts/update', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteXaiAccount: (accountId: string) =>
+    apiFetch<ActionResponse>(`/web/api/xai/accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' }),
+  saveXaiConfig: (payload: XaiConfigForm) =>
+    apiFetch<ActionResponse>('/web/api/xai/config', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getCodexModelPrices: () => apiFetch<CodexModelPrice[]>('/web/api/codex/model-prices'),
   saveCodexModelPrices: (prices: CodexModelPrice[]) =>
     apiFetch<CodexModelPrice[]>('/web/api/codex/model-prices', {

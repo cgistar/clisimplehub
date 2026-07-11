@@ -3178,7 +3178,12 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 		backupData.CodexConfig = json.RawMessage(raw)
 	}
 
-	// 9. 生成备份文件名
+	// 9. 尝试获取 xai 同步数据（xai.json）
+	if raw := a.xaiSyncExportRaw(); len(raw) > 0 {
+		backupData.XaiConfig = json.RawMessage(raw)
+	}
+
+	// 10. 生成备份文件名
 	computerName, _ := a.GetComputerName()
 	timestamp := time.Now().Format("2006-01-02T15-04-05")
 	filename := fmt.Sprintf("%s-%s.json", computerName, timestamp)
@@ -3260,6 +3265,13 @@ func (a *App) RestoreBackupData(backupData *config.BackupData, mode string) erro
 	if backupData.CodexConfig != nil {
 		if err := a.saveCodexSyncConfigInternal(backupData.CodexConfig, replaceMode); err != nil {
 			fmt.Printf("warning: failed to restore codex config/accounts: %v\n", err)
+		}
+	}
+
+	// 恢复 xai 配置与账号
+	if backupData.XaiConfig != nil {
+		if err := a.saveXaiSyncConfigInternal(backupData.XaiConfig, replaceMode); err != nil {
+			fmt.Printf("warning: failed to restore xai config/accounts: %v\n", err)
 		}
 	}
 
@@ -3938,6 +3950,7 @@ func (a *App) buildSyncRequestData(index int) (*syncRequestData, error) {
 		KiroConfigEncoded  string                  `json:"kiroConfigEncoded,omitempty"`
 		ClashConfigEncoded string                  `json:"clashConfigEncoded,omitempty"`
 		CodexConfigEncoded string                  `json:"codexConfigEncoded,omitempty"`
+		XaiConfigEncoded   string                  `json:"xaiConfigEncoded,omitempty"`
 	}
 
 	payload := syncPayload{
@@ -3945,6 +3958,7 @@ func (a *App) buildSyncRequestData(index int) (*syncRequestData, error) {
 		Endpoints:          cfg.Endpoints,
 		KiroConfigEncoded:  encodeSyncPayload(a.kiroSyncExportRaw()),
 		ClashConfigEncoded: encodeSyncPayload(a.clashSyncExportRaw()),
+		XaiConfigEncoded:   encodeSyncPayload(a.xaiSyncExportRaw()),
 	}
 
 	if raw, err := a.codexSyncExportRaw(); err != nil {

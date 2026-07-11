@@ -25,6 +25,9 @@ export default function Topbar({ route, onNavigate, onLogout }: TopbarProps) {
         <NavLink active={route === 'codex'} onClick={() => onNavigate('codex')}>
           Codex
         </NavLink>
+        <NavLink active={route === 'xai'} onClick={() => onNavigate('xai')}>
+          xAI
+        </NavLink>
         <NavLink active={route === 'settings'} onClick={() => onNavigate('settings')}>
           设置
         </NavLink>

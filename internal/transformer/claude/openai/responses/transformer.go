@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -11,6 +13,7 @@ import (
 	"strings"
 
 	"clisimplehub/internal/transformer/shared"
+	xaiBackend "clisimplehub/internal/xai/backend"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -47,19 +50,35 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 		modelName = strings.TrimSpace(root.Get("model").String())
 	}
 
-	template := `{"model":"","input":[]}`
+	template := `{"model":"","instructions":"","input":[]}`
 	template, _ = sjson.Set(template, "model", modelName)
 
 	if systemMessage := buildSystemDeveloperMessage(root.Get("system")); systemMessage != "" {
 		template, _ = sjson.SetRaw(template, "input.-1", systemMessage)
 	}
+	// Claude max_tokens → Responses max_output_tokens
+	if maxTokens := root.Get("max_tokens"); maxTokens.Exists() && maxTokens.Type == gjson.Number {
+		if n := maxTokens.Int(); n > 0 {
+			template, _ = sjson.Set(template, "max_output_tokens", n)
+		}
+	}
 
 	toolMap := buildReverseMapFromClaudeOriginalToShort(rawJSON)
+	webSearchNames := buildClaudeWebSearchToolNameSet(root.Get("tools"))
 	messages := root.Get("messages")
 	if messages.IsArray() {
 		for _, messageResult := range messages.Array() {
 			messageRole := strings.TrimSpace(messageResult.Get("role").String())
 			if messageRole == "" {
+				continue
+			}
+			// system role message → user reminder
+			if messageRole == "system" {
+				if reminder := claudeMessageSystemReminderText(messageResult.Get("content")); reminder != "" {
+					msg := `{"type":"message","role":"user","content":[{"type":"input_text","text":""}]}`
+					msg, _ = sjson.Set(msg, "content.0.text", reminder)
+					template, _ = sjson.SetRaw(template, "input.-1", msg)
+				}
 				continue
 			}
 
@@ -101,6 +120,21 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 				hasContent = true
 			}
 
+			// Claude thinking → Responses reasoning（仅当 signature 为合法 Grok encrypted 时）
+			appendThinkingAsReasoning := func(part gjson.Result) {
+				if messageRole != "assistant" {
+					return
+				}
+				sig := strings.TrimSpace(part.Get("signature").String())
+				if sig == "" || !xaiBackend.IsValidGrokEncryptedContent(sig) {
+					return
+				}
+				flushMessage()
+				item := `{"type":"reasoning","summary":[],"content":null}`
+				item, _ = sjson.Set(item, "encrypted_content", sig)
+				template, _ = sjson.SetRaw(template, "input.-1", item)
+			}
+
 			messageContents := messageResult.Get("content")
 			switch {
 			case messageContents.IsArray():
@@ -108,6 +142,8 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 					switch strings.TrimSpace(contentResult.Get("type").String()) {
 					case "text":
 						appendTextContent(contentResult.Get("text").String())
+					case "thinking":
+						appendThinkingAsReasoning(contentResult)
 					case "image":
 						if dataURL := buildDataURL(contentResult.Get("source")); dataURL != "" {
 							appendImageContent(dataURL)
@@ -121,7 +157,7 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 							name = shortenNameIfNeeded(name)
 						}
 						functionCall := `{"type":"function_call"}`
-						functionCall, _ = sjson.Set(functionCall, "call_id", contentResult.Get("id").String())
+						functionCall, _ = sjson.Set(functionCall, "call_id", shortenCodexCallIDIfNeeded(contentResult.Get("id").String()))
 						functionCall, _ = sjson.Set(functionCall, "name", name)
 						argsRaw := strings.TrimSpace(contentResult.Get("input").Raw)
 						if argsRaw == "" {
@@ -132,7 +168,7 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 					case "tool_result":
 						flushMessage()
 						functionOutput := `{"type":"function_call_output"}`
-						functionOutput, _ = sjson.Set(functionOutput, "call_id", contentResult.Get("tool_use_id").String())
+						functionOutput, _ = sjson.Set(functionOutput, "call_id", shortenCodexCallIDIfNeeded(contentResult.Get("tool_use_id").String()))
 
 						outputResult := contentResult.Get("content")
 						if outputResult.IsArray() {
@@ -174,10 +210,12 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 
 	if tools := buildResponsesTools(root.Get("tools")); tools != "" {
 		template, _ = sjson.SetRaw(template, "tools", tools)
-		template, _ = sjson.Set(template, "tool_choice", "auto")
+		template, _ = sjson.SetRaw(template, "tool_choice", convertClaudeToolChoiceToCodex(root.Get("tool_choice"), toolMap, webSearchNames))
 	}
 
+	// 禁用 thinking 时不传 effort=none（上游 400）
 	reasoningEffort := "high"
+	disableReasoning := false
 	if thinkingConfig := root.Get("thinking"); thinkingConfig.Exists() && thinkingConfig.IsObject() {
 		switch thinkingConfig.Get("type").String() {
 		case "enabled":
@@ -193,27 +231,55 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 				reasoningEffort = "xhigh"
 			}
 		case "disabled":
-			if effort, ok := convertBudgetToLevel(0); ok && effort != "" {
-				reasoningEffort = effort
-			}
+			// Claude Code 常在 thinking.disabled 时仍带 output_config.effort；
+			// xAI 不接受 none，关闭 reasoning 块。
+			disableReasoning = true
 		}
 	}
 	if modelSuffix.hasSuffix {
 		if effort, ok := parseEffortSuffix(modelSuffix.rawSuffix); ok {
-			reasoningEffort = effort
+			if effort == "none" {
+				disableReasoning = true
+			} else {
+				reasoningEffort = effort
+				disableReasoning = false
+			}
 		}
 	}
 	if bodyModelSuffix.hasSuffix {
 		if effort, ok := parseEffortSuffix(bodyModelSuffix.rawSuffix); ok {
-			reasoningEffort = effort
+			if effort == "none" {
+				disableReasoning = true
+			} else {
+				reasoningEffort = effort
+				disableReasoning = false
+			}
+		}
+	}
+	// 规范化 xAI effort
+	if !disableReasoning {
+		if norm, drop := xaiBackend.NormalizeXAIReasoningEffort(reasoningEffort); drop {
+			disableReasoning = true
+		} else {
+			reasoningEffort = norm
 		}
 	}
 
-	template, _ = sjson.Set(template, "parallel_tool_calls", true)
-	template, _ = sjson.Set(template, "reasoning.effort", reasoningEffort)
-	template, _ = sjson.Set(template, "reasoning.summary", "auto")
+	parallelToolCalls := true
+	if disable := root.Get("tool_choice.disable_parallel_tool_use"); disable.Exists() {
+		parallelToolCalls = !disable.Bool()
+	}
+	template, _ = sjson.Set(template, "parallel_tool_calls", parallelToolCalls)
+	if !disableReasoning {
+		template, _ = sjson.Set(template, "reasoning.effort", reasoningEffort)
+		template, _ = sjson.Set(template, "reasoning.summary", "auto")
+	}
+	if tier := normalizeCodexServiceTier(root.Get("service_tier")); tier != "" {
+		template, _ = sjson.Set(template, "service_tier", tier)
+	}
 	template, _ = sjson.Set(template, "stream", true)
 	template, _ = sjson.Set(template, "store", false)
+	// xAI / Codex 多轮 reasoning 必需
 	template, _ = sjson.Set(template, "include", []string{"reasoning.encrypted_content"})
 
 	return []byte(template), nil
@@ -234,11 +300,15 @@ func (Transformer) TransformResponseNonStream(ctx context.Context, modelName str
 	line := bytes.TrimSpace(rawJSON)
 	if gjson.ValidBytes(line) {
 		root := gjson.ParseBytes(line)
-		switch {
-		case root.Get("type").String() == "response.completed":
+		switch root.Get("type").String() {
+		case "response.completed", "response.incomplete":
+			// 事件外壳下的 response 对象
 			return buildClaudeMessageFromResponseObject(modelName, originalRequestRawJSON, root.Get("response"))
-		case root.IsObject():
-			return buildClaudeMessageFromResponseObject(modelName, originalRequestRawJSON, root)
+		default:
+			// 裸 response 对象（无 type 包装）
+			if root.IsObject() && (root.Get("output").Exists() || root.Get("id").Exists()) {
+				return buildClaudeMessageFromResponseObject(modelName, originalRequestRawJSON, root)
+			}
 		}
 	}
 
@@ -246,19 +316,39 @@ func (Transformer) TransformResponseNonStream(ctx context.Context, modelName str
 }
 
 type responsesToClaudeStreamState struct {
-	HasToolCall               bool
+	HasEmittedToolUse         bool
 	BlockIndex                int
 	HasReceivedArgumentsDelta bool
 	SentMessageStop           bool
+	// 分块开关
+	TextBlockOpen           bool
+	ThinkingBlockOpen       bool
+	ThinkingStopPending     bool
+	ThinkingSummarySeen     bool
+	FunctionCallBlockOpen   bool
+	FunctionCallBlockCallID string
+	FunctionCallBlockIndex  int
+	HasTextDelta            bool
+	ThinkingSignature       string
+
+	PendingFunctionCalls       map[string]*pendingFunctionCall
+	LastPendingFunctionCallKey string
+
+	WebSearchToolUseIDs    map[string]struct{}
+	WebSearchToolResultIDs map[string]struct{}
+	LastWebSearchToolUseID string
 }
 
 type collectedSSEBlock struct {
-	blockType string
-	id        string
-	name      string
-	text      strings.Builder
-	args      strings.Builder
-	thinking  strings.Builder
+	blockType  string
+	id         string
+	name       string
+	toolUseID  string
+	text       strings.Builder
+	args       strings.Builder
+	thinking   strings.Builder
+	signature  string
+	rawContent any // web_search_tool_result.content 等
 }
 
 type collectedSSEEvent struct {
@@ -275,7 +365,7 @@ func buildSystemDeveloperMessage(systemResult gjson.Result) string {
 	contentIndex := 0
 
 	appendText := func(text string) {
-		if text == "" || strings.HasPrefix(text, "x-anthropic-billing-header: ") {
+		if text == "" || isClaudeCodeAttributionSystemText(text) {
 			return
 		}
 		message, _ = sjson.Set(message, fmt.Sprintf("content.%d.type", contentIndex), "input_text")
@@ -315,8 +405,9 @@ func buildResponsesTools(toolsResult gjson.Result) string {
 	shortMap := buildShortNameMap(names)
 
 	for _, tool := range toolsResult.Array() {
-		if tool.Get("type").String() == "web_search_20250305" {
-			tools, _ = sjson.SetRaw(tools, "-1", `{"type":"web_search"}`)
+		toolType := tool.Get("type").String()
+		if isClaudeWebSearchToolType(toolType) {
+			tools, _ = sjson.SetRaw(tools, "-1", convertClaudeWebSearchToolToCodex(tool))
 			continue
 		}
 
@@ -333,6 +424,12 @@ func buildResponsesTools(toolsResult gjson.Result) string {
 			out, _ = sjson.Set(out, "description", description)
 		}
 		out, _ = sjson.SetRaw(out, "parameters", normalizeToolParameters(tool.Get("input_schema").Raw))
+		// 剥离 Claude 专用字段
+		out, _ = sjson.Delete(out, "input_schema")
+		out, _ = sjson.Delete(out, "cache_control")
+		out, _ = sjson.Delete(out, "defer_loading")
+		out, _ = sjson.Delete(out, "parameters.$schema")
+		out, _ = sjson.Set(out, "strict", false)
 		tools, _ = sjson.SetRaw(tools, "-1", out)
 	}
 
@@ -360,202 +457,7 @@ func buildDataURL(source gjson.Result) string {
 	return fmt.Sprintf("data:%s;base64,%s", mediaType, data)
 }
 
-func transformResponsesLineToClaudeSSE(originalRequestRawJSON []byte, modelName string, rawLine []byte, state *responsesToClaudeStreamState) ([]string, error) {
-	if state == nil {
-		return nil, fmt.Errorf("nil stream state")
-	}
-
-	line := bytes.TrimSpace(rawLine)
-	if len(line) == 0 || bytes.HasPrefix(line, []byte("event:")) || bytes.HasPrefix(line, []byte(":")) {
-		return nil, nil
-	}
-
-	payload := line
-	if p, ok := shared.SSEDataPayload(line); ok {
-		payload = p
-	}
-
-	if bytes.Equal(payload, []byte("[DONE]")) {
-		if state.SentMessageStop {
-			return nil, nil
-		}
-		state.SentMessageStop = true
-		return []string{shared.SSEEvent("message_stop", map[string]any{"type": "message_stop"})}, nil
-	}
-	if !gjson.ValidBytes(payload) {
-		return nil, nil
-	}
-
-	root := gjson.ParseBytes(payload)
-	typeStr := root.Get("type").String()
-	outputs := make([]string, 0, 2)
-
-	switch typeStr {
-	case "response.created":
-		resp := root.Get("response")
-		model := strings.TrimSpace(modelName)
-		if model == "" {
-			model = strings.TrimSpace(resp.Get("model").String())
-		}
-		outputs = append(outputs, shared.SSEEvent("message_start", map[string]any{
-			"type": "message_start",
-			"message": map[string]any{
-				"id":            resp.Get("id").String(),
-				"type":          "message",
-				"role":          "assistant",
-				"model":         model,
-				"stop_reason":   nil,
-				"stop_sequence": nil,
-				"usage": map[string]any{
-					"input_tokens":  0,
-					"output_tokens": 0,
-				},
-				"content": []any{},
-			},
-		}))
-	case "response.reasoning_summary_part.added":
-		outputs = append(outputs, shared.SSEEvent("content_block_start", map[string]any{
-			"type":  "content_block_start",
-			"index": state.BlockIndex,
-			"content_block": map[string]any{
-				"type":     "thinking",
-				"thinking": "",
-			},
-		}))
-	case "response.reasoning_summary_text.delta":
-		outputs = append(outputs, shared.SSEEvent("content_block_delta", map[string]any{
-			"type":  "content_block_delta",
-			"index": state.BlockIndex,
-			"delta": map[string]any{
-				"type":     "thinking_delta",
-				"thinking": root.Get("delta").String(),
-			},
-		}))
-	case "response.reasoning_summary_part.done":
-		outputs = append(outputs, shared.SSEEvent("content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": state.BlockIndex,
-		}))
-		state.BlockIndex++
-	case "response.content_part.added":
-		outputs = append(outputs, shared.SSEEvent("content_block_start", map[string]any{
-			"type":  "content_block_start",
-			"index": state.BlockIndex,
-			"content_block": map[string]any{
-				"type": "text",
-				"text": "",
-			},
-		}))
-	case "response.output_text.delta":
-		outputs = append(outputs, shared.SSEEvent("content_block_delta", map[string]any{
-			"type":  "content_block_delta",
-			"index": state.BlockIndex,
-			"delta": map[string]any{
-				"type": "text_delta",
-				"text": root.Get("delta").String(),
-			},
-		}))
-	case "response.content_part.done":
-		outputs = append(outputs, shared.SSEEvent("content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": state.BlockIndex,
-		}))
-		state.BlockIndex++
-	case "response.output_item.added":
-		item := root.Get("item")
-		if item.Get("type").String() == "function_call" {
-			state.HasToolCall = true
-			state.HasReceivedArgumentsDelta = false
-			name := item.Get("name").String()
-			if original, ok := buildReverseMapFromClaudeOriginalShortToOriginal(originalRequestRawJSON)[name]; ok {
-				name = original
-			}
-			outputs = append(outputs, shared.SSEEvent("content_block_start", map[string]any{
-				"type":  "content_block_start",
-				"index": state.BlockIndex,
-				"content_block": map[string]any{
-					"type":  "tool_use",
-					"id":    sanitizeClaudeToolID(item.Get("call_id").String()),
-					"name":  name,
-					"input": map[string]any{},
-				},
-			}))
-			outputs = append(outputs, shared.SSEEvent("content_block_delta", map[string]any{
-				"type":  "content_block_delta",
-				"index": state.BlockIndex,
-				"delta": map[string]any{
-					"type":         "input_json_delta",
-					"partial_json": "",
-				},
-			}))
-		}
-	case "response.function_call_arguments.delta":
-		state.HasReceivedArgumentsDelta = true
-		outputs = append(outputs, shared.SSEEvent("content_block_delta", map[string]any{
-			"type":  "content_block_delta",
-			"index": state.BlockIndex,
-			"delta": map[string]any{
-				"type":         "input_json_delta",
-				"partial_json": root.Get("delta").String(),
-			},
-		}))
-	case "response.function_call_arguments.done":
-		if !state.HasReceivedArgumentsDelta {
-			if args := root.Get("arguments").String(); args != "" {
-				outputs = append(outputs, shared.SSEEvent("content_block_delta", map[string]any{
-					"type":  "content_block_delta",
-					"index": state.BlockIndex,
-					"delta": map[string]any{
-						"type":         "input_json_delta",
-						"partial_json": args,
-					},
-				}))
-			}
-		}
-	case "response.output_item.done":
-		if root.Get("item.type").String() == "function_call" {
-			outputs = append(outputs, shared.SSEEvent("content_block_stop", map[string]any{
-				"type":  "content_block_stop",
-				"index": state.BlockIndex,
-			}))
-			state.BlockIndex++
-		}
-	case "response.completed":
-		stopReason := root.Get("response.stop_reason").String()
-		switch {
-		case state.HasToolCall:
-			stopReason = "tool_use"
-		case stopReason == "max_tokens" || stopReason == "stop":
-		default:
-			stopReason = "end_turn"
-		}
-
-		inputTokens, outputTokens, cachedRead, reasoning := extractResponsesUsage(root.Get("response.usage"))
-		usage := map[string]any{
-			"input_tokens":  inputTokens,
-			"output_tokens": outputTokens,
-		}
-		if cachedRead > 0 {
-			usage["cache_read_input_tokens"] = cachedRead
-		}
-		if reasoning > 0 {
-			usage["reasoning_tokens"] = reasoning
-		}
-
-		outputs = append(outputs, shared.SSEEvent("message_delta", map[string]any{
-			"type": "message_delta",
-			"delta": map[string]any{
-				"stop_reason":   stopReason,
-				"stop_sequence": nil,
-			},
-			"usage": usage,
-		}))
-		outputs = append(outputs, shared.SSEEvent("message_stop", map[string]any{"type": "message_stop"}))
-		state.SentMessageStop = true
-	}
-
-	return outputs, nil
-}
+// stream transform 见 stream_transform.go
 
 func buildClaudeMessageFromResponsesTranscript(_ context.Context, modelName string, originalRequestRawJSON, _ []byte, rawJSON []byte) ([]byte, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(rawJSON))
@@ -637,11 +539,22 @@ func buildClaudeMessageFromSSEEvents(events []collectedSSEEvent, modelName strin
 				blockOrder = append(blockOrder, index)
 			}
 			contentBlock, _ := data["content_block"].(map[string]any)
-			blocks[index] = &collectedSSEBlock{
+			block := &collectedSSEBlock{
 				blockType: strings.TrimSpace(shared.StringFromAny(contentBlock["type"])),
 				id:        strings.TrimSpace(shared.StringFromAny(contentBlock["id"])),
 				name:      strings.TrimSpace(shared.StringFromAny(contentBlock["name"])),
+				toolUseID: strings.TrimSpace(shared.StringFromAny(contentBlock["tool_use_id"])),
 			}
+			if contentBlock["content"] != nil {
+				block.rawContent = contentBlock["content"]
+			}
+			// server_tool_use 可能在 start 时已带 input
+			if input, ok := contentBlock["input"].(map[string]any); ok && len(input) > 0 {
+				if raw, err := json.Marshal(input); err == nil {
+					block.args.Write(raw)
+				}
+			}
+			blocks[index] = block
 		case "content_block_delta":
 			index := shared.IntFromAny(data["index"])
 			block := blocks[index]
@@ -656,6 +569,10 @@ func buildClaudeMessageFromSSEEvents(events []collectedSSEEvent, modelName strin
 				block.args.WriteString(shared.StringFromAny(delta["partial_json"]))
 			case "thinking_delta":
 				block.thinking.WriteString(shared.StringFromAny(delta["thinking"]))
+			case "signature_delta":
+				if sig := strings.TrimSpace(shared.StringFromAny(delta["signature"])); sig != "" {
+					block.signature = sig
+				}
 			}
 		case "message_delta":
 			delta, _ := data["delta"].(map[string]any)
@@ -691,11 +608,16 @@ func buildClaudeMessageFromSSEEvents(events []collectedSSEEvent, modelName strin
 			}
 		case "thinking":
 			thinking := block.thinking.String()
-			if strings.TrimSpace(thinking) != "" {
-				content = append(content, map[string]any{
+			// signature-only thinking 也要保留
+			if strings.TrimSpace(thinking) != "" || block.signature != "" {
+				item := map[string]any{
 					"type":     "thinking",
 					"thinking": thinking,
-				})
+				}
+				if block.signature != "" {
+					item["signature"] = block.signature
+				}
+				content = append(content, item)
 			}
 		case "tool_use":
 			hasToolUse = true
@@ -712,6 +634,31 @@ func buildClaudeMessageFromSSEEvents(events []collectedSSEEvent, modelName strin
 				"id":    block.id,
 				"name":  block.name,
 				"input": input,
+			})
+		case "server_tool_use":
+			input := map[string]any{}
+			rawArgs := strings.TrimSpace(block.args.String())
+			if rawArgs != "" && gjson.Valid(rawArgs) {
+				parsed := gjson.Parse(rawArgs)
+				if parsed.IsObject() {
+					_ = json.Unmarshal([]byte(parsed.Raw), &input)
+				}
+			}
+			content = append(content, map[string]any{
+				"type":  "server_tool_use",
+				"id":    block.id,
+				"name":  block.name,
+				"input": input,
+			})
+		case "web_search_tool_result":
+			resultContent := block.rawContent
+			if resultContent == nil {
+				resultContent = []any{}
+			}
+			content = append(content, map[string]any{
+				"type":        "web_search_tool_result",
+				"tool_use_id": block.toolUseID,
+				"content":     resultContent,
 			})
 		}
 	}
@@ -790,17 +737,24 @@ func buildClaudeMessageFromResponseObject(modelName string, originalRequestRawJS
 	content := make([]any, 0)
 	hasToolCall := false
 	reverseToolNames := buildReverseMapFromClaudeOriginalShortToOriginal(originalRequestRawJSON)
+	webSearchSeen := make(map[string]struct{})
 
 	output := response.Get("output")
 	if output.IsArray() {
 		for _, item := range output.Array() {
 			switch item.Get("type").String() {
 			case "reasoning":
-				if thinking := extractThinkingTextFromReasoningItem(item); strings.TrimSpace(thinking) != "" {
-					content = append(content, map[string]any{
+				thinking := extractThinkingTextFromReasoningItem(item)
+				signature := item.Get("encrypted_content").String()
+				if strings.TrimSpace(thinking) != "" || signature != "" {
+					block := map[string]any{
 						"type":     "thinking",
 						"thinking": thinking,
-					})
+					}
+					if signature != "" {
+						block["signature"] = signature
+					}
+					content = append(content, block)
 				}
 			case "message":
 				itemContent := item.Get("content")
@@ -830,6 +784,8 @@ func buildClaudeMessageFromResponseObject(modelName string, originalRequestRawJS
 						"text": text,
 					})
 				}
+			case "web_search_call":
+				content = appendWebSearchNonStreamContent(content, item, webSearchSeen)
 			case "function_call":
 				hasToolCall = true
 				name := item.Get("name").String()
@@ -848,7 +804,7 @@ func buildClaudeMessageFromResponseObject(modelName string, originalRequestRawJS
 
 				content = append(content, map[string]any{
 					"type":  "tool_use",
-					"id":    sanitizeClaudeToolID(item.Get("call_id").String()),
+					"id":    shortenCodexCallIDIfNeeded(sanitizeClaudeToolID(item.Get("call_id").String())),
 					"name":  name,
 					"input": input,
 				})
@@ -856,17 +812,10 @@ func buildClaudeMessageFromResponseObject(modelName string, originalRequestRawJS
 		}
 	}
 
-	stopReason := strings.TrimSpace(response.Get("stop_reason").String())
-	switch {
-	case stopReason != "":
-	case hasToolCall:
-		stopReason = "tool_use"
-	default:
-		stopReason = "end_turn"
-	}
+	stopReason := mapCodexStopReasonToClaude(codexStopReason(response), hasToolCall)
 
 	var stopSequence any
-	if stopSeq := response.Get("stop_sequence"); stopSeq.Exists() && stopSeq.Type != gjson.Null {
+	if stopSeq := response.Get("stop_sequence"); stopSeq.Exists() && stopSeq.Type != gjson.Null && stopSeq.String() != "" {
 		stopSequence = stopSeq.Value()
 	}
 
@@ -1138,4 +1087,139 @@ func normalizeToolParameters(raw string) string {
 		schema, _ = sjson.Delete(schema, "$schema")
 	}
 	return schema
+}
+
+// call_id 上限 64。
+func shortenCodexCallIDIfNeeded(id string) string {
+	const limit = 64
+	if len(id) <= limit {
+		return id
+	}
+	sum := sha256.Sum256([]byte(id))
+	suffix := "_" + hex.EncodeToString(sum[:8])
+	prefixLen := limit - len(suffix)
+	if prefixLen <= 0 {
+		return suffix[len(suffix)-limit:]
+	}
+	return id[:prefixLen] + suffix
+}
+
+func isClaudeWebSearchToolType(toolType string) bool {
+	return toolType == "web_search_20250305" || toolType == "web_search_20260209"
+}
+
+func buildClaudeWebSearchToolNameSet(tools gjson.Result) map[string]struct{} {
+	names := map[string]struct{}{}
+	if !tools.IsArray() {
+		return names
+	}
+	for _, tool := range tools.Array() {
+		if !isClaudeWebSearchToolType(tool.Get("type").String()) {
+			continue
+		}
+		if name := tool.Get("name").String(); name != "" {
+			names[name] = struct{}{}
+		}
+	}
+	return names
+}
+
+func convertClaudeWebSearchToolToCodex(tool gjson.Result) string {
+	out := `{"type":"web_search"}`
+	if allowed := tool.Get("allowed_domains"); allowed.Exists() && allowed.IsArray() {
+		out, _ = sjson.SetRaw(out, "filters.allowed_domains", allowed.Raw)
+	}
+	if loc := tool.Get("user_location"); loc.Exists() && loc.IsObject() {
+		out, _ = sjson.SetRaw(out, "user_location", loc.Raw)
+	}
+	return out
+}
+
+func convertClaudeToolChoiceToCodex(toolChoice gjson.Result, toolNameMap map[string]string, webSearchNames map[string]struct{}) string {
+	if !toolChoice.Exists() || toolChoice.Type == gjson.Null {
+		return `"auto"`
+	}
+	choiceType := toolChoice.Get("type").String()
+	if choiceType == "" && toolChoice.Type == gjson.String {
+		choiceType = toolChoice.String()
+	}
+	switch choiceType {
+	case "auto", "":
+		return `"auto"`
+	case "any":
+		return `"required"`
+	case "none":
+		return `"none"`
+	case "tool":
+		name := toolChoice.Get("name").String()
+		if _, ok := webSearchNames[name]; ok {
+			return `{"type":"web_search"}`
+		}
+		if short, ok := toolNameMap[name]; ok {
+			name = short
+		} else {
+			name = shortenNameIfNeeded(name)
+		}
+		if name == "" {
+			return `"auto"`
+		}
+		choice := `{"type":"function","name":""}`
+		choice, _ = sjson.Set(choice, "name", name)
+		return choice
+	default:
+		return `"auto"`
+	}
+}
+
+func normalizeCodexServiceTier(result gjson.Result) string {
+	if !result.Exists() || result.Type != gjson.String {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(result.String())) {
+	case "fast", "priority":
+		return "priority"
+	default:
+		return ""
+	}
+}
+
+// 过滤 billing attribution，并用 <system-reminder> 包装。
+func claudeMessageSystemReminderText(content gjson.Result) string {
+	parts := claudeSystemTextParts(content)
+	if len(parts) == 0 {
+		return ""
+	}
+	text := strings.Join(parts, "\n")
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return "<system-reminder>\n" + text + "\n</system-reminder>"
+}
+
+func claudeSystemTextParts(content gjson.Result) []string {
+	if !content.Exists() {
+		return nil
+	}
+	if content.Type == gjson.String {
+		text := content.String()
+		if text == "" || isClaudeCodeAttributionSystemText(text) {
+			return nil
+		}
+		return []string{text}
+	}
+	if !content.IsArray() {
+		return nil
+	}
+	parts := make([]string, 0)
+	for _, item := range content.Array() {
+		if item.Get("type").String() != "text" {
+			continue
+		}
+		text := item.Get("text").String()
+		if text == "" || isClaudeCodeAttributionSystemText(text) {
+			continue
+		}
+		parts = append(parts, text)
+	}
+	return parts
 }

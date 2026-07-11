@@ -5,6 +5,7 @@ import type {
   XaiAccountInput,
   XaiAccountsPage,
   XaiGlobalConfig,
+  XaiDeviceLoginInfo,
   XaiLoginResult,
   XaiTestResult
 } from '@/types/xai'
@@ -15,17 +16,23 @@ function normalizeAccount(account: main.XaiAccountDTO | XaiAccount | null | unde
   if (!account) {
     return { enabled: true, status: 'valid' }
   }
+  const authKind = account.authKind || (account.apiKey && !account.refreshToken ? 'api_key' : 'oauth')
+  // 缺省：api_key → true；oauth → false
+  const defaultUsingApi = authKind === 'api_key'
   return {
     ...account,
     enabled: account.enabled !== false,
-    websockets: Boolean(account.websockets),
+    websockets: account.websockets !== false,
+    usingApi: account.usingApi !== undefined ? Boolean(account.usingApi) : defaultUsingApi,
     status: account.status || 'valid',
-    authKind: account.authKind || (account.apiKey && !account.refreshToken ? 'api_key' : 'oauth'),
+    authKind,
     weight: Number(account.weight || 1)
   }
 }
 
 function toXaiDto(input: XaiAccountInput): main.XaiAccountDTO {
+  const authKind = input.authKind || ''
+  const defaultUsingApi = authKind === 'api_key'
   return {
     id: input.id || '',
     email: input.email || '',
@@ -33,16 +40,16 @@ function toXaiDto(input: XaiAccountInput): main.XaiAccountDTO {
     accessToken: input.accessToken || '',
     refreshToken: input.refreshToken || '',
     idToken: input.idToken || '',
-    authKind: input.authKind || '',
+    authKind,
     apiKey: input.apiKey || '',
-    baseURL: input.baseURL || '',
-    tokenEndpoint: input.tokenEndpoint || '',
-    redirectURI: input.redirectURI || '',
+    sso: input.sso || '',
     enabled: input.enabled !== false,
-    websockets: Boolean(input.websockets),
+    websockets: input.websockets !== false,
+    usingApi: input.usingApi !== undefined ? Boolean(input.usingApi) : defaultUsingApi,
     status: input.status || 'valid',
     weight: input.weight || 1,
     proxyUrl: input.proxyUrl || '',
+    customHeaders: input.customHeaders || {},
     expiresAt: input.expiresAt || '',
     lastRefresh: input.lastRefresh || '',
     cooldownUntil: input.cooldownUntil || '',
@@ -98,8 +105,26 @@ export const xaiApi = {
     }
   },
 
+  async probeAccountStream(accountId: string): Promise<XaiTestResult> {
+    const result = await App.ProbeXaiAccountStream(accountId)
+    return {
+      success: Boolean(result?.success),
+      account: result?.account ? normalizeAccount(result.account) : undefined,
+      error: result?.error || ''
+    }
+  },
+
   async refreshAccountToken(accountId: string): Promise<XaiTestResult> {
     const result = await App.RefreshXaiAccountToken(accountId)
+    return {
+      success: Boolean(result?.success),
+      account: result?.account ? normalizeAccount(result.account) : undefined,
+      error: result?.error || ''
+    }
+  },
+
+  async refreshAccountQuota(accountId: string): Promise<XaiTestResult> {
+    const result = await App.RefreshXaiAccountQuota(accountId)
     return {
       success: Boolean(result?.success),
       account: result?.account ? normalizeAccount(result.account) : undefined,
@@ -113,6 +138,11 @@ export const xaiApi = {
       rotationMode: config?.rotationMode || 'fixed',
       proxyUrl: config?.proxyUrl || '',
       baseURL: config?.baseURL || DEFAULT_BASE_URL,
+      clientVersion: config?.clientVersion || '',
+      userAgent: config?.userAgent || '',
+      tokenAuth: config?.tokenAuth || '',
+      clientSurface: config?.clientSurface || '',
+      dynamicStatsig: config?.dynamicStatsig !== false,
       customHeaders: config?.customHeaders || {}
     }
   },
@@ -122,6 +152,11 @@ export const xaiApi = {
       rotationMode: config.rotationMode || 'fixed',
       proxyUrl: config.proxyUrl || '',
       baseURL: config.baseURL || '',
+      clientVersion: config.clientVersion || '',
+      userAgent: config.userAgent || '',
+      tokenAuth: config.tokenAuth || '',
+      clientSurface: config.clientSurface || '',
+      dynamicStatsig: config.dynamicStatsig !== false,
       customHeaders: config.customHeaders || {}
     })
   },
@@ -142,6 +177,22 @@ export const xaiApi = {
     if (window.go?.main?.App?.CancelXaiLogin) {
       await window.go.main.App.CancelXaiLogin()
     }
+  },
+
+  async startDeviceLogin(): Promise<XaiDeviceLoginInfo> {
+    const info = await App.StartXaiDeviceLogin()
+    return {
+      deviceCode: info?.deviceCode || '',
+      userCode: info?.userCode || '',
+      verificationUri: info?.verificationUri || '',
+      verificationUriComplete: info?.verificationUriComplete || '',
+      expiresIn: info?.expiresIn || 0,
+      interval: info?.interval || 0
+    }
+  },
+
+  async waitForDeviceLogin(): Promise<XaiLoginResult> {
+    return App.WaitForXaiDeviceLogin()
   },
 
   async openLoginURL(url: string): Promise<void> {

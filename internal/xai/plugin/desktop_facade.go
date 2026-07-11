@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
-	xai "clisimplehub/internal/xai"
-	xaiAuth "clisimplehub/internal/xai/auth"
-	xaiShared "clisimplehub/internal/xai/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
+	xai "clisimplehub/internal/xai"
+	xaiAuth "clisimplehub/internal/xai/auth"
+	xaiBackend "clisimplehub/internal/xai/backend"
+	xaiShared "clisimplehub/internal/xai/shared"
 )
 
 type desktopFacade struct{}
@@ -60,6 +61,10 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 	if err != nil {
 		return nil, err
 	}
+	// 从 xai.json 重新加载，保证外部改文件后列表与磁盘一致
+	if err := pool.Reload(); err != nil {
+		return nil, err
+	}
 	accounts := pool.ListAccounts()
 	activeID := pool.ActiveAccountID()
 	dtos := make([]map[string]any, 0, len(accounts))
@@ -81,6 +86,10 @@ func (d *desktopFacade) GetAccountsPage(configPath string, offset, limit int) (j
 	}
 	pool, err := ensurePool(configPath)
 	if err != nil {
+		return nil, err
+	}
+	// 从 xai.json 重新加载，保证外部改文件后列表与磁盘一致
+	if err := pool.Reload(); err != nil {
 		return nil, err
 	}
 	accounts := pool.ListAccounts()
@@ -146,8 +155,10 @@ func (d *desktopFacade) AddAccount(configPath string, dtoJSON json.RawMessage) (
 		if strings.TrimSpace(account.APIKey) == "" {
 			return nil, fmt.Errorf("apiKey is required for api_key auth")
 		}
-	} else if strings.TrimSpace(account.RefreshToken) == "" && strings.TrimSpace(account.AccessToken) == "" {
-		return nil, fmt.Errorf("refreshToken or accessToken is required")
+	} else if strings.TrimSpace(account.RefreshToken) == "" &&
+		strings.TrimSpace(account.AccessToken) == "" &&
+		strings.TrimSpace(account.SSO) == "" {
+		return nil, fmt.Errorf("refreshToken, accessToken or sso is required")
 	}
 	if strings.TrimSpace(account.ID) == "" {
 		return nil, fmt.Errorf("unable to derive account id")
@@ -168,10 +179,26 @@ func (d *desktopFacade) AddAccount(configPath string, dtoJSON json.RawMessage) (
 		if strings.TrimSpace(account.Subject) == "" {
 			account.Subject = existing.Subject
 		}
+		if strings.TrimSpace(account.SSO) == "" {
+			account.SSO = existing.SSO
+		}
+		if strings.TrimSpace(account.Pool) == "" {
+			account.Pool = existing.Pool
+		}
+		if account.Quota == nil {
+			account.Quota = existing.Quota
+		}
+		if account.LastQuotaSync.IsZero() {
+			account.LastQuotaSync = existing.LastQuotaSync
+		}
 	}
 	saved, err := pool.UpsertAccount(account)
 	if err != nil {
 		return nil, err
+	}
+	// 导入后尽力同步额度与账号类型（需要 sso；失败不阻断导入）
+	if refreshed, refreshErr := d.syncAccountQuota(context.Background(), pool, saved); refreshErr == nil && refreshed != nil {
+		saved = refreshed
 	}
 	return json.Marshal(accountToDTO(*saved, pool.ActiveAccountID()))
 }
@@ -214,28 +241,28 @@ func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage
 	if v, ok := dto["apiKey"]; ok {
 		account.APIKey = strings.TrimSpace(asString(v))
 	}
+	if v, ok := dto["sso"]; ok {
+		account.SSO = strings.TrimSpace(asString(v))
+	}
 	if v, ok := dto["authKind"]; ok {
 		if kind := strings.TrimSpace(asString(v)); kind != "" {
 			account.AuthKind = kind
 		}
 	}
-	if v, ok := dto["baseURL"]; ok {
-		account.BaseURL = strings.TrimSpace(asString(v))
-	}
-	if v, ok := dto["tokenEndpoint"]; ok {
-		account.TokenEndpoint = strings.TrimSpace(asString(v))
-	}
-	if v, ok := dto["redirectURI"]; ok {
-		account.RedirectURI = strings.TrimSpace(asString(v))
-	}
 	if v, ok := dto["proxyUrl"]; ok {
 		account.ProxyUrl = strings.TrimSpace(asString(v))
+	}
+	if v, ok := dto["customHeaders"]; ok {
+		account.CustomHeaders = asStringMap(v)
 	}
 	if v, ok := dto["enabled"]; ok {
 		account.Enabled = asBool(v, account.Enabled)
 	}
 	if v, ok := dto["websockets"]; ok {
-		account.Websockets = asBool(v, account.Websockets)
+		account.SetWebsockets(asBool(v, account.WebsocketsEnabled()))
+	}
+	if v, ok := dto["usingApi"]; ok {
+		account.SetUsingAPI(asBool(v, account.UsingAPIEnabled()))
 	}
 	if v, ok := dto["weight"]; ok {
 		if w := asInt(v); w > 0 {
@@ -272,6 +299,10 @@ func (d *desktopFacade) GetXaiGlobalConfig(configPath string) (json.RawMessage, 
 	if err != nil {
 		return nil, err
 	}
+	// 从 xai.json 重载，保证 UI 与磁盘一致（含 rotationMode）
+	if err := pool.Reload(); err != nil {
+		return nil, err
+	}
 	snap := pool.Snapshot()
 	if snap == nil {
 		snap = &xaiShared.XaiMultiConfig{Config: xaiShared.DefaultXaiConfig()}
@@ -281,19 +312,29 @@ func (d *desktopFacade) GetXaiGlobalConfig(configPath string) (json.RawMessage, 
 		baseURL = xaiAuth.DefaultAPIBaseURL
 	}
 	return json.Marshal(map[string]any{
-		"rotationMode":  snap.GetRotationMode(),
-		"proxyUrl":      snap.ProxyUrl,
-		"baseURL":       baseURL,
-		"customHeaders": snap.Config.CustomHeaders,
+		"rotationMode":    snap.GetRotationMode(),
+		"proxyUrl":        snap.ProxyUrl,
+		"baseURL":         baseURL,
+		"clientVersion":   snap.Config.ClientVersion,
+		"userAgent":       snap.Config.UserAgent,
+		"tokenAuth":       snap.Config.TokenAuth,
+		"clientSurface":   snap.Config.ClientSurface,
+		"dynamicStatsig":  snap.Config.DynamicStatsigEnabled(),
+		"customHeaders":   snap.Config.CustomHeaders,
 	})
 }
 
 func (d *desktopFacade) SaveXaiGlobalConfig(configPath string, dtoJSON json.RawMessage) error {
 	var dto struct {
-		RotationMode  string            `json:"rotationMode"`
-		ProxyUrl      string            `json:"proxyUrl"`
-		BaseURL       string            `json:"baseURL"`
-		CustomHeaders map[string]string `json:"customHeaders"`
+		RotationMode   string            `json:"rotationMode"`
+		ProxyUrl       string            `json:"proxyUrl"`
+		BaseURL        string            `json:"baseURL"`
+		ClientVersion  string            `json:"clientVersion"`
+		UserAgent      string            `json:"userAgent"`
+		TokenAuth      string            `json:"tokenAuth"`
+		ClientSurface  string            `json:"clientSurface"`
+		DynamicStatsig *bool             `json:"dynamicStatsig"`
+		CustomHeaders  map[string]string `json:"customHeaders"`
 	}
 	if err := json.Unmarshal(dtoJSON, &dto); err != nil {
 		return err
@@ -302,10 +343,25 @@ func (d *desktopFacade) SaveXaiGlobalConfig(configPath string, dtoJSON json.RawM
 	if err != nil {
 		return err
 	}
-	return pool.SaveGlobalConfig(dto.RotationMode, dto.ProxyUrl, xaiShared.XaiConfig{
+	cfg := xaiShared.XaiConfig{
 		BaseURL:       strings.TrimSpace(dto.BaseURL),
+		ClientVersion: strings.TrimSpace(dto.ClientVersion),
+		UserAgent:     strings.TrimSpace(dto.UserAgent),
+		TokenAuth:     strings.TrimSpace(dto.TokenAuth),
+		ClientSurface: strings.TrimSpace(dto.ClientSurface),
 		CustomHeaders: dto.CustomHeaders,
-	})
+	}
+	// 未传字段时保持默认 true
+	if dto.DynamicStatsig != nil {
+		cfg.SetDynamicStatsig(*dto.DynamicStatsig)
+	} else {
+		cfg.SetDynamicStatsig(true)
+	}
+	// 先写盘再 Reload，确保 rotationMode 落盘且运行时池同步
+	if err := pool.SaveGlobalConfig(dto.RotationMode, dto.ProxyUrl, cfg); err != nil {
+		return err
+	}
+	return pool.Reload()
 }
 
 func (d *desktopFacade) StartLoginWithURL(ctx context.Context, proxyURL string) (string, error) {
@@ -347,6 +403,9 @@ func (d *desktopFacade) WaitForLoginCallback(ctx context.Context) (json.RawMessa
 	if err != nil {
 		return nil, err
 	}
+	if svc != nil {
+		svc.ensureXaiEndpoints()
+	}
 	return json.Marshal(result)
 }
 
@@ -356,11 +415,160 @@ func (d *desktopFacade) CancelLogin() error {
 		return fmt.Errorf("xai service not available")
 	}
 	svc.cancelLoginSession()
+	svc.cancelDeviceSession()
 	return nil
+}
+
+// StartDeviceLogin 发起 device code 登录，返回 user_code / verification_uri。
+func (d *desktopFacade) StartDeviceLogin(ctx context.Context, proxyURL string) (json.RawMessage, error) {
+	svc := getService()
+	if svc == nil {
+		return nil, fmt.Errorf("xai service not available")
+	}
+	svc.cancelDeviceSession()
+
+	auth := xaiAuth.NewXAIAuth(proxyURL)
+	deviceCode, err := auth.StartDeviceFlow(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pollCtx, cancel := context.WithCancel(context.Background())
+	waitFn := func() (*xaiAuth.LoginResult, error) {
+		bundle, err := auth.WaitForAuthorization(pollCtx, deviceCode)
+		if err != nil {
+			return nil, err
+		}
+		return &xaiAuth.LoginResult{
+			AccessToken:   bundle.TokenData.AccessToken,
+			RefreshToken:  bundle.TokenData.RefreshToken,
+			IDToken:       bundle.TokenData.IDToken,
+			Email:         bundle.TokenData.Email,
+			Subject:       bundle.TokenData.Subject,
+			ExpiresAt:     bundle.TokenData.Expire,
+			BaseURL:       bundle.BaseURL,
+			TokenEndpoint: bundle.TokenEndpoint,
+			LastRefresh:   bundle.LastRefresh,
+		}, nil
+	}
+	svc.storeDeviceSession(deviceCode, waitFn, cancel)
+
+	return json.Marshal(map[string]any{
+		"deviceCode":              deviceCode.DeviceCode,
+		"userCode":                deviceCode.UserCode,
+		"verificationUri":         deviceCode.VerificationURI,
+		"verificationUriComplete": deviceCode.VerificationURIComplete,
+		"expiresIn":               deviceCode.ExpiresIn,
+		"interval":                deviceCode.Interval,
+	})
+}
+
+// WaitForDeviceLogin 等待用户完成 device 授权。
+func (d *desktopFacade) WaitForDeviceLogin(ctx context.Context) (json.RawMessage, error) {
+	svc := getService()
+	if svc == nil {
+		return nil, fmt.Errorf("xai service not available")
+	}
+	_, waitFn, cancel, sessionID := svc.popDeviceSession()
+	if waitFn == nil {
+		return nil, fmt.Errorf("no device login session")
+	}
+	defer func() {
+		if cancel != nil {
+			cancel()
+		}
+		_ = sessionID
+	}()
+
+	// 允许外部 ctx 取消
+	done := make(chan struct{})
+	var result *xaiAuth.LoginResult
+	var waitErr error
+	go func() {
+		result, waitErr = waitFn()
+		close(done)
+	}()
+	select {
+	case <-ctx.Done():
+		if cancel != nil {
+			cancel()
+		}
+		<-done
+		return nil, ctx.Err()
+	case <-done:
+		if waitErr != nil {
+			return nil, waitErr
+		}
+		// 成功后确保 endpoints
+		svc.ensureXaiEndpoints()
+		return json.Marshal(result)
+	}
 }
 
 func (d *desktopFacade) TestAccount(configPath, accountID string) (json.RawMessage, error) {
 	return d.RefreshAccountToken(context.Background(), configPath, accountID)
+}
+
+// RefreshAccountQuota 拉取 grok.com rate-limits，更新 pool + quota。
+func (d *desktopFacade) RefreshAccountQuota(ctx context.Context, configPath, accountID string) (json.RawMessage, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("accountId is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	pool, err := ensurePool(configPath)
+	if err != nil {
+		return nil, err
+	}
+	account := findAccount(pool, accountID)
+	if account == nil {
+		return nil, fmt.Errorf("account not found: %s", accountID)
+	}
+	saved, err := d.syncAccountQuota(ctx, pool, account)
+	if err != nil {
+		return json.Marshal(map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+	}
+	return json.Marshal(map[string]any{
+		"success": true,
+		"account": accountToDTO(*saved, pool.ActiveAccountID()),
+	})
+}
+
+// syncAccountQuota 用 sso 调用 rate-limits 并落盘。
+func (d *desktopFacade) syncAccountQuota(
+	ctx context.Context,
+	pool *xai.XaiAccountPool,
+	account *xaiShared.XaiAccount,
+) (*xaiShared.XaiAccount, error) {
+	if account == nil {
+		return nil, fmt.Errorf("account is nil")
+	}
+	sso := strings.TrimSpace(account.SSO)
+	if sso == "" {
+		return nil, fmt.Errorf("sso cookie is required to refresh quota")
+	}
+	proxyURL := resolveAccountProxy(pool, account)
+	dynamicStatsig := true
+	if snap := pool.Snapshot(); snap != nil {
+		dynamicStatsig = snap.Config.DynamicStatsigEnabled()
+	}
+	windows, err := xaiAuth.FetchAllRateLimits(ctx, sso, proxyURL, xaiAuth.RateLimitFetchOptions{
+		DynamicStatsig: dynamicStatsig,
+	})
+	if err != nil {
+		return nil, err
+	}
+	updated := *account
+	xaiAuth.ApplyRateLimitsToAccount(&updated, windows)
+	saved, err := pool.UpsertAccount(updated)
+	if err != nil {
+		return nil, err
+	}
+	return saved, nil
 }
 
 func (d *desktopFacade) RefreshAccountToken(ctx context.Context, configPath, accountID string) (json.RawMessage, error) {
@@ -389,7 +597,8 @@ func (d *desktopFacade) RefreshAccountToken(ctx context.Context, configPath, acc
 		if token == "" {
 			return nil, fmt.Errorf("api key is empty")
 		}
-		baseURL := account.EffectiveBaseURL(snap.Config)
+		// probe 走 chat base（按账号 usingApi），与线上转发一致
+		baseURL := xaiBackend.ResolveChatBaseURL(snap, account)
 		if err := probeModels(ctx, baseURL, token, proxyURL); err != nil {
 			account.Status = xaiShared.XaiStatusUnknown
 			_, _ = pool.UpsertAccount(*account)
@@ -413,7 +622,7 @@ func (d *desktopFacade) RefreshAccountToken(ctx context.Context, configPath, acc
 		if token == "" {
 			return nil, fmt.Errorf("refreshToken is required")
 		}
-		baseURL := account.EffectiveBaseURL(snap.Config)
+		baseURL := xaiBackend.ResolveChatBaseURL(snap, account)
 		if err := probeModels(ctx, baseURL, token, proxyURL); err != nil {
 			return nil, err
 		}
@@ -429,7 +638,8 @@ func (d *desktopFacade) RefreshAccountToken(ctx context.Context, configPath, acc
 	}
 
 	svc := xaiAuth.NewXAIAuth(proxyURL)
-	td, err := svc.RefreshTokens(ctx, account.RefreshToken, account.TokenEndpoint)
+	// tokenEndpoint 不按账号存储，走 OIDC discovery
+	td, err := svc.RefreshTokens(ctx, account.RefreshToken, "")
 	if err != nil {
 		account.Status = xaiShared.XaiStatusUnknown
 		_, _ = pool.UpsertAccount(*account)
@@ -475,6 +685,13 @@ func probeModels(ctx context.Context, baseURL, token, proxyURL string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
+	// cli-chat-proxy 需要 Grok CLI 身份头
+	if xaiBackend.IsCLIChatProxyBaseURL(baseURL) {
+		req.Header.Set(xaiBackend.HeaderClientVersion, xaiBackend.DefaultClientVersion)
+		req.Header.Set("User-Agent", xaiBackend.DefaultUserAgent)
+		req.Header.Set(xaiBackend.HeaderTokenAuth, xaiBackend.DefaultTokenAuth)
+		req.Header.Set(xaiBackend.HeaderClientSurface, xaiBackend.DefaultClientSurface)
+	}
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 20*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -486,6 +703,174 @@ func probeModels(ctx context.Context, baseURL, token, proxyURL string) error {
 		return fmt.Errorf("probe failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+// ProbeAccountStream 对该账号发起 responses SSE 探测
+func (d *desktopFacade) ProbeAccountStream(ctx context.Context, configPath, accountID string) (json.RawMessage, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("accountId is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	pool, err := ensurePool(configPath)
+	if err != nil {
+		return nil, err
+	}
+	account := findAccount(pool, accountID)
+	if account == nil {
+		return nil, fmt.Errorf("account not found: %s", accountID)
+	}
+	snap := pool.Snapshot()
+	proxyURL := resolveAccountProxy(pool, account)
+
+	// 确保 access token 可用
+	token, err := ensureAccessToken(ctx, pool, account, proxyURL)
+	if err != nil {
+		return json.Marshal(map[string]any{"success": false, "error": err.Error()})
+	}
+	// ensureAccessToken 可能已刷新账号
+	if refreshed := findAccount(pool, accountID); refreshed != nil {
+		account = refreshed
+	}
+
+	baseURL := xaiBackend.ResolveChatBaseURL(snap, account)
+	url := strings.TrimRight(baseURL, "/") + "/responses"
+	conv := fmt.Sprintf("probe-%d", time.Now().UnixNano())
+	bodyObj := map[string]any{
+		"model":            "grok-4.5",
+		"stream":           true,
+		"input":            "Say hi in one word.",
+		"prompt_cache_key": conv,
+	}
+	bodyBytes, err := json.Marshal(bodyObj)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set(xaiBackend.HeaderGrokConvID, conv)
+	// CLI 身份头：仅 chat-proxy（usingApi=false）
+	if xaiBackend.IsCLIChatProxyBaseURL(baseURL) {
+		authKind := strings.TrimSpace(account.AuthKind)
+		if authKind == "" || authKind == xaiShared.AuthKindOAuth {
+			req.Header.Set(xaiBackend.HeaderTokenAuth, xaiBackend.DefaultTokenAuth)
+		}
+		req.Header.Set(xaiBackend.HeaderClientVersion, xaiBackend.DefaultClientVersion)
+		req.Header.Set("User-Agent", xaiBackend.DefaultUserAgent)
+		req.Header.Set(xaiBackend.HeaderClientSurface, xaiBackend.DefaultClientSurface)
+		if snap != nil {
+			if v := strings.TrimSpace(snap.Config.ClientVersion); v != "" {
+				req.Header.Set(xaiBackend.HeaderClientVersion, v)
+			}
+			if v := strings.TrimSpace(snap.Config.UserAgent); v != "" {
+				req.Header.Set("User-Agent", v)
+			}
+			if v := strings.TrimSpace(snap.Config.TokenAuth); v != "" && (authKind == "" || authKind == xaiShared.AuthKindOAuth) {
+				req.Header.Set(xaiBackend.HeaderTokenAuth, v)
+			}
+			if v := strings.TrimSpace(snap.Config.ClientSurface); v != "" {
+				req.Header.Set(xaiBackend.HeaderClientSurface, v)
+			}
+		}
+	}
+
+	// 总超时 45s；SSE 拿到首批事件后立即结束
+	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 45*time.Second)
+	resp, err := client.Do(req)
+	if err != nil {
+		return json.Marshal(map[string]any{"success": false, "error": err.Error()})
+	}
+	defer resp.Body.Close()
+
+	raw, readErr := readSSEProbeBody(resp.Body, 64*1024, 20*time.Second)
+	text := string(raw)
+	preview := text
+	if len(preview) > 240 {
+		preview = preview[:240] + "…"
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return json.Marshal(map[string]any{
+			"success":    false,
+			"statusCode": resp.StatusCode,
+			"error":      fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(preview)),
+			"detail":     preview,
+		})
+	}
+	hasEvent := strings.Contains(text, "data:") || strings.Contains(text, "response.")
+	if !hasEvent {
+		errDetail := "response missing SSE events"
+		if readErr != nil {
+			errDetail = errDetail + ": " + readErr.Error()
+		}
+		return json.Marshal(map[string]any{
+			"success":    false,
+			"statusCode": resp.StatusCode,
+			"error":      errDetail,
+			"detail":     preview,
+		})
+	}
+	pool.ReportSuccess(account.ID)
+	return json.Marshal(map[string]any{
+		"success":    true,
+		"statusCode": resp.StatusCode,
+		"detail":     fmt.Sprintf("sse_len=%d has_event=true", len(raw)),
+		"account":    accountToDTO(*account, pool.ActiveAccountID()),
+	})
+}
+
+// readSSEProbeBody 读取 SSE 直到出现事件、达到上限或超时。
+func readSSEProbeBody(r io.Reader, maxBytes int, idleTimeout time.Duration) ([]byte, error) {
+	if maxBytes <= 0 {
+		maxBytes = 64 * 1024
+	}
+	type chunk struct {
+		b   []byte
+		err error
+	}
+	ch := make(chan chunk, 1)
+	go func() {
+		buf := make([]byte, 0, 4096)
+		tmp := make([]byte, 2048)
+		for len(buf) < maxBytes {
+			n, err := r.Read(tmp)
+			if n > 0 {
+				remain := maxBytes - len(buf)
+				if n > remain {
+					n = remain
+				}
+				buf = append(buf, tmp[:n]...)
+				if strings.Contains(string(buf), "data:") || strings.Contains(string(buf), "response.") {
+					ch <- chunk{b: buf, err: nil}
+					return
+				}
+			}
+			if err != nil {
+				ch <- chunk{b: buf, err: err}
+				return
+			}
+			if len(buf) >= maxBytes {
+				ch <- chunk{b: buf, err: nil}
+				return
+			}
+		}
+		ch <- chunk{b: buf, err: nil}
+	}()
+	timer := time.NewTimer(idleTimeout)
+	defer timer.Stop()
+	select {
+	case c := <-ch:
+		return c.b, c.err
+	case <-timer.C:
+		return nil, fmt.Errorf("sse probe timeout after %s", idleTimeout)
+	}
 }
 
 func findAccount(pool *xai.XaiAccountPool, id string) *xaiShared.XaiAccount {
@@ -511,18 +896,81 @@ func dtoToAccount(dto map[string]any) xaiShared.XaiAccount {
 		IDToken:       strings.TrimSpace(asString(dto["idToken"])),
 		AuthKind:      strings.TrimSpace(asString(dto["authKind"])),
 		APIKey:        strings.TrimSpace(asString(dto["apiKey"])),
-		BaseURL:       strings.TrimSpace(asString(dto["baseURL"])),
-		TokenEndpoint: strings.TrimSpace(asString(dto["tokenEndpoint"])),
-		RedirectURI:   strings.TrimSpace(asString(dto["redirectURI"])),
+		SSO:           strings.TrimSpace(asString(dto["sso"])),
 		ProxyUrl:      strings.TrimSpace(asString(dto["proxyUrl"])),
+		CustomHeaders: asStringMap(dto["customHeaders"]),
 		Enabled:       asBool(dto["enabled"], true),
-		Websockets:    asBool(dto["websockets"], false),
+		// 引入账号默认开启 websockets
+		Websockets:    xaiShared.BoolPtr(asBool(dto["websockets"], true)),
 		Weight:        asInt(dto["weight"]),
+		Pool:          strings.TrimSpace(asString(dto["pool"])),
 		Status:        xaiShared.XaiAccountStatus(strings.TrimSpace(asString(dto["status"]))),
 		ExpiresAt:     parseTimeString(asString(dto["expiresAt"])),
 		LastRefresh:   parseTimeString(asString(dto["lastRefresh"])),
+		LastQuotaSync: parseTimeString(asString(dto["lastQuotaSync"])),
+		Quota:         parseQuota(dto["quota"]),
+	}
+	if _, ok := dto["usingApi"]; ok {
+		account.SetUsingAPI(asBool(dto["usingApi"], account.UsingAPIEnabled()))
 	}
 	return account
+}
+
+func parseQuota(v any) *xaiShared.XaiQuota {
+	if v == nil {
+		return nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var q xaiShared.XaiQuota
+	if err := json.Unmarshal(raw, &q); err != nil {
+		return nil
+	}
+	if q.Auto == nil && q.Fast == nil && q.Expert == nil && q.Heavy == nil && q.Grok43 == nil {
+		return nil
+	}
+	return &q
+}
+
+func asStringMap(v any) map[string]string {
+	if v == nil {
+		return nil
+	}
+	switch t := v.(type) {
+	case map[string]string:
+		if len(t) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(t))
+		for k, val := range t {
+			k = strings.TrimSpace(k)
+			val = strings.TrimSpace(val)
+			if k != "" && val != "" {
+				out[k] = val
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]string, len(t))
+		for k, val := range t {
+			k = strings.TrimSpace(k)
+			s := strings.TrimSpace(asString(val))
+			if k != "" && s != "" {
+				out[k] = s
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func asString(v any) string {

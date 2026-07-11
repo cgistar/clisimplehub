@@ -27,7 +27,7 @@ import { ref, watch } from 'vue'
 import { NModal, NInput, NButton, NSpace, useMessage, useDialog } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useXaiAccountsStore } from '../../stores/xaiAccountsStore'
-import type { XaiAccountInput } from '@/types/xai'
+import { parseXaiImportAccounts } from '@/utils/xaiAccountCopy'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -52,48 +52,6 @@ watch(visible, (v) => {
   if (!v) emit('update:show', false)
 })
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function parseAccounts(raw: unknown): XaiAccountInput[] {
-  const list = Array.isArray(raw)
-    ? raw
-    : isRecord(raw) && Array.isArray(raw.accounts)
-      ? raw.accounts
-      : isRecord(raw)
-        ? [raw]
-        : []
-
-  const out: XaiAccountInput[] = []
-  for (const item of list) {
-    if (!isRecord(item)) continue
-    const refreshToken = String(item.refreshToken || item.refresh_token || '').trim()
-    const accessToken = String(item.accessToken || item.access_token || '').trim()
-    const apiKey = String(item.apiKey || item.api_key || '').trim()
-    if (!refreshToken && !accessToken && !apiKey) continue
-    out.push({
-      email: String(item.email || '').trim(),
-      subject: String(item.subject || item.sub || '').trim(),
-      accessToken,
-      refreshToken,
-      idToken: String(item.idToken || item.id_token || '').trim(),
-      apiKey,
-      authKind: String(item.authKind || item.auth_kind || (apiKey && !refreshToken ? 'api_key' : 'oauth')),
-      baseURL: String(item.baseURL || item.base_url || '').trim(),
-      tokenEndpoint: String(item.tokenEndpoint || item.token_endpoint || '').trim(),
-      redirectURI: String(item.redirectURI || item.redirect_uri || '').trim(),
-      proxyUrl: String(item.proxyUrl || item.proxy_url || '').trim(),
-      weight: Number(item.weight || 1) || 1,
-      enabled: item.enabled !== false,
-      websockets: Boolean(item.websockets),
-      status: String(item.status || 'valid'),
-      expiresAt: String(item.expiresAt || item.expired || '').trim()
-    })
-  }
-  return out
-}
-
 async function handleImport() {
   if (!jsonText.value.trim()) {
     message.warning(t('xai.pasteJsonContent'))
@@ -106,7 +64,7 @@ async function handleImport() {
     message.error(t('xai.importFailed'))
     return
   }
-  const accounts = parseAccounts(parsed)
+  const accounts = parseXaiImportAccounts(parsed)
   if (accounts.length === 0) {
     message.warning(t('xai.noValidAccounts'))
     return

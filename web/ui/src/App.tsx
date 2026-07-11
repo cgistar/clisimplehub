@@ -5,16 +5,21 @@ import { webApi } from '@/api/web'
 import type { ApiError } from '@/api/client'
 import { copyToClipboard } from '@/lib/format'
 import { buildCodexAccountCopyData, buildCodexAccountsCopyJson, createCodexConfigForm, createCodexEditForm } from '@/lib/codex'
-import type { ActionResponse, CodexAccount, CodexConfigForm, CodexEditForm, CodexPageData, EndpointInfo, HomePageData, RouteKey, SettingsData, SettingsForm } from '@/types'
+import { buildXaiAccountCopyJson, buildXaiAccountsCopyJson, createXaiConfigForm, createXaiEditForm } from '@/lib/xai'
+import type { ActionResponse, CodexAccount, CodexConfigForm, CodexEditForm, CodexPageData, EndpointInfo, HomePageData, RouteKey, SettingsData, SettingsForm, XaiAccount, XaiConfigForm, XaiEditForm, XaiPageData } from '@/types'
 import LoginScreen from '@/components/LoginScreen'
 import Topbar from '@/components/Topbar'
 import PageHeader from '@/components/PageHeader'
 import HomePage from '@/pages/HomePage'
 import CodexPage from '@/pages/CodexPage'
+import XaiPage from '@/pages/XaiPage'
 import SettingsPage from '@/pages/SettingsPage'
 import CodexConfigDialog from '@/pages/components/CodexConfigDialog'
 import CodexEditDialog from '@/pages/components/CodexEditDialog'
 import CodexImportDialog from '@/pages/components/CodexImportDialog'
+import XaiConfigDialog from '@/pages/components/XaiConfigDialog'
+import XaiEditDialog from '@/pages/components/XaiEditDialog'
+import XaiImportDialog from '@/pages/components/XaiImportDialog'
 import EndpointImportDialog from '@/pages/components/EndpointImportDialog'
 import HomeStatsDialog from '@/pages/components/HomeStatsDialog'
 import { Toaster } from '@/components/ui/sonner'
@@ -31,6 +36,7 @@ export default function App() {
   const [busyAction, setBusyAction] = useState<string>('')
   const [homeData, setHomeData] = useState<HomePageData | null>(null)
   const [codexData, setCodexData] = useState<CodexPageData | null>(null)
+  const [xaiData, setXaiData] = useState<XaiPageData | null>(null)
   const [settingsData, setSettingsData] = useState<SettingsData | null>(null)
   const [settingsForm, setSettingsForm] = useState<SettingsForm | null>(null)
   const [settingsSaving, setSettingsSaving] = useState<boolean>(false)
@@ -41,6 +47,13 @@ export default function App() {
   const [codexEditForm, setCodexEditForm] = useState<CodexEditForm>(createCodexEditForm())
   const [codexEditSaving, setCodexEditSaving] = useState<boolean>(false)
   const [codexImportDialogOpen, setCodexImportDialogOpen] = useState<boolean>(false)
+  const [xaiConfigDialogOpen, setXaiConfigDialogOpen] = useState<boolean>(false)
+  const [xaiConfigForm, setXaiConfigForm] = useState<XaiConfigForm>(createXaiConfigForm())
+  const [xaiConfigSaving, setXaiConfigSaving] = useState<boolean>(false)
+  const [xaiEditDialogOpen, setXaiEditDialogOpen] = useState<boolean>(false)
+  const [xaiEditForm, setXaiEditForm] = useState<XaiEditForm>(createXaiEditForm())
+  const [xaiEditSaving, setXaiEditSaving] = useState<boolean>(false)
+  const [xaiImportDialogOpen, setXaiImportDialogOpen] = useState<boolean>(false)
   const [homeStatsDialogOpen, setHomeStatsDialogOpen] = useState<boolean>(false)
   const [endpointImportDialogOpen, setEndpointImportDialogOpen] = useState<boolean>(false)
 
@@ -72,8 +85,8 @@ export default function App() {
   }, [authenticated, route])
 
   useEffect(() => {
-    if (!authenticated || route !== 'codex') return
-    const timer = setInterval(() => void refreshCurrentPage('codex'), 60_000)
+    if (!authenticated || (route !== 'codex' && route !== 'xai')) return
+    const timer = setInterval(() => void refreshCurrentPage(route), 60_000)
     return () => clearInterval(timer)
   }, [authenticated, route])
 
@@ -100,6 +113,14 @@ export default function App() {
         setCodexData(data)
         if (!codexConfigDialogOpen) {
           setCodexConfigForm(createCodexConfigForm(data?.globalConfig))
+        }
+        return
+      }
+      if (currentRoute === 'xai') {
+        const data = await webApi.getXai()
+        setXaiData(data)
+        if (!xaiConfigDialogOpen) {
+          setXaiConfigForm(createXaiConfigForm(data?.globalConfig))
         }
         return
       }
@@ -157,10 +178,13 @@ export default function App() {
     setGlobalError('')
     setHomeData(null)
     setCodexData(null)
+    setXaiData(null)
     setSettingsData(null)
     setSettingsForm(null)
     setCodexConfigDialogOpen(false)
     setCodexImportDialogOpen(false)
+    setXaiConfigDialogOpen(false)
+    setXaiImportDialogOpen(false)
     setHomeStatsDialogOpen(false)
     setEndpointImportDialogOpen(false)
   }
@@ -251,6 +275,115 @@ export default function App() {
 
   async function handleDeleteCodexAccount(accountId: string): Promise<void> {
     await runCodexAction(`codex:delete:${accountId}`, () => webApi.deleteCodexAccount(accountId), '账号已删除', '删除 Codex 账号失败')
+  }
+
+  async function runXaiAction(actionKey: string, request: () => Promise<ActionResponse>, defaultSuccessMessage: string, defaultErrorMessage: string): Promise<ActionResponse | null> {
+    setBusyAction(actionKey)
+    try {
+      const result = await request()
+      toast.success(result?.message || defaultSuccessMessage)
+      await refreshCurrentPage('xai')
+      return result
+    } catch (error) {
+      const apiError = error as ApiError
+      if (apiError.status === 401 || apiError.status === 403) {
+        setAuthenticated(false)
+        setGlobalError('登录状态已失效，请重新登录')
+      } else {
+        toast.error(apiError.message || defaultErrorMessage)
+      }
+      return null
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  async function handleActivateXaiAccount(accountId: string): Promise<void> {
+    await runXaiAction(`xai:activate:${accountId}`, () => webApi.activateXaiAccount(accountId), '已切换活跃账号', '切换 xAI 活跃账号失败')
+  }
+
+  async function handleProbeXaiStream(accountId: string): Promise<void> {
+    await runXaiAction(`xai:probe:${accountId}`, () => webApi.probeXaiStream(accountId), '连通测试成功', '连通测试失败')
+  }
+
+  async function handleRefreshXaiQuota(accountId: string): Promise<void> {
+    await runXaiAction(`xai:quota:${accountId}`, () => webApi.refreshXaiQuota(accountId), '额度已刷新', '刷新额度失败')
+  }
+
+  async function handleRefreshXaiToken(accountId: string): Promise<void> {
+    await runXaiAction(`xai:refresh:${accountId}`, () => webApi.refreshXaiToken(accountId), 'Refresh Token 成功', 'Refresh Token 失败')
+  }
+
+  async function handleDeleteXaiAccount(accountId: string): Promise<void> {
+    await runXaiAction(`xai:delete:${accountId}`, () => webApi.deleteXaiAccount(accountId), '账号已删除', '删除 xAI 账号失败')
+  }
+
+  async function handleCopyXaiAccount(account: XaiAccount): Promise<void> {
+    try {
+      await copyToClipboard(buildXaiAccountCopyJson(account))
+      toast.success('auth.json 已复制到剪贴板')
+    } catch (error) {
+      toast.error((error as ApiError).message || '复制账号信息失败')
+    }
+  }
+
+  async function handleCopyVisibleXaiAccounts(accounts: XaiAccount[]): Promise<void> {
+    try {
+      await copyToClipboard(buildXaiAccountsCopyJson(accounts))
+      toast.success('当前显示账号已复制到剪贴板')
+    } catch (error) {
+      toast.error((error as ApiError).message || '复制当前显示账号失败')
+    }
+  }
+
+  function handleOpenXaiConfig(): void {
+    setXaiConfigForm(createXaiConfigForm(xaiData?.globalConfig))
+    setXaiConfigDialogOpen(true)
+  }
+
+  function handleCloseXaiConfig(): void {
+    if (xaiConfigSaving) return
+    setXaiConfigDialogOpen(false)
+  }
+
+  function handleOpenXaiEdit(account: XaiAccount): void {
+    setXaiEditForm(createXaiEditForm(account))
+    setXaiEditDialogOpen(true)
+  }
+
+  function handleCloseXaiEdit(): void {
+    if (xaiEditSaving) return
+    setXaiEditDialogOpen(false)
+  }
+
+  async function handleSaveXaiConfig(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    setXaiConfigSaving(true)
+    try {
+      const result = await webApi.saveXaiConfig(xaiConfigForm)
+      toast.success(result.message || 'xAI 配置已保存')
+      setXaiConfigDialogOpen(false)
+      await refreshCurrentPage('xai')
+    } catch (error) {
+      toast.error((error as ApiError).message || '保存 xAI 配置失败')
+    } finally {
+      setXaiConfigSaving(false)
+    }
+  }
+
+  async function handleSaveXaiEdit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    setXaiEditSaving(true)
+    try {
+      const result = await webApi.updateXaiAccount(xaiEditForm)
+      toast.success(result.message || '账号已更新')
+      setXaiEditDialogOpen(false)
+      await refreshCurrentPage('xai')
+    } catch (error) {
+      toast.error((error as ApiError).message || '更新 xAI 账号失败')
+    } finally {
+      setXaiEditSaving(false)
+    }
   }
 
   async function handleCopyCodexAccount(account: CodexAccount): Promise<void> {
@@ -403,6 +536,7 @@ export default function App() {
 
   const pageTitle = useMemo<string>(() => {
     if (route === 'codex') return 'Codex'
+    if (route === 'xai') return 'xAI'
     if (route === 'settings') return '设置'
     return '主页'
   }, [route])
@@ -410,6 +544,7 @@ export default function App() {
   const pageDescription = useMemo<string>(() => {
     if (route === 'home') return '查看端点概览、实时请求与最近请求。'
     if (route === 'codex') return '查看 Codex 账号池、卡片操作与全局配置。'
+    if (route === 'xai') return '查看 xAI 账号池、连通测试、auth.json 导入导出与全局配置。'
     return '管理基础设置、全局代理、WebDAV 备份与服务器同步。'
   }, [route])
 
@@ -441,7 +576,7 @@ export default function App() {
           description={pageDescription}
           loading={pageLoading}
           onRefresh={() => void refreshCurrentPage(route)}
-          showRefresh={route !== 'codex'}
+          showRefresh={route !== 'codex' && route !== 'xai'}
           extraActions={route === 'home' ? (
             <button type="button" className="btn" onClick={() => setHomeStatsDialogOpen(true)}>
               统计
@@ -476,6 +611,23 @@ export default function App() {
             onEditAccount={handleOpenCodexEdit}
             onDeleteAccount={handleDeleteCodexAccount}
           />
+        ) : route === 'xai' ? (
+          <XaiPage
+            data={xaiData}
+            loading={pageLoading}
+            busyAction={busyAction}
+            onOpenConfig={handleOpenXaiConfig}
+            onOpenImport={() => setXaiImportDialogOpen(true)}
+            onRefreshXai={() => refreshCurrentPage('xai')}
+            onCopyVisibleAccounts={handleCopyVisibleXaiAccounts}
+            onActivateAccount={handleActivateXaiAccount}
+            onProbeStream={handleProbeXaiStream}
+            onRefreshQuota={handleRefreshXaiQuota}
+            onRefreshToken={handleRefreshXaiToken}
+            onCopyAccount={handleCopyXaiAccount}
+            onEditAccount={handleOpenXaiEdit}
+            onDeleteAccount={handleDeleteXaiAccount}
+          />
         ) : (
           <SettingsPage
             data={settingsData}
@@ -492,6 +644,9 @@ export default function App() {
       <CodexConfigDialog open={codexConfigDialogOpen} form={codexConfigForm} saving={codexConfigSaving} onClose={handleCloseCodexConfig} onChange={setCodexConfigForm} onSubmit={handleSaveCodexConfig} />
       <CodexEditDialog open={codexEditDialogOpen} form={codexEditForm} saving={codexEditSaving} onClose={handleCloseCodexEdit} onChange={setCodexEditForm} onRestore={handleRestoreCodexAccount} onSubmit={handleSaveCodexEdit} />
       <CodexImportDialog open={codexImportDialogOpen} onClose={handleCloseCodexImport} onSuccess={() => refreshCurrentPage('codex')} />
+      <XaiConfigDialog open={xaiConfigDialogOpen} form={xaiConfigForm} saving={xaiConfigSaving} onClose={handleCloseXaiConfig} onChange={setXaiConfigForm} onSubmit={handleSaveXaiConfig} />
+      <XaiEditDialog open={xaiEditDialogOpen} form={xaiEditForm} saving={xaiEditSaving} onClose={handleCloseXaiEdit} onChange={setXaiEditForm} onSubmit={handleSaveXaiEdit} />
+      <XaiImportDialog open={xaiImportDialogOpen} onClose={() => setXaiImportDialogOpen(false)} onImported={() => refreshCurrentPage('xai')} />
       <HomeStatsDialog open={homeStatsDialogOpen} onClose={() => setHomeStatsDialogOpen(false)} onCleared={() => refreshCurrentPage('home')} onAuthExpired={handleAuthExpired} />
       <EndpointImportDialog open={endpointImportDialogOpen} onClose={() => setEndpointImportDialogOpen(false)} onSuccess={() => refreshCurrentPage('home')} onAuthExpired={handleAuthExpired} />
     </div>

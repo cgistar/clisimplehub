@@ -22,8 +22,14 @@ type XaiDesktopProvider interface {
 	SubmitLoginCallbackURL(ctx context.Context, callbackURL string) error
 	WaitForLoginCallback(ctx context.Context) (json.RawMessage, error)
 	CancelLogin() error
+	StartDeviceLogin(ctx context.Context, proxyURL string) (json.RawMessage, error)
+	WaitForDeviceLogin(ctx context.Context) (json.RawMessage, error)
 	TestAccount(configPath, accountID string) (json.RawMessage, error)
+	// ProbeAccountStream 对该账号发一次 responses SSE 探测（对齐 test_xai_apis stream）。
+	ProbeAccountStream(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
 	RefreshAccountToken(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
+	// RefreshAccountQuota 拉取 grok.com rate-limits，更新 pool + 额度。
+	RefreshAccountQuota(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
 }
 
 func GetXaiDesktopProvider() XaiDesktopProvider {

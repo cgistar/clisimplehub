@@ -359,6 +359,9 @@ func (p *ProxyServer) createWebUIBackupData() (*webUIBackupDataResponse, error) 
 	} else if len(raw) > 0 {
 		backupData.CodexConfig = json.RawMessage(raw)
 	}
+	if raw := exportXaiSyncPayload(configPath); len(raw) > 0 {
+		backupData.XaiConfig = json.RawMessage(raw)
+	}
 
 	hostname, err := os.Hostname()
 	if err != nil || strings.TrimSpace(hostname) == "" {
@@ -663,6 +666,11 @@ func (p *ProxyServer) restoreWebUIBackupPlugins(configPath string, backupData *c
 			return fmt.Errorf("restore codex backup: %w", err)
 		}
 	}
+	if backupData.XaiConfig != nil {
+		if err := restoreXaiBackupPayload(configPath, backupData.XaiConfig, replaceMode); err != nil {
+			return fmt.Errorf("restore xai backup: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -724,6 +732,102 @@ func restoreCodexBackupPayload(configPath string, data interface{}, replaceMode 
 		}
 	}
 	return importer.SyncImport(configPath, payloadRaw)
+}
+
+func exportXaiSyncPayload(configPath string) json.RawMessage {
+	pl := plugin.ByName("xai-accounts")
+	if pl == nil {
+		return nil
+	}
+	exporter, ok := pl.(plugin.ConfigSyncExporter)
+	if !ok {
+		return nil
+	}
+	_, data, err := exporter.SyncExport(configPath)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return data
+}
+
+func restoreXaiBackupPayload(configPath string, data interface{}, replaceMode bool) error {
+	pl := plugin.ByName("xai-accounts")
+	if pl == nil {
+		return fmt.Errorf("xai plugin not available")
+	}
+	importer, ok := pl.(plugin.ConfigSyncImporter)
+	if !ok {
+		return fmt.Errorf("xai plugin does not support sync import")
+	}
+	payloadRaw, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal xai backup: %w", err)
+	}
+	if !replaceMode {
+		payloadRaw, err = mergeXaiSyncPayloadWithLocal(configPath, payloadRaw)
+		if err != nil {
+			return err
+		}
+	}
+	return importer.SyncImport(configPath, payloadRaw)
+}
+
+func mergeXaiSyncPayloadWithLocal(configPath string, remoteRaw json.RawMessage) (json.RawMessage, error) {
+	var remote map[string]interface{}
+	if err := json.Unmarshal(remoteRaw, &remote); err != nil {
+		return nil, fmt.Errorf("invalid xai backup payload: %w", err)
+	}
+	localRaw := exportXaiSyncPayload(configPath)
+	if len(localRaw) == 0 {
+		return remoteRaw, nil
+	}
+	var local map[string]interface{}
+	if err := json.Unmarshal(localRaw, &local); err != nil {
+		return remoteRaw, nil
+	}
+	localAccounts, _ := local["accounts"].([]interface{})
+	remoteAccounts, _ := remote["accounts"].([]interface{})
+	byID := map[string]interface{}{}
+	order := make([]string, 0)
+	appendAcc := func(item interface{}) {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			return
+		}
+		id := strings.TrimSpace(fmt.Sprint(m["id"]))
+		if id == "" || id == "<nil>" {
+			id = strings.TrimSpace(fmt.Sprint(m["email"])) + "|" + strings.TrimSpace(fmt.Sprint(m["subject"]))
+		}
+		if id == "" || id == "|" {
+			key := fmt.Sprintf("_anon_%d", len(order))
+			byID[key] = m
+			order = append(order, key)
+			return
+		}
+		if _, exists := byID[id]; !exists {
+			order = append(order, id)
+		}
+		byID[id] = m
+	}
+	for _, item := range localAccounts {
+		appendAcc(item)
+	}
+	for _, item := range remoteAccounts {
+		appendAcc(item)
+	}
+	merged := make([]interface{}, 0, len(order))
+	for _, id := range order {
+		merged = append(merged, byID[id])
+	}
+	out := local
+	for k, v := range remote {
+		if k == "accounts" {
+			continue
+		}
+		out[k] = v
+	}
+	out["accounts"] = merged
+	return json.Marshal(out)
 }
 
 func mergeCodexSyncPayloadWithLocal(configPath string, remoteRaw json.RawMessage) (json.RawMessage, error) {
@@ -1060,12 +1164,14 @@ func (p *ProxyServer) buildWebUISyncRequestData(index int) (*webUISyncRequestDat
 		KiroConfigEncoded  string                  `json:"kiroConfigEncoded,omitempty"`
 		ClashConfigEncoded string                  `json:"clashConfigEncoded,omitempty"`
 		CodexConfigEncoded string                  `json:"codexConfigEncoded,omitempty"`
+		XaiConfigEncoded   string                  `json:"xaiConfigEncoded,omitempty"`
 	}
 	payload := syncPayload{
 		Vendors:            cfg.Vendors,
 		Endpoints:          cfg.Endpoints,
 		KiroConfigEncoded:  encodeSyncPayload(exportKiroSyncPayload(p.getConfigPath())),
 		ClashConfigEncoded: encodeSyncPayload(exportClashSyncPayload(p.getConfigPath())),
+		XaiConfigEncoded:   encodeSyncPayload(exportXaiSyncPayload(p.getConfigPath())),
 	}
 	if raw, err := exportCodexSyncPayload(p.getConfigPath()); err != nil {
 		return nil, fmt.Errorf("failed to export codex sync payload: %w", err)

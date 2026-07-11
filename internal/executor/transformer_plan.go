@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	codexBackend "clisimplehub/internal/codex/backend"
+	xaiBackend "clisimplehub/internal/xai/backend"
 	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/transformer"
 	chat_anthropic "clisimplehub/internal/transformer/chat/anthropic/messages"
 	chat_responses "clisimplehub/internal/transformer/chat/openai/responses"
+	claude_responses "clisimplehub/internal/transformer/claude/openai/responses"
 
 	"github.com/tidwall/gjson"
 )
@@ -27,6 +29,9 @@ func (c *ExecutionContext) BuildTransformationPlan(ctx context.Context, interfac
 
 	if strings.EqualFold(strings.TrimSpace(endpoint.Transformer), "openai/codex") {
 		return c.buildCodexTransformationPlan(ctx, interfaceType, endpoint, req)
+	}
+	if strings.EqualFold(strings.TrimSpace(endpoint.Transformer), "openai/xai") {
+		return c.buildXaiTransformationPlan(ctx, interfaceType, endpoint, req)
 	}
 	if strings.EqualFold(strings.TrimSpace(interfaceType), "chat") && strings.EqualFold(strings.TrimSpace(endpoint.Transformer), "kiro/claude") {
 		return c.buildKiroChatTransformationPlan(ctx, endpoint, req)
@@ -378,4 +383,212 @@ func shouldNormalizeClaudeMessagesRequest(targetInterfaceType, targetPath string
 	}
 	path := strings.ToLower(strings.TrimRight(strings.TrimSpace(targetPath), "/"))
 	return strings.HasSuffix(path, "/v1/messages")
+}
+
+// buildXaiTransformationPlan 对齐 openai/codex，目标上游为 xAI Responses。
+// 支持 claude / chat / codex(responses) → xAI；端点 Models/Routes 经 ResolveUpstreamModel 生效。
+func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest) (*TransformationPlan, *ForwardResult) {
+	if xaiBackend.IsImagesPath(req.Path) || xaiBackend.IsVideosPath(req.Path) {
+		resolvedModel := ResolveUpstreamModel(extractModelFromBody(req.Body), endpoint)
+		if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
+			debugLogger.SetSection("TransformedRequest", string(req.Body))
+		}
+		return &TransformationPlan{
+			TargetInterfaceType: "xai",
+			TargetPath:          req.Path,
+			RawQuery:            req.RawQuery,
+			RequestBody:         append([]byte(nil), req.Body...),
+			IsStreaming:         req.IsStreaming,
+			OutputContentType:   "application/json",
+			StreamInputMode:     StreamInputModeChunk,
+			Context: &TransformContext{
+				OriginalRequestBody:    append([]byte(nil), req.Body...),
+				TransformedRequestBody: append([]byte(nil), req.Body...),
+				Metadata: map[string]any{
+					"request_model":  extractModelFromBody(req.Body),
+					"upstream_model": xaiBackend.BaseModelName(strings.TrimSpace(resolvedModel)),
+					"source_type":    interfaceType,
+				},
+			},
+		}, nil
+	}
+
+	isStreaming := req.IsStreaming
+	if xaiBackend.IsCompactPath(req.Path) {
+		isStreaming = false
+	}
+	resolvedModel := ResolveUpstreamModel(extractModelFromBody(req.Body), endpoint)
+	body := append([]byte(nil), req.Body...)
+
+	var responseTransformer transformer.Transformer
+	requestModel := extractModelFromBody(body)
+	originalBody := append([]byte(nil), body...)
+	sourceType := strings.TrimSpace(interfaceType)
+	enableReplay := false
+
+	// Claude Messages → Responses（interfaceType=claude 优先，避免 messages 被 chat 误判）
+	var originalClaudeBody []byte
+	if strings.EqualFold(sourceType, "claude") || isClaudeMessagesFormat(body, sourceType) {
+		requestModel = extractModelFromBody(body)
+		if strings.TrimSpace(requestModel) == "" {
+			requestModel = xaiBackend.BaseModelName(strings.TrimSpace(resolvedModel))
+		}
+		// 转换前保留 Claude 原文：session / metadata 在 Responses 中会丢失
+		originalClaudeBody = append([]byte(nil), body...)
+		tr := claude_responses.Transformer{}
+		converted, err := tr.TransformRequest(requestModel, body, isStreaming)
+		if err != nil {
+			return nil, &ForwardResult{
+				StatusCode: http.StatusBadRequest,
+				Error:      err,
+				Body: mustJSONBytes(map[string]any{
+					"error": map[string]any{"type": "invalid_request_error", "message": fmt.Sprintf("claude messages conversion failed: %v", err)},
+				}),
+				Headers: http.Header{"Content-Type": []string{"application/json"}},
+			}
+		}
+		body = converted
+		responseTransformer = tr
+		sourceType = "claude"
+		enableReplay = true
+	} else if isChatCompletionsFormat(body) {
+		requestModel = extractModelFromBody(body)
+		if strings.TrimSpace(requestModel) == "" {
+			requestModel = xaiBackend.BaseModelName(strings.TrimSpace(resolvedModel))
+		}
+		tr := chat_responses.Transformer{}
+		converted, err := tr.TransformRequest(requestModel, body, isStreaming)
+		if err != nil {
+			return nil, &ForwardResult{
+				StatusCode: http.StatusBadRequest,
+				Error:      err,
+				Body: mustJSONBytes(map[string]any{
+					"error": map[string]any{"type": "invalid_request_error", "message": fmt.Sprintf("chat completions conversion failed: %v", err)},
+				}),
+				Headers: http.Header{"Content-Type": []string{"application/json"}},
+			}
+		}
+		body = converted
+		responseTransformer = tr
+		if sourceType == "" {
+			sourceType = "chat"
+		}
+	} else if strings.TrimSpace(requestModel) == "" {
+		requestModel = xaiBackend.BaseModelName(strings.TrimSpace(resolvedModel))
+	}
+	if sourceType == "" {
+		sourceType = "codex"
+	}
+
+	suffixModel := requestModel
+	if strings.TrimSpace(resolvedModel) != "" {
+		suffixModel = strings.TrimSpace(resolvedModel)
+	}
+	sessionID := ""
+	if req.Headers != nil {
+		sessionID = strings.TrimSpace(req.Headers.Get("x-grok-conv-id"))
+	}
+	// Claude session 必须用原始 Messages body（metadata.user_id / X-Claude-Code-Session-Id）
+	replayKey := xaiBackend.ResolveReplaySessionKeyWithClaude(body, originalClaudeBody, req.Headers, sessionID)
+	if replayKey == "" && enableReplay {
+		// 仍无 session 时不写 cache key，避免跨会话串扰
+		enableReplay = false
+	}
+	prepared, err := xaiBackend.PrepareResponsesBody(body, xaiBackend.PrepareOptions{
+		Stream:           isStreaming,
+		Model:            suffixModel,
+		SessionID:        sessionID,
+		IsCompact:        xaiBackend.IsCompactPath(req.Path),
+		EnableReplay:     enableReplay,
+		ReplaySessionKey: replayKey,
+	})
+	if err != nil {
+		return nil, &ForwardResult{
+			StatusCode: http.StatusBadRequest,
+			Error:      err,
+			Body: mustJSONBytes(map[string]any{
+				"error": map[string]any{"type": "invalid_request_error", "message": err.Error()},
+			}),
+			Headers: http.Header{"Content-Type": []string{"application/json"}},
+		}
+	}
+	body = prepared.Body
+	upstreamModel := prepared.BaseModel
+	if upstreamModel == "" {
+		upstreamModel = xaiBackend.BaseModelName(suffixModel)
+	}
+
+	if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
+		debugLogger.SetSection("TransformedRequest", string(body))
+	}
+
+	targetPath := "/xai/v1/responses"
+	if xaiBackend.IsCompactPath(req.Path) {
+		targetPath = "/xai/v1/responses/compact"
+	}
+
+	plan := &TransformationPlan{
+		Transformer:         responseTransformer,
+		TargetInterfaceType: "xai",
+		TargetPath:          targetPath,
+		RawQuery:            req.RawQuery,
+		RequestBody:         body,
+		IsStreaming:         isStreaming,
+		OutputContentType:   outputContentTypeForCodex(responseTransformer != nil, isStreaming),
+		StreamInputMode:     StreamInputModeLine,
+		Context: &TransformContext{
+			OriginalRequestBody:    originalBody,
+			TransformedRequestBody: append([]byte(nil), body...),
+			Metadata: map[string]any{
+				"request_model":                      requestModel,
+				"upstream_model":                     upstreamModel,
+				"source_type":                        sourceType,
+				"chat_conversion":                    responseTransformer != nil,
+				"response_transform_on_success_only": true,
+				"xai_session_id":                     prepared.SessionID,
+				"enable_xai_replay":                  enableReplay,
+				"xai_replay_session":                 prepared.ReplayScope.SessionKey,
+			},
+		},
+	}
+	return plan, nil
+}
+
+// isClaudeMessagesFormat 区分 Anthropic messages 与 OpenAI chat completions。
+func isClaudeMessagesFormat(body []byte, interfaceType string) bool {
+	if strings.EqualFold(strings.TrimSpace(interfaceType), "claude") {
+		return gjson.GetBytes(body, "messages").Exists()
+	}
+	// Anthropic 特征：input_schema 工具、system 为数组、anthropic-version 不在 body
+	if !gjson.GetBytes(body, "messages").Exists() || gjson.GetBytes(body, "input").Exists() {
+		return false
+	}
+	// tools[].input_schema 是 Claude 形态；chat 用 parameters
+	tools := gjson.GetBytes(body, "tools")
+	if tools.IsArray() {
+		for _, t := range tools.Array() {
+			if t.Get("input_schema").Exists() {
+				return true
+			}
+		}
+	}
+	// system 为 content block 数组
+	if sys := gjson.GetBytes(body, "system"); sys.IsArray() {
+		return true
+	}
+	// max_tokens 存在且无 stream_options（弱启发）
+	if gjson.GetBytes(body, "max_tokens").Exists() && !gjson.GetBytes(body, "max_completion_tokens").Exists() {
+		// 进一步：messages[].content 为数组块
+		for _, m := range gjson.GetBytes(body, "messages").Array() {
+			if m.Get("content").IsArray() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func mustJSONBytes(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
