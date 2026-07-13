@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	codexBackend "clisimplehub/internal/codex/backend"
 	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/usage"
 )
@@ -65,10 +66,7 @@ func (c *ExecutionContext) FinalizeTransformation(ctx context.Context, w http.Re
 	}
 
 	result.StatusCode = upstream.StatusCode
-	result.Headers = cloneHTTPHeader(upstream.Headers)
-	if shouldSanitizeUpstreamResponseHeaders(plan) {
-		result.Headers = safeUpstreamResponseHeaders(result.Headers)
-	}
+	result.Headers = safeUpstreamResponseHeadersForPlan(plan, cloneHTTPHeader(upstream.Headers))
 	result.TargetURL = strings.TrimSpace(upstream.TargetURL)
 	result.TargetHeaders = cloneStringMap(upstream.TargetHeaders)
 	result.Tokens = upstream.Tokens
@@ -240,10 +238,7 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 func handleLineStreamingResponse(ctx context.Context, w http.ResponseWriter, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
 	debugLogger := DebugLoggerFromContext(ctx)
 
-	responseHeaders := upstream.Headers
-	if shouldSanitizeUpstreamResponseHeaders(plan) {
-		responseHeaders = safeUpstreamResponseHeaders(responseHeaders)
-	}
+	responseHeaders := safeUpstreamResponseHeadersForPlan(plan, upstream.Headers)
 	for key, values := range responseHeaders {
 		switch strings.ToLower(key) {
 		case "content-length", "content-encoding", "content-type":
@@ -273,6 +268,11 @@ func handleLineStreamingResponse(ctx context.Context, w http.ResponseWriter, ups
 	var capture strings.Builder
 	var rawCapture strings.Builder
 	var upstreamCapture limitedByteBuffer
+	useResponsesFramer := plan.Transformer == nil && isResponsesPassthroughPlan(plan)
+	var responsesFramer *codexBackend.ResponsesSSEFramer
+	if useResponsesFramer {
+		responsesFramer = &codexBackend.ResponsesSSEFramer{}
+	}
 
 readLoop:
 	for scanner.Scan() {
@@ -294,13 +294,18 @@ readLoop:
 		}
 
 		if plan.Transformer == nil {
-			if _, err := w.Write(line); err != nil {
-				result.Error = fmt.Errorf("downstream write failed: %w", err)
-				break
-			}
-			if _, err := w.Write([]byte("\n")); err != nil {
-				result.Error = fmt.Errorf("downstream write failed: %w", err)
-				break
+			if useResponsesFramer {
+				frame := append(append([]byte(nil), line...), '\n')
+				responsesFramer.WriteChunk(w, frame)
+			} else {
+				if _, err := w.Write(line); err != nil {
+					result.Error = fmt.Errorf("downstream write failed: %w", err)
+					break
+				}
+				if _, err := w.Write([]byte("\n")); err != nil {
+					result.Error = fmt.Errorf("downstream write failed: %w", err)
+					break
+				}
 			}
 			capture.Write(line)
 			capture.WriteByte('\n')
@@ -328,6 +333,10 @@ readLoop:
 
 	if err := scanner.Err(); err != nil && result.Error == nil {
 		result.Error = err
+	}
+	if useResponsesFramer && responsesFramer != nil {
+		responsesFramer.Flush(w)
+		flusher.Flush()
 	}
 	if result.Error == nil && plan.Transformer != nil {
 		outs, trErr := plan.Transformer.TransformResponseStream(ctx, planRequestModel(plan), plan.Context.OriginalRequestBody, plan.Context.TransformedRequestBody, nil, &plan.Context.StreamState)
@@ -364,22 +373,78 @@ readLoop:
 	return result
 }
 
-func shouldSanitizeUpstreamResponseHeaders(plan *TransformationPlan) bool {
-	if plan == nil || plan.Context == nil || plan.Context.Metadata == nil {
-		return false
-	}
-	v, _ := plan.Context.Metadata["sanitize_upstream_response_headers"].(bool)
-	return v
-}
-
-func safeUpstreamResponseHeaders(headers http.Header) http.Header {
-	out := make(http.Header)
-	for _, key := range []string{"Content-Type", "Cache-Control", "Retry-After"} {
-		for _, value := range headers.Values(key) {
-			out.Add(key, value)
+// safeUpstreamResponseHeadersForPlan 过滤下游响应头：
+// - metadata sanitize=true：xAI 严格白名单
+// - 默认：CLI 风格 hop-by-hop / 网关指纹过滤
+func safeUpstreamResponseHeadersForPlan(plan *TransformationPlan, headers http.Header) http.Header {
+	if plan != nil && plan.Context != nil && plan.Context.Metadata != nil {
+		if v, _ := plan.Context.Metadata["sanitize_upstream_response_headers"].(bool); v {
+			// xAI：仅保留安全白名单，防止账号等内部头泄漏。
+			out := make(http.Header)
+			for _, key := range []string{"Content-Type", "Cache-Control", "Retry-After"} {
+				for _, value := range headers.Values(key) {
+					out.Add(key, value)
+				}
+			}
+			return out
 		}
 	}
-	return out
+	return filterUpstreamResponseHeadersLocal(headers)
+}
+
+var gatewayHeaderPrefixes = []string{
+	"x-litellm-",
+	"helicone-",
+	"x-portkey-",
+	"cf-aig-",
+	"x-kong-",
+	"x-bt-",
+}
+
+var hopByHopResponseHeaders = map[string]struct{}{
+	"Connection": {}, "Keep-Alive": {}, "Proxy-Authenticate": {}, "Proxy-Authorization": {},
+	"Te": {}, "Trailer": {}, "Transfer-Encoding": {}, "Upgrade": {},
+	"Set-Cookie": {}, "Content-Length": {}, "Content-Encoding": {},
+}
+
+func filterUpstreamResponseHeadersLocal(src http.Header) http.Header {
+	if src == nil {
+		return nil
+	}
+	scoped := map[string]struct{}{}
+	for _, raw := range src.Values("Connection") {
+		for _, token := range strings.Split(raw, ",") {
+			if name := strings.TrimSpace(token); name != "" {
+				scoped[http.CanonicalHeaderKey(name)] = struct{}{}
+			}
+		}
+	}
+	dst := make(http.Header)
+	for key, values := range src {
+		canonical := http.CanonicalHeaderKey(key)
+		if _, blocked := hopByHopResponseHeaders[canonical]; blocked {
+			continue
+		}
+		if _, s := scoped[canonical]; s {
+			continue
+		}
+		lower := strings.ToLower(key)
+		skip := false
+		for _, prefix := range gatewayHeaderPrefixes {
+			if strings.HasPrefix(lower, prefix) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		dst[key] = append([]string(nil), values...)
+	}
+	if len(dst) == 0 {
+		return nil
+	}
+	return dst
 }
 
 func handleChunkStreamingResponse(ctx context.Context, w http.ResponseWriter, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
@@ -388,10 +453,7 @@ func handleChunkStreamingResponse(ctx context.Context, w http.ResponseWriter, up
 	captureUpstream := shouldCaptureUpstreamResponseBody(ctx) || debugLogger != nil
 	captureResponse := !isOpenAIImages
 
-	responseHeaders := upstream.Headers
-	if shouldSanitizeUpstreamResponseHeaders(plan) {
-		responseHeaders = safeUpstreamResponseHeaders(responseHeaders)
-	}
+	responseHeaders := safeUpstreamResponseHeadersForPlan(plan, upstream.Headers)
 	for key, values := range responseHeaders {
 		switch strings.ToLower(key) {
 		case "content-length", "content-encoding", "content-type":
@@ -805,4 +867,13 @@ func cloneStringMap(src map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+
+func isResponsesPassthroughPlan(plan *TransformationPlan) bool {
+	if plan == nil {
+		return false
+	}
+	path := strings.ToLower(strings.TrimRight(strings.TrimSpace(plan.TargetPath), "/"))
+	return strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/responses/compact")
 }

@@ -13,7 +13,7 @@ const (
 	ConsoleCluster = "https://us-east-1.api.x.ai"
 )
 
-// 对外模型名 → console.x.ai model 字段（对齐 grok2api CONSOLE_MODELS）。
+// 对外模型名 → console.x.ai model 字段
 var consoleModelMap = map[string]string{
 	"grok-4.3-console":                     "grok-4.3",
 	"grok-4.3-low":                         "grok-4.3",

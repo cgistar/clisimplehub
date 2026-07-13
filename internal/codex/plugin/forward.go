@@ -168,13 +168,10 @@ func writeUpstreamRoundTripHTTPResult(w http.ResponseWriter, result *executor.Up
 		http.Error(w, `{"error":"codex request failed"}`, http.StatusBadGateway)
 		return
 	}
-	for key, values := range result.Headers {
-		if strings.EqualFold(key, "Content-Length") {
-			continue
-		}
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
+	// 下游响应头：剥离 hop-by-hop / 网关指纹，不覆盖本侧已设 Content-Type。
+	proxy.WriteUpstreamResponseHeaders(w.Header(), result.Headers)
+	if ct := result.Headers.Get("Content-Type"); ct != "" && w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", ct)
 	}
 	statusCode := result.StatusCode
 	if statusCode <= 0 {
@@ -185,17 +182,20 @@ func writeUpstreamRoundTripHTTPResult(w http.ResponseWriter, result *executor.Up
 		w.WriteHeader(statusCode)
 		buf := make([]byte, 32*1024)
 		flusher, _ := w.(http.Flusher)
+		framer := &codexBackend.ResponsesSSEFramer{}
 		for {
 			n, readErr := result.Stream.Read(buf)
 			if n > 0 {
-				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-					return
-				}
+				framer.WriteChunk(w, buf[:n])
 				if flusher != nil {
 					flusher.Flush()
 				}
 			}
 			if readErr != nil {
+				framer.Flush(w)
+				if flusher != nil {
+					flusher.Flush()
+				}
 				return
 			}
 		}

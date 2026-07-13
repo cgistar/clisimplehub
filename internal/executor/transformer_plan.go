@@ -211,8 +211,33 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 	var responseTransformer transformer.Transformer
 	requestModel := extractModelFromBody(body)
 	originalBody := append([]byte(nil), body...)
+	sourceType := strings.TrimSpace(interfaceType)
 
-	if isChatCompletionsFormat(body) {
+	// Claude Messages 优先（与 xAI plan 一致），避免 messages 被 chat 误判。
+	if strings.EqualFold(sourceType, "claude") || isClaudeMessagesFormat(body, sourceType) {
+		requestModel = extractModelFromBody(body)
+		if strings.TrimSpace(requestModel) == "" {
+			requestModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
+		}
+		tr := claude_responses.Transformer{}
+		converted, err := tr.TransformRequest(requestModel, body, isStreaming)
+		if err != nil {
+			if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
+				debugLogger.Log("Claude Messages 请求转换失败: %v", err)
+			}
+			return nil, buildCodexInvalidRequestError(fmt.Sprintf("claude messages conversion failed: %v", err), err)
+		}
+		if rewritten, changed := codexBackend.ApplySuffixThinking(converted, suffixModel); changed {
+			converted = rewritten
+		}
+		normalizedBody, result := normalizeResponsesBodyForCodex(converted, req.Path, userAgent)
+		if result != nil {
+			return nil, result
+		}
+		body = normalizedBody
+		responseTransformer = tr
+		sourceType = codexBackend.SourceClaude
+	} else if isChatCompletionsFormat(body) {
 		requestModel = extractModelFromBody(body)
 		if strings.TrimSpace(requestModel) == "" {
 			requestModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
@@ -235,6 +260,9 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 		}
 		body = normalizedBody
 		responseTransformer = tr
+		if sourceType == "" {
+			sourceType = "chat"
+		}
 	} else {
 		normalizedBody, result := normalizeResponsesBodyForCodex(body, req.Path, userAgent)
 		if result != nil {
@@ -246,6 +274,9 @@ func (c *ExecutionContext) buildCodexTransformationPlan(ctx context.Context, int
 		}
 		if strings.TrimSpace(requestModel) == "" {
 			requestModel = codexBackend.BaseModelName(strings.TrimSpace(resolvedModel))
+		}
+		if sourceType == "" {
+			sourceType = "codex"
 		}
 	}
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// 对齐 grok2api：x-statsig-id = Base64(伪造的 JS TypeError 指纹字符串)。
+// x-statsig-id = Base64(伪造的 JS TypeError 指纹字符串)。
 // 静态兜底与浏览器/旧版抓包常见值一致。
 const staticStatsigID = "ZTpUeXBlRXJyb3I6IENhbm5vdCByZWFkIHByb3BlcnRpZXMgb2YgdW5kZWZpbmVkIChyZWFkaW5nICdjaGlsZE5vZGVzJyk="
 

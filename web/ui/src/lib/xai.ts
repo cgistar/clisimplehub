@@ -291,7 +291,7 @@ export function getXaiStatus(account: XaiAccount): { label: string; variant: str
   }
 }
 
-/** 对齐桌面 XaiAccountCard：Token 2h / Token 3d / Token 已过期 */
+/** Token 2h / Token 3d / Token 已过期 */
 export function getXaiExpireInfo(account: XaiAccount, nowMs: number = Date.now()): { text: string; expired: boolean } {
   const raw = String(account.expiresAt || '').trim()
   if (!raw) return { text: '', expired: false }

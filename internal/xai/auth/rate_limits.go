@@ -19,7 +19,7 @@ import (
 
 const rateLimitsURL = "https://grok.com/rest/rate-limits"
 
-// modelName 与 grok.com/rest/rate-limits 对齐（bootstrap 探测用）。
+// modelName 与 grok.com/rest/rate-limits
 var bootstrapModelNames = []string{
 	"auto",
 	"fast",
@@ -70,7 +70,7 @@ func FetchRateLimit(ctx context.Context, sso, proxyURL, modelName string, opts R
 	req.Header.Set("Origin", "https://grok.com")
 	req.Header.Set("Referer", "https://grok.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-	// 对齐 grok2api reverse headers：x-statsig-id + x-xai-request-id
+	// x-statsig-id + x-xai-request-id
 	req.Header.Set(HeaderStatsigID, GenerateStatsigID(opts.DynamicStatsig))
 	req.Header.Set(HeaderXAIRequestID, uuid.NewString())
 	req.Header.Set("Cookie", buildSSOCookie(sso))

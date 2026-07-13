@@ -1374,7 +1374,7 @@ func fetchCodexUsageFromHeaders(ctx context.Context, accessToken, accountID, pro
 	}
 
 	body := []byte(`{"model":"gpt-5.6-luna","reasoning":{"effort":"medium"},"instructions":"You are Codex, based on GPT-5.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Say 'OK' only"}]}],"stream":true,"store":false}`)
-	req, _, _, _, err := codexBackend.Prepare(ctx, codexBackend.Request{
+	req, _, _, _, _, err := codexBackend.Prepare(ctx, codexBackend.Request{
 		Method:      http.MethodPost,
 		Path:        "/v1/responses",
 		Source:      codexBackend.SourceCodex,

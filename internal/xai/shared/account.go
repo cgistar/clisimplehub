@@ -108,7 +108,7 @@ type XaiConfig struct {
 	TokenAuth string `json:"tokenAuth,omitempty"`
 	// ClientSurface maps to x-grok-client-surface (default grok-cli).
 	ClientSurface string `json:"clientSurface,omitempty"`
-	// DynamicStatsig：nil/缺省=true，对齐 grok2api features.dynamic_statsig。
+	// DynamicStatsig：nil/缺省=true
 	// 控制 grok.com rate-limits 等请求的 x-statsig-id 是否动态生成。
 	DynamicStatsig *bool             `json:"dynamicStatsig,omitempty"`
 	CustomHeaders  map[string]string `json:"customHeaders,omitempty"`

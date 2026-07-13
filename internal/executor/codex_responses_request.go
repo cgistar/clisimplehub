@@ -56,11 +56,26 @@ func applyCodexResponsesHeaders(req *http.Request, src http.Header, isStreaming 
 		req.Header.Set("Version", version)
 	}
 
-	sessionID := strings.TrimSpace(src.Get("Session_id"))
-	if sessionID == "" {
-		sessionID = uuid.NewString()
+	// UA：客户端透传 → 默认
+	userAgent := ""
+	if src != nil {
+		userAgent = strings.TrimSpace(src.Get("User-Agent"))
 	}
-	req.Header.Set("Session_id", sessionID)
+	if userAgent == "" {
+		userAgent = codexShared.DefaultCodexUserAgent
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	// Session_id：仅 Mac UA Ensure。
+	if strings.Contains(userAgent, "Mac OS") {
+		sessionID := strings.TrimSpace(src.Get("Session_id"))
+		if sessionID == "" {
+			sessionID = uuid.NewString()
+		}
+		req.Header.Set("Session_id", sessionID)
+	} else if sessionID := strings.TrimSpace(src.Get("Session_id")); sessionID != "" {
+		req.Header.Set("Session_id", sessionID)
+	}
 
 	if openAIBeta := strings.TrimSpace(src.Get("Openai-Beta")); openAIBeta != "" {
 		req.Header.Set("Openai-Beta", openAIBeta)
@@ -70,7 +85,6 @@ func applyCodexResponsesHeaders(req *http.Request, src http.Header, isStreaming 
 	copyCodexHeaderIfPresent(req.Header, src, "X-Client-Request-Id")
 	copyCodexHeaderIfPresent(req.Header, src, "Originator")
 
-	req.Header.Set("User-Agent", codexShared.DefaultCodexUserAgent)
 	req.Header.Set("Connection", "Keep-Alive")
 	if isStreaming {
 		req.Header.Set("Accept", "text/event-stream")

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	codexShared "clisimplehub/internal/codex/shared"
-	appmiddleware "clisimplehub/internal/middleware"
 
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -57,10 +56,11 @@ type promptCacheEntry struct {
 	Expire time.Time
 }
 
-func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePreparedRequest, IdentityState, error) {
+func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePreparedRequest, IdentityState, ReplayScope, error) {
 	body := append([]byte(nil), req.Body...)
 	path := TargetPath(req.Path)
 	var imageMeta *imagePreparedRequest
+	var replayScope ReplayScope
 	if IsImagesPath(req.Path) {
 		path = "/responses"
 	}
@@ -70,7 +70,7 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 		body = finalizeCompactBody(body, req.Model, resolveImageGenMode(req.DisableImageGeneration))
 	} else if IsImagesPath(req.Path) {
 		if resolveImageGenMode(req.DisableImageGeneration) == ImageGenAll {
-			return nil, nil, nil, IdentityState{}, StatusError{
+			return nil, nil, nil, IdentityState{}, ReplayScope{}, StatusError{
 				Code: http.StatusNotFound,
 				Body: []byte(`{"error":{"message":"image generation is disabled (disable-image-generation=all)","type":"invalid_request_error"}}`),
 			}
@@ -90,10 +90,16 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 			}
 		}
 		if err != nil {
-			return nil, nil, nil, IdentityState{}, err
+			return nil, nil, nil, IdentityState{}, ReplayScope{}, err
 		}
 	} else {
 		body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration))
+	}
+
+	// Claude→Codex：在 finalize 后注入 reasoning replay
+	if IsClaudeSource(req.Source) && !IsImagesPath(req.Path) && !IsCompactPath(req.Path) {
+		sessionKey := ResolveReplaySessionKeyWithClaude(body, req.OriginalBody, req.Headers, req.ReplaySessionKey)
+		body, replayScope = ApplyReasoningReplay(body, req.Model, sessionKey, true)
 	}
 
 	targetURL := UpstreamURL(req.Config, path)
@@ -101,10 +107,16 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 	body, headers, identityState := applyIdentityConfuse(req.LocalAccountID, body, headers)
 	httpReq, err := http.NewRequestWithContext(ctx, methodOrPost(req.Method), targetURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, nil, nil, IdentityState{}, err
+		return nil, nil, nil, IdentityState{}, ReplayScope{}, err
 	}
-	ApplyHeaders(httpReq, req.AccessToken, req.AccountID, req.IsStreaming || IsImagesPath(req.Path), req.Config, headers)
-	return httpReq, body, imageMeta, identityState, nil
+	// 图片直连不转发客户端 UA，降低 Cloudflare 1010。
+	clientHeaders := headers
+	if IsImagesPath(req.Path) && clientHeaders != nil {
+		clientHeaders = clientHeaders.Clone()
+		clientHeaders.Del("User-Agent")
+	}
+	ApplyHeaders(httpReq, req.AccessToken, req.AccountID, req.IsStreaming || IsImagesPath(req.Path), req.Config, clientHeaders)
+	return httpReq, body, imageMeta, identityState, replayScope, nil
 }
 
 func PrepareWebsocket(ctx context.Context, req Request) ([]byte, http.Header, IdentityState, error) {
@@ -194,6 +206,8 @@ func finalizeResponsesBody(body []byte, model string, planType string, imageGenM
 	body, _ = sjson.SetBytes(body, "stream", true)
 	body = deleteUnsupportedFields(body)
 	body = normalizeInstructions(body)
+	body = sanitizeReasoningEncryptedContent(body)
+	body = normalizeParallelToolCallsForTools(body)
 	return applyImageGenerationPolicy(body, baseModel, planType, imageGenMode)
 }
 
@@ -208,6 +222,8 @@ func finalizeCompactBody(body []byte, model string, imageGenMode string) []byte 
 	body, _ = sjson.DeleteBytes(body, "stream")
 	body = deleteUnsupportedFields(body)
 	body = normalizeInstructions(body)
+	body = sanitizeReasoningEncryptedContent(body)
+	body = normalizeParallelToolCallsForTools(body)
 	return applyImageGenerationPolicy(body, baseModel, "", imageGenMode)
 }
 
@@ -230,7 +246,6 @@ func deleteUnsupportedFields(body []byte) []byte {
 		"prompt_cache_retention",
 		"safety_identifier",
 		"stream_options",
-		"context_management",
 	} {
 		body, _ = sjson.DeleteBytes(body, field)
 	}
@@ -242,6 +257,58 @@ func normalizeInstructions(body []byte) []byte {
 	if !instructions.Exists() || instructions.Type == gjson.Null {
 		body, _ = sjson.SetBytes(body, "instructions", "")
 	}
+	return body
+}
+
+// sanitizeReasoningEncryptedContent 删除 input 中非法 reasoning.encrypted_content，
+// 避免上游因脏签名直接 400（对齐 CLIProxyAPI）。
+func sanitizeReasoningEncryptedContent(body []byte) []byte {
+	input := gjson.GetBytes(body, "input")
+	if !input.Exists() || !input.IsArray() {
+		return body
+	}
+	updated := body
+	for index, item := range input.Array() {
+		if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+			continue
+		}
+		path := fmt.Sprintf("input.%d.encrypted_content", index)
+		encrypted := gjson.GetBytes(updated, path)
+		if !encrypted.Exists() {
+			continue
+		}
+		invalid := false
+		switch encrypted.Type {
+		case gjson.String:
+			raw := encrypted.String()
+			if raw != strings.TrimSpace(raw) || InspectGPTReasoningSignature(raw) != nil {
+				invalid = true
+			}
+		case gjson.Null:
+			invalid = true
+		default:
+			invalid = true
+		}
+		if !invalid {
+			continue
+		}
+		if next, err := sjson.DeleteBytes(updated, path); err == nil {
+			updated = next
+		}
+	}
+	return updated
+}
+
+// normalizeParallelToolCallsForTools：无 tools 时剥离 parallel_tool_calls，避免上游拒识。
+func normalizeParallelToolCallsForTools(body []byte) []byte {
+	if !gjson.GetBytes(body, "parallel_tool_calls").Exists() {
+		return body
+	}
+	tools := gjson.GetBytes(body, "tools")
+	if tools.Exists() && tools.IsArray() && len(tools.Array()) > 0 {
+		return body
+	}
+	body, _ = sjson.DeleteBytes(body, "parallel_tool_calls")
 	return body
 }
 
@@ -305,6 +372,7 @@ func ApplyHeaders(req *http.Request, accessToken, accountID string, isStreaming 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
+	// 主集合 Version / Beta / Turn-Metadata / Request-Id / UA / Session(Mac) / Originator。
 	filtered := FilterClientHeaders(clientHeaders)
 	if val := filtered.Get("X-Codex-Beta-Features"); val != "" {
 		req.Header.Set("X-Codex-Beta-Features", val)
@@ -321,16 +389,20 @@ func ApplyHeaders(req *http.Request, accessToken, accountID string, isStreaming 
 		req.Header.Set("X-Client-Request-Id", val)
 	}
 
-	userAgent := codexShared.DefaultCodexUserAgent
+	// UA：配置优先 → 客户端透传 → 默认（不再强制伪装 DefaultCodexUserAgent）。
+	userAgent := ""
 	if config != nil {
-		userAgent = config.GetUserAgent()
+		userAgent = strings.TrimSpace(config.GetUserAgent())
 	}
-	if config == nil || strings.TrimSpace(config.Config.UserAgent) == "" {
-		if clientUserAgent := strings.TrimSpace(clientHeaders.Get("User-Agent")); appmiddleware.IsCodexCLI(clientUserAgent) {
-			userAgent = clientUserAgent
-		}
+	if userAgent == "" && clientHeaders != nil {
+		userAgent = strings.TrimSpace(clientHeaders.Get("User-Agent"))
+	}
+	if userAgent == "" {
+		userAgent = codexShared.DefaultCodexUserAgent
 	}
 	req.Header.Set("User-Agent", userAgent)
+
+	// Session_id：仅 Mac UA 时 Ensure（透传或生成）
 	if strings.Contains(userAgent, "Mac OS") {
 		if val := filtered.Get("Session_id"); val != "" {
 			req.Header.Set("Session_id", val)
@@ -340,10 +412,6 @@ func ApplyHeaders(req *http.Request, accessToken, accountID string, isStreaming 
 	} else if val := filtered.Get("Session_id"); val != "" {
 		req.Header.Set("Session_id", val)
 	}
-	copyHeaderIfPresent(req.Header, filtered, "Session-Id")
-	copyHeaderIfPresent(req.Header, filtered, "Conversation_id")
-	copyHeaderIfPresent(req.Header, filtered, "Thread-Id")
-	copyHeaderIfPresent(req.Header, filtered, "X-Codex-Window-Id")
 
 	if isStreaming {
 		req.Header.Set("Accept", "text/event-stream")
@@ -418,16 +486,13 @@ func FilterClientHeaders(clientHeaders http.Header) http.Header {
 	if clientHeaders == nil {
 		return filtered
 	}
+	// 上游透传主集合；Window/Conversation 仍可读作 replay sessionKey，但不强制写上游。
 	for _, key := range []string{
 		"Version",
 		"Session_id",
-		"Session-Id",
-		"Conversation_id",
 		"X-Codex-Beta-Features",
 		"X-Codex-Turn-Metadata",
 		"X-Client-Request-Id",
-		"Thread-Id",
-		"X-Codex-Window-Id",
 		"Originator",
 	} {
 		if val := strings.TrimSpace(headerValueCaseInsensitive(clientHeaders, key)); val != "" {

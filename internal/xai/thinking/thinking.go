@@ -1,4 +1,4 @@
-// Package thinking 提供 xAI Responses 的完整 thinking 配置管线（对齐 CLIProxyAPI ApplyThinking）。
+// Package thinking 提供 xAI Responses 的完整 thinking 配置管线
 package thinking
 
 import (
@@ -321,7 +321,7 @@ var standardLevelOrder = []ThinkingLevel{
 	LevelMinimal, LevelLow, LevelMedium, LevelHigh, LevelXHigh, LevelMax,
 }
 
-// ValidateConfig 按模型能力校验并规范化（对齐 CLIProxyAPI）。
+// ValidateConfig 按模型能力校验并规范化
 func ValidateConfig(config ThinkingConfig, modelInfo *ModelInfo, fromFormat, toFormat string, fromSuffix bool) (*ThinkingConfig, error) {
 	fromFormat = strings.ToLower(strings.TrimSpace(fromFormat))
 	toFormat = strings.ToLower(strings.TrimSpace(toFormat))
@@ -761,7 +761,7 @@ func parseEffortValue(raw string) ThinkingConfig {
 	return ThinkingConfig{Mode: ModeLevel, Level: ThinkingLevel(strings.ToLower(raw))}
 }
 
-// applyCodex 写入 reasoning.effort（对齐 CPA codex/xai applier）。
+// applyCodex 写入 reasoning.effort
 func applyCodex(body []byte, config ThinkingConfig, modelInfo *ModelInfo) ([]byte, error) {
 	if IsUserDefinedModel(modelInfo) {
 		return applyCompatibleCodex(body, config)

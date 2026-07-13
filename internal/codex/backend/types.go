@@ -12,6 +12,7 @@ const (
 	SourceCodex       = "codex"
 	SourceOpenAI      = "openai"
 	SourceOpenAIImage = "openai-image"
+	SourceClaude      = "claude"
 
 	ImagesGenerationsPath = "/v1/images/generations"
 	ImagesEditsPath       = "/v1/images/edits"
@@ -36,6 +37,9 @@ type Request struct {
 	PlanType               string
 	DisableImageGeneration string
 
+	// ReplaySessionKey 可选显式 session；空则从 body/headers/OriginalBody 解析。
+	ReplaySessionKey string
+
 	Attempts   int
 	RetryDelay time.Duration
 }
@@ -49,6 +53,7 @@ type Result struct {
 	TargetHeaders map[string]string
 	RequestBody   []byte
 	Error         error
+	ReplayScope   ReplayScope
 }
 
 type IdentityState struct {
@@ -57,7 +62,6 @@ type IdentityState struct {
 	originalPromptCacheKey string
 	promptCacheKey         string
 	turnIDs                []identityReplacement
-	installations          []identityReplacement
 }
 
 type identityReplacement struct {

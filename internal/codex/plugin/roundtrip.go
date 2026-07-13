@@ -255,6 +255,9 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 	if strings.EqualFold(source, "chat") {
 		source = codexBackend.SourceOpenAI
 	}
+	if strings.EqualFold(source, "claude") {
+		source = codexBackend.SourceClaude
+	}
 	if codexBackend.IsImagesPath(requestPath) {
 		source = codexBackend.SourceOpenAIImage
 	}

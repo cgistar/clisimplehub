@@ -19,7 +19,7 @@ import (
 )
 
 // HandleConsoleImagesGenerations POST /xai/console/v1/images/generations
-// 对齐 grok2api：wss://grok.com/ws/imagine/listen + SSO。
+// wss://grok.com/ws/imagine/listen + SSO。
 func (s *XaiService) HandleConsoleImagesGenerations(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -79,7 +79,7 @@ func (s *XaiService) HandleConsoleImagesGenerations(w http.ResponseWriter, r *ht
 
 // HandleConsoleImagesEdits POST /xai/console/v1/images/edits
 // JSON 体：{model,prompt,image|images:[dataURI],n,response_format}
-// 对齐 grok2api：upload + media/post/create + app-chat imagine-image-edit。
+// upload + media/post/create + app-chat imagine-image-edit。
 func (s *XaiService) HandleConsoleImagesEdits(w http.ResponseWriter, r *http.Request) {
 	// 支持 JSON 与 multipart（简化：优先 JSON）
 	ct := strings.ToLower(r.Header.Get("Content-Type"))
@@ -418,7 +418,7 @@ func (s *XaiService) runConsoleVideoJob(jobID, prompt, aspect, resolution string
 }
 
 // HandleConsoleVideosGet GET /xai/console/v1/videos/{id}
-// 查询异步视频任务状态（对齐 grok2api GET /v1/videos/{video_id}）。
+// 查询异步视频任务状态
 func (s *XaiService) HandleConsoleVideosGet(w http.ResponseWriter, r *http.Request) {
 	id := videoIDFromPath(r.URL.Path)
 	if id == "" {
@@ -434,7 +434,7 @@ func (s *XaiService) HandleConsoleVideosGet(w http.ResponseWriter, r *http.Reque
 }
 
 // HandleConsoleVideosContent GET /xai/console/v1/videos/{id}/content
-// 获取最终视频文件（mp4 字节流）。对齐 grok2api GET /v1/videos/{id}/content。
+// 获取最终视频文件（mp4 字节流）。
 // 优先使用任务内缓存；否则用 basic+SSO 从 grok CDN 拉取后回写。
 func (s *XaiService) HandleConsoleVideosContent(w http.ResponseWriter, r *http.Request) {
 	id := videoIDFromPath(strings.TrimSuffix(r.URL.Path, "/content"))

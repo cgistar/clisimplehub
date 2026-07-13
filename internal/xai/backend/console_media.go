@@ -290,7 +290,7 @@ func BuildLiteImageChatPayload(prompt string, n int) map[string]any {
 	}
 }
 
-// BuildImageEditPayload 对齐 grok2api imagine-image-edit。
+// BuildImageEditPayload
 func BuildImageEditPayload(prompt string, imageRefs []string, parentPostID string) map[string]any {
 	return map[string]any{
 		"temporary":                 true,
