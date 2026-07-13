@@ -7,20 +7,20 @@ import (
 
 // ConsoleVideoJob 异步视频任务（内存，进程内）。
 type ConsoleVideoJob struct {
-	ID                 string `json:"id"`
-	Object             string `json:"object"`
-	Model              string `json:"model"`
-	Status             string `json:"status"` // queued|in_progress|completed|failed
-	Progress           int    `json:"progress"`
-	CreatedAt          int64  `json:"created_at"`
-	CompletedAt        int64  `json:"completed_at,omitempty"`
-	Prompt             string `json:"prompt,omitempty"`
-	Seconds            string `json:"seconds,omitempty"`
-	Size               string `json:"size,omitempty"`
-	VideoURL           string `json:"video_url,omitempty"`
+	ID          string `json:"id"`
+	Object      string `json:"object"`
+	Model       string `json:"model"`
+	Status      string `json:"status"` // queued|in_progress|completed|failed
+	Progress    int    `json:"progress"`
+	CreatedAt   int64  `json:"created_at"`
+	CompletedAt int64  `json:"completed_at,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+	Seconds     string `json:"seconds,omitempty"`
+	Size        string `json:"size,omitempty"`
+	VideoURL    string `json:"video_url,omitempty"`
 	// Content 可选本地缓存的 mp4 字节（完成时按需下载填充）
-	Content     []byte `json:"-"`
-	ContentType string `json:"-"`
+	Content            []byte `json:"-"`
+	ContentType        string `json:"-"`
 	Error              string `json:"error,omitempty"`
 	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
 }

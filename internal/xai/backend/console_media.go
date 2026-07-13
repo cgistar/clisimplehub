@@ -48,12 +48,12 @@ func BuildGrokSSOHeaders(sso string, dynamicStatsig bool, origin, referer string
 		referer = "https://grok.com/"
 	}
 	return map[string]string{
-		"Accept":            "*/*",
-		"Accept-Language":   "zh-CN,zh;q=0.9,en;q=0.8",
-		"Content-Type":      "application/json",
-		"Origin":            origin,
-		"Referer":           referer,
-		"User-Agent":        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+		"Accept":           "*/*",
+		"Accept-Language":  "zh-CN,zh;q=0.9,en;q=0.8",
+		"Content-Type":     "application/json",
+		"Origin":           origin,
+		"Referer":          referer,
+		"User-Agent":       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
 		"x-statsig-id":     generateGrokStatsigID(dynamicStatsig),
 		"x-xai-request-id": uuid.NewString(),
 		"Cookie":           "sso=" + sso + "; sso-rw=" + sso,
@@ -293,19 +293,19 @@ func BuildLiteImageChatPayload(prompt string, n int) map[string]any {
 // BuildImageEditPayload 对齐 grok2api imagine-image-edit。
 func BuildImageEditPayload(prompt string, imageRefs []string, parentPostID string) map[string]any {
 	return map[string]any{
-		"temporary":              true,
-		"modelName":              imageEditModel,
-		"message":                prompt,
-		"enableImageGeneration":  true,
-		"returnImageBytes":       false,
+		"temporary":                 true,
+		"modelName":                 imageEditModel,
+		"message":                   prompt,
+		"enableImageGeneration":     true,
+		"returnImageBytes":          false,
 		"returnRawGrokInXaiRequest": false,
-		"enableImageStreaming":   true,
-		"imageGenerationCount":   2,
-		"forceConcise":           false,
-		"enableSideBySide":       true,
-		"sendFinalMetadata":      true,
-		"isReasoning":            false,
-		"disableTextFollowUps":   true,
+		"enableImageStreaming":      true,
+		"imageGenerationCount":      2,
+		"forceConcise":              false,
+		"enableSideBySide":          true,
+		"sendFinalMetadata":         true,
+		"isReasoning":               false,
+		"disableTextFollowUps":      true,
 		"responseMetadata": map[string]any{
 			"modelConfigOverride": map[string]any{
 				"modelMap": map[string]any{
@@ -317,8 +317,8 @@ func BuildImageEditPayload(prompt string, imageRefs []string, parentPostID strin
 				},
 			},
 		},
-		"disableMemory":    true,
-		"forceSideBySide":  false,
+		"disableMemory":   true,
+		"forceSideBySide": false,
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/executor"
+	xaiBackend "clisimplehub/internal/xai/backend"
 )
 
 func (s *XaiService) HandleProxy(w http.ResponseWriter, r *http.Request) {
@@ -22,8 +23,16 @@ func (s *XaiService) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	_ = r.Body.Close()
 
 	isStreaming := isStreamRequested(r, body)
-	// compact 不支持 SSE 透传
+	// compact 是严格的非流接口，不能把客户端 stream=true 静默降级。
 	if strings.HasSuffix(strings.TrimRight(strings.ToLower(r.URL.Path), "/"), "/responses/compact") {
+		if isStreaming {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+				"message": "stream is not supported for responses compact",
+				"type":    "invalid_request_error",
+				"code":    "invalid_stream",
+			}})
+			return
+		}
 		isStreaming = false
 	}
 	// GET 无 body 场景（如 videos/{id}）
@@ -36,6 +45,8 @@ func (s *XaiService) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		requestID = fmt.Sprintf("xai-%d", time.Now().UnixNano())
 	}
 
+	// /xai/v1/* 已是 Responses wire 形态，统一走同一 prepare 链路。
+	clientMode := xaiBackend.ClientModeCompat
 	result := s.RoundTrip(r.Context(), &executor.UpstreamRequest{
 		Method:              r.Method,
 		TargetPath:          r.URL.Path,
@@ -46,6 +57,11 @@ func (s *XaiService) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		RequestModel:        extractModelFromBody(body),
 		OriginalPath:        r.URL.Path,
 		TargetInterfaceType: "xai",
+		TransformContext: &executor.TransformContext{
+			Metadata: map[string]any{
+				"client_mode": string(clientMode),
+			},
+		},
 	})
 	writeUpstreamResult(w, result)
 
@@ -63,7 +79,7 @@ func writeUpstreamResult(w http.ResponseWriter, result *executor.UpstreamRoundTr
 		return
 	}
 	for key, values := range result.Headers {
-		if strings.EqualFold(key, "Content-Length") {
+		if !allowedDownstreamHeader(key) {
 			continue
 		}
 		for _, value := range values {
@@ -100,6 +116,15 @@ func writeUpstreamResult(w http.ResponseWriter, result *executor.UpstreamRoundTr
 	w.WriteHeader(statusCode)
 	if len(result.Body) > 0 {
 		_, _ = w.Write(result.Body)
+	}
+}
+
+func allowedDownstreamHeader(key string) bool {
+	switch http.CanonicalHeaderKey(key) {
+	case "Content-Type", "Cache-Control", "Retry-After":
+		return true
+	default:
+		return false
 	}
 }
 

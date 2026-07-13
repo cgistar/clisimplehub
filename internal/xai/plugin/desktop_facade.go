@@ -312,15 +312,15 @@ func (d *desktopFacade) GetXaiGlobalConfig(configPath string) (json.RawMessage, 
 		baseURL = xaiAuth.DefaultAPIBaseURL
 	}
 	return json.Marshal(map[string]any{
-		"rotationMode":    snap.GetRotationMode(),
-		"proxyUrl":        snap.ProxyUrl,
-		"baseURL":         baseURL,
-		"clientVersion":   snap.Config.ClientVersion,
-		"userAgent":       snap.Config.UserAgent,
-		"tokenAuth":       snap.Config.TokenAuth,
-		"clientSurface":   snap.Config.ClientSurface,
-		"dynamicStatsig":  snap.Config.DynamicStatsigEnabled(),
-		"customHeaders":   snap.Config.CustomHeaders,
+		"rotationMode":   snap.GetRotationMode(),
+		"proxyUrl":       snap.ProxyUrl,
+		"baseURL":        baseURL,
+		"clientVersion":  snap.Config.ClientVersion,
+		"userAgent":      snap.Config.UserAgent,
+		"tokenAuth":      snap.Config.TokenAuth,
+		"clientSurface":  snap.Config.ClientSurface,
+		"dynamicStatsig": snap.Config.DynamicStatsigEnabled(),
+		"customHeaders":  snap.Config.CustomHeaders,
 	})
 }
 
@@ -685,12 +685,11 @@ func probeModels(ctx context.Context, baseURL, token, proxyURL string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	// cli-chat-proxy 需要 Grok CLI 身份头
+	// cli-chat-proxy：附加 CLI 身份头
 	if xaiBackend.IsCLIChatProxyBaseURL(baseURL) {
 		req.Header.Set(xaiBackend.HeaderClientVersion, xaiBackend.DefaultClientVersion)
 		req.Header.Set("User-Agent", xaiBackend.DefaultUserAgent)
 		req.Header.Set(xaiBackend.HeaderTokenAuth, xaiBackend.DefaultTokenAuth)
-		req.Header.Set(xaiBackend.HeaderClientSurface, xaiBackend.DefaultClientSurface)
 	}
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 20*time.Second)
 	resp, err := client.Do(req)
@@ -756,29 +755,29 @@ func (d *desktopFacade) ProbeAccountStream(ctx context.Context, configPath, acco
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set(xaiBackend.HeaderGrokConvID, conv)
-	// CLI 身份头：仅 chat-proxy（usingApi=false）
-	if xaiBackend.IsCLIChatProxyBaseURL(baseURL) {
+	// CLI 身份头：usingApi=false + chat-proxy
+	if !account.UsingAPIEnabled() && xaiBackend.IsCLIChatProxyBaseURL(baseURL) {
 		authKind := strings.TrimSpace(account.AuthKind)
-		if authKind == "" || authKind == xaiShared.AuthKindOAuth {
-			req.Header.Set(xaiBackend.HeaderTokenAuth, xaiBackend.DefaultTokenAuth)
-		}
-		req.Header.Set(xaiBackend.HeaderClientVersion, xaiBackend.DefaultClientVersion)
-		req.Header.Set("User-Agent", xaiBackend.DefaultUserAgent)
-		req.Header.Set(xaiBackend.HeaderClientSurface, xaiBackend.DefaultClientSurface)
+		version := xaiBackend.DefaultClientVersion
+		tokenAuth := xaiBackend.DefaultTokenAuth
+		userAgent := xaiBackend.DefaultUserAgent
 		if snap != nil {
 			if v := strings.TrimSpace(snap.Config.ClientVersion); v != "" {
-				req.Header.Set(xaiBackend.HeaderClientVersion, v)
+				version = v
+				userAgent = "xai-grok-workspace/" + v
+			}
+			if v := strings.TrimSpace(snap.Config.TokenAuth); v != "" {
+				tokenAuth = v
 			}
 			if v := strings.TrimSpace(snap.Config.UserAgent); v != "" {
-				req.Header.Set("User-Agent", v)
-			}
-			if v := strings.TrimSpace(snap.Config.TokenAuth); v != "" && (authKind == "" || authKind == xaiShared.AuthKindOAuth) {
-				req.Header.Set(xaiBackend.HeaderTokenAuth, v)
-			}
-			if v := strings.TrimSpace(snap.Config.ClientSurface); v != "" {
-				req.Header.Set(xaiBackend.HeaderClientSurface, v)
+				userAgent = v
 			}
 		}
+		if authKind == "" || authKind == xaiShared.AuthKindOAuth {
+			req.Header.Set(xaiBackend.HeaderTokenAuth, tokenAuth)
+		}
+		req.Header.Set(xaiBackend.HeaderClientVersion, version)
+		req.Header.Set("User-Agent", userAgent)
 	}
 
 	// 总超时 45s；SSE 拿到首批事件后立即结束

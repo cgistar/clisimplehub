@@ -1,6 +1,6 @@
 module clisimplehub
 
-go 1.25.7
+go 1.26
 
 require (
 	github.com/bogdanfinn/fhttp v0.6.8
@@ -13,6 +13,7 @@ require (
 	github.com/metacubex/mihomo v1.19.20
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
+	github.com/tiktoken-go/tokenizer v0.6.2
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/net v0.50.0
 	golang.org/x/sync v0.19.0

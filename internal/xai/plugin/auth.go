@@ -17,6 +17,15 @@ var refreshGroup singleflight.Group
 
 // ensureAccessToken 返回可用 Bearer token；OAuth 临近过期时自动刷新。
 func ensureAccessToken(ctx context.Context, pool *xai.XaiAccountPool, account *xaiShared.XaiAccount, proxyURL string) (string, error) {
+	return accessToken(ctx, pool, account, proxyURL, false)
+}
+
+// refreshAccessToken 强制向 OAuth token endpoint 刷新，不接受 pool 中仍未过期的旧 access token。
+func refreshAccessToken(ctx context.Context, pool *xai.XaiAccountPool, account *xaiShared.XaiAccount, proxyURL string) (string, error) {
+	return accessToken(ctx, pool, account, proxyURL, true)
+}
+
+func accessToken(ctx context.Context, pool *xai.XaiAccountPool, account *xaiShared.XaiAccount, proxyURL string, force bool) (string, error) {
 	if account == nil {
 		return "", fmt.Errorf("account is nil")
 	}
@@ -35,7 +44,7 @@ func ensureAccessToken(ctx context.Context, pool *xai.XaiAccountPool, account *x
 			needRefresh = true
 		}
 	}
-	if !needRefresh {
+	if !needRefresh && !force {
 		return token, nil
 	}
 	if strings.TrimSpace(account.RefreshToken) == "" {
@@ -53,7 +62,7 @@ func ensureAccessToken(ctx context.Context, pool *xai.XaiAccountPool, account *x
 
 	v, err, _ := refreshGroup.Do(key, func() (any, error) {
 		// 双重检查：可能并发路径已刷新
-		if pool != nil {
+		if pool != nil && !force {
 			for _, acc := range pool.ListAccounts() {
 				if strings.TrimSpace(acc.ID) != accountID {
 					continue

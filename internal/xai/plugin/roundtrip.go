@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"clisimplehub/internal/executor"
+	"clisimplehub/internal/plugin"
 	xai "clisimplehub/internal/xai"
 	xaiBackend "clisimplehub/internal/xai/backend"
 	xaiShared "clisimplehub/internal/xai/shared"
-	"clisimplehub/internal/executor"
-	"clisimplehub/internal/plugin"
 )
 
 const (
-	maxRetryAccounts       = 5
+	maxRetryAccounts        = 5
 	xaiNetworkRetryAttempts = 2
 	xaiNetworkRetryDelay    = 2 * time.Second
 )
@@ -35,7 +35,15 @@ func (s *XaiService) RoundTrip(ctx context.Context, req *executor.UpstreamReques
 	}
 
 	mode := pool.Mode()
-	first := pool.Select()
+	var first *xaiShared.XaiAccount
+	if req.TransformContext != nil && req.TransformContext.Metadata != nil {
+		if id, _ := req.TransformContext.Metadata["xai_preferred_account_id"].(string); id != "" {
+			first = pool.SelectByID(id)
+		}
+	}
+	if first == nil {
+		first = pool.Select()
+	}
 	if first == nil {
 		status, body := buildNoAccountsError(mode)
 		return &executor.UpstreamRoundTripResult{
@@ -48,6 +56,7 @@ func (s *XaiService) RoundTrip(ctx context.Context, req *executor.UpstreamReques
 
 	excluded := make(map[string]bool)
 	var lastErr error
+	var lastResult *executor.UpstreamRoundTripResult
 	for attempt := 0; attempt < maxRetryAccounts; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -71,6 +80,10 @@ func (s *XaiService) RoundTrip(ctx context.Context, req *executor.UpstreamReques
 		if result == nil {
 			return roundTripError(http.StatusBadGateway, "empty upstream result", fmt.Errorf("empty upstream result"))
 		}
+		if result.Headers == nil {
+			result.Headers = http.Header{}
+		}
+		result.Headers.Set("X-Clisimplehub-XAI-Account-ID", strings.TrimSpace(account.ID))
 		if result.StatusCode >= 200 && result.StatusCode < 300 && result.Error == nil {
 			pool.ReportSuccess(account.ID)
 			return result
@@ -80,6 +93,12 @@ func (s *XaiService) RoundTrip(ctx context.Context, req *executor.UpstreamReques
 		}
 		excluded[strings.TrimSpace(account.ID)] = true
 		lastErr = result.Error
+		lastResult = result
+	}
+	// 所有账号均返回了 HTTP 响应时，保留最后一个有意义的上游状态和标准错误体。
+	// 只有没有任何 HTTP 结果（纯 token/transport failure）才合成 502。
+	if lastResult != nil && lastResult.StatusCode >= 400 {
+		return lastResult
 	}
 
 	status, body := buildAllFailedError(lastErr)
@@ -121,36 +140,61 @@ func (s *XaiService) roundTripWithAccount(
 	if path == "" {
 		path = strings.TrimSpace(req.OriginalPath)
 	}
-	// Claude 源启用 reasoning replay；session key 优先用 plan metadata（转换前解析）
+	// client_mode / replay / execution_session 优先 plan metadata
+	clientMode := xaiBackend.ClientModeAuto
 	enableReplay := false
 	replaySession := ""
+	executionSessionID := ""
+	sourceType := "openai-response"
 	if req.TransformContext != nil && req.TransformContext.Metadata != nil {
+		if m, _ := req.TransformContext.Metadata["client_mode"].(string); strings.TrimSpace(m) != "" {
+			clientMode = xaiBackend.ClientMode(strings.TrimSpace(m))
+		}
 		if v, ok := req.TransformContext.Metadata["enable_xai_replay"].(bool); ok && v {
 			enableReplay = true
 		}
-		if src, _ := req.TransformContext.Metadata["source_type"].(string); strings.EqualFold(src, "claude") {
-			enableReplay = true
+		if src, _ := req.TransformContext.Metadata["source_type"].(string); strings.TrimSpace(src) != "" {
+			sourceType = strings.TrimSpace(src)
+			if strings.EqualFold(sourceType, "claude") {
+				enableReplay = true
+			}
 		}
 		if k, _ := req.TransformContext.Metadata["xai_replay_session"].(string); strings.TrimSpace(k) != "" {
 			replaySession = strings.TrimSpace(k)
 		}
+		executionSessionID = xaiBackend.ExecutionSessionIDFromMeta(req.TransformContext.Metadata)
+	}
+	// 无 plan 时：按 UA + path 解析（直接 /xai 或裸 RoundTrip）
+	if clientMode == xaiBackend.ClientModeAuto {
+		needsFmt := false
+		if req.Transformer != nil {
+			needsFmt = true
+		}
+		clientMode = xaiBackend.ResolveClientMode(
+			xaiBackend.ClientModeAuto,
+			headerUA(req.Headers),
+			path,
+			req.Body,
+			needsFmt,
+		)
 	}
 	if !enableReplay {
 		pathLower := strings.ToLower(req.OriginalPath)
 		enableReplay = strings.Contains(pathLower, "/messages")
 	}
-	// body 可能已是 Responses；若仍有 Claude metadata 则从 body 解析
 	if enableReplay && replaySession == "" {
 		replaySession = xaiBackend.ResolveReplaySessionKeyWithClaude(req.Body, req.Body, req.Headers, "")
 	}
 
-	// 若 plan 已 prepare 过且 body 含 input，仍让 backend 再 prepare 以应用 stream 强制与 headers；
-	// 但 replay session 通过 header 旁路注入（x-xai-replay-session）避免丢失。
 	headers := req.Headers
 	if headers == nil {
 		headers = http.Header{}
 	} else {
 		headers = headers.Clone()
+	}
+	// 元数据中的 execution_session_id 注入请求头，供 ResolveUpstreamSessionID / WS 绑定
+	if executionSessionID != "" && xaiBackend.ExecutionSessionIDFromHeaders(headers) == "" {
+		headers.Set(xaiBackend.HeaderExecutionSessionID, executionSessionID)
 	}
 	if replaySession != "" {
 		headers.Set("x-xai-replay-session", replaySession)
@@ -164,11 +208,13 @@ func (s *XaiService) roundTripWithAccount(
 		Headers:      headers,
 		IsStreaming:  req.IsStreaming,
 		Model:        req.RequestModel,
+		SourceType:   sourceType,
 		Config:       config,
 		Account:      account,
 		AccessToken:  token,
 		ProxyURL:     proxyURL,
 		Client:       client,
+		ClientMode:   clientMode,
 		EnableReplay: enableReplay,
 		Attempts:     xaiNetworkRetryAttempts,
 		RetryDelay:   xaiNetworkRetryDelay,
@@ -179,6 +225,15 @@ func (s *XaiService) roundTripWithAccount(
 		backendResult = &xaiBackend.Result{}
 	}
 	if execErr != nil && backendResult.StatusCode == 0 {
+		if xaiBackend.IsInvalidRequestError(execErr) {
+			return &executor.UpstreamRoundTripResult{
+				StatusCode:  http.StatusBadRequest,
+				Body:        mustJSON(map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": execErr.Error()}}),
+				Headers:     http.Header{"Content-Type": []string{"application/json"}},
+				RequestBody: backendResult.RequestBody,
+				Error:       execErr,
+			}, false
+		}
 		return &executor.UpstreamRoundTripResult{
 			StatusCode:    http.StatusBadGateway,
 			Body:          mustJSON(map[string]any{"error": map[string]any{"type": "transport_error", "message": execErr.Error()}}),
@@ -190,21 +245,30 @@ func (s *XaiService) roundTripWithAccount(
 		}, true
 	}
 
-	// 官方 API 路径（compact / images / videos）上 free OAuth 常 402/403 spending-limit，
+	// 官方 API 媒体路径上 free OAuth 常 402/403 spending-limit，
 	// 但同一账号在 cli-chat-proxy 的 free chat 仍可用。勿因此把账号永久 exhausted。
+	// compact 走 chat base，额度错误应正常 exhausted。
 	// 仍应 retryable=true，让 failover 换其它账号继续。
-	paidOnlyPath := xaiBackend.IsCompactPath(path) || xaiBackend.IsMediaPath(path)
+	paidOnlyPath := xaiBackend.IsMediaPath(path)
 
+	refreshed401 := false
+classifyResponse:
 	switch backendResult.StatusCode {
 	case http.StatusUnauthorized:
 		// 强制刷新后重试一次
-		if strings.TrimSpace(account.RefreshToken) != "" {
+		if !refreshed401 && strings.TrimSpace(account.RefreshToken) != "" {
+			refreshed401 = true
 			svc := mustRefresh(ctx, pool, account, proxyURL)
 			if svc != "" {
 				backendReq.AccessToken = svc
 				retryResult, retryErr := xaiBackend.Execute(ctx, backendReq)
-				if retryErr == nil && retryResult != nil && retryResult.StatusCode >= 200 && retryResult.StatusCode < 300 {
-					return toUpstreamResult(retryResult), false
+				if retryResult != nil {
+					if retryErr == nil && retryResult.StatusCode >= 200 && retryResult.StatusCode < 300 {
+						return toUpstreamResult(retryResult), false
+					}
+					// 刷新后的响应才是该账号最终结果，不能退回过期 token 的首次 401。
+					backendResult = retryResult
+					goto classifyResponse
 				}
 			}
 		}
@@ -233,7 +297,7 @@ func (s *XaiService) roundTripWithAccount(
 		if isFreeUsageExhaustedBody(backendResult.Body) {
 			cooldown = 24 * time.Hour
 		}
-		pool.MarkFailed(account.ID, xaiShared.XaiStatusValid, cooldown, "rate_limit")
+		pool.CooldownMainAccount(account.ID, cooldown, "rate_limit")
 		return toUpstreamResult(backendResult), true
 	}
 
@@ -254,10 +318,7 @@ func (s *XaiService) roundTripWithAccount(
 }
 
 func mustRefresh(ctx context.Context, pool *xai.XaiAccountPool, account *xaiShared.XaiAccount, proxyURL string) string {
-	// 清空 access 强制刷新
-	account.AccessToken = ""
-	account.ExpiresAt = time.Time{}
-	token, err := ensureAccessToken(ctx, pool, account, proxyURL)
+	token, err := refreshAccessToken(ctx, pool, account, proxyURL)
 	if err != nil {
 		return ""
 	}
@@ -278,6 +339,9 @@ func resolveAccountProxy(pool *xai.XaiAccountPool, account *xaiShared.XaiAccount
 func toUpstreamResult(r *xaiBackend.Result) *executor.UpstreamRoundTripResult {
 	if r == nil {
 		return roundTripError(http.StatusBadGateway, "empty result", fmt.Errorf("empty result"))
+	}
+	if r.Headers == nil {
+		r.Headers = http.Header{}
 	}
 	return &executor.UpstreamRoundTripResult{
 		StatusCode:    r.StatusCode,
@@ -345,6 +409,11 @@ func parseRetryAfter(headers http.Header) time.Duration {
 	if secs, err := time.ParseDuration(raw + "s"); err == nil {
 		return secs
 	}
+	if when, err := http.ParseTime(raw); err == nil {
+		if delay := time.Until(when); delay > 0 {
+			return delay
+		}
+	}
 	return 0
 }
 
@@ -370,4 +439,11 @@ func isFreeUsageExhaustedBody(body []byte) bool {
 func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+func headerUA(h http.Header) string {
+	if h == nil {
+		return ""
+	}
+	return strings.TrimSpace(h.Get("User-Agent"))
 }

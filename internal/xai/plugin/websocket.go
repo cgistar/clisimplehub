@@ -84,6 +84,33 @@ func CloseWebsocketSessionsForAccount(accountID string) {
 	_ = xaiBackend.GlobalUpstreamConnStore().CloseSessionsForAuthID(accountID, "auth_removed")
 }
 
+// wsUpstreamState 单条下游 WS 对应的上游连接与会话（懒拨号后填充）。
+type wsUpstreamState struct {
+	// clientSession：客户端可见会话（未混淆）；用于多轮强制对齐 body.prompt_cache_key
+	clientSession string
+	// upstreamSession：握手 x-grok-conv-id / ID store key。
+	upstreamSession string
+	headers         http.Header
+	idState         *xaiBackend.WebsocketIDState
+	connSess        *xaiBackend.UpstreamConnSession
+	upstream        *websocket.Conn
+	dialFn          func(context.Context) (*websocket.Conn, *http.Response, error)
+	startReader     func(*xaiBackend.UpstreamConnSession, *websocket.Conn)
+	releaseOnce     sync.Once
+}
+
+func (st *wsUpstreamState) release() {
+	if st == nil || st.connSess == nil {
+		return
+	}
+	st.releaseOnce.Do(func() {
+		st.connSess.UnlockRequest()
+		if n := st.connSess.Release(); n <= 0 {
+			st.connSess.Close("client_detached")
+		}
+	})
+}
+
 func (s *XaiService) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Request) {
 	downstream, err := xaiWebsocketUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -109,7 +136,7 @@ func (s *XaiService) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Req
 	}
 	accountID := strings.TrimSpace(account.ID)
 	trackWSConn(accountID, downstream)
-	defer untrackWSConn(accountID, downstream)
+	defer func() { untrackWSConn(accountID, downstream) }()
 
 	proxyURL := resolveAccountProxy(pool, account)
 	token, err := ensureAccessToken(ctx, pool, account, proxyURL)
@@ -124,59 +151,120 @@ func (s *XaiService) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Req
 		_ = writeWSError(downstream, err.Error())
 		return
 	}
-	sessionID := strings.TrimSpace(r.Header.Get("x-grok-conv-id"))
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(r.Header.Get("X-Grok-Conv-Id"))
-	}
-	if sessionID == "" {
-		// 无 conv id 时用连接级临时 key（不跨重连复用）
-		sessionID = fmt.Sprintf("ephemeral-%s-%d", accountID, time.Now().UnixNano())
-	}
-	headers := xaiBackend.ApplyWebsocketHeadersWithAccount(token, sessionID, config, account)
+	upgradeHeaders := r.Header.Clone()
+	// 跨请求绑 WS：仅信 X-Execution-Session-Id。
+	// 不信任客户端 x-grok-conv-id（该头仅由代理写给上游）。
+	// 无 execution 时：body.prompt_cache_key / Claude·composer 由 ResolveUpstreamSessionID 推导。
+	headerSession := xaiBackend.ExecutionSessionIDFromHeaders(upgradeHeaders)
 
-	// ID state + 上游 conn session
-	idState := xaiBackend.GlobalWebsocketIDStore().Get(sessionID)
-	if idState == nil {
-		idState = xaiBackend.NewWebsocketIDState()
-	}
-	sessKey := xaiBackend.SessionKey(sessionID, accountID)
-	connSess := xaiBackend.GlobalUpstreamConnStore().GetOrCreate(sessKey)
-	if connSess != nil {
-		connSess.SetAuthMeta(accountID, sessionID)
-		connSess.Acquire()
-		defer func() {
-			if n := connSess.Release(); n <= 0 {
-				// 无下游附着时关闭上游，ID/transcript 仍保留在 idStore
-				connSess.Close("client_detached")
-			}
-		}()
-		connSess.LockRequest()
-		defer connSess.UnlockRequest()
-	}
-
-	dialFn := func(c context.Context) (*websocket.Conn, *http.Response, error) {
-		return dialXaiWebsocket(c, wsURL, headers, proxyURL)
-	}
-	startReader := func(sess *xaiBackend.UpstreamConnSession, conn *websocket.Conn) {
-		sess.ReadLoop(conn)
-	}
-
-	upstream, resp, err := ensureOrDial(ctx, connSess, accountID, wsURL, dialFn, startReader)
-	if err != nil {
-		msg := err.Error()
-		if resp != nil {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-			_ = resp.Body.Close()
-			if len(body) > 0 {
-				msg = fmt.Sprintf("websocket dial failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
-			}
+	var st *wsUpstreamState
+	defer func() {
+		if st != nil {
+			st.release()
 		}
-		_ = writeWSError(downstream, msg)
-		return
-	}
-	pool.ReportSuccess(account.ID)
+	}()
 
-	// 主循环：读下游 → 处理一轮（含 compact/warmup）→ 写上游 → 读到 completed
+	excludedAccounts := map[string]bool{}
+	refreshed401 := map[string]bool{}
+	var ensureDialed func(string) error
+	ensureDialed = func(clientSession string) error {
+		if st != nil && st.upstream != nil {
+			return nil
+		}
+		clientSession = strings.TrimSpace(clientSession)
+		if clientSession == "" {
+			clientSession = fmt.Sprintf("ephemeral-%s-%d", accountID, time.Now().UnixNano())
+		}
+
+		upstreamSession := clientSession
+
+		headers := xaiBackend.ApplyWebsocketHeadersWithAccount(token, upstreamSession, config, account)
+
+		idState := xaiBackend.GlobalWebsocketIDStore().Get(upstreamSession)
+		if idState == nil {
+			idState = xaiBackend.NewWebsocketIDState()
+		}
+		sessKey := xaiBackend.SessionKey(upstreamSession, accountID)
+		connSess := xaiBackend.GlobalUpstreamConnStore().GetOrCreate(sessKey)
+		if connSess != nil {
+			connSess.SetAuthMeta(accountID, upstreamSession)
+			connSess.Acquire()
+			connSess.LockRequest()
+		}
+
+		dialFn := func(c context.Context) (*websocket.Conn, *http.Response, error) {
+			return dialXaiWebsocket(c, wsURL, headers, proxyURL)
+		}
+		startReader := func(sess *xaiBackend.UpstreamConnSession, conn *websocket.Conn) {
+			sess.ReadLoop(conn)
+		}
+
+		upstream, resp, dialErr := ensureOrDial(ctx, connSess, accountID, wsURL, dialFn, startReader)
+		if dialErr != nil {
+			if connSess != nil {
+				connSess.UnlockRequest()
+				if n := connSess.Release(); n <= 0 {
+					connSess.Close("dial_failed")
+				}
+			}
+			msg := dialErr.Error()
+			status := 0
+			var responseHeaders http.Header
+			var responseBody []byte
+			if resp != nil {
+				status = resp.StatusCode
+				responseHeaders = resp.Header.Clone()
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				responseBody = body
+				_ = resp.Body.Close()
+				if len(body) > 0 {
+					msg = fmt.Sprintf("websocket dial failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+				}
+			}
+			// 401 先强制刷新同一账号并重试一次；第二次失败才进入状态分类和换号。
+			if shouldRefreshWS401(status, account, refreshed401[accountID]) {
+				refreshed401[accountID] = true
+				if refreshed, refreshErr := refreshAccessToken(ctx, pool, account, proxyURL); refreshErr == nil && refreshed != "" {
+					token = refreshed
+					return ensureDialed(clientSession)
+				}
+			}
+			applyWSHandshakeFailure(pool, accountID, status, responseHeaders, responseBody)
+			excludedAccounts[accountID] = true
+			if next := pool.SelectWebsocketExcluding(excludedAccounts); next != nil {
+				nextProxy := resolveAccountProxy(pool, next)
+				nextToken, tokenErr := ensureAccessToken(ctx, pool, next, nextProxy)
+				if tokenErr == nil {
+					untrackWSConn(accountID, downstream)
+					account = next
+					accountID = strings.TrimSpace(next.ID)
+					trackWSConn(accountID, downstream)
+					proxyURL, token = nextProxy, nextToken
+					httpURL = xaiBackend.UpstreamWebsocketURL(config, account, r.URL.Path)
+					wsURL, tokenErr = xaiBackend.BuildWebsocketURL(httpURL)
+					if tokenErr == nil {
+						return ensureDialed(clientSession)
+					}
+				}
+			}
+			return fmt.Errorf("%s", msg)
+		}
+
+		st = &wsUpstreamState{
+			clientSession:   clientSession,
+			upstreamSession: upstreamSession,
+			headers:         headers,
+			idState:         idState,
+			connSess:        connSess,
+			upstream:        upstream,
+			dialFn:          dialFn,
+			startReader:     startReader,
+		}
+		pool.ReportSuccess(account.ID)
+		return nil
+	}
+
+	// 主循环：读下游 → 解析会话（懒拨号）→ 处理一轮 → 写上游 → 读到 completed
 	for {
 		_ = downstream.SetReadDeadline(time.Now().Add(xaiWSIdleTimeout))
 		msgType, payload, readErr := downstream.ReadMessage()
@@ -187,83 +275,210 @@ func (s *XaiService) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Req
 			continue
 		}
 
-		// 控制类消息原样转发
 		eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 		if eventType != "" && eventType != "response.create" {
-			if writeErr := writeUpstream(connSess, upstream, payload); writeErr != nil {
-				// 尝试重连再写
-				upstream, _, err = reconnectUpstream(ctx, connSess, accountID, wsURL, dialFn, startReader)
-				if err != nil || writeUpstream(connSess, upstream, payload) != nil {
+			// 控制消息：若尚未拨号，用 header/ephemeral 建立上游
+			if st == nil {
+				if err := ensureDialed(headerSession); err != nil {
+					_ = writeWSError(downstream, err.Error())
+					return
+				}
+			}
+			if writeErr := writeUpstream(st.connSess, st.upstream, payload); writeErr != nil {
+				up, _, reErr := reconnectUpstream(ctx, st.connSess, accountID, wsURL, st.dialFn, st.startReader)
+				if reErr != nil || writeUpstream(st.connSess, up, payload) != nil {
 					_ = writeWSError(downstream, "upstream write failed: "+writeErr.Error())
 					return
 				}
+				st.upstream = up
 			}
 			continue
 		}
 
+		// 解析本轮客户端会话：连接级已建立则固定；否则 execution > body.prompt_cache_key > Claude/composer
+		preferred := ""
+		if st != nil {
+			preferred = st.clientSession
+		}
+		if preferred == "" {
+			preferred = headerSession // 仅 Execution-Session-Id
+		}
+		model := gjson.GetBytes(payload, "model").String()
+		// 剥离入站 x-grok-conv-id，避免 replay/其它路径误读
+		sessionHeaders := upgradeHeaders.Clone()
+		sessionHeaders.Del("x-grok-conv-id")
+		sessionHeaders.Del("X-Grok-Conv-Id")
+		clientSession := xaiBackend.ResolveUpstreamSessionID(payload, sessionHeaders, preferred, model)
+
+		if st == nil {
+			if err := ensureDialed(clientSession); err != nil {
+				_ = writeWSError(downstream, err.Error())
+				return
+			}
+		}
+
 		// compaction_trigger → HTTP compact + 伪 WS 事件
 		if xaiBackend.InputHasCompactionTrigger(payload) {
-			if err := s.handleWSCompaction(ctx, pool, config, account, proxyURL, token, idState, payload, downstream); err != nil {
+			if err := s.handleWSCompaction(ctx, pool, config, account, proxyURL, token, st.idState, payload, downstream); err != nil {
 				_ = writeWSError(downstream, err.Error())
 			}
 			continue
 		}
 
-		// 准备 + ID 映射
-		reqBody, mapper, warmup, prepErr := prepareWSTurn(payload, idState)
+		// 准备 + ID 映射；强制 body.prompt_cache_key 与握手 session 对齐
+		reqBody, mapper, warmup, prepErr := prepareWSTurn(
+			payload, st.idState, st.clientSession, st.upstreamSession,
+		)
 		if prepErr != nil {
 			_ = writeWSError(downstream, prepErr.Error())
 			continue
 		}
 
-		// 先挂 active reader，再写上游，避免 response 在 SetActive 前到达被丢弃
 		var readCh chan xaiBackend.UpstreamRead
-		if connSess != nil {
+		if st.connSess != nil {
 			readCh = make(chan xaiBackend.UpstreamRead, 4096)
-			connSess.SetActive(readCh)
+			st.connSess.SetActive(readCh)
 		}
 
-		// 写上游（失败则 invalidate + 重连重试一次）
-		if writeErr := writeUpstream(connSess, upstream, reqBody); writeErr != nil {
-			if connSess != nil {
-				connSess.ClearActive(readCh)
-				connSess.InvalidateConn(upstream, "send_error", writeErr, true)
+		if writeErr := writeUpstream(st.connSess, st.upstream, reqBody); writeErr != nil {
+			if st.connSess != nil {
+				st.connSess.ClearActive(readCh)
+				st.connSess.InvalidateConn(st.upstream, "send_error", writeErr, true)
 			}
-			upstream, _, err = reconnectUpstream(ctx, connSess, accountID, wsURL, dialFn, startReader)
-			if err != nil {
-				_ = writeWSError(downstream, "upstream reconnect failed: "+err.Error())
+			up, _, reErr := reconnectUpstream(ctx, st.connSess, accountID, wsURL, st.dialFn, st.startReader)
+			if reErr != nil {
+				_ = writeWSError(downstream, "upstream reconnect failed: "+reErr.Error())
 				return
 			}
-			if connSess != nil {
+			st.upstream = up
+			if st.connSess != nil {
 				readCh = make(chan xaiBackend.UpstreamRead, 4096)
-				connSess.SetActive(readCh)
+				st.connSess.SetActive(readCh)
 			}
-			if writeErr = writeUpstream(connSess, upstream, reqBody); writeErr != nil {
-				if connSess != nil {
-					connSess.ClearActive(readCh)
+			if writeErr = writeUpstream(st.connSess, st.upstream, reqBody); writeErr != nil {
+				if st.connSess != nil {
+					st.connSess.ClearActive(readCh)
 				}
 				_ = writeWSError(downstream, "upstream write failed: "+writeErr.Error())
 				return
 			}
 		}
 
-		// 读本轮直到 completed / error（或 warmup 合成 completed）
-		if err := pumpUpstreamTurn(ctx, connSess, upstream, readCh, idState, mapper, reqBody, warmup, downstream); err != nil {
-			// 上游断线：invalidate，等待下一轮下游消息时重连
-			if connSess != nil {
-				connSess.InvalidateConn(upstream, "turn_error", err, true)
+		if err := pumpUpstreamTurn(ctx, st.connSess, st.upstream, readCh, st.idState, mapper, reqBody, warmup, downstream); err != nil {
+			applyWSTurnFailure(pool, accountID, err)
+			if st.connSess != nil {
+				st.connSess.InvalidateConn(st.upstream, "turn_error", err, true)
 			}
-			// 尝试立即重连供后续轮次
-			if u2, _, e2 := reconnectUpstream(ctx, connSess, accountID, wsURL, dialFn, startReader); e2 == nil {
-				upstream = u2
+			if u2, _, e2 := reconnectUpstream(ctx, st.connSess, accountID, wsURL, st.dialFn, st.startReader); e2 == nil {
+				st.upstream = u2
 			}
-			// 非致命：把错误回给客户端，保持下游连接
 			if !strings.Contains(err.Error(), "downstream") {
 				_ = writeWSError(downstream, err.Error())
 			} else {
 				return
 			}
 		}
+	}
+}
+
+func shouldRefreshWS401(status int, account *xaiShared.XaiAccount, alreadyRefreshed bool) bool {
+	return status == http.StatusUnauthorized && !alreadyRefreshed && account != nil && strings.TrimSpace(account.RefreshToken) != ""
+}
+
+func applyWSHandshakeFailure(pool *xai.XaiAccountPool, accountID string, status int, headers http.Header, body []byte) {
+	if pool == nil || accountID == "" {
+		return
+	}
+	switch status {
+	case http.StatusTooManyRequests:
+		cooldown := parseRetryAfter(headers)
+		if cooldown <= 0 {
+			cooldown = time.Minute
+		}
+		if isFreeUsageExhaustedBody(body) {
+			cooldown = 24 * time.Hour
+		}
+		pool.CooldownWebsocketAccount(accountID, cooldown, "websocket_rate_limit")
+	case http.StatusPaymentRequired, http.StatusForbidden:
+		if isQuotaLikeBody(body) || isFreeUsageExhaustedBody(body) {
+			pool.MarkFailed(accountID, xaiShared.XaiStatusExhausted, 0, "websocket_quota")
+		}
+	case http.StatusUnauthorized:
+		pool.MarkFailed(accountID, xaiShared.XaiStatusBanned, 24*time.Hour, "websocket_unauthorized")
+	}
+}
+
+type wsTurnError struct {
+	Status     int
+	RetryAfter time.Duration
+	Payload    []byte
+	Message    string
+}
+
+func (e *wsTurnError) Error() string {
+	if e == nil {
+		return "websocket upstream error"
+	}
+	if strings.TrimSpace(e.Message) != "" {
+		return e.Message
+	}
+	return strings.TrimSpace(string(e.Payload))
+}
+
+func parseWSTurnError(payload []byte) *wsTurnError {
+	err := &wsTurnError{Payload: append([]byte(nil), payload...), Message: extractWSErrorMessage(payload)}
+	for _, path := range []string{"status", "status_code", "error.status", "error.status_code", "response.error.status", "response.error.status_code"} {
+		if value := gjson.GetBytes(payload, path); value.Exists() {
+			err.Status = int(value.Int())
+			if err.Status > 0 {
+				break
+			}
+		}
+	}
+	for _, path := range []string{"retry_after", "error.retry_after", "response.error.retry_after"} {
+		if value := gjson.GetBytes(payload, path); value.Exists() && value.Float() > 0 {
+			err.RetryAfter = time.Duration(value.Float() * float64(time.Second))
+			break
+		}
+	}
+	classification := strings.ToLower(string(payload))
+	if err.Status == 0 {
+		switch {
+		case strings.Contains(classification, "rate_limit"), strings.Contains(classification, "rate limit"), strings.Contains(classification, "too many requests"):
+			err.Status = http.StatusTooManyRequests
+		case strings.Contains(classification, "unauthorized"), strings.Contains(classification, "authentication"):
+			err.Status = http.StatusUnauthorized
+		case isQuotaLikeBody(payload), isFreeUsageExhaustedBody(payload):
+			err.Status = http.StatusPaymentRequired
+		}
+	}
+	return err
+}
+
+func applyWSTurnFailure(pool *xai.XaiAccountPool, accountID string, failure error) {
+	if pool == nil || strings.TrimSpace(accountID) == "" || failure == nil {
+		return
+	}
+	wsErr, ok := failure.(*wsTurnError)
+	if !ok {
+		return
+	}
+	switch wsErr.Status {
+	case http.StatusTooManyRequests:
+		cooldown := wsErr.RetryAfter
+		if cooldown <= 0 {
+			cooldown = time.Minute
+		}
+		if isFreeUsageExhaustedBody(wsErr.Payload) {
+			cooldown = 24 * time.Hour
+		}
+		pool.CooldownWebsocketAccount(accountID, cooldown, "websocket_rate_limit")
+	case http.StatusPaymentRequired, http.StatusForbidden:
+		if isQuotaLikeBody(wsErr.Payload) || isFreeUsageExhaustedBody(wsErr.Payload) {
+			pool.MarkFailed(accountID, xaiShared.XaiStatusExhausted, 0, "websocket_quota")
+		}
+	case http.StatusUnauthorized:
+		pool.MarkFailed(accountID, xaiShared.XaiStatusBanned, 24*time.Hour, "websocket_unauthorized")
 	}
 }
 
@@ -304,19 +519,43 @@ func writeUpstream(sess *xaiBackend.UpstreamConnSession, conn *websocket.Conn, p
 	return conn.WriteMessage(websocket.TextMessage, payload)
 }
 
-func prepareWSTurn(payload []byte, idState *xaiBackend.WebsocketIDState) (out []byte, mapper *xaiBackend.RequestIDMapper, warmup bool, err error) {
+// prepareWSTurn 准备 WS 出站 body。
+// clientSession：客户端会话；upstreamSession：握手已用会话。
+// 保证 body.prompt_cache_key 与 upstreamSession 对齐。
+func prepareWSTurn(
+	payload []byte,
+	idState *xaiBackend.WebsocketIDState,
+	clientSession, upstreamSession string,
+) (out []byte, mapper *xaiBackend.RequestIDMapper, warmup bool, err error) {
+	clientSession = strings.TrimSpace(clientSession)
+	upstreamSession = strings.TrimSpace(upstreamSession)
 	model := gjson.GetBytes(payload, "model").String()
-	prepared, err := xaiBackend.PrepareResponsesBody(payload, xaiBackend.PrepareOptions{
+	var body []byte
+
+	// PrepareResponsesBody 用连接级 clientSession 作 explicit，强制多轮同源。
+	prepared, prepErr := xaiBackend.PrepareResponsesBody(payload, xaiBackend.PrepareOptions{
 		Stream:       true,
 		Model:        model,
+		SourceType:   "openai-response",
+		SessionID:    clientSession,
 		IsWebsocket:  true,
 		KeepPrevious: true,
 	})
-	if err != nil {
-		return nil, nil, false, err
+	if prepErr != nil {
+		return nil, nil, false, prepErr
 	}
-	body := prepared.Body
-	// 保留客户端 previous_response_id（Prepare 在 KeepPrevious 时不删）
+	body = prepared.Body
+	// 与握手 upstreamSession 对齐（compat 下二者通常相同）
+	align := upstreamSession
+	if align == "" {
+		align = prepared.SessionID
+	}
+	if align == "" {
+		align = clientSession
+	}
+	if align != "" {
+		body, _ = sjson.SetBytes(body, "prompt_cache_key", align)
+	}
 	if prev := strings.TrimSpace(gjson.GetBytes(payload, "previous_response_id").String()); prev != "" {
 		body, _ = sjson.SetBytes(body, "previous_response_id", prev)
 	}
@@ -348,6 +587,8 @@ func pumpUpstreamTurn(
 	}
 
 	recordedTranscript := false
+	outputItemsByIndex := make(map[int64][]byte)
+	outputItemsFallback := make([][]byte, 0, 4)
 	for {
 		var (
 			msgType int
@@ -369,6 +610,20 @@ func pumpUpstreamTurn(
 			continue
 		}
 
+		upstreamType := gjson.GetBytes(payload, "type").String()
+		// 错误必须在任何
+		// reasoning/ID 归一和下游写出之前转成内部错误。调用方会据此应用
+		// cooldown，并只生成一个稳定的下游 error 事件，避免原始错误帧与
+		// 本地 error 帧重复下发。
+		if isWSTurnErrorPayload(payload) {
+			return parseWSTurnError(payload)
+		}
+		switch upstreamType {
+		case "response.output_item.done":
+			xaiBackend.CollectOutputItemDone(payload, outputItemsByIndex, &outputItemsFallback)
+		case "response.completed", "response.done":
+			payload = xaiBackend.PatchCompletedOutput(payload, outputItemsByIndex, outputItemsFallback)
+		}
 		// 入站 ID 改写 + reasoning 归一
 		if mapper != nil {
 			payload = mapper.DownstreamResponsePayload(payload)
@@ -381,7 +636,7 @@ func pumpUpstreamTurn(
 
 		typ := gjson.GetBytes(payload, "type").String()
 		switch typ {
-		case "response.completed":
+		case "response.completed", "response.done":
 			if !warmup && idState != nil && !recordedTranscript {
 				idState.RecordTranscriptTurn(reqBody, payload)
 				recordedTranscript = true
@@ -389,7 +644,6 @@ func pumpUpstreamTurn(
 		case "response.created":
 			// warmup：在 created 后合成 completed
 			if warmup {
-				// 先把 created 发给下游
 				for _, ev := range events {
 					if err := writeDownstream(downstream, ev); err != nil {
 						return fmt.Errorf("downstream write: %w", err)
@@ -404,11 +658,6 @@ func pumpUpstreamTurn(
 				}
 				return nil
 			}
-		case "error":
-			for _, ev := range events {
-				_ = writeDownstream(downstream, ev)
-			}
-			return fmt.Errorf("%s", extractWSErrorMessage(payload))
 		}
 
 		for _, ev := range events {
@@ -416,10 +665,18 @@ func pumpUpstreamTurn(
 				return fmt.Errorf("downstream write: %w", err)
 			}
 		}
-		if typ == "response.completed" {
+		if typ == "response.completed" || typ == "response.done" {
 			return nil
 		}
 	}
+}
+
+func isWSTurnErrorPayload(payload []byte) bool {
+	typ := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+	if typ == "error" {
+		return true
+	}
+	return gjson.GetBytes(payload, "error").Exists()
 }
 
 func writeDownstream(conn *websocket.Conn, payload []byte) error {
@@ -431,11 +688,10 @@ func writeDownstream(conn *websocket.Conn, payload []byte) error {
 }
 
 func extractWSErrorMessage(payload []byte) string {
-	if m := strings.TrimSpace(gjson.GetBytes(payload, "error.message").String()); m != "" {
-		return m
-	}
-	if m := strings.TrimSpace(gjson.GetBytes(payload, "error.error").String()); m != "" {
-		return m
+	for _, path := range []string{"error.message", "error.error", "message"} {
+		if m := strings.TrimSpace(gjson.GetBytes(payload, path).String()); m != "" {
+			return m
+		}
 	}
 	return strings.TrimSpace(string(payload))
 }

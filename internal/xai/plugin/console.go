@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"clisimplehub/internal/executor"
 	xai "clisimplehub/internal/xai"
 	xaiBackend "clisimplehub/internal/xai/backend"
 	xaiShared "clisimplehub/internal/xai/shared"
-	"clisimplehub/internal/executor"
 )
 
 // consoleOutFmt 控制上游 SSE 如何转回客户端协议。
@@ -557,7 +557,7 @@ func (s *XaiService) consoleRoundTrip(
 			return resp.StatusCode, raw, true, fmt.Errorf("console free usage exhausted")
 		}
 		// 短冷却即可；勿进 failed map / exhausted，否则单账号池后续全 503
-		pool.CooldownAccount(account.ID, 15*time.Second, "console_rate_limited")
+		pool.CooldownConsoleAccount(account.ID, 15*time.Second, "console_rate_limited")
 		return resp.StatusCode, raw, true, fmt.Errorf("console rate limited")
 	}
 	if resp.StatusCode == http.StatusPaymentRequired {
@@ -646,7 +646,7 @@ func (s *XaiService) consoleRoundTrip(
 					if p == nil || a == nil {
 						return
 					}
-					p.CooldownAccount(a.ID, 15*time.Second, "console_stream_rate_limited")
+					p.CooldownConsoleAccount(a.ID, 15*time.Second, "console_stream_rate_limited")
 				}
 			}
 		}
@@ -690,7 +690,7 @@ func peekConsoleUpstreamFailure(raw []byte) (retryable bool, markFn func(*xai.Xa
 				if p == nil || a == nil {
 					return
 				}
-				p.CooldownAccount(a.ID, 15*time.Second, "console_rate_limited")
+				p.CooldownConsoleAccount(a.ID, 15*time.Second, "console_rate_limited")
 			}, fmt.Errorf("console rate limited")
 		}
 		return false, nil, nil
@@ -715,7 +715,7 @@ func peekConsoleUpstreamFailure(raw []byte) (retryable bool, markFn func(*xai.Xa
 			if p == nil || a == nil {
 				return
 			}
-			p.CooldownAccount(a.ID, 15*time.Second, "console_sse_error")
+			p.CooldownConsoleAccount(a.ID, 15*time.Second, "console_sse_error")
 		}, fmt.Errorf("%s", msg)
 	}
 	return false, nil, fmt.Errorf("%s", msg)

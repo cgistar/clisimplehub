@@ -9,12 +9,12 @@ import (
 	"strings"
 
 	codexBackend "clisimplehub/internal/codex/backend"
-	xaiBackend "clisimplehub/internal/xai/backend"
 	appmiddleware "clisimplehub/internal/middleware"
 	"clisimplehub/internal/transformer"
 	chat_anthropic "clisimplehub/internal/transformer/chat/anthropic/messages"
 	chat_responses "clisimplehub/internal/transformer/chat/openai/responses"
 	claude_responses "clisimplehub/internal/transformer/claude/openai/responses"
+	xaiBackend "clisimplehub/internal/xai/backend"
 
 	"github.com/tidwall/gjson"
 )
@@ -385,13 +385,35 @@ func shouldNormalizeClaudeMessagesRequest(targetInterfaceType, targetPath string
 	return strings.HasSuffix(path, "/v1/messages")
 }
 
-// buildXaiTransformationPlan 对齐 openai/codex，目标上游为 xAI Responses。
-// 支持 claude / chat / codex(responses) → xAI；端点 Models/Routes 经 ResolveUpstreamModel 生效。
+// buildXaiTransformationPlan：
+//  1. chat/claude 等需转换 → ModeTransform（转换 + SSE 行管道）
+//  2. 其它 Responses wire → ModeCompat（统一 prepare）
 func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, interfaceType string, endpoint *EndpointConfig, req *ForwardRequest) (*TransformationPlan, *ForwardResult) {
+	userAgent := ""
+	if req.Headers != nil {
+		userAgent = req.Headers.Get("User-Agent")
+	}
+	sourceType := strings.TrimSpace(interfaceType)
+	body := append([]byte(nil), req.Body...)
+	needsFormatTransform := strings.EqualFold(sourceType, "claude") ||
+		isClaudeMessagesFormat(body, sourceType) ||
+		isChatCompletionsFormat(body)
+
+	clientMode := xaiBackend.ResolveClientMode(
+		xaiBackend.ClientModeAuto,
+		userAgent,
+		req.Path,
+		body,
+		needsFormatTransform,
+	)
+
 	if xaiBackend.IsImagesPath(req.Path) || xaiBackend.IsVideosPath(req.Path) {
 		resolvedModel := ResolveUpstreamModel(extractModelFromBody(req.Body), endpoint)
 		if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
 			debugLogger.SetSection("TransformedRequest", string(req.Body))
+		}
+		if clientMode == "" {
+			clientMode = xaiBackend.ClientModeCompat
 		}
 		return &TransformationPlan{
 			TargetInterfaceType: "xai",
@@ -408,6 +430,7 @@ func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, inter
 					"request_model":  extractModelFromBody(req.Body),
 					"upstream_model": xaiBackend.BaseModelName(strings.TrimSpace(resolvedModel)),
 					"source_type":    interfaceType,
+					"client_mode":    string(clientMode),
 				},
 			},
 		}, nil
@@ -415,16 +438,21 @@ func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, inter
 
 	isStreaming := req.IsStreaming
 	if xaiBackend.IsCompactPath(req.Path) {
+		if isStreaming {
+			err := fmt.Errorf("stream is not supported for responses compact")
+			return nil, &ForwardResult{StatusCode: http.StatusBadRequest, Error: err, Body: mustJSONBytes(map[string]any{
+				"error": map[string]any{"type": "invalid_request_error", "code": "invalid_stream", "message": err.Error()},
+			}), Headers: http.Header{"Content-Type": []string{"application/json"}}}
+		}
 		isStreaming = false
 	}
 	resolvedModel := ResolveUpstreamModel(extractModelFromBody(req.Body), endpoint)
-	body := append([]byte(nil), req.Body...)
 
 	var responseTransformer transformer.Transformer
 	requestModel := extractModelFromBody(body)
 	originalBody := append([]byte(nil), body...)
-	sourceType := strings.TrimSpace(interfaceType)
 	enableReplay := false
+	mode := xaiBackend.ClientModeCompat
 
 	// Claude Messages → Responses（interfaceType=claude 优先，避免 messages 被 chat 误判）
 	var originalClaudeBody []byte
@@ -433,7 +461,6 @@ func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, inter
 		if strings.TrimSpace(requestModel) == "" {
 			requestModel = xaiBackend.BaseModelName(strings.TrimSpace(resolvedModel))
 		}
-		// 转换前保留 Claude 原文：session / metadata 在 Responses 中会丢失
 		originalClaudeBody = append([]byte(nil), body...)
 		tr := claude_responses.Transformer{}
 		converted, err := tr.TransformRequest(requestModel, body, isStreaming)
@@ -451,6 +478,7 @@ func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, inter
 		responseTransformer = tr
 		sourceType = "claude"
 		enableReplay = true
+		mode = xaiBackend.ClientModeTransform
 	} else if isChatCompletionsFormat(body) {
 		requestModel = extractModelFromBody(body)
 		if strings.TrimSpace(requestModel) == "" {
@@ -473,6 +501,7 @@ func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, inter
 		if sourceType == "" {
 			sourceType = "chat"
 		}
+		mode = xaiBackend.ClientModeTransform
 	} else if strings.TrimSpace(requestModel) == "" {
 		requestModel = xaiBackend.BaseModelName(strings.TrimSpace(resolvedModel))
 	}
@@ -484,42 +513,35 @@ func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, inter
 	if strings.TrimSpace(resolvedModel) != "" {
 		suffixModel = strings.TrimSpace(resolvedModel)
 	}
-	sessionID := ""
-	if req.Headers != nil {
-		sessionID = strings.TrimSpace(req.Headers.Get("x-grok-conv-id"))
+	// session：execution_session_id > prompt_cache_key > header > Claude/composer
+	// 客户端可通过 X-Execution-Session-Id 跨 HTTP/WS 绑定；见 roundtrip 元数据注入
+	sessionHeaders := req.Headers
+	if sessionHeaders == nil {
+		sessionHeaders = http.Header{}
+	} else {
+		sessionHeaders = sessionHeaders.Clone()
 	}
-	// Claude session 必须用原始 Messages body（metadata.user_id / X-Claude-Code-Session-Id）
-	replayKey := xaiBackend.ResolveReplaySessionKeyWithClaude(body, originalClaudeBody, req.Headers, sessionID)
+	preSession := xaiBackend.ResolveUpstreamSessionID(body, sessionHeaders, "", suffixModel)
+	if preSession == "" && len(originalClaudeBody) > 0 {
+		preSession = xaiBackend.ResolveUpstreamSessionID(originalClaudeBody, sessionHeaders, "", suffixModel)
+	}
+	// execution 会话：replay 用 execution: 前缀（无需 caller 隔离即可跨请求）
+	var replayKey string
+	if execID := xaiBackend.ExecutionSessionIDFromHeaders(sessionHeaders); execID != "" {
+		replayKey = xaiBackend.IsolateReplaySessionKey("execution:"+execID, xaiBackend.CallerAPIKeyFromHeaders(sessionHeaders))
+	} else {
+		replayKey = xaiBackend.ResolveReplaySessionKeyWithClaude(body, originalClaudeBody, sessionHeaders, preSession)
+	}
 	if replayKey == "" && enableReplay {
-		// 仍无 session 时不写 cache key，避免跨会话串扰
 		enableReplay = false
 	}
-	prepared, err := xaiBackend.PrepareResponsesBody(body, xaiBackend.PrepareOptions{
-		Stream:           isStreaming,
-		Model:            suffixModel,
-		SessionID:        sessionID,
-		IsCompact:        xaiBackend.IsCompactPath(req.Path),
-		EnableReplay:     enableReplay,
-		ReplaySessionKey: replayKey,
-	})
-	if err != nil {
-		return nil, &ForwardResult{
-			StatusCode: http.StatusBadRequest,
-			Error:      err,
-			Body: mustJSONBytes(map[string]any{
-				"error": map[string]any{"type": "invalid_request_error", "message": err.Error()},
-			}),
-			Headers: http.Header{"Content-Type": []string{"application/json"}},
-		}
-	}
-	body = prepared.Body
-	upstreamModel := prepared.BaseModel
-	if upstreamModel == "" {
-		upstreamModel = xaiBackend.BaseModelName(suffixModel)
-	}
+	// transformer 只做协议转换。sanitize、thinking、replay 和 wire 字段全部由
+	// backend.PrepareResponsesBody 唯一执行，避免同一请求重复 prepare。
+	upstreamModel := xaiBackend.BaseModelName(suffixModel)
 
 	if debugLogger := DebugLoggerFromContext(ctx); debugLogger != nil {
 		debugLogger.SetSection("TransformedRequest", string(body))
+		debugLogger.Log("xai client_mode=%s ua=%q path=%s", mode, userAgent, req.Path)
 	}
 
 	targetPath := "/xai/v1/responses"
@@ -527,6 +549,21 @@ func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, inter
 		targetPath = "/xai/v1/responses/compact"
 	}
 
+	meta := map[string]any{
+		"request_model":                      requestModel,
+		"upstream_model":                     upstreamModel,
+		"source_type":                        sourceType,
+		"client_mode":                        string(mode),
+		"chat_conversion":                    responseTransformer != nil,
+		"response_transform_on_success_only": true,
+		"xai_session_id":                     preSession,
+		"enable_xai_replay":                  enableReplay,
+		"xai_replay_session":                 replayKey,
+		"sanitize_upstream_response_headers": true,
+	}
+	if execID := xaiBackend.ExecutionSessionIDFromHeaders(sessionHeaders); execID != "" {
+		meta[xaiBackend.ExecutionSessionMetadataKey] = execID
+	}
 	plan := &TransformationPlan{
 		Transformer:         responseTransformer,
 		TargetInterfaceType: "xai",
@@ -539,16 +576,7 @@ func (c *ExecutionContext) buildXaiTransformationPlan(ctx context.Context, inter
 		Context: &TransformContext{
 			OriginalRequestBody:    originalBody,
 			TransformedRequestBody: append([]byte(nil), body...),
-			Metadata: map[string]any{
-				"request_model":                      requestModel,
-				"upstream_model":                     upstreamModel,
-				"source_type":                        sourceType,
-				"chat_conversion":                    responseTransformer != nil,
-				"response_transform_on_success_only": true,
-				"xai_session_id":                     prepared.SessionID,
-				"enable_xai_replay":                  enableReplay,
-				"xai_replay_session":                 prepared.ReplayScope.SessionKey,
-			},
+			Metadata:               meta,
 		},
 	}
 	return plan, nil

@@ -66,6 +66,9 @@ func (c *ExecutionContext) FinalizeTransformation(ctx context.Context, w http.Re
 
 	result.StatusCode = upstream.StatusCode
 	result.Headers = cloneHTTPHeader(upstream.Headers)
+	if shouldSanitizeUpstreamResponseHeaders(plan) {
+		result.Headers = safeUpstreamResponseHeaders(result.Headers)
+	}
 	result.TargetURL = strings.TrimSpace(upstream.TargetURL)
 	result.TargetHeaders = cloneStringMap(upstream.TargetHeaders)
 	result.Tokens = upstream.Tokens
@@ -237,7 +240,11 @@ func handleTransformedStreamingResponse(ctx context.Context, w http.ResponseWrit
 func handleLineStreamingResponse(ctx context.Context, w http.ResponseWriter, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
 	debugLogger := DebugLoggerFromContext(ctx)
 
-	for key, values := range upstream.Headers {
+	responseHeaders := upstream.Headers
+	if shouldSanitizeUpstreamResponseHeaders(plan) {
+		responseHeaders = safeUpstreamResponseHeaders(responseHeaders)
+	}
+	for key, values := range responseHeaders {
 		switch strings.ToLower(key) {
 		case "content-length", "content-encoding", "content-type":
 			continue
@@ -322,6 +329,24 @@ readLoop:
 	if err := scanner.Err(); err != nil && result.Error == nil {
 		result.Error = err
 	}
+	if result.Error == nil && plan.Transformer != nil {
+		outs, trErr := plan.Transformer.TransformResponseStream(ctx, planRequestModel(plan), plan.Context.OriginalRequestBody, plan.Context.TransformedRequestBody, nil, &plan.Context.StreamState)
+		if trErr != nil {
+			result.Error = trErr
+		} else {
+			for _, out := range outs {
+				if out == "" {
+					continue
+				}
+				if _, err := w.Write([]byte(out)); err != nil {
+					result.Error = fmt.Errorf("downstream write failed: %w", err)
+					break
+				}
+				capture.WriteString(out)
+				flusher.Flush()
+			}
+		}
+	}
 
 	if debugLogger != nil && rawCapture.Len() > 0 {
 		debugLogger.SetSection("UpstreamResponseRaw", rawCapture.String())
@@ -339,13 +364,35 @@ readLoop:
 	return result
 }
 
+func shouldSanitizeUpstreamResponseHeaders(plan *TransformationPlan) bool {
+	if plan == nil || plan.Context == nil || plan.Context.Metadata == nil {
+		return false
+	}
+	v, _ := plan.Context.Metadata["sanitize_upstream_response_headers"].(bool)
+	return v
+}
+
+func safeUpstreamResponseHeaders(headers http.Header) http.Header {
+	out := make(http.Header)
+	for _, key := range []string{"Content-Type", "Cache-Control", "Retry-After"} {
+		for _, value := range headers.Values(key) {
+			out.Add(key, value)
+		}
+	}
+	return out
+}
+
 func handleChunkStreamingResponse(ctx context.Context, w http.ResponseWriter, upstream *UpstreamRoundTripResult, result *ForwardResult, plan *TransformationPlan) *ForwardResult {
 	debugLogger := DebugLoggerFromContext(ctx)
 	isOpenAIImages := isOpenAIImagesPlan(plan)
 	captureUpstream := shouldCaptureUpstreamResponseBody(ctx) || debugLogger != nil
 	captureResponse := !isOpenAIImages
 
-	for key, values := range upstream.Headers {
+	responseHeaders := upstream.Headers
+	if shouldSanitizeUpstreamResponseHeaders(plan) {
+		responseHeaders = safeUpstreamResponseHeaders(responseHeaders)
+	}
+	for key, values := range responseHeaders {
 		switch strings.ToLower(key) {
 		case "content-length", "content-encoding", "content-type":
 			continue

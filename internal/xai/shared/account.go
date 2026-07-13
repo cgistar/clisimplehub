@@ -62,25 +62,25 @@ type XaiQuota struct {
 }
 
 type XaiAccount struct {
-	ID            string          `json:"id,omitempty"`
-	Email         string          `json:"email,omitempty"`
-	Subject       string          `json:"subject,omitempty"`
-	AccessToken   string          `json:"accessToken,omitempty"`
-	RefreshToken  string          `json:"refreshToken,omitempty"`
-	IDToken       string          `json:"idToken,omitempty"`
-	AuthKind     string           `json:"authKind,omitempty"`
-	APIKey       string           `json:"apiKey,omitempty"`
+	ID           string `json:"id,omitempty"`
+	Email        string `json:"email,omitempty"`
+	Subject      string `json:"subject,omitempty"`
+	AccessToken  string `json:"accessToken,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+	IDToken      string `json:"idToken,omitempty"`
+	AuthKind     string `json:"authKind,omitempty"`
+	APIKey       string `json:"apiKey,omitempty"`
 	// SSO 浏览器 grok.com / accounts.x.ai 的 sso Cookie 值（JWT，含 session_id）。
-	SSO string `json:"sso,omitempty"`
-	Enabled bool `json:"enabled"`
+	SSO     string `json:"sso,omitempty"`
+	Enabled bool   `json:"enabled"`
 	// Websockets：nil/缺省=默认开启；显式 false 可关闭。
 	Websockets *bool `json:"websockets,omitempty"`
 	// UsingAPI：nil 时按 authKind 默认（oauth=false→chat-proxy；api_key=true→官方 API）。
 	// true=非媒体 HTTP 文本走官方 api.x.ai；false=走 cli-chat-proxy（Grok Build 额度）。
-	// 图片/视频/WebSocket/compact 仍固定官方 API。
-	UsingAPI *bool `json:"usingApi,omitempty"`
-	Weight     int   `json:"weight,omitempty"`
-	ProxyUrl     string           `json:"proxyUrl,omitempty"`
+	// responses/compact 走 chat base；图片/视频/WebSocket 走官方 API。
+	UsingAPI *bool  `json:"usingApi,omitempty"`
+	Weight   int    `json:"weight,omitempty"`
+	ProxyUrl string `json:"proxyUrl,omitempty"`
 	// CustomHeaders 账号级自定义头（后写覆盖全局 customHeaders）
 	CustomHeaders map[string]string `json:"customHeaders,omitempty"`
 	// Pool 账号类型：basic / super / heavy（由 rate-limits 推断）。
@@ -88,18 +88,18 @@ type XaiAccount struct {
 	// Quota grok.com rate-limits 同步的额度。
 	Quota *XaiQuota `json:"quota,omitempty"`
 	// LastQuotaSync 上次额度同步时间。
-	LastQuotaSync time.Time `json:"lastQuotaSync,omitempty"`
-	Status       XaiAccountStatus `json:"status,omitempty"`
-	ExpiresAt    time.Time        `json:"expiresAt,omitempty"`
-	LastRefresh  time.Time        `json:"lastRefresh,omitempty"`
-	CooldownUntil time.Time        `json:"cooldownUntil,omitempty"`
-	CooldownReason string         `json:"cooldownReason,omitempty"`
-	CreatedAt    time.Time        `json:"createdAt,omitempty"`
-	UpdatedAt    time.Time        `json:"updatedAt,omitempty"`
+	LastQuotaSync  time.Time        `json:"lastQuotaSync,omitempty"`
+	Status         XaiAccountStatus `json:"status,omitempty"`
+	ExpiresAt      time.Time        `json:"expiresAt,omitempty"`
+	LastRefresh    time.Time        `json:"lastRefresh,omitempty"`
+	CooldownUntil  time.Time        `json:"cooldownUntil,omitempty"`
+	CooldownReason string           `json:"cooldownReason,omitempty"`
+	CreatedAt      time.Time        `json:"createdAt,omitempty"`
+	UpdatedAt      time.Time        `json:"updatedAt,omitempty"`
 }
 
 type XaiConfig struct {
-	BaseURL       string            `json:"baseURL,omitempty"`
+	BaseURL string `json:"baseURL,omitempty"`
 	// ClientVersion maps to x-grok-client-version (Grok CLI version).
 	ClientVersion string `json:"clientVersion,omitempty"`
 	// UserAgent maps to User-Agent (default xai-grok-cli/<version>).
@@ -107,7 +107,7 @@ type XaiConfig struct {
 	// TokenAuth maps to X-XAI-Token-Auth (default xai-grok-cli for OAuth).
 	TokenAuth string `json:"tokenAuth,omitempty"`
 	// ClientSurface maps to x-grok-client-surface (default grok-cli).
-	ClientSurface string            `json:"clientSurface,omitempty"`
+	ClientSurface string `json:"clientSurface,omitempty"`
 	// DynamicStatsig：nil/缺省=true，对齐 grok2api features.dynamic_statsig。
 	// 控制 grok.com rate-limits 等请求的 x-statsig-id 是否动态生成。
 	DynamicStatsig *bool             `json:"dynamicStatsig,omitempty"`
@@ -205,11 +205,11 @@ func (a *XaiAccount) SetWebsockets(enabled bool) {
 	a.Websockets = &v
 }
 
-// UsingAPIEnabled 是否对非媒体 HTTP 文本走官方 API（对齐 CLIProxyAPI xaiUsingAPI）。
-// 显式 usingApi 优先；缺省：oauth=false，api_key/其它=true；account=nil 视为 false（兼容全局默认改写 chat-proxy）。
+// UsingAPIEnabled 是否对非媒体 HTTP 文本走官方 API。
+// 显式 usingApi 优先；缺省：oauth=false，api_key/其它=true；account=nil 视为 true
 func (a *XaiAccount) UsingAPIEnabled() bool {
 	if a == nil {
-		return false
+		return true
 	}
 	if a.UsingAPI != nil {
 		return *a.UsingAPI

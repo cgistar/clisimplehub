@@ -100,7 +100,9 @@ func writeExecutorResult(w http.ResponseWriter, result *executor.ForwardResult) 
 		return
 	}
 	for key, values := range result.Headers {
-		if strings.EqualFold(key, "Content-Length") {
+		switch http.CanonicalHeaderKey(key) {
+		case "Content-Type", "Cache-Control", "Retry-After":
+		default:
 			continue
 		}
 		for _, value := range values {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"strconv"
 	"strings"
@@ -16,8 +17,6 @@ import (
 // Transformer implements: Chat Completions ("chat") -> Responses API ("codex").
 // Use-case: client talks /v1/chat/completions, upstream only supports /v1/responses.
 type Transformer struct{}
-
-const defaultCodingInstructions = "You are a helpful coding assistant."
 
 type modelSuffixResult struct {
 	modelName string
@@ -51,42 +50,20 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, stream boo
 		targetModel = strings.TrimSpace(modelName)
 	}
 
-	out := fmt.Sprintf(`{"instructions":%q}`, defaultCodingInstructions)
+	out := `{"instructions":""}`
 	out, _ = sjson.Set(out, "stream", stream)
 	out, _ = sjson.Set(out, "model", targetModel)
 
-	// Temperature / top_p passthrough for generic Responses API backends
-	if v := gjson.GetBytes(rawJSON, "temperature"); v.Exists() {
-		out, _ = sjson.Set(out, "temperature", v.Value())
-	}
-	if v := gjson.GetBytes(rawJSON, "top_p"); v.Exists() {
-		out, _ = sjson.Set(out, "top_p", v.Value())
-	}
-
-	// Token limits
-	if v := gjson.GetBytes(rawJSON, "max_tokens"); v.Exists() {
-		out, _ = sjson.Set(out, "max_output_tokens", v.Value())
-	}
-	if v := gjson.GetBytes(rawJSON, "max_completion_tokens"); v.Exists() {
-		out, _ = sjson.Set(out, "max_output_tokens", v.Value())
-	}
-
-	// Reasoning
+	// Reasoning：仅映射 body.reasoning_effort；model suffix 由 backend.ApplyThinking 裁决（suffix 优先）。
+	// 无 body effort 时默认 medium。
 	if v := gjson.GetBytes(rawJSON, "reasoning_effort"); v.Exists() {
 		out, _ = sjson.Set(out, "reasoning.effort", v.Value())
-	} else if effort, ok := parseEffortSuffix(modelSuffix.rawSuffix); ok {
-		out, _ = sjson.Set(out, "reasoning.effort", effort)
-	} else if effort, ok := parseEffortSuffix(bodyModelSuffix.rawSuffix); ok {
-		out, _ = sjson.Set(out, "reasoning.effort", effort)
 	} else {
 		out, _ = sjson.Set(out, "reasoning.effort", "medium")
 	}
 	out, _ = sjson.Set(out, "reasoning.summary", "auto")
-	if v := gjson.GetBytes(rawJSON, "parallel_tool_calls"); v.Exists() {
-		out, _ = sjson.Set(out, "parallel_tool_calls", v.Value())
-	} else {
-		out, _ = sjson.Set(out, "parallel_tool_calls", true)
-	}
+	// 固定 parallel_tool_calls=true，不透传客户端字段。
+	out, _ = sjson.Set(out, "parallel_tool_calls", true)
 	out, _ = sjson.Set(out, "include", []string{"reasoning.encrypted_content"})
 
 	// Build tool name shortening map
@@ -104,7 +81,7 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, stream boo
 				funcOutput := `{}`
 				funcOutput, _ = sjson.Set(funcOutput, "type", "function_call_output")
 				funcOutput, _ = sjson.Set(funcOutput, "call_id", m.Get("tool_call_id").String())
-				funcOutput, _ = sjson.Set(funcOutput, "output", m.Get("content").String())
+				funcOutput = setToolCallOutputContent(funcOutput, m.Get("content"))
 				out, _ = sjson.SetRaw(out, "input.-1", funcOutput)
 
 			default:
@@ -159,6 +136,20 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, stream boo
 									part, _ = sjson.Set(part, "file_data", fileData)
 									if filename != "" {
 										part, _ = sjson.Set(part, "filename", filename)
+									}
+									msg, _ = sjson.SetRaw(msg, "content.-1", part)
+								}
+							}
+						case "input_audio":
+							if role == "user" {
+								audioData := it.Get("input_audio.data").String()
+								audioFormat := it.Get("input_audio.format").String()
+								if audioData != "" {
+									part := `{}`
+									part, _ = sjson.Set(part, "type", "input_audio")
+									part, _ = sjson.Set(part, "data", audioData)
+									if audioFormat != "" {
+										part, _ = sjson.Set(part, "format", audioFormat)
 									}
 									msg, _ = sjson.SetRaw(msg, "content.-1", part)
 								}
@@ -316,13 +307,18 @@ type responsesToChatState struct {
 	FunctionCallIndex         int
 	HasReceivedArgumentsDelta bool
 	HasToolCallAnnounced      bool
-	Finished                  bool
-	ReverseMap                map[string]string
+	// Finished：已收到正常 terminal（response.completed）；EOF finalizer 仅此时发 [DONE]
+	Finished bool
+	// DoneEmitted：防止重复 [DONE]
+	DoneEmitted           bool
+	ReverseMap            map[string]string
+	LastImageHashByItemID map[string][32]byte
 }
 
 var dataTag = []byte("data:")
 
 // TransformResponseStream converts a single SSE line from Responses API to Chat Completions SSE chunk(s).
+// rawLine == nil/empty：EOF finalizer；仅当已成功收到 response.completed 时追加一次 data: [DONE]。
 func (Transformer) TransformResponseStream(_ context.Context, modelName string, originalRequestRawJSON, _ []byte, rawLine []byte, state *any) ([]string, error) {
 	if state == nil {
 		return nil, fmt.Errorf("nil transformer state")
@@ -334,8 +330,19 @@ func (Transformer) TransformResponseStream(_ context.Context, modelName string, 
 		}
 	}
 	st := (*state).(*responsesToChatState)
+	if len(rawLine) == 0 {
+		// 仅正常 terminal 后补 [DONE]；异常/未完成流不伪造成功收尾
+		if st.Finished && !st.DoneEmitted {
+			st.DoneEmitted = true
+			return []string{"data: [DONE]\n\n"}, nil
+		}
+		return nil, nil
+	}
 	if st.ReverseMap == nil {
 		st.ReverseMap = buildReverseMapFromOriginalChatCompletions(originalRequestRawJSON)
+	}
+	if st.LastImageHashByItemID == nil {
+		st.LastImageHashByItemID = make(map[string][32]byte)
 	}
 
 	line := bytes.TrimSpace(rawLine)
@@ -347,6 +354,7 @@ func (Transformer) TransformResponseStream(_ context.Context, modelName string, 
 	if bytes.HasPrefix(line, dataTag) {
 		payload = bytes.TrimSpace(line[5:])
 	}
+	// 上游偶发 [DONE]：Chat 转换侧不转发；本侧由 finalizer 在 completed 后统一发出
 	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
 		return nil, nil
 	}
@@ -357,8 +365,8 @@ func (Transformer) TransformResponseStream(_ context.Context, modelName string, 
 	root := gjson.ParseBytes(payload)
 	dataType := root.Get("type").String()
 
-	// Build base chunk without null fields — each branch adds only relevant delta keys
-	chunk := `{"id":"","object":"chat.completion.chunk","created":0,"model":"","choices":[{"index":0,"delta":{},"finish_reason":null}]}`
+	// Build base chunk — finish_reason/native_finish_reason 仅在 terminal 写入
+	chunk := `{"id":"","object":"chat.completion.chunk","created":0,"model":"","choices":[{"index":0,"delta":{},"finish_reason":null,"native_finish_reason":null}]}`
 
 	if dataType == "response.created" {
 		st.ResponseID = root.Get("response.id").String()
@@ -379,23 +387,9 @@ func (Transformer) TransformResponseStream(_ context.Context, modelName string, 
 	chunk, _ = sjson.Set(chunk, "created", st.CreatedAt)
 	chunk, _ = sjson.Set(chunk, "id", st.ResponseID)
 
-	// Usage (only in response.completed)
+	// Usage（response.completed 等带 usage 的事件）
 	if usage := root.Get("response.usage"); usage.Exists() {
-		if v := usage.Get("output_tokens"); v.Exists() {
-			chunk, _ = sjson.Set(chunk, "usage.completion_tokens", v.Int())
-		}
-		if v := usage.Get("total_tokens"); v.Exists() {
-			chunk, _ = sjson.Set(chunk, "usage.total_tokens", v.Int())
-		}
-		if v := usage.Get("input_tokens"); v.Exists() {
-			chunk, _ = sjson.Set(chunk, "usage.prompt_tokens", v.Int())
-		}
-		if v := usage.Get("input_tokens_details.cached_tokens"); v.Exists() {
-			chunk, _ = sjson.Set(chunk, "usage.prompt_tokens_details.cached_tokens", v.Int())
-		}
-		if v := usage.Get("output_tokens_details.reasoning_tokens"); v.Exists() {
-			chunk, _ = sjson.Set(chunk, "usage.completion_tokens_details.reasoning_tokens", v.Int())
-		}
+		chunk = applyChatUsageFromResponses(chunk, usage)
 	}
 
 	reverseMap := st.ReverseMap
@@ -416,6 +410,21 @@ func (Transformer) TransformResponseStream(_ context.Context, modelName string, 
 	case "response.reasoning_summary_text.done":
 		chunk, _ = sjson.Set(chunk, "choices.0.delta.role", "assistant")
 		chunk, _ = sjson.Set(chunk, "choices.0.delta.reasoning_content", "\n\n")
+
+	case "response.image_generation_call.partial_image":
+		itemID := root.Get("item_id").String()
+		b64 := root.Get("partial_image_b64").String()
+		if b64 == "" {
+			return nil, nil
+		}
+		if itemID != "" {
+			hash := sha256.Sum256([]byte(b64))
+			if last, ok := st.LastImageHashByItemID[itemID]; ok && last == hash {
+				return nil, nil
+			}
+			st.LastImageHashByItemID[itemID] = hash
+		}
+		chunk = appendChatImageDelta(chunk, b64, root.Get("output_format").String())
 
 	case "response.output_item.added":
 		item := root.Get("item")
@@ -459,7 +468,27 @@ func (Transformer) TransformResponseStream(_ context.Context, modelName string, 
 
 	case "response.output_item.done":
 		item := root.Get("item")
-		if !item.Exists() || item.Get("type").String() != "function_call" {
+		if !item.Exists() {
+			return nil, nil
+		}
+		itemType := item.Get("type").String()
+		if itemType == "image_generation_call" {
+			itemID := item.Get("id").String()
+			b64 := item.Get("result").String()
+			if b64 == "" {
+				return nil, nil
+			}
+			if itemID != "" {
+				hash := sha256.Sum256([]byte(b64))
+				if last, ok := st.LastImageHashByItemID[itemID]; ok && last == hash {
+					return nil, nil
+				}
+				st.LastImageHashByItemID[itemID] = hash
+			}
+			chunk = appendChatImageDelta(chunk, b64, item.Get("output_format").String())
+			return []string{chatSSE(chunk)}, nil
+		}
+		if itemType != "function_call" {
 			return nil, nil
 		}
 		if st.HasToolCallAnnounced {
@@ -487,6 +516,7 @@ func (Transformer) TransformResponseStream(_ context.Context, modelName string, 
 			finishReason = "tool_calls"
 		}
 		chunk, _ = sjson.Set(chunk, "choices.0.finish_reason", finishReason)
+		chunk, _ = sjson.Set(chunk, "choices.0.native_finish_reason", finishReason)
 		st.Finished = true
 
 	default:
@@ -494,6 +524,69 @@ func (Transformer) TransformResponseStream(_ context.Context, modelName string, 
 	}
 
 	return []string{chatSSE(chunk)}, nil
+}
+
+func applyChatUsageFromResponses(chunk string, usage gjson.Result) string {
+	if !usage.Exists() {
+		return chunk
+	}
+	if v := usage.Get("output_tokens"); v.Exists() {
+		chunk, _ = sjson.Set(chunk, "usage.completion_tokens", v.Int())
+	}
+	if v := usage.Get("total_tokens"); v.Exists() {
+		chunk, _ = sjson.Set(chunk, "usage.total_tokens", v.Int())
+	}
+	if v := usage.Get("input_tokens"); v.Exists() {
+		chunk, _ = sjson.Set(chunk, "usage.prompt_tokens", v.Int())
+	}
+	if v := usage.Get("input_tokens_details.cached_tokens"); v.Exists() {
+		chunk, _ = sjson.Set(chunk, "usage.prompt_tokens_details.cached_tokens", v.Int())
+	}
+	// cache_write_tokens → cached_creation_tokens（含显式 0）
+	if v := usage.Get("input_tokens_details.cache_write_tokens"); v.Exists() {
+		chunk, _ = sjson.Set(chunk, "usage.prompt_tokens_details.cached_creation_tokens", v.Int())
+	}
+	if v := usage.Get("output_tokens_details.reasoning_tokens"); v.Exists() {
+		chunk, _ = sjson.Set(chunk, "usage.completion_tokens_details.reasoning_tokens", v.Int())
+	}
+	return chunk
+}
+
+func appendChatImageDelta(chunk, b64, outputFormat string) string {
+	mimeType := mimeTypeFromCodexOutputFormat(outputFormat)
+	imageURL := "data:" + mimeType + ";base64," + b64
+	images := gjson.Get(chunk, "choices.0.delta.images")
+	if !images.Exists() || !images.IsArray() {
+		chunk, _ = sjson.SetRaw(chunk, "choices.0.delta.images", `[]`)
+	}
+	imageIndex := len(gjson.Get(chunk, "choices.0.delta.images").Array())
+	imagePayload := `{"type":"image_url","image_url":{"url":""}}`
+	imagePayload, _ = sjson.Set(imagePayload, "index", imageIndex)
+	imagePayload, _ = sjson.Set(imagePayload, "image_url.url", imageURL)
+	chunk, _ = sjson.Set(chunk, "choices.0.delta.role", "assistant")
+	chunk, _ = sjson.SetRaw(chunk, "choices.0.delta.images.-1", imagePayload)
+	return chunk
+}
+
+func mimeTypeFromCodexOutputFormat(outputFormat string) string {
+	if outputFormat == "" {
+		return "image/png"
+	}
+	if strings.Contains(outputFormat, "/") {
+		return outputFormat
+	}
+	switch strings.ToLower(outputFormat) {
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "webp":
+		return "image/webp"
+	case "gif":
+		return "image/gif"
+	default:
+		return "image/png"
+	}
 }
 
 // TransformResponseNonStream converts a Responses API JSON response to Chat Completions JSON.
@@ -519,7 +612,7 @@ func buildResponseFromObject(modelName string, originalRequestRawJSON []byte, re
 		return nil, fmt.Errorf("empty response")
 	}
 
-	template := `{"id":"","object":"chat.completion","created":0,"model":"","choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null}]}`
+	template := `{"id":"","object":"chat.completion","created":0,"model":"","choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null,"native_finish_reason":null}]}`
 
 	if m := response.Get("model"); m.Exists() {
 		template, _ = sjson.Set(template, "model", m.String())
@@ -537,29 +630,15 @@ func buildResponseFromObject(modelName string, originalRequestRawJSON []byte, re
 		template, _ = sjson.Set(template, "id", v.String())
 	}
 
-	// Usage
 	if usage := response.Get("usage"); usage.Exists() {
-		if v := usage.Get("output_tokens"); v.Exists() {
-			template, _ = sjson.Set(template, "usage.completion_tokens", v.Int())
-		}
-		if v := usage.Get("total_tokens"); v.Exists() {
-			template, _ = sjson.Set(template, "usage.total_tokens", v.Int())
-		}
-		if v := usage.Get("input_tokens"); v.Exists() {
-			template, _ = sjson.Set(template, "usage.prompt_tokens", v.Int())
-		}
-		if v := usage.Get("input_tokens_details.cached_tokens"); v.Exists() {
-			template, _ = sjson.Set(template, "usage.prompt_tokens_details.cached_tokens", v.Int())
-		}
-		if v := usage.Get("output_tokens_details.reasoning_tokens"); v.Exists() {
-			template, _ = sjson.Set(template, "usage.completion_tokens_details.reasoning_tokens", v.Int())
-		}
+		template = applyChatUsageFromResponses(template, usage)
 	}
 
 	// Process output array
 	reverseMap := buildReverseMapFromOriginalChatCompletions(originalRequestRawJSON)
 	output := response.Get("output")
 	var toolCalls []string
+	var images []string
 	if output.IsArray() {
 		var contentBuf strings.Builder
 		var reasoningBuf strings.Builder
@@ -598,30 +677,52 @@ func buildResponseFromObject(modelName string, originalRequestRawJSON []byte, re
 					fc, _ = sjson.Set(fc, "function.arguments", v.String())
 				}
 				toolCalls = append(toolCalls, fc)
+			case "image_generation_call":
+				b64 := item.Get("result").String()
+				if b64 == "" {
+					break
+				}
+				mimeType := mimeTypeFromCodexOutputFormat(item.Get("output_format").String())
+				imageURL := "data:" + mimeType + ";base64," + b64
+				imagePayload := `{"type":"image_url","image_url":{"url":""}}`
+				imagePayload, _ = sjson.Set(imagePayload, "index", len(images))
+				imagePayload, _ = sjson.Set(imagePayload, "image_url.url", imageURL)
+				images = append(images, imagePayload)
 			}
 		}
 
 		if contentBuf.Len() > 0 {
 			template, _ = sjson.Set(template, "choices.0.message.content", contentBuf.String())
+			template, _ = sjson.Set(template, "choices.0.message.role", "assistant")
 		}
 		if reasoningBuf.Len() > 0 {
 			template, _ = sjson.Set(template, "choices.0.message.reasoning_content", reasoningBuf.String())
+			template, _ = sjson.Set(template, "choices.0.message.role", "assistant")
 		}
 		if len(toolCalls) > 0 {
 			template, _ = sjson.SetRaw(template, "choices.0.message.tool_calls", `[]`)
 			for _, tc := range toolCalls {
 				template, _ = sjson.SetRaw(template, "choices.0.message.tool_calls.-1", tc)
 			}
+			template, _ = sjson.Set(template, "choices.0.message.role", "assistant")
+		}
+		if len(images) > 0 {
+			template, _ = sjson.SetRaw(template, "choices.0.message.images", `[]`)
+			for _, img := range images {
+				template, _ = sjson.SetRaw(template, "choices.0.message.images.-1", img)
+			}
+			template, _ = sjson.Set(template, "choices.0.message.role", "assistant")
 		}
 	}
 
 	// Finish reason
 	if status := response.Get("status"); status.Exists() && status.String() == "completed" {
+		finishReason := "stop"
 		if len(toolCalls) > 0 {
-			template, _ = sjson.Set(template, "choices.0.finish_reason", "tool_calls")
-		} else {
-			template, _ = sjson.Set(template, "choices.0.finish_reason", "stop")
+			finishReason = "tool_calls"
 		}
+		template, _ = sjson.Set(template, "choices.0.finish_reason", finishReason)
+		template, _ = sjson.Set(template, "choices.0.native_finish_reason", finishReason)
 	}
 
 	return []byte(template), nil
@@ -643,6 +744,10 @@ func buildResponseFromTranscript(ctx context.Context, modelName string, original
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+	// 非流聚合不需要 [DONE]；finalizer 仅清理状态
+	if outs, err := (Transformer{}).TransformResponseStream(ctx, modelName, originalRequestRawJSON, nil, nil, &state); err == nil {
+		_ = outs
 	}
 	if len(allChunks) == 0 {
 		return nil, fmt.Errorf("failed to parse responses transcript")
@@ -673,31 +778,23 @@ func parseModelSuffix(model string) modelSuffixResult {
 	}
 }
 
-func parseEffortSuffix(raw string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "minimal", "low", "medium", "high", "xhigh", "max", "none", "auto":
-		return strings.ToLower(strings.TrimSpace(raw)), true
-	default:
-		return "", false
-	}
-}
-
 func mergeChunksToNonStream(chunks []string) ([]byte, error) {
-	template := `{"id":"","object":"chat.completion","created":0,"model":"","choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null}]}`
+	template := `{"id":"","object":"chat.completion","created":0,"model":"","choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null,"native_finish_reason":null}]}`
 
 	var contentBuf strings.Builder
 	var reasoningBuf strings.Builder
 	var toolCalls []string
+	var images []string
 	var finishReason string
 
 	for _, chunk := range chunks {
 		// Strip "data: " prefix and trailing newlines
 		data := strings.TrimSpace(chunk)
-		if strings.HasPrefix(data, "data: ") {
-			data = strings.TrimPrefix(data, "data: ")
+		if after, ok := strings.CutPrefix(data, "data: "); ok {
+			data = after
 		}
 		data = strings.TrimSpace(data)
-		if data == "" || !gjson.Valid(data) {
+		if data == "" || data == "[DONE]" || !gjson.Valid(data) {
 			continue
 		}
 
@@ -713,7 +810,7 @@ func mergeChunksToNonStream(chunks []string) ([]byte, error) {
 			template, _ = sjson.Set(template, "created", c.Int())
 		}
 
-		// Usage
+		// Usage（已是 chat 形态字段）
 		if usage := root.Get("usage"); usage.Exists() {
 			if v := usage.Get("prompt_tokens"); v.Exists() {
 				template, _ = sjson.Set(template, "usage.prompt_tokens", v.Int())
@@ -727,50 +824,69 @@ func mergeChunksToNonStream(chunks []string) ([]byte, error) {
 			if v := usage.Get("prompt_tokens_details.cached_tokens"); v.Exists() {
 				template, _ = sjson.Set(template, "usage.prompt_tokens_details.cached_tokens", v.Int())
 			}
+			if v := usage.Get("prompt_tokens_details.cached_creation_tokens"); v.Exists() {
+				template, _ = sjson.Set(template, "usage.prompt_tokens_details.cached_creation_tokens", v.Int())
+			}
 			if v := usage.Get("completion_tokens_details.reasoning_tokens"); v.Exists() {
 				template, _ = sjson.Set(template, "usage.completion_tokens_details.reasoning_tokens", v.Int())
 			}
 		}
 
 		delta := root.Get("choices.0.delta")
-		if !delta.Exists() {
-			continue
-		}
-
-		if v := delta.Get("content"); v.Exists() && v.Type == gjson.String {
-			contentBuf.WriteString(v.String())
-		}
-		if v := delta.Get("reasoning_content"); v.Exists() && v.Type == gjson.String {
-			reasoningBuf.WriteString(v.String())
-		}
-		if tcs := delta.Get("tool_calls"); tcs.Exists() && tcs.IsArray() {
-			for _, tc := range tcs.Array() {
-				// If it has id+name, it's a new tool call announcement
-				if tc.Get("id").Exists() && tc.Get("function.name").Exists() {
-					idx := int(tc.Get("index").Int())
-					for len(toolCalls) <= idx {
-						toolCalls = append(toolCalls, `{"id":"","type":"function","function":{"name":"","arguments":""}}`)
+		if delta.Exists() {
+			if v := delta.Get("content"); v.Exists() && v.Type == gjson.String {
+				contentBuf.WriteString(v.String())
+			}
+			if v := delta.Get("reasoning_content"); v.Exists() && v.Type == gjson.String {
+				reasoningBuf.WriteString(v.String())
+			}
+			if tcs := delta.Get("tool_calls"); tcs.Exists() && tcs.IsArray() {
+				for _, tc := range tcs.Array() {
+					// If it has id+name, it's a new tool call announcement
+					if tc.Get("id").Exists() && tc.Get("function.name").Exists() {
+						idx := int(tc.Get("index").Int())
+						for len(toolCalls) <= idx {
+							toolCalls = append(toolCalls, `{"id":"","type":"function","function":{"name":"","arguments":""}}`)
+						}
+						entry := toolCalls[idx]
+						entry, _ = sjson.Set(entry, "id", tc.Get("id").String())
+						entry, _ = sjson.Set(entry, "function.name", tc.Get("function.name").String())
+						toolCalls[idx] = entry
 					}
-					entry := toolCalls[idx]
-					entry, _ = sjson.Set(entry, "id", tc.Get("id").String())
-					entry, _ = sjson.Set(entry, "function.name", tc.Get("function.name").String())
-					toolCalls[idx] = entry
+					// Accumulate arguments
+					if args := tc.Get("function.arguments"); args.Exists() && args.String() != "" {
+						idx := int(tc.Get("index").Int())
+						for len(toolCalls) <= idx {
+							toolCalls = append(toolCalls, `{"id":"","type":"function","function":{"name":"","arguments":""}}`)
+						}
+						entry := toolCalls[idx]
+						existing := gjson.Get(entry, "function.arguments").String()
+						entry, _ = sjson.Set(entry, "function.arguments", existing+args.String())
+						toolCalls[idx] = entry
+					}
 				}
-				// Accumulate arguments
-				if args := tc.Get("function.arguments"); args.Exists() && args.String() != "" {
-					idx := int(tc.Get("index").Int())
-					for len(toolCalls) <= idx {
-						toolCalls = append(toolCalls, `{"id":"","type":"function","function":{"name":"","arguments":""}}`)
+			}
+			if imgs := delta.Get("images"); imgs.Exists() && imgs.IsArray() {
+				for _, img := range imgs.Array() {
+					// 按最终 URL 去重，避免 partial + done 重复
+					url := img.Get("image_url.url").String()
+					dup := false
+					for _, existing := range images {
+						if gjson.Get(existing, "image_url.url").String() == url {
+							dup = true
+							break
+						}
 					}
-					entry := toolCalls[idx]
-					existing := gjson.Get(entry, "function.arguments").String()
-					entry, _ = sjson.Set(entry, "function.arguments", existing+args.String())
-					toolCalls[idx] = entry
+					if !dup && url != "" {
+						payload := img.Raw
+						payload, _ = sjson.Set(payload, "index", len(images))
+						images = append(images, payload)
+					}
 				}
 			}
 		}
 
-		if fr := root.Get("choices.0.finish_reason"); fr.Exists() && fr.Type == gjson.String {
+		if fr := root.Get("choices.0.finish_reason"); fr.Exists() && fr.Type == gjson.String && fr.String() != "" {
 			finishReason = fr.String()
 		}
 	}
@@ -787,11 +903,105 @@ func mergeChunksToNonStream(chunks []string) ([]byte, error) {
 			template, _ = sjson.SetRaw(template, "choices.0.message.tool_calls.-1", tc)
 		}
 	}
+	if len(images) > 0 {
+		template, _ = sjson.SetRaw(template, "choices.0.message.images", `[]`)
+		for _, img := range images {
+			template, _ = sjson.SetRaw(template, "choices.0.message.images.-1", img)
+		}
+	}
 	if finishReason != "" {
 		template, _ = sjson.Set(template, "choices.0.finish_reason", finishReason)
+		template, _ = sjson.Set(template, "choices.0.native_finish_reason", finishReason)
 	}
 
 	return []byte(template), nil
+}
+
+// setToolCallOutputContent 将 chat tool message content 映射为 Responses function_call_output.output。
+// 支持 string / 结构化数组（text、image_url、file）
+func setToolCallOutputContent(funcOutput string, content gjson.Result) string {
+	switch {
+	case content.Type == gjson.String:
+		funcOutput, _ = sjson.Set(funcOutput, "output", content.String())
+	case content.IsArray():
+		output := `[]`
+		for _, item := range content.Array() {
+			output = appendToolOutputContentPart(output, item)
+		}
+		funcOutput, _ = sjson.SetRaw(funcOutput, "output", output)
+	default:
+		fallback := content.Raw
+		if fallback == "" {
+			fallback = content.String()
+		}
+		funcOutput, _ = sjson.Set(funcOutput, "output", fallback)
+	}
+	return funcOutput
+}
+
+func appendToolOutputContentPart(output string, item gjson.Result) string {
+	switch item.Get("type").String() {
+	case "text":
+		part := `{}`
+		part, _ = sjson.Set(part, "type", "input_text")
+		part, _ = sjson.Set(part, "text", item.Get("text").String())
+		output, _ = sjson.SetRaw(output, "-1", part)
+	case "image_url":
+		imageURL := item.Get("image_url.url").String()
+		fileID := item.Get("image_url.file_id").String()
+		if imageURL == "" && fileID == "" {
+			return appendToolOutputFallbackPart(output, item)
+		}
+		part := `{}`
+		part, _ = sjson.Set(part, "type", "input_image")
+		if imageURL != "" {
+			part, _ = sjson.Set(part, "image_url", imageURL)
+		}
+		if fileID != "" {
+			part, _ = sjson.Set(part, "file_id", fileID)
+		}
+		if detail := item.Get("image_url.detail").String(); detail != "" {
+			part, _ = sjson.Set(part, "detail", detail)
+		}
+		output, _ = sjson.SetRaw(output, "-1", part)
+	case "file":
+		fileID := item.Get("file.file_id").String()
+		fileData := item.Get("file.file_data").String()
+		fileURL := item.Get("file.file_url").String()
+		if fileID == "" && fileData == "" && fileURL == "" {
+			return appendToolOutputFallbackPart(output, item)
+		}
+		part := `{}`
+		part, _ = sjson.Set(part, "type", "input_file")
+		if fileID != "" {
+			part, _ = sjson.Set(part, "file_id", fileID)
+		}
+		if fileData != "" {
+			part, _ = sjson.Set(part, "file_data", fileData)
+		}
+		if fileURL != "" {
+			part, _ = sjson.Set(part, "file_url", fileURL)
+		}
+		if filename := item.Get("file.filename").String(); filename != "" {
+			part, _ = sjson.Set(part, "filename", filename)
+		}
+		output, _ = sjson.SetRaw(output, "-1", part)
+	default:
+		output = appendToolOutputFallbackPart(output, item)
+	}
+	return output
+}
+
+func appendToolOutputFallbackPart(output string, item gjson.Result) string {
+	text := item.Raw
+	if text == "" {
+		text = item.String()
+	}
+	part := `{}`
+	part, _ = sjson.Set(part, "type", "input_text")
+	part, _ = sjson.Set(part, "text", text)
+	output, _ = sjson.SetRaw(output, "-1", part)
+	return output
 }
 
 // --- SSE helper ---

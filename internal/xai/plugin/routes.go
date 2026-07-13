@@ -142,7 +142,7 @@ func (p *XaiPlugin) handleXaiRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 			return
 		}
 		svc.HandleProxy(w, r)
@@ -150,7 +150,7 @@ func (p *XaiPlugin) handleXaiRoute(w http.ResponseWriter, r *http.Request) {
 
 	case path == "/xai/v1/responses/compact":
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 			return
 		}
 		svc.HandleProxy(w, r)
@@ -158,7 +158,7 @@ func (p *XaiPlugin) handleXaiRoute(w http.ResponseWriter, r *http.Request) {
 
 	case path == "/xai/v1/chat/completions":
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 			return
 		}
 		svc.HandleChatCompletions(w, r)
@@ -166,34 +166,35 @@ func (p *XaiPlugin) handleXaiRoute(w http.ResponseWriter, r *http.Request) {
 
 	case path == "/xai/v1/images/generations", path == "/xai/v1/images/edits":
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 			return
 		}
-		svc.HandleProxy(w, r)
+		svc.HandleImages(w, r, path == "/xai/v1/images/edits")
 		return
 
-	case path == "/xai/v1/videos/generations",
+	case path == "/xai/v1/videos",
+		path == "/xai/v1/videos/generations",
 		path == "/xai/v1/videos/edits",
 		path == "/xai/v1/videos/extensions":
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 			return
 		}
-		svc.HandleProxy(w, r)
+		svc.HandleVideos(w, r)
 		return
 
 	case strings.HasPrefix(path, "/xai/v1/videos/"):
 		// GET /xai/v1/videos/{request_id}
 		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 			return
 		}
-		svc.HandleProxy(w, r)
+		svc.HandleVideos(w, r)
 		return
 
 	case path == "/xai/v1/models":
 		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "method_not_allowed")
 			return
 		}
 		// 本地模型表，不转发上游
@@ -202,10 +203,7 @@ func (p *XaiPlugin) handleXaiRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 未显式注册的 /xai 路径一律 404（避免未知 path 被误转发上游）
-	writeJSON(w, http.StatusNotFound, map[string]any{
-		"error": "xai route not found",
-		"path":  r.URL.Path,
-	})
+	writeAPIError(w, http.StatusNotFound, "xai route not found", "invalid_request_error", "route_not_found")
 }
 
 func normalizeXaiRoutePath(path string) string {

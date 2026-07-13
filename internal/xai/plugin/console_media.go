@@ -201,7 +201,7 @@ func (s *XaiService) HandleConsoleImagesEdits(w http.ResponseWriter, r *http.Req
 			}
 			retryable := status == http.StatusTooManyRequests || status >= 500
 			if status == http.StatusTooManyRequests {
-				pool.CooldownAccount(acc.ID, 15*time.Second, "console_media_rate_limited")
+				pool.CooldownConsoleAccount(acc.ID, 15*time.Second, "console_media_rate_limited")
 			} else if isFreeUsageExhaustedBody(raw) || isQuotaLikeBody(raw) {
 				pool.MarkFailed(acc.ID, xaiShared.XaiStatusExhausted, 0, "console_media_quota")
 				retryable = true
@@ -522,7 +522,7 @@ func classifyConsoleMediaErr(pool *xai.XaiAccountPool, acc *xaiShared.XaiAccount
 	case strings.Contains(msg, "rate limit") || strings.Contains(msg, "too many requests") || strings.Contains(msg, "429"):
 		status = http.StatusTooManyRequests
 		if pool != nil && acc != nil {
-			pool.CooldownAccount(acc.ID, 15*time.Second, "console_image_rate_limited")
+			pool.CooldownConsoleAccount(acc.ID, 15*time.Second, "console_image_rate_limited")
 		}
 	case strings.Contains(msg, "free-usage") || strings.Contains(msg, "free usage") ||
 		strings.Contains(msg, "spending-limit") || strings.Contains(msg, "quota"):

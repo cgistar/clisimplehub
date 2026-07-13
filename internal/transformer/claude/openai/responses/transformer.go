@@ -56,13 +56,6 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 	if systemMessage := buildSystemDeveloperMessage(root.Get("system")); systemMessage != "" {
 		template, _ = sjson.SetRaw(template, "input.-1", systemMessage)
 	}
-	// Claude max_tokens → Responses max_output_tokens
-	if maxTokens := root.Get("max_tokens"); maxTokens.Exists() && maxTokens.Type == gjson.Number {
-		if n := maxTokens.Int(); n > 0 {
-			template, _ = sjson.Set(template, "max_output_tokens", n)
-		}
-	}
-
 	toolMap := buildReverseMapFromClaudeOriginalToShort(rawJSON)
 	webSearchNames := buildClaudeWebSearchToolNameSet(root.Get("tools"))
 	messages := root.Get("messages")
@@ -213,9 +206,10 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 		template, _ = sjson.SetRaw(template, "tool_choice", convertClaudeToolChoiceToCodex(root.Get("tool_choice"), toolMap, webSearchNames))
 	}
 
-	// 禁用 thinking 时不传 effort=none（上游 400）
-	reasoningEffort := "high"
-	disableReasoning := false
+	// Claude thinking → Responses reasoning（协议映射）。
+	// xAI level 最终由 backend.ApplyThinking / thinking.ApplyThinking 按模型能力收敛（suffix 优先）。
+	// adaptive 默认 xhigh，disabled → none。
+	reasoningEffort := "medium"
 	if thinkingConfig := root.Get("thinking"); thinkingConfig.Exists() && thinkingConfig.IsObject() {
 		switch thinkingConfig.Get("type").String() {
 		case "enabled":
@@ -225,55 +219,26 @@ func (Transformer) TransformRequest(modelName string, rawJSON []byte, _ bool) ([
 				}
 			}
 		case "adaptive", "auto":
+			// Adaptive 可带 output_config.effort（Claude 4.6）；无则默认 xhigh。
 			if effort := strings.ToLower(strings.TrimSpace(root.Get("output_config.effort").String())); effort != "" {
 				reasoningEffort = effort
 			} else {
 				reasoningEffort = "xhigh"
 			}
 		case "disabled":
-			// Claude Code 常在 thinking.disabled 时仍带 output_config.effort；
-			// xAI 不接受 none，关闭 reasoning 块。
-			disableReasoning = true
-		}
-	}
-	if modelSuffix.hasSuffix {
-		if effort, ok := parseEffortSuffix(modelSuffix.rawSuffix); ok {
-			if effort == "none" {
-				disableReasoning = true
-			} else {
+			if effort, ok := convertBudgetToLevel(0); ok && effort != "" {
 				reasoningEffort = effort
-				disableReasoning = false
 			}
 		}
 	}
-	if bodyModelSuffix.hasSuffix {
-		if effort, ok := parseEffortSuffix(bodyModelSuffix.rawSuffix); ok {
-			if effort == "none" {
-				disableReasoning = true
-			} else {
-				reasoningEffort = effort
-				disableReasoning = false
-			}
-		}
-	}
-	// 规范化 xAI effort
-	if !disableReasoning {
-		if norm, drop := xaiBackend.NormalizeXAIReasoningEffort(reasoningEffort); drop {
-			disableReasoning = true
-		} else {
-			reasoningEffort = norm
-		}
-	}
-
+	// model suffix 不在此裁决：由 PrepareResponsesBody/ApplyThinking 按 suffix 优先处理。
 	parallelToolCalls := true
 	if disable := root.Get("tool_choice.disable_parallel_tool_use"); disable.Exists() {
 		parallelToolCalls = !disable.Bool()
 	}
 	template, _ = sjson.Set(template, "parallel_tool_calls", parallelToolCalls)
-	if !disableReasoning {
-		template, _ = sjson.Set(template, "reasoning.effort", reasoningEffort)
-		template, _ = sjson.Set(template, "reasoning.summary", "auto")
-	}
+	template, _ = sjson.Set(template, "reasoning.effort", reasoningEffort)
+	template, _ = sjson.Set(template, "reasoning.summary", "auto")
 	if tier := normalizeCodexServiceTier(root.Get("service_tier")); tier != "" {
 		template, _ = sjson.Set(template, "service_tier", tier)
 	}

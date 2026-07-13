@@ -226,7 +226,7 @@ func boolFromAny(v any) bool {
 
 func newImagineDialer(proxyURL string) *websocket.Dialer {
 	dialer := &websocket.Dialer{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy:            http.ProxyFromEnvironment,
 		HandshakeTimeout: 25 * time.Second,
 		NetDialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,

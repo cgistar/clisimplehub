@@ -172,10 +172,21 @@ func (p *XaiAccountPool) MarkFailed(accountID string, status shared.XaiAccountSt
 	p.persistIfPathSet()
 }
 
-// CooldownAccount 仅设置冷却窗口，不写入 failed map / 不改 status。
-// 用于 console 429 等短暂限流，避免账号被永久踢出选号。
+// CooldownConsoleAccount 仅冷却 console 候选账号，不写入 failed map / 不改 status。
 // failover 下若冷却的是当前 active，立即切到下一个可用账号，便于同请求/后续请求继续。
-func (p *XaiAccountPool) CooldownAccount(accountID string, cooldown time.Duration, reason string) {
+func (p *XaiAccountPool) CooldownConsoleAccount(accountID string, cooldown time.Duration, reason string) {
+	p.cooldownMatching(accountID, cooldown, reason, consoleMatch)
+}
+
+func (p *XaiAccountPool) CooldownMainAccount(accountID string, cooldown time.Duration, reason string) {
+	p.cooldownMatching(accountID, cooldown, reason, nil)
+}
+
+func (p *XaiAccountPool) CooldownWebsocketAccount(accountID string, cooldown time.Duration, reason string) {
+	p.cooldownMatching(accountID, cooldown, reason, websocketMatch)
+}
+
+func (p *XaiAccountPool) cooldownMatching(accountID string, cooldown time.Duration, reason string, match func(*shared.XaiAccount) bool) {
 	if p == nil || cooldown <= 0 {
 		return
 	}
@@ -192,6 +203,9 @@ func (p *XaiAccountPool) CooldownAccount(accountID string, cooldown time.Duratio
 		if strings.TrimSpace(p.config.Accounts[i].ID) != accountID {
 			continue
 		}
+		if match != nil && !match(&p.config.Accounts[i]) {
+			return
+		}
 		p.config.Accounts[i].CooldownUntil = time.Now().Add(cooldown)
 		p.config.Accounts[i].CooldownReason = strings.TrimSpace(reason)
 		// 若此前被误标 exhausted，冷却场景恢复为 valid
@@ -199,9 +213,8 @@ func (p *XaiAccountPool) CooldownAccount(accountID string, cooldown time.Duratio
 			p.config.Accounts[i].Status = shared.XaiStatusValid
 		}
 		delete(p.failed, accountID)
-		// Cooldown 仅 console 路径使用：优先切到下一个 console 可用账号
 		if p.config.GetRotationMode() == shared.RotationFailover && strings.TrimSpace(p.activeAccountID) == accountID {
-			if next := p.findNextAvailable(accountID, consoleMatch); next != nil {
+			if next := p.findNextAvailable(accountID, match); next != nil {
 				_ = p.promoteActive(next)
 			}
 		}
@@ -264,6 +277,12 @@ func (p *XaiAccountPool) SelectWebsocketStrict() *shared.XaiAccount {
 		return acc
 	}
 	return nil
+}
+
+func (p *XaiAccountPool) SelectWebsocketExcluding(excluded map[string]bool) *shared.XaiAccount {
+	return p.selectMatching(func(a *shared.XaiAccount) bool {
+		return a != nil && a.WebsocketsEnabled() && !excluded[accountLocalID(a)]
+	}, false)
 }
 
 func (p *XaiAccountPool) UpdateTokens(accountID string, accessToken, refreshToken, idToken string, expiresAt time.Time) error {
@@ -557,6 +576,25 @@ func (p *XaiAccountPool) Select() *shared.XaiAccount {
 	return p.selectMatching(func(*shared.XaiAccount) bool { return true }, false)
 }
 
+func (p *XaiAccountPool) SelectByID(accountID string) *shared.XaiAccount {
+	accountID = strings.TrimSpace(accountID)
+	if p == nil || accountID == "" {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		return nil
+	}
+	for i := range p.config.Accounts {
+		acc := &p.config.Accounts[i]
+		if accountLocalID(acc) == accountID && accountSelectable(acc, p.failed) {
+			return acc
+		}
+	}
+	return nil
+}
+
 // SelectConsole 仅选择 basic + 有 SSO 的可用账号；轮询模式与主池相同但游标独立。
 func (p *XaiAccountPool) SelectConsole() *shared.XaiAccount {
 	return p.selectMatching(consoleMatch, true)
@@ -596,6 +634,10 @@ func consoleMatch(acc *shared.XaiAccount) bool {
 		return false
 	}
 	return true
+}
+
+func websocketMatch(acc *shared.XaiAccount) bool {
+	return acc != nil && acc.WebsocketsEnabled()
 }
 
 // consoleAccountSelectable basic 池 + 非空 SSO + 主池可选条件。
