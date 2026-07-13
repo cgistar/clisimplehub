@@ -86,15 +86,15 @@ export default function CodexAccountCard({
 
       <div className="codex-account-card-body">
         <CodexUsageBar
-          label="5 小时限"
+          label="首限"
           usage={account.codexUsage?.primary}
           refreshable
           refreshDisabled={actionBusy || !localId}
-          refreshTitle={primaryUsageBusy ? '刷新 5 小时用量中...' : '刷新 5 小时用量'}
+          refreshTitle={primaryUsageBusy ? '刷新 首个用量限制中...' : '刷新 首个用量限制'}
           onRefresh={() => onFetchPrimaryUsage(localId)}
         />
         <CodexUsageBar
-          label="周限"
+          label="次限"
           usage={account.codexUsage?.secondary ?? {}}
         />
 

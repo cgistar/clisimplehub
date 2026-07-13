@@ -16,7 +16,7 @@
       </n-form-item>
 
       <n-form-item v-if="!isCreate && formData.authKind !== 'api_key'" :label="t('xai.refreshTokenLabel')">
-        <n-input v-model:value="formData.refreshToken" type="textarea" :rows="2" readonly disabled />
+        <n-input v-model:value="formData.refreshToken" type="textarea" :rows="2" :placeholder="t('xai.refreshTokenLabel')" />
       </n-form-item>
 
       <n-form-item :label="t('xai.emailLabel')">
