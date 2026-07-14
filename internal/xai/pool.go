@@ -319,6 +319,249 @@ func (p *XaiAccountPool) UpdateTokens(accountID string, accessToken, refreshToke
 	return fmt.Errorf("account not found: %s", accountID)
 }
 
+// ApplyRefreshedCredentials 原子写入 OAuth 刷新结果，不改变额度、封禁或冷却状态。
+func (p *XaiAccountPool) ApplyRefreshedCredentials(
+	accountID string,
+	accessToken string,
+	refreshToken string,
+	idToken string,
+	email string,
+	subject string,
+	expiresAt time.Time,
+) (*shared.XaiAccount, error) {
+	if p == nil {
+		return nil, fmt.Errorf("pool is nil")
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("accountId is required")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		return nil, fmt.Errorf("pool config is nil")
+	}
+	for i := range p.config.Accounts {
+		account := &p.config.Accounts[i]
+		if strings.TrimSpace(account.ID) != accountID {
+			continue
+		}
+		if accessToken = strings.TrimSpace(accessToken); accessToken != "" {
+			account.AccessToken = accessToken
+		}
+		if refreshToken = strings.TrimSpace(refreshToken); refreshToken != "" {
+			account.RefreshToken = refreshToken
+		}
+		if idToken = strings.TrimSpace(idToken); idToken != "" {
+			account.IDToken = idToken
+		}
+		if email = strings.TrimSpace(email); email != "" {
+			account.Email = email
+		}
+		if subject = strings.TrimSpace(subject); subject != "" {
+			account.Subject = subject
+		}
+		if !expiresAt.IsZero() {
+			account.ExpiresAt = expiresAt.UTC()
+		}
+		now := time.Now().UTC()
+		account.LastRefresh = now
+		account.UpdatedAt = now
+		account.AuthKind = shared.AuthKindOAuth
+		if err := shared.SaveXaiMultiConfig(p.configPath, p.config); err != nil {
+			return nil, err
+		}
+		updated := *account
+		return &updated, nil
+	}
+	return nil, fmt.Errorf("account not found: %s", accountID)
+}
+
+// ApplySSOAuthCredentials 原子写入 SSO2Auth 结果，保留账号的非 OAuth 配置与运行状态。
+func (p *XaiAccountPool) ApplySSOAuthCredentials(
+	accountID string,
+	accessToken string,
+	refreshToken string,
+	idToken string,
+	email string,
+	subject string,
+	expiresAt time.Time,
+) (*shared.XaiAccount, error) {
+	if p == nil {
+		return nil, fmt.Errorf("pool is nil")
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("accountId is required")
+	}
+	accessToken = strings.TrimSpace(accessToken)
+	refreshToken = strings.TrimSpace(refreshToken)
+	if accessToken == "" || refreshToken == "" {
+		return nil, fmt.Errorf("sso2auth access token and refresh token are required")
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		return nil, fmt.Errorf("pool config is nil")
+	}
+	for i := range p.config.Accounts {
+		account := &p.config.Accounts[i]
+		if strings.TrimSpace(account.ID) != accountID {
+			continue
+		}
+		account.AccessToken = accessToken
+		account.RefreshToken = refreshToken
+		if idToken = strings.TrimSpace(idToken); idToken != "" {
+			account.IDToken = idToken
+		}
+		if email = strings.TrimSpace(email); email != "" {
+			account.Email = email
+		}
+		if subject = strings.TrimSpace(subject); subject != "" {
+			account.Subject = subject
+		}
+		if !expiresAt.IsZero() {
+			account.ExpiresAt = expiresAt.UTC()
+		}
+		now := time.Now().UTC()
+		account.LastRefresh = now
+		account.UpdatedAt = now
+		account.AuthKind = shared.AuthKindOAuth
+		if account.Status == "" || account.Status == shared.XaiStatusUnknown {
+			account.Status = shared.XaiStatusValid
+		}
+		if err := shared.SaveXaiMultiConfig(p.configPath, p.config); err != nil {
+			return nil, err
+		}
+		updated := *account
+		return &updated, nil
+	}
+	return nil, fmt.Errorf("account not found: %s", accountID)
+}
+
+// UpsertImportedSSOAccount 保存由 SSO2Auth 获取的账号；重复身份仅更新凭据并保留本地配置。
+func (p *XaiAccountPool) UpsertImportedSSOAccount(incoming shared.XaiAccount) (*shared.XaiAccount, bool, error) {
+	if p == nil {
+		return nil, false, fmt.Errorf("pool is nil")
+	}
+	email := strings.TrimSpace(incoming.Email)
+	subject := strings.TrimSpace(incoming.Subject)
+	sso := strings.TrimSpace(incoming.SSO)
+	accessToken := strings.TrimSpace(incoming.AccessToken)
+	refreshToken := strings.TrimSpace(incoming.RefreshToken)
+	if sso == "" {
+		return nil, false, fmt.Errorf("sso cookie is required")
+	}
+	if accessToken == "" || refreshToken == "" {
+		return nil, false, fmt.Errorf("sso2auth access token and refresh token are required")
+	}
+	canonicalID := shared.GenerateXaiLocalID(email, subject, "", sso)
+	if canonicalID == "" {
+		return nil, false, fmt.Errorf("unable to derive account id")
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		p.config = &shared.XaiMultiConfig{Config: shared.DefaultXaiConfig()}
+	}
+
+	matchIndex := -1
+	if subject != "" {
+		for i := range p.config.Accounts {
+			if strings.TrimSpace(p.config.Accounts[i].Subject) == subject {
+				matchIndex = i
+				break
+			}
+		}
+	}
+	if matchIndex < 0 {
+		for i := range p.config.Accounts {
+			if strings.TrimSpace(p.config.Accounts[i].ID) == canonicalID {
+				matchIndex = i
+				break
+			}
+		}
+	}
+	if matchIndex < 0 && email != "" {
+		for i := range p.config.Accounts {
+			account := &p.config.Accounts[i]
+			apiKeyOnly := strings.EqualFold(strings.TrimSpace(account.AuthKind), shared.AuthKindAPIKey) ||
+				(strings.TrimSpace(account.APIKey) != "" && strings.TrimSpace(account.AccessToken) == "" && strings.TrimSpace(account.RefreshToken) == "")
+			if !apiKeyOnly && strings.EqualFold(strings.TrimSpace(account.Email), email) {
+				matchIndex = i
+				break
+			}
+		}
+	}
+	if matchIndex < 0 {
+		for i := range p.config.Accounts {
+			if strings.TrimSpace(p.config.Accounts[i].SSO) == sso {
+				matchIndex = i
+				break
+			}
+		}
+	}
+
+	now := time.Now().UTC()
+	if matchIndex >= 0 {
+		account := &p.config.Accounts[matchIndex]
+		account.SSO = sso
+		account.AccessToken = accessToken
+		account.RefreshToken = refreshToken
+		if idToken := strings.TrimSpace(incoming.IDToken); idToken != "" {
+			account.IDToken = idToken
+		}
+		if email != "" {
+			account.Email = email
+		}
+		if subject != "" {
+			account.Subject = subject
+		}
+		if !incoming.ExpiresAt.IsZero() {
+			account.ExpiresAt = incoming.ExpiresAt.UTC()
+		}
+		account.AuthKind = shared.AuthKindOAuth
+		account.LastRefresh = now
+		account.UpdatedAt = now
+		if account.Status == "" || account.Status == shared.XaiStatusUnknown {
+			account.Status = shared.XaiStatusValid
+		}
+		if err := shared.SaveXaiMultiConfig(p.configPath, p.config); err != nil {
+			return nil, false, err
+		}
+		updated := *account
+		return &updated, false, nil
+	}
+
+	incoming.ID = canonicalID
+	incoming.Email = email
+	incoming.Subject = subject
+	incoming.SSO = sso
+	incoming.AccessToken = accessToken
+	incoming.RefreshToken = refreshToken
+	incoming.AuthKind = shared.AuthKindOAuth
+	incoming.Enabled = true
+	incoming.Status = shared.XaiStatusValid
+	incoming.LastRefresh = now
+	incoming.CreatedAt = now
+	incoming.UpdatedAt = now
+	shared.NormalizeAccount(&incoming)
+	p.config.Accounts = append(p.config.Accounts, incoming)
+	if strings.TrimSpace(p.config.ActiveAccountID) == "" {
+		p.config.ActiveAccountID = incoming.ID
+		p.activeAccountID = incoming.ID
+	}
+	SortAccounts(p.config.Accounts)
+	p.resetWRR()
+	if err := shared.SaveXaiMultiConfig(p.configPath, p.config); err != nil {
+		return nil, false, err
+	}
+	created := incoming
+	return &created, true, nil
+}
+
 func (p *XaiAccountPool) Snapshot() *shared.XaiMultiConfig {
 	if p == nil {
 		return nil
@@ -533,11 +776,28 @@ func (p *XaiAccountPool) SaveGlobalConfig(rotationMode, proxyURL string, cfg sha
 	if cfg.DynamicStatsig != nil {
 		existing.DynamicStatsig = cfg.DynamicStatsig
 	}
+	if cfg.AutoRefreshToken != nil {
+		existing.AutoRefreshToken = cfg.AutoRefreshToken
+	}
 	if cfg.CustomHeaders != nil {
 		existing.CustomHeaders = cfg.CustomHeaders
 	}
 	p.config.Config = existing
 	p.resetRR()
+	return shared.SaveXaiMultiConfig(p.configPath, p.config)
+}
+
+// SetAutoRefreshToken 仅更新自动刷新开关，避免工具栏操作覆盖其它全局配置。
+func (p *XaiAccountPool) SetAutoRefreshToken(enabled bool) error {
+	if p == nil {
+		return fmt.Errorf("pool is nil")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config == nil {
+		p.config = &shared.XaiMultiConfig{Config: shared.DefaultXaiConfig(), Accounts: []shared.XaiAccount{}}
+	}
+	p.config.Config.SetAutoRefreshToken(enabled)
 	return shared.SaveXaiMultiConfig(p.configPath, p.config)
 }
 

@@ -19,6 +19,13 @@ import (
 
 const defaultImageToolModel = "gpt-image-2"
 
+// Responses Lite 检测
+// HTTP 走 header；WebSocket 常把仅握手可见的 header 镜像进 client_metadata。
+const (
+	responsesLiteHeader   = "X-OpenAI-Internal-Codex-Responses-Lite"
+	responsesLiteMetadata = "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite"
+)
+
 var imageGenToolJSON = []byte(`{"type":"image_generation","output_format":"png"}`)
 var imageGenToolArrayJSON = []byte(`[{"type":"image_generation","output_format":"png"}]`)
 
@@ -67,7 +74,7 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 
 	if IsCompactPath(req.Path) {
 		req.IsStreaming = false
-		body = finalizeCompactBody(body, req.Model, resolveImageGenMode(req.DisableImageGeneration))
+		body = finalizeCompactBody(body, req.Model, resolveImageGenMode(req.DisableImageGeneration), req.Headers)
 	} else if IsImagesPath(req.Path) {
 		if resolveImageGenMode(req.DisableImageGeneration) == ImageGenAll {
 			return nil, nil, nil, IdentityState{}, ReplayScope{}, StatusError{
@@ -93,7 +100,7 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 			return nil, nil, nil, IdentityState{}, ReplayScope{}, err
 		}
 	} else {
-		body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration))
+		body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration), req.Headers)
 	}
 
 	// Claude→Codex：在 finalize 后注入 reasoning replay
@@ -124,7 +131,7 @@ func PrepareWebsocket(ctx context.Context, req Request) ([]byte, http.Header, Id
 		ctx = context.Background()
 	}
 	body := append([]byte(nil), req.Body...)
-	body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration))
+	body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration), req.Headers)
 	body, headers := applyPromptCache(req.Source, body, req.OriginalBody, req.Headers, req.Model, req.LocalAccountID)
 	body, headers, identityState := applyIdentityConfuse(req.LocalAccountID, body, headers)
 	return BuildWebsocketRequestBody(body), ApplyWebsocketHeaders(req.AccessToken, req.AccountID, req.Config, headers), identityState, nil
@@ -195,7 +202,7 @@ func methodOrPost(method string) string {
 	return method
 }
 
-func finalizeResponsesBody(body []byte, model string, planType string, imageGenMode string) []byte {
+func finalizeResponsesBody(body []byte, model string, planType string, imageGenMode string, headers http.Header) []byte {
 	baseModel := BaseModelName(model)
 	if baseModel == "" {
 		baseModel = BaseModelName(gjson.GetBytes(body, "model").String())
@@ -207,11 +214,12 @@ func finalizeResponsesBody(body []byte, model string, planType string, imageGenM
 	body = deleteUnsupportedFields(body)
 	body = normalizeInstructions(body)
 	body = sanitizeReasoningEncryptedContent(body)
-	body = normalizeParallelToolCallsForTools(body)
-	return applyImageGenerationPolicy(body, baseModel, planType, imageGenMode)
+	lite := isResponsesLiteRequest(body, headers)
+	body = normalizeParallelToolCallsForTools(body, lite)
+	return applyImageGenerationPolicy(body, baseModel, planType, imageGenMode, lite)
 }
 
-func finalizeCompactBody(body []byte, model string, imageGenMode string) []byte {
+func finalizeCompactBody(body []byte, model string, imageGenMode string, headers http.Header) []byte {
 	baseModel := BaseModelName(model)
 	if baseModel == "" {
 		baseModel = BaseModelName(gjson.GetBytes(body, "model").String())
@@ -223,21 +231,41 @@ func finalizeCompactBody(body []byte, model string, imageGenMode string) []byte 
 	body = deleteUnsupportedFields(body)
 	body = normalizeInstructions(body)
 	body = sanitizeReasoningEncryptedContent(body)
-	body = normalizeParallelToolCallsForTools(body)
-	return applyImageGenerationPolicy(body, baseModel, "", imageGenMode)
+	lite := isResponsesLiteRequest(body, headers)
+	body = normalizeParallelToolCallsForTools(body, lite)
+	return applyImageGenerationPolicy(body, baseModel, "", imageGenMode, lite)
 }
 
 // applyImageGenerationPolicy 根据四态配置处理 image_generation 工具：
 // off 注入、all/chat 剥离、passthrough 透传。
-func applyImageGenerationPolicy(body []byte, baseModel string, planType string, imageGenMode string) []byte {
+// Responses Lite 不注入 image_generation（上游仅允许 function/custom/client tool search）。
+func applyImageGenerationPolicy(body []byte, baseModel string, planType string, imageGenMode string, lite bool) []byte {
 	switch imageGenMode {
 	case ImageGenOff:
-		return ensureImageGenerationTool(body, baseModel, planType)
+		return ensureImageGenerationTool(body, baseModel, planType, lite)
 	case ImageGenAll, ImageGenChat:
 		return stripImageGenerationTools(body)
 	default:
 		return body
 	}
+}
+
+// isResponsesLiteRequest 检测 Codex Responses Lite 请求。
+// 来源：HTTP header，或 WS body 内 client_metadata 镜像字段。
+func isResponsesLiteRequest(body []byte, headers http.Header) bool {
+	if headers != nil {
+		if strings.EqualFold(strings.TrimSpace(headerValueCaseInsensitive(headers, responsesLiteHeader)), "true") {
+			return true
+		}
+	}
+	value := gjson.GetBytes(body, responsesLiteMetadata)
+	if !value.Exists() {
+		return false
+	}
+	if value.Type == gjson.True {
+		return true
+	}
+	return value.Type == gjson.String && strings.EqualFold(strings.TrimSpace(value.String()), "true")
 }
 
 func deleteUnsupportedFields(body []byte) []byte {
@@ -261,7 +289,7 @@ func normalizeInstructions(body []byte) []byte {
 }
 
 // sanitizeReasoningEncryptedContent 删除 input 中非法 reasoning.encrypted_content，
-// 避免上游因脏签名直接 400（对齐 CLIProxyAPI）。
+// 避免上游因脏签名直接 400
 func sanitizeReasoningEncryptedContent(body []byte) []byte {
 	input := gjson.GetBytes(body, "input")
 	if !input.Exists() || !input.IsArray() {
@@ -299,8 +327,14 @@ func sanitizeReasoningEncryptedContent(body []byte) []byte {
 	return updated
 }
 
-// normalizeParallelToolCallsForTools：无 tools 时剥离 parallel_tool_calls，避免上游拒识。
-func normalizeParallelToolCallsForTools(body []byte) []byte {
+// normalizeParallelToolCallsForTools：
+// - Responses Lite：强制 parallel_tool_calls=false（上游硬性要求；Lite 顶层 tools 常为空）。
+// - 普通请求：无 tools 时剥离 parallel_tool_calls，避免上游拒识。
+func normalizeParallelToolCallsForTools(body []byte, lite bool) []byte {
+	if lite {
+		body, _ = sjson.SetBytes(body, "parallel_tool_calls", false)
+		return body
+	}
 	if !gjson.GetBytes(body, "parallel_tool_calls").Exists() {
 		return body
 	}
@@ -312,7 +346,10 @@ func normalizeParallelToolCallsForTools(body []byte) []byte {
 	return body
 }
 
-func ensureImageGenerationTool(body []byte, baseModel string, planType string) []byte {
+func ensureImageGenerationTool(body []byte, baseModel string, planType string, lite bool) []byte {
+	if lite {
+		return body
+	}
 	if strings.HasSuffix(strings.TrimSpace(baseModel), "spark") {
 		return body
 	}
@@ -430,6 +467,10 @@ func ApplyHeaders(req *http.Request, accessToken, accountID string, isStreaming 
 	if accountID != "" {
 		req.Header.Set("Chatgpt-Account-Id", accountID)
 	}
+	// 透传 Responses Lite 标记（HTTP 路径；WS 另有 body client_metadata）。
+	if val := strings.TrimSpace(headerValueCaseInsensitive(clientHeaders, responsesLiteHeader)); val != "" {
+		req.Header.Set(responsesLiteHeader, val)
+	}
 	if config != nil {
 		for k, v := range config.GetCustomHeaders() {
 			if k = strings.TrimSpace(k); k != "" {
@@ -464,6 +505,10 @@ func ApplyWebsocketHeaders(accessToken, accountID string, config *codexShared.Co
 	}
 	if val := headerValueCaseInsensitive(clientHeaders, "X-ResponsesAPI-Include-Timing-Metrics"); val != "" {
 		headers.Set("X-ResponsesAPI-Include-Timing-Metrics", val)
+	}
+	// WS 握手侧可能携带 Lite header；与 body client_metadata 双通道对齐上游。
+	if val := strings.TrimSpace(headerValueCaseInsensitive(clientHeaders, responsesLiteHeader)); val != "" {
+		headers.Set(responsesLiteHeader, val)
 	}
 	betaHeader := strings.TrimSpace(headerValueCaseInsensitive(clientHeaders, "OpenAI-Beta"))
 	if betaHeader == "" || !strings.Contains(betaHeader, "responses_websockets=") {

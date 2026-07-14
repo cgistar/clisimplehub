@@ -284,6 +284,7 @@ func (p *CodexPlugin) saveOAuthAccount(result *codexAuth.CodexLoginResult) error
 			Email:        result.Email,
 			PlanType:     result.PlanType,
 			Enabled:      true,
+			Websockets:   true,
 			Status:       codexShared.CodexStatusValid,
 			ExpiresAt:    expiresAt,
 			CreatedAt:    now,

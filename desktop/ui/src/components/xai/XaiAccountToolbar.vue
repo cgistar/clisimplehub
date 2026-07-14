@@ -18,6 +18,15 @@
           :options="statusOptions"
           style="width: 150px"
         />
+
+        <div class="auto-refresh-token-control">
+          <n-switch
+            :value="autoRefreshToken"
+            :loading="autoRefreshSaving"
+            @update:value="handleAutoRefreshTokenChange"
+          />
+          <span>{{ t('xai.autoRefreshToken') }}</span>
+        </div>
       </div>
 
       <div class="toolbar-right">
@@ -58,17 +67,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NInput, NSelect, NSpace, NTag, NButton, NDropdown, NIcon, useMessage } from 'naive-ui'
+import { computed, onMounted, ref } from 'vue'
+import { NInput, NSelect, NSpace, NTag, NButton, NDropdown, NIcon, NSwitch, useMessage } from 'naive-ui'
 import { Search, RefreshCw, Plus, Trash2, Settings, Copy } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useXaiAccountsStore } from '../../stores/xaiAccountsStore'
 import { buildXaiAccountsCopyJson } from '@/utils/xaiAccountCopy'
+import { xaiApi } from '@/api/xai'
 
 const { t } = useI18n()
 const message = useMessage()
 const xaiStore = useXaiAccountsStore()
+const autoRefreshToken = ref(false)
+const autoRefreshSaving = ref(false)
 
 const {
   searchQuery,
@@ -81,6 +93,7 @@ const {
 const emit = defineEmits<{
   'oauth-login': []
   'api-key': []
+  'sso-import': []
   'json-import': []
   'bulk-delete': []
   'open-config': []
@@ -96,6 +109,7 @@ const statusOptions = computed(() => [
 
 const addAccountOptions = computed(() => [
   { label: t('xai.oauthLogin'), key: 'oauth' },
+  { label: t('xai.ssoImport'), key: 'sso' },
   { label: t('xai.apiKeyAdd'), key: 'api-key' },
   { label: t('xai.jsonImport'), key: 'json' }
 ])
@@ -103,6 +117,33 @@ const addAccountOptions = computed(() => [
 async function handleRefresh(): Promise<void> {
   await xaiStore.loadAccounts(true)
 }
+
+async function loadAutoRefreshToken(): Promise<void> {
+  try {
+    const config = await xaiApi.getGlobalConfig()
+    autoRefreshToken.value = Boolean(config.autoRefreshToken)
+  } catch (error) {
+    message.error(t('xai.autoRefreshTokenLoadFailed') + toErrorMessage(error))
+  }
+}
+
+async function handleAutoRefreshTokenChange(enabled: boolean): Promise<void> {
+  if (autoRefreshSaving.value) return
+  autoRefreshSaving.value = true
+  try {
+    await xaiApi.setAutoRefreshToken(enabled)
+    autoRefreshToken.value = enabled
+    message.success(enabled ? t('xai.autoRefreshTokenEnabled') : t('xai.autoRefreshTokenDisabled'))
+  } catch (error) {
+    message.error(t('xai.autoRefreshTokenSaveFailed') + toErrorMessage(error))
+  } finally {
+    autoRefreshSaving.value = false
+  }
+}
+
+onMounted(() => {
+  void loadAutoRefreshToken()
+})
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -125,6 +166,9 @@ function handleAddAccountSelect(key: string | number): void {
       break
     case 'api-key':
       emit('api-key')
+      break
+    case 'sso':
+      emit('sso-import')
       break
     case 'json':
       emit('json-import')
@@ -162,6 +206,15 @@ function handleAddAccountSelect(key: string | number): void {
   gap: 12px;
   min-width: 0;
   flex: 1 1 auto;
+}
+
+.auto-refresh-token-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .toolbar-right {

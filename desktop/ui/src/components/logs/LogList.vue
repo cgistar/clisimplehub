@@ -50,6 +50,7 @@ const realtimeLogs = computed((): UILogItem[] =>
     .map((req: RealtimeRequest): UILogItem => ({
       id: req.request_id,
       interfaceType: req.interfaceType,
+      transport: req.transport,
       providerName: req.providerName,
       endpointName: req.endpointName,
       path: req.path,

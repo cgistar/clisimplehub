@@ -4,10 +4,13 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"clisimplehub/internal/storage"
+	xai "clisimplehub/internal/xai"
 	xaiAuth "clisimplehub/internal/xai/auth"
 	xaiBackend "clisimplehub/internal/xai/backend"
+	xaiShared "clisimplehub/internal/xai/shared"
 )
 
 type StorageAccessor interface {
@@ -17,6 +20,12 @@ type StorageAccessor interface {
 
 type XaiService struct {
 	storageAccessor StorageAccessor
+
+	tokenRefreshMu       sync.Mutex
+	tokenRefreshCancel   context.CancelFunc
+	tokenRefreshDone     chan struct{}
+	tokenRefreshInterval time.Duration
+	tokenRefreshFn       func(context.Context, *xai.XaiAccountPool, *xaiShared.XaiAccount, string) error
 
 	loginMu      sync.Mutex
 	loginWaitFn  func() (*xaiAuth.LoginResult, error)

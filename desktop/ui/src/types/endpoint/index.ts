@@ -4,8 +4,9 @@ import type { config } from '../../../wailsjs/go/models'
 
 export type Endpoint = main.EndpointInfo
 export type PingResult = main.PingResult
-export type RequestLogInfo = main.RequestLogInfo
-export type RequestLogDetail = main.RequestLogDetailInfo
+export type RequestTransport = 'http' | 'websocket'
+export type RequestLogInfo = main.RequestLogInfo & { transport?: RequestTransport }
+export type RequestLogDetail = main.RequestLogDetailInfo & { transport?: RequestTransport }
 export type Vendor = main.VendorInfo
 export type LocalIPInfo = main.LocalIPInfo
 export type CLIConfigFile = main.CLIConfigFile

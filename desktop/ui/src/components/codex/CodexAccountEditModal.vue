@@ -128,7 +128,7 @@ const formData = ref<EditFormData>({
   proxyUrl: '',
   weight: 0,
   enabled: true,
-  websockets: false
+  websockets: true
 })
 
 const rules: FormRules = {}

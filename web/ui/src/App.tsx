@@ -20,6 +20,7 @@ import CodexImportDialog from '@/pages/components/CodexImportDialog'
 import XaiConfigDialog from '@/pages/components/XaiConfigDialog'
 import XaiEditDialog from '@/pages/components/XaiEditDialog'
 import XaiImportDialog from '@/pages/components/XaiImportDialog'
+import XaiSSOImportDialog from '@/pages/components/XaiSSOImportDialog'
 import EndpointImportDialog from '@/pages/components/EndpointImportDialog'
 import HomeStatsDialog from '@/pages/components/HomeStatsDialog'
 import { Toaster } from '@/components/ui/sonner'
@@ -54,6 +55,7 @@ export default function App() {
   const [xaiEditForm, setXaiEditForm] = useState<XaiEditForm>(createXaiEditForm())
   const [xaiEditSaving, setXaiEditSaving] = useState<boolean>(false)
   const [xaiImportDialogOpen, setXaiImportDialogOpen] = useState<boolean>(false)
+  const [xaiSSOImportDialogOpen, setXaiSSOImportDialogOpen] = useState<boolean>(false)
   const [homeStatsDialogOpen, setHomeStatsDialogOpen] = useState<boolean>(false)
   const [endpointImportDialogOpen, setEndpointImportDialogOpen] = useState<boolean>(false)
 
@@ -185,6 +187,7 @@ export default function App() {
     setCodexImportDialogOpen(false)
     setXaiConfigDialogOpen(false)
     setXaiImportDialogOpen(false)
+    setXaiSSOImportDialogOpen(false)
     setHomeStatsDialogOpen(false)
     setEndpointImportDialogOpen(false)
   }
@@ -314,6 +317,36 @@ export default function App() {
     await runXaiAction(`xai:refresh:${accountId}`, () => webApi.refreshXaiToken(accountId), 'Refresh Token 成功', 'Refresh Token 失败')
   }
 
+  async function handleXaiSSO2Auth(accountId: string): Promise<void> {
+    setBusyAction(`xai:sso2auth:${accountId}`)
+    try {
+      const result = await webApi.sso2authXaiAccount(accountId)
+      const warning = String(result?.warning || '').trim()
+      if (warning) toast.warning(`OAuth 凭据已更新，但身份信息补全失败：${warning}`)
+      else toast.success(result?.message || 'SSO2Auth 完成，OAuth 凭据已更新')
+      await refreshCurrentPage('xai')
+    } catch (error) {
+      const apiError = error as ApiError
+      if (apiError.status === 401 || apiError.status === 403) {
+        setAuthenticated(false)
+        setGlobalError('登录状态已失效，请重新登录')
+      } else {
+        toast.error(apiError.message || 'SSO2Auth 失败')
+      }
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  async function handleSetXaiAutoRefreshToken(enabled: boolean): Promise<void> {
+    await runXaiAction(
+      'xai:auto-refresh',
+      () => webApi.setXaiAutoRefreshToken(enabled),
+      enabled ? 'Token 自动更新已开启' : 'Token 自动更新已关闭',
+      '保存 Token 自动更新配置失败',
+    )
+  }
+
   async function handleDeleteXaiAccount(accountId: string): Promise<void> {
     await runXaiAction(`xai:delete:${accountId}`, () => webApi.deleteXaiAccount(accountId), '账号已删除', '删除 xAI 账号失败')
   }
@@ -437,6 +470,7 @@ export default function App() {
     setGlobalError('登录状态已失效，请重新登录')
     setHomeStatsDialogOpen(false)
     setEndpointImportDialogOpen(false)
+    setXaiSSOImportDialogOpen(false)
   }
 
   async function handleSaveCodexConfig(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -618,12 +652,15 @@ export default function App() {
             busyAction={busyAction}
             onOpenConfig={handleOpenXaiConfig}
             onOpenImport={() => setXaiImportDialogOpen(true)}
+            onOpenSSOImport={() => setXaiSSOImportDialogOpen(true)}
             onRefreshXai={() => refreshCurrentPage('xai')}
             onCopyVisibleAccounts={handleCopyVisibleXaiAccounts}
             onActivateAccount={handleActivateXaiAccount}
             onProbeStream={handleProbeXaiStream}
             onRefreshQuota={handleRefreshXaiQuota}
+            onSSO2Auth={handleXaiSSO2Auth}
             onRefreshToken={handleRefreshXaiToken}
+            onSetAutoRefreshToken={handleSetXaiAutoRefreshToken}
             onCopyAccount={handleCopyXaiAccount}
             onEditAccount={handleOpenXaiEdit}
             onDeleteAccount={handleDeleteXaiAccount}
@@ -647,6 +684,12 @@ export default function App() {
       <XaiConfigDialog open={xaiConfigDialogOpen} form={xaiConfigForm} saving={xaiConfigSaving} onClose={handleCloseXaiConfig} onChange={setXaiConfigForm} onSubmit={handleSaveXaiConfig} />
       <XaiEditDialog open={xaiEditDialogOpen} form={xaiEditForm} saving={xaiEditSaving} onClose={handleCloseXaiEdit} onChange={setXaiEditForm} onSubmit={handleSaveXaiEdit} />
       <XaiImportDialog open={xaiImportDialogOpen} onClose={() => setXaiImportDialogOpen(false)} onImported={() => refreshCurrentPage('xai')} />
+      <XaiSSOImportDialog
+        open={xaiSSOImportDialogOpen}
+        onClose={() => setXaiSSOImportDialogOpen(false)}
+        onImported={() => refreshCurrentPage('xai')}
+        onAuthExpired={handleAuthExpired}
+      />
       <HomeStatsDialog open={homeStatsDialogOpen} onClose={() => setHomeStatsDialogOpen(false)} onCleared={() => refreshCurrentPage('home')} onAuthExpired={handleAuthExpired} />
       <EndpointImportDialog open={endpointImportDialogOpen} onClose={() => setEndpointImportDialogOpen(false)} onSuccess={() => refreshCurrentPage('home')} onAuthExpired={handleAuthExpired} />
     </div>

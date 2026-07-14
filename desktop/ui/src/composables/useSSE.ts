@@ -143,6 +143,7 @@ function createSSEManager() {
     const request: RealtimeRequest = {
       request_id: requestId,
       interfaceType: readString(raw.interfaceType),
+      transport: readString(raw.transport, 'http') === 'websocket' ? 'websocket' : 'http',
       providerName: readString(raw.providerName),
       endpointName: readString(raw.endpointName),
       method: readString(raw.method, 'POST'),

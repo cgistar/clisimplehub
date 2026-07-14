@@ -83,12 +83,12 @@ function normalizeAccount(account: main.CodexAccountDTO): CodexAccount {
 
 function toCodexDto(input: CodexAccountInput): main.CodexAccountDTO {
   return {
+    ...input,
     refreshToken: input.refreshToken ?? '',
     enabled: input.enabled !== false,
-    websockets: Boolean(input.websockets),
+    websockets: input.websockets !== false,
     status: input.status ?? 'valid',
-    isActive: Boolean(input.isActive),
-    ...input
+    isActive: Boolean(input.isActive)
   }
 }
 

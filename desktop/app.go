@@ -951,6 +951,7 @@ func (a *App) GetTransformers() map[string][]string {
 type RequestLogInfo struct {
 	ID            string `json:"id"`
 	InterfaceType string `json:"interfaceType"`
+	Transport     string `json:"transport"`
 	ProviderName  string `json:"providerName"`
 	EndpointName  string `json:"endpointName"`
 	Path          string `json:"path"`
@@ -993,6 +994,7 @@ func (a *App) GetRecentLogs() ([]*RequestLogInfo, error) {
 		info := &RequestLogInfo{
 			ID:            log.ID,
 			InterfaceType: log.InterfaceType,
+			Transport:     log.Transport,
 			ProviderName:  log.ProviderName,
 			EndpointName:  log.EndpointName,
 			Path:          log.Path,
@@ -1011,6 +1013,7 @@ func (a *App) GetRecentLogs() ([]*RequestLogInfo, error) {
 type RequestLogDetailInfo struct {
 	ID             string            `json:"id"`
 	InterfaceType  string            `json:"interfaceType"`
+	Transport      string            `json:"transport"`
 	ProviderName   string            `json:"providerName"`
 	EndpointName   string            `json:"endpointName"`
 	Path           string            `json:"path"`
@@ -1045,6 +1048,7 @@ func (a *App) GetLogDetail(logID string) (*RequestLogDetailInfo, error) {
 			return &RequestLogDetailInfo{
 				ID:             log.ID,
 				InterfaceType:  log.InterfaceType,
+				Transport:      log.Transport,
 				ProviderName:   log.ProviderName,
 				EndpointName:   log.EndpointName,
 				Path:           log.Path,

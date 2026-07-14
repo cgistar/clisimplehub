@@ -977,6 +977,18 @@ code {
   color: #0c4a6e;
 }
 
+.notice.error {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.18);
+  color: #991b1b;
+}
+
+.notice.warning {
+  background: rgba(217, 119, 6, 0.08);
+  border-color: rgba(217, 119, 6, 0.2);
+  color: #92400e;
+}
+
 .error-banner {
   background: rgba(220, 38, 38, 0.08);
   border: 1px solid rgba(220, 38, 38, 0.18);
@@ -1075,6 +1087,47 @@ code {
   justify-content: flex-end;
 }
 
+.account-menu-positioner {
+  z-index: 80;
+  outline: none;
+}
+
+.account-menu-popup {
+  min-width: 150px;
+  padding: 6px;
+  border: 1px solid #dce5ee;
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+  outline: none;
+}
+
+.account-menu-item {
+  padding: 9px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  outline: none;
+}
+
+.account-menu-item[data-highlighted] {
+  background: rgba(2, 132, 199, 0.1);
+  color: var(--primary);
+}
+
+.sso-import-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sso-import-result-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
 .codex-account-card {
   display: flex;
   flex-direction: column;
@@ -1110,6 +1163,12 @@ code {
 .codex-account-card.xai-account-card .codex-account-card-footer {
   margin-top: auto;
   padding-top: 8px;
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.codex-account-card.xai-account-card .codex-card-actions {
+  align-self: flex-end;
 }
 
 .codex-account-card.active {

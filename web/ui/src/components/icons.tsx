@@ -44,6 +44,17 @@ export function GaugeIcon() {
   )
 }
 
+export function KeyIcon() {
+  return (
+    <IconBase>
+      <circle cx="7.5" cy="15.5" r="5.5" />
+      <path d="m21 2-9.6 9.6" />
+      <path d="m15 6 3 3" />
+      <path d="m18 3 3 3" />
+    </IconBase>
+  )
+}
+
 export function CopyIcon() {
   return (
     <IconBase>

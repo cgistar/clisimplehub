@@ -312,29 +312,31 @@ func (d *desktopFacade) GetXaiGlobalConfig(configPath string) (json.RawMessage, 
 		baseURL = xaiAuth.DefaultAPIBaseURL
 	}
 	return json.Marshal(map[string]any{
-		"rotationMode":   snap.GetRotationMode(),
-		"proxyUrl":       snap.ProxyUrl,
-		"baseURL":        baseURL,
-		"clientVersion":  snap.Config.ClientVersion,
-		"userAgent":      snap.Config.UserAgent,
-		"tokenAuth":      snap.Config.TokenAuth,
-		"clientSurface":  snap.Config.ClientSurface,
-		"dynamicStatsig": snap.Config.DynamicStatsigEnabled(),
-		"customHeaders":  snap.Config.CustomHeaders,
+		"rotationMode":     snap.GetRotationMode(),
+		"proxyUrl":         snap.ProxyUrl,
+		"baseURL":          baseURL,
+		"clientVersion":    snap.Config.ClientVersion,
+		"userAgent":        snap.Config.UserAgent,
+		"tokenAuth":        snap.Config.TokenAuth,
+		"clientSurface":    snap.Config.ClientSurface,
+		"dynamicStatsig":   snap.Config.DynamicStatsigEnabled(),
+		"autoRefreshToken": snap.Config.AutoRefreshTokenEnabled(),
+		"customHeaders":    snap.Config.CustomHeaders,
 	})
 }
 
 func (d *desktopFacade) SaveXaiGlobalConfig(configPath string, dtoJSON json.RawMessage) error {
 	var dto struct {
-		RotationMode   string            `json:"rotationMode"`
-		ProxyUrl       string            `json:"proxyUrl"`
-		BaseURL        string            `json:"baseURL"`
-		ClientVersion  string            `json:"clientVersion"`
-		UserAgent      string            `json:"userAgent"`
-		TokenAuth      string            `json:"tokenAuth"`
-		ClientSurface  string            `json:"clientSurface"`
-		DynamicStatsig *bool             `json:"dynamicStatsig"`
-		CustomHeaders  map[string]string `json:"customHeaders"`
+		RotationMode     string            `json:"rotationMode"`
+		ProxyUrl         string            `json:"proxyUrl"`
+		BaseURL          string            `json:"baseURL"`
+		ClientVersion    string            `json:"clientVersion"`
+		UserAgent        string            `json:"userAgent"`
+		TokenAuth        string            `json:"tokenAuth"`
+		ClientSurface    string            `json:"clientSurface"`
+		DynamicStatsig   *bool             `json:"dynamicStatsig"`
+		AutoRefreshToken *bool             `json:"autoRefreshToken"`
+		CustomHeaders    map[string]string `json:"customHeaders"`
 	}
 	if err := json.Unmarshal(dtoJSON, &dto); err != nil {
 		return err
@@ -357,11 +359,34 @@ func (d *desktopFacade) SaveXaiGlobalConfig(configPath string, dtoJSON json.RawM
 	} else {
 		cfg.SetDynamicStatsig(true)
 	}
+	if dto.AutoRefreshToken != nil {
+		cfg.SetAutoRefreshToken(*dto.AutoRefreshToken)
+	}
 	// 先写盘再 Reload，确保 rotationMode 落盘且运行时池同步
 	if err := pool.SaveGlobalConfig(dto.RotationMode, dto.ProxyUrl, cfg); err != nil {
 		return err
 	}
-	return pool.Reload()
+	if err := pool.Reload(); err != nil {
+		return err
+	}
+	if svc := getService(); svc != nil {
+		svc.reconcileTokenRefreshScheduler(pool)
+	}
+	return nil
+}
+
+func (d *desktopFacade) SetAutoRefreshToken(configPath string, enabled bool) error {
+	pool, err := ensurePool(configPath)
+	if err != nil {
+		return err
+	}
+	if err := pool.SetAutoRefreshToken(enabled); err != nil {
+		return err
+	}
+	if svc := getService(); svc != nil {
+		svc.reconcileTokenRefreshScheduler(pool)
+	}
+	return nil
 }
 
 func (d *desktopFacade) StartLoginWithURL(ctx context.Context, proxyURL string) (string, error) {
@@ -508,6 +533,121 @@ func (d *desktopFacade) TestAccount(configPath, accountID string) (json.RawMessa
 	return d.RefreshAccountToken(context.Background(), configPath, accountID)
 }
 
+// ConvertSSOToAuth 使用账号已有的 SSO Cookie 获取并原子回写 OAuth 凭据。
+func (d *desktopFacade) ConvertSSOToAuth(ctx context.Context, configPath, accountID string) (json.RawMessage, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("accountId is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	pool, err := ensurePool(configPath)
+	if err != nil {
+		return nil, err
+	}
+	account := findAccount(pool, accountID)
+	if account == nil {
+		return nil, fmt.Errorf("account not found: %s", accountID)
+	}
+	if strings.TrimSpace(account.SSO) == "" {
+		return nil, fmt.Errorf("sso cookie is required")
+	}
+
+	value, err, _ := ssoAuthGroup.Do(accountID, func() (any, error) {
+		current := findAccount(pool, accountID)
+		if current == nil {
+			return nil, fmt.Errorf("account not found: %s", accountID)
+		}
+		sso := strings.TrimSpace(current.SSO)
+		if sso == "" {
+			return nil, fmt.Errorf("sso cookie is required")
+		}
+		result, exchangeErr := xaiAuth.ExchangeSSOForTokens(ctx, sso, resolveAccountProxy(pool, current))
+		if exchangeErr != nil {
+			return nil, exchangeErr
+		}
+		token := result.TokenData
+		expiresAt := parseTimeString(token.Expire)
+		saved, saveErr := pool.ApplySSOAuthCredentials(
+			accountID,
+			token.AccessToken,
+			token.RefreshToken,
+			token.IDToken,
+			token.Email,
+			token.Subject,
+			expiresAt,
+		)
+		if saveErr != nil {
+			return nil, saveErr
+		}
+		return map[string]any{
+			"success": true,
+			"account": accountToDTO(*saved, pool.ActiveAccountID()),
+			"warning": strings.TrimSpace(result.Warning),
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected sso2auth result")
+	}
+	return json.Marshal(payload)
+}
+
+// ImportSSOAccount 使用原始 SSO 获取 OAuth 凭据，并按账号身份新增或更新账号。
+func (d *desktopFacade) ImportSSOAccount(ctx context.Context, configPath, sso string) (json.RawMessage, error) {
+	sso = strings.TrimSpace(sso)
+	if sso == "" {
+		return nil, fmt.Errorf("sso cookie is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	pool, err := ensurePool(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var existing *xaiShared.XaiAccount
+	for _, account := range pool.ListAccounts() {
+		if strings.TrimSpace(account.SSO) == sso {
+			copy := account
+			existing = &copy
+			break
+		}
+	}
+	result, err := xaiAuth.ExchangeSSOForTokens(ctx, sso, resolveAccountProxy(pool, existing))
+	if err != nil {
+		return nil, err
+	}
+	token := result.TokenData
+	saved, created, err := pool.UpsertImportedSSOAccount(xaiShared.XaiAccount{
+		Email:        token.Email,
+		Subject:      token.Subject,
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		IDToken:      token.IDToken,
+		SSO:          sso,
+		ExpiresAt:    parseTimeString(token.Expire),
+	})
+	if err != nil {
+		return nil, err
+	}
+	action := "updated"
+	if created {
+		action = "created"
+	}
+	return json.Marshal(map[string]any{
+		"success": true,
+		"action":  action,
+		"account": accountToDTO(*saved, pool.ActiveAccountID()),
+		"warning": strings.TrimSpace(result.Warning),
+	})
+}
+
 // RefreshAccountQuota 拉取 grok.com rate-limits，更新 pool + quota。
 func (d *desktopFacade) RefreshAccountQuota(ctx context.Context, configPath, accountID string) (json.RawMessage, error) {
 	accountID = strings.TrimSpace(accountID)
@@ -637,31 +777,14 @@ func (d *desktopFacade) RefreshAccountToken(ctx context.Context, configPath, acc
 		})
 	}
 
-	svc := xaiAuth.NewXAIAuth(proxyURL)
-	// tokenEndpoint 不按账号存储，走 OIDC discovery
-	td, err := svc.RefreshTokens(ctx, account.RefreshToken, "")
+	// tokenEndpoint 不按账号存储，走 OIDC discovery；与请求链路和定时任务共享账号级 singleflight。
+	updated, err := refreshOAuthAccount(ctx, pool, account, proxyURL, true)
 	if err != nil {
 		account.Status = xaiShared.XaiStatusUnknown
 		_, _ = pool.UpsertAccount(*account)
 		return nil, err
 	}
-	account.AccessToken = td.AccessToken
-	if td.RefreshToken != "" {
-		account.RefreshToken = td.RefreshToken
-	}
-	if td.IDToken != "" {
-		account.IDToken = td.IDToken
-	}
-	if td.Email != "" {
-		account.Email = td.Email
-	}
-	if td.Subject != "" {
-		account.Subject = td.Subject
-	}
-	if td.Expire != "" {
-		account.ExpiresAt = parseTimeString(td.Expire)
-	}
-	account.LastRefresh = time.Now().UTC()
+	account = updated
 	account.Status = xaiShared.XaiStatusValid
 	account.AuthKind = xaiShared.AuthKindOAuth
 	saved, err := pool.UpsertAccount(*account)

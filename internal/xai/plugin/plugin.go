@@ -9,13 +9,13 @@ import (
 	"strings"
 	"sync"
 
-	xai "clisimplehub/internal/xai"
-	xaiBackend "clisimplehub/internal/xai/backend"
-	xaiShared "clisimplehub/internal/xai/shared"
 	"clisimplehub/internal/executor"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/storage"
 	"clisimplehub/internal/transformer"
+	xai "clisimplehub/internal/xai"
+	xaiBackend "clisimplehub/internal/xai/backend"
+	xaiShared "clisimplehub/internal/xai/shared"
 
 	"github.com/tidwall/gjson"
 )
@@ -70,20 +70,26 @@ func (p *XaiPlugin) Init(cfg plugin.InitConfig) error {
 	})
 
 	p.mu.Lock()
+	oldService := p.service
 	p.xaiJsonPath = xaiJsonPath
 	p.service = NewXaiService()
+	service := p.service
 	p.mu.Unlock()
+	if oldService != nil {
+		oldService.stopTokenRefreshScheduler()
+	}
 
 	if cfg.Storage != nil {
-		p.service.SetStorageAccessor(&pluginStorageAccessor{
+		service.SetStorageAccessor(&pluginStorageAccessor{
 			store:  cfg.Storage,
 			reload: cfg.TriggerReload,
 		})
 		// 已有账号时补建 endpoints
 		if pool := xai.GetPool(); pool != nil && len(pool.ListAccounts()) > 0 {
-			p.service.ensureXaiEndpoints()
+			service.ensureXaiEndpoints()
 		}
 	}
+	service.reconcileTokenRefreshScheduler(xai.GetPool())
 	return nil
 }
 
@@ -114,7 +120,24 @@ func (p *XaiPlugin) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Requ
 func (p *XaiPlugin) Reload() error {
 	pool := xai.GetPool()
 	if pool != nil {
-		return pool.Reload()
+		if err := pool.Reload(); err != nil {
+			return err
+		}
+	}
+	if svc := p.GetService(); svc != nil {
+		svc.reconcileTokenRefreshScheduler(pool)
+	}
+	return nil
+}
+
+func (p *XaiPlugin) Close() error {
+	p.mu.RLock()
+	service := p.service
+	p.mu.RUnlock()
+	if service != nil {
+		service.stopTokenRefreshScheduler()
+		service.cancelLoginSession()
+		service.cancelDeviceSession()
 	}
 	return nil
 }

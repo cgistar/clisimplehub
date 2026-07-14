@@ -29,6 +29,9 @@ type XaiDesktopProvider interface {
 	// ProbeAccountStream 对该账号发一次 responses SSE 探测
 	ProbeAccountStream(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
 	RefreshAccountToken(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
+	ConvertSSOToAuth(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
+	ImportSSOAccount(ctx context.Context, configPath, sso string) (json.RawMessage, error)
+	SetAutoRefreshToken(configPath string, enabled bool) error
 	// RefreshAccountQuota 拉取 grok.com rate-limits，更新 pool + 额度。
 	RefreshAccountQuota(ctx context.Context, configPath, accountID string) (json.RawMessage, error)
 }

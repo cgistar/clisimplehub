@@ -47,7 +47,7 @@ type CodexAccountDTO struct {
 	IDToken              string         `json:"idToken,omitempty"`
 	AccountID            string         `json:"accountId,omitempty"`
 	Enabled              bool           `json:"enabled"`
-	Websockets           bool           `json:"websockets,omitempty"`
+	Websockets           bool           `json:"websockets"`
 	Status               string         `json:"status"`
 	Weight               int            `json:"weight,omitempty"`
 	ProxyUrl             string         `json:"proxyUrl,omitempty"`

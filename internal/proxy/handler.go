@@ -182,6 +182,8 @@ func (p *ProxyServer) handleV1ResponsesWebsocketRoute(w http.ResponseWriter, r *
 		return
 	}
 
+	var handle func(http.ResponseWriter, *http.Request)
+	handlerRequest := r
 	switch strings.ToLower(strings.TrimSpace(endpoint.Transformer)) {
 	case "openai/codex":
 		provider, ok := plugin.ByName("codex-accounts").(plugin.CodexResponsesWebsocketProvider)
@@ -191,7 +193,7 @@ func (p *ProxyServer) handleV1ResponsesWebsocketRoute(w http.ResponseWriter, r *
 			})
 			return
 		}
-		provider.HandleResponsesWebsocket(w, r)
+		handle = provider.HandleResponsesWebsocket
 	case "openai/xai":
 		provider, ok := plugin.ByName("xai-accounts").(plugin.XaiResponsesWebsocketProvider)
 		if !ok || provider == nil {
@@ -207,12 +209,26 @@ func (p *ProxyServer) handleV1ResponsesWebsocketRoute(w http.ResponseWriter, r *
 			u.Path = "/xai/v1/responses"
 			req.URL = &u
 		}
-		provider.HandleResponsesWebsocket(w, req)
+		handle = provider.HandleResponsesWebsocket
+		handlerRequest = req
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": "responses websocket requires active endpoint with openai/codex or openai/xai transformer",
 		})
+		return
 	}
+
+	startTime := time.Now()
+	requestID := uuid.New().String()
+	detail := &RequestDetail{
+		Method:         r.Method,
+		TargetURL:      strings.TrimSuffix(endpoint.APIURL, "/") + r.URL.Path,
+		RequestHeaders: sanitizeHeadersForLog(r.Header),
+	}
+	p.recordRequestWithDetail(requestID, InterfaceTypeCodex, RequestTransportWebSocket, endpoint, r.URL.Path, startTime, "in_progress", 0, detail)
+	handle(w, handlerRequest)
+	runTime := time.Since(startTime).Milliseconds()
+	p.recordRequestWithDetail(requestID, InterfaceTypeCodex, RequestTransportWebSocket, endpoint, r.URL.Path, startTime, "success", runTime, detail)
 }
 
 func (p *ProxyServer) resolveEndpointForRequest(exec *proxyExecutor, r *http.Request, req *executor.ForwardRequest) (*executor.EndpointConfig, string) {
@@ -323,7 +339,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			RequestStream:  string(bodyBytes),
 		}
 		runTime := time.Since(startTime).Milliseconds()
-		p.recordRequestWithDetail(requestID, interfaceType, nil, r.URL.Path, startTime, "error_503", runTime, detail)
+		p.recordRequestWithDetail(requestID, interfaceType, RequestTransportHTTP, nil, r.URL.Path, startTime, "error_503", runTime, detail)
 		logRequestToConsole(requestID, r.Method, r.URL.Path, interfaceType, nil, http.StatusServiceUnavailable, "error_503", runTime)
 		return
 	}
@@ -353,7 +369,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	p.recordRequestWithDetail(requestID, interfaceType, endpoint, r.URL.Path, startTime, "in_progress", 0, detail)
+	p.recordRequestWithDetail(requestID, interfaceType, RequestTransportHTTP, endpoint, r.URL.Path, startTime, "in_progress", 0, detail)
 
 	enableRetry := isRetryable && fallbackEnabled
 	captureUpstreamRequestBody := p.isDebugModeAll() && isRetryable && shouldRecordStats
@@ -428,7 +444,7 @@ func (p *ProxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	runTime := time.Since(startTime).Milliseconds()
 	status := statusFromExecuteResult(result)
-	p.recordRequestWithDetail(requestID, interfaceType, execResult.Endpoint, r.URL.Path, startTime, status, runTime, detail)
+	p.recordRequestWithDetail(requestID, interfaceType, RequestTransportHTTP, execResult.Endpoint, r.URL.Path, startTime, status, runTime, detail)
 
 	// 输出请求日志到控制台
 	logRequestToConsole(requestID, r.Method, r.URL.Path, interfaceType, execResult.Endpoint, detail.StatusCode, status, runTime)

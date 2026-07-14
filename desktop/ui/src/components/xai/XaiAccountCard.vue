@@ -64,6 +64,16 @@
         <button
           type="button"
           class="xai-action-btn"
+          :title="t('xai.test')"
+          :aria-label="t('xai.test')"
+          :disabled="busy"
+          @click="emit('refresh-token', account.id || '')"
+        >
+          <RefreshCw class="xai-action-icon" />
+        </button>
+        <button
+          type="button"
+          class="xai-action-btn"
           :title="t('xai.probeStream')"
           :aria-label="t('xai.probeStream')"
           :disabled="busy"
@@ -84,12 +94,12 @@
         <button
           type="button"
           class="xai-action-btn"
-          :title="t('xai.test')"
-          :aria-label="t('xai.test')"
-          :disabled="busy"
-          @click="emit('refresh-token', account.id || '')"
+          :title="canSSO2Auth ? t('xai.sso2auth') : t('xai.sso2authNeedSso')"
+          :aria-label="t('xai.sso2auth')"
+          :disabled="busy || !canSSO2Auth"
+          @click="emit('sso2auth', account.id || '')"
         >
-          <RefreshCw class="xai-action-icon" />
+          <KeyRound class="xai-action-icon" />
         </button>
         <button
           type="button"
@@ -129,7 +139,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { NTag, useDialog } from 'naive-ui'
-import { Power, RefreshCw, Copy, Edit, Trash, Activity, Gauge } from 'lucide-vue-next'
+import { Power, RefreshCw, Copy, Edit, Trash, Activity, Gauge, KeyRound } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import type { XaiAccount, XaiQuotaWindow } from '@/types/xai'
 
@@ -149,6 +159,7 @@ const emit = defineEmits<{
   activate: [accountId: string]
   test: [accountId: string]
   'refresh-quota': [accountId: string]
+  sso2auth: [accountId: string]
   'refresh-token': [accountId: string]
   copy: [account: XaiAccount]
   edit: [account: XaiAccount]
@@ -220,6 +231,7 @@ const expireText = computed(() => (expireInfo.value.text ? expireInfo.value.text
 const isExpired = computed(() => expireInfo.value.isExpired)
 const canActivate = computed(() => !props.isActive && props.account.status !== 'banned')
 const canRefreshQuota = computed(() => Boolean(String(props.account.sso || '').trim()))
+const canSSO2Auth = computed(() => Boolean(String(props.account.sso || '').trim()))
 
 const poolLabel = computed(() => {
   switch (String(props.account.pool || '').toLowerCase()) {
@@ -388,7 +400,8 @@ function truncateText(text: string | undefined, maxLength: number): string {
   border-top: 1px solid var(--border-color, #e0e0e0);
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: stretch;
+  flex-direction: column;
   gap: 8px;
 }
 
@@ -411,6 +424,7 @@ function truncateText(text: string | undefined, maxLength: number): string {
   overflow: hidden;
   background: var(--bg-primary, #ffffff);
   flex-shrink: 0;
+  align-self: flex-end;
 }
 
 .xai-action-btn {

@@ -170,6 +170,19 @@ export const useXaiAccountsStore = defineStore('xaiAccounts', () => {
     }
   }
 
+  async function sso2authAccount(accountId: string): Promise<string> {
+    const result = await xaiApi.sso2authAccount(accountId)
+    if (!result.success) {
+      throw new Error(result.error || 'sso2auth failed')
+    }
+    if (result.account?.id) {
+      patchAccountById(result.account.id, result.account)
+    } else {
+      await loadAccounts(true)
+    }
+    return result.warning || ''
+  }
+
   return {
     accounts,
     activeAccountId,
@@ -189,6 +202,7 @@ export const useXaiAccountsStore = defineStore('xaiAccounts', () => {
     deleteAccounts,
     testAccount,
     probeAccountStream,
-    refreshAccountQuota
+    refreshAccountQuota,
+    sso2authAccount
   }
 })

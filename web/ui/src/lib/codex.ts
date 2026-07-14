@@ -43,7 +43,7 @@ export function createCodexEditForm(account: CodexAccount | null = null): CodexE
     proxyUrl: account?.proxyUrl || '',
     weight: Number(account?.weight || 0),
     enabled: account?.enabled !== false,
-    websockets: Boolean(account?.websockets),
+    websockets: account ? Boolean(account.websockets) : true,
     status: account?.status || 'valid',
     cooldownRemaining: Number(account?.cooldownRemaining || 0),
   }

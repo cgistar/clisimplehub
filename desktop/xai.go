@@ -69,34 +69,34 @@ type XaiQuotaDTO struct {
 }
 
 type XaiAccountDTO struct {
-	ID               string            `json:"id,omitempty"`
-	Email            string            `json:"email,omitempty"`
-	Subject          string            `json:"subject,omitempty"`
-	AccessToken      string            `json:"accessToken,omitempty"`
-	RefreshToken     string            `json:"refreshToken,omitempty"`
-	IDToken          string            `json:"idToken,omitempty"`
-	AuthKind         string            `json:"authKind,omitempty"`
-	APIKey           string            `json:"apiKey,omitempty"`
-	SSO              string            `json:"sso,omitempty"`
-	Enabled          bool              `json:"enabled"`
-	Websockets       bool              `json:"websockets,omitempty"`
+	ID           string `json:"id,omitempty"`
+	Email        string `json:"email,omitempty"`
+	Subject      string `json:"subject,omitempty"`
+	AccessToken  string `json:"accessToken,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+	IDToken      string `json:"idToken,omitempty"`
+	AuthKind     string `json:"authKind,omitempty"`
+	APIKey       string `json:"apiKey,omitempty"`
+	SSO          string `json:"sso,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	Websockets   bool   `json:"websockets,omitempty"`
 	// UsingApi：true=官方 API；false=cli-chat-proxy（OAuth 默认 false）
-	UsingApi         bool              `json:"usingApi"`
-	Pool             string            `json:"pool,omitempty"`
-	Quota            *XaiQuotaDTO      `json:"quota,omitempty"`
-	LastQuotaSync    string            `json:"lastQuotaSync,omitempty"`
-	Status           string            `json:"status"`
-	Weight           int               `json:"weight,omitempty"`
-	ProxyUrl         string            `json:"proxyUrl,omitempty"`
-	CustomHeaders    map[string]string `json:"customHeaders,omitempty"`
-	ExpiresAt        string            `json:"expiresAt,omitempty"`
-	LastRefresh      string            `json:"lastRefresh,omitempty"`
+	UsingApi          bool              `json:"usingApi"`
+	Pool              string            `json:"pool,omitempty"`
+	Quota             *XaiQuotaDTO      `json:"quota,omitempty"`
+	LastQuotaSync     string            `json:"lastQuotaSync,omitempty"`
+	Status            string            `json:"status"`
+	Weight            int               `json:"weight,omitempty"`
+	ProxyUrl          string            `json:"proxyUrl,omitempty"`
+	CustomHeaders     map[string]string `json:"customHeaders,omitempty"`
+	ExpiresAt         string            `json:"expiresAt,omitempty"`
+	LastRefresh       string            `json:"lastRefresh,omitempty"`
 	CooldownUntil     string            `json:"cooldownUntil,omitempty"`
 	CooldownReason    string            `json:"cooldownReason,omitempty"`
 	CooldownRemaining int               `json:"cooldownRemaining,omitempty"`
-	CreatedAt        string            `json:"createdAt,omitempty"`
-	UpdatedAt        string            `json:"updatedAt,omitempty"`
-	IsActive         bool              `json:"isActive"`
+	CreatedAt         string            `json:"createdAt,omitempty"`
+	UpdatedAt         string            `json:"updatedAt,omitempty"`
+	IsActive          bool              `json:"isActive"`
 }
 
 type XaiDeviceLoginDTO struct {
@@ -109,30 +109,31 @@ type XaiDeviceLoginDTO struct {
 }
 
 type XaiAccountsResponse struct {
-	ActiveAccountID string         `json:"activeAccountId"`
+	ActiveAccountID string          `json:"activeAccountId"`
 	Accounts        []XaiAccountDTO `json:"accounts"`
 }
 
 type XaiAccountsPageResponse struct {
-	ActiveAccountID string         `json:"activeAccountId"`
+	ActiveAccountID string          `json:"activeAccountId"`
 	Accounts        []XaiAccountDTO `json:"accounts"`
-	Offset          int            `json:"offset"`
-	Limit           int            `json:"limit"`
-	NextOffset      int            `json:"nextOffset"`
-	Total           int            `json:"total"`
-	HasMore         bool           `json:"hasMore"`
+	Offset          int             `json:"offset"`
+	Limit           int             `json:"limit"`
+	NextOffset      int             `json:"nextOffset"`
+	Total           int             `json:"total"`
+	HasMore         bool            `json:"hasMore"`
 }
 
 type XaiGlobalConfigDTO struct {
-	RotationMode   string            `json:"rotationMode"`
-	ProxyUrl       string            `json:"proxyUrl"`
-	BaseURL        string            `json:"baseURL"`
-	ClientVersion  string            `json:"clientVersion,omitempty"`
-	UserAgent      string            `json:"userAgent,omitempty"`
-	TokenAuth      string            `json:"tokenAuth,omitempty"`
-	ClientSurface  string            `json:"clientSurface,omitempty"`
-	DynamicStatsig bool              `json:"dynamicStatsig"`
-	CustomHeaders  map[string]string `json:"customHeaders,omitempty"`
+	RotationMode     string            `json:"rotationMode"`
+	ProxyUrl         string            `json:"proxyUrl"`
+	BaseURL          string            `json:"baseURL"`
+	ClientVersion    string            `json:"clientVersion,omitempty"`
+	UserAgent        string            `json:"userAgent,omitempty"`
+	TokenAuth        string            `json:"tokenAuth,omitempty"`
+	ClientSurface    string            `json:"clientSurface,omitempty"`
+	DynamicStatsig   bool              `json:"dynamicStatsig"`
+	AutoRefreshToken *bool             `json:"autoRefreshToken,omitempty"`
+	CustomHeaders    map[string]string `json:"customHeaders,omitempty"`
 }
 
 type XaiLoginResultDTO struct {
@@ -152,6 +153,15 @@ type XaiTestResult struct {
 	Success bool           `json:"success"`
 	Account *XaiAccountDTO `json:"account,omitempty"`
 	Error   string         `json:"error,omitempty"`
+	Warning string         `json:"warning,omitempty"`
+}
+
+type XaiSSOImportResult struct {
+	Success bool           `json:"success"`
+	Action  string         `json:"action"`
+	Account *XaiAccountDTO `json:"account,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	Warning string         `json:"warning,omitempty"`
 }
 
 func (a *App) GetXaiAccounts() (*XaiAccountsResponse, error) {
@@ -431,6 +441,56 @@ func (a *App) RefreshXaiAccountToken(accountId string) (*XaiTestResult, error) {
 	return &XaiTestResult{Success: payload.Success, Account: &payload.Account}, nil
 }
 
+// ConvertXaiSSOToAuth 使用账号保存的 SSO Cookie 获取 OAuth 凭据。
+func (a *App) ConvertXaiSSOToAuth(accountId string) (*XaiTestResult, error) {
+	xp := xaiProvider()
+	if xp == nil {
+		return nil, fmt.Errorf("xai plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := xp.ConvertSSOToAuth(ctx, a.getXaiMultiConfigPath(), accountId)
+	if err != nil {
+		return &XaiTestResult{Success: false, Error: err.Error()}, nil
+	}
+	var payload struct {
+		Success bool           `json:"success"`
+		Account *XaiAccountDTO `json:"account"`
+		Warning string         `json:"warning"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	return &XaiTestResult{
+		Success: payload.Success,
+		Account: payload.Account,
+		Warning: strings.TrimSpace(payload.Warning),
+	}, nil
+}
+
+// ImportXaiSSOAccount 使用原始 SSO Cookie 新增或更新 xAI 账号。
+func (a *App) ImportXaiSSOAccount(sso string) (*XaiSSOImportResult, error) {
+	xp := xaiProvider()
+	if xp == nil {
+		return nil, fmt.Errorf("xai plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := xp.ImportSSOAccount(ctx, a.getXaiMultiConfigPath(), sso)
+	if err != nil {
+		return nil, err
+	}
+	var result XaiSSOImportResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // RefreshXaiAccountQuota 拉取 rate-limits 并更新账号类型与额度。
 func (a *App) RefreshXaiAccountQuota(accountId string) (*XaiTestResult, error) {
 	xp := xaiProvider()
@@ -489,6 +549,14 @@ func (a *App) SaveXaiGlobalConfig(dto *XaiGlobalConfigDTO) error {
 		return err
 	}
 	return xp.SaveXaiGlobalConfig(a.getXaiMultiConfigPath(), raw)
+}
+
+func (a *App) SetXaiAutoRefreshToken(enabled bool) error {
+	xp := xaiProvider()
+	if xp == nil {
+		return fmt.Errorf("xai plugin not available")
+	}
+	return xp.SetAutoRefreshToken(a.getXaiMultiConfigPath(), enabled)
 }
 
 func (a *App) OpenXaiLoginURL(url string) error {

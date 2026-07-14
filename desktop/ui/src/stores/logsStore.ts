@@ -16,6 +16,7 @@ function requestToLogInfo(request: RealtimeRequest): RequestLogInfo {
   return {
     id: request.request_id,
     interfaceType: request.interfaceType || '',
+    transport: request.transport || 'http',
     providerName: request.providerName || '',
     endpointName: request.endpointName || '',
     path: request.path || '',
@@ -75,6 +76,7 @@ export const useLogsStore = defineStore('logs', () => {
       selectedLogDetail.value = {
         id: realtime.request_id,
         interfaceType: realtime.interfaceType,
+        transport: realtime.transport,
         providerName: realtime.providerName,
         endpointName: realtime.endpointName,
         path: realtime.path,
@@ -103,6 +105,7 @@ export const useLogsStore = defineStore('logs', () => {
         selectedLogDetail.value = {
           id: cached.id,
           interfaceType: cached.interfaceType,
+          transport: cached.transport,
           providerName: cached.providerName,
           endpointName: cached.endpointName,
           path: cached.path,

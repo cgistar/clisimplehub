@@ -18,10 +18,11 @@ type RequestDetail struct {
 	Model          string
 }
 
-func (p *ProxyServer) recordRequestWithDetail(id string, interfaceType InterfaceType, endpoint *executor.EndpointConfig, path string, startTime time.Time, status string, runTime int64, detail *RequestDetail) {
+func (p *ProxyServer) recordRequestWithDetail(id string, interfaceType InterfaceType, transport string, endpoint *executor.EndpointConfig, path string, startTime time.Time, status string, runTime int64, detail *RequestDetail) {
 	log := &RequestLog{
 		ID:            id,
 		InterfaceType: string(interfaceType),
+		Transport:     transport,
 		Path:          path,
 		RunTime:       runTime,
 		Status:        status,

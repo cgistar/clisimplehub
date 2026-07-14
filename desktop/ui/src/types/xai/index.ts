@@ -65,6 +65,8 @@ export interface XaiGlobalConfig {
   clientSurface?: string
   /** 默认 true：动态生成 x-statsig-id（grok.com rate-limits 等） */
   dynamicStatsig?: boolean
+  /** 默认 false：后台刷新临近过期的 OAuth token */
+  autoRefreshToken?: boolean
   customHeaders?: Record<string, string>
 }
 
@@ -101,4 +103,13 @@ export interface XaiTestResult {
   success: boolean
   account?: XaiAccount
   error?: string
+  warning?: string
+}
+
+export interface XaiSSOImportResult {
+  success: boolean
+  action: 'created' | 'updated' | string
+  account?: XaiAccount
+  error?: string
+  warning?: string
 }

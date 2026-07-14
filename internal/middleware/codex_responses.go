@@ -25,7 +25,7 @@ var ErrCompactStreamingNotSupported = errors.New("streaming not supported for co
 var compactStreamingErrorJSON = []byte(`{"error":{"type":"invalid_request_error","message":"Streaming not supported for compact responses"}}`)
 
 // fieldsToRemoveForCodexUpstream 仅删除 Codex 上游硬伤字段。
-// store / context_management 透传客户端值（对齐 CLIProxyAPI）。
+// store / context_management 透传客户端值
 var fieldsToRemoveForCodexUpstream = []string{
 	"previous_response_id",
 	"prompt_cache_retention",

@@ -13,6 +13,7 @@ export const DEFAULT_XAI_CONFIG: XaiConfigForm = {
   tokenAuth: '',
   clientSurface: '',
   dynamicStatsig: true,
+  autoRefreshToken: false,
   customHeaders: {},
 }
 
@@ -26,6 +27,7 @@ export function createXaiConfigForm(globalConfig: Partial<XaiConfigForm> = {}): 
     tokenAuth: globalConfig.tokenAuth || DEFAULT_XAI_CONFIG.tokenAuth,
     clientSurface: globalConfig.clientSurface || DEFAULT_XAI_CONFIG.clientSurface,
     dynamicStatsig: globalConfig.dynamicStatsig !== false,
+    autoRefreshToken: Boolean(globalConfig.autoRefreshToken),
     customHeaders: normalizeCustomHeaders(globalConfig.customHeaders),
   }
 }

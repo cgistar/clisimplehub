@@ -155,6 +155,65 @@ func (p *ProxyServer) handleWebUIRefreshXaiQuota(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, payload)
 }
 
+func (p *ProxyServer) handleWebUIXaiSSOToAuth(w http.ResponseWriter, r *http.Request) {
+	provider, accountID, xaiPath, ok := p.parseWebUIXaiAccountAction(w, r)
+	if !ok {
+		return
+	}
+	result, err := provider.ConvertSSOToAuth(r.Context(), xaiPath, accountID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to parse sso2auth result"})
+		return
+	}
+	if success, _ := payload["success"].(bool); !success {
+		errMsg, _ := payload["error"].(string)
+		if strings.TrimSpace(errMsg) == "" {
+			errMsg = "sso2auth failed"
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": errMsg, "result": payload})
+		return
+	}
+	payload["message"] = "SSO2Auth completed"
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (p *ProxyServer) handleWebUIXaiSSOImport(w http.ResponseWriter, r *http.Request) {
+	provider := plugin.GetXaiDesktopProviderCached()
+	if provider == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "xai-accounts 插件不可用"})
+		return
+	}
+	var req struct {
+		SSO string `json:"sso"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求体格式无效"})
+		return
+	}
+	if strings.TrimSpace(req.SSO) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "sso 必填"})
+		return
+	}
+	xaiPath := resolveWebUIXaiConfigPath(provider, p.getConfigPath())
+	result, err := provider.ImportSSOAccount(r.Context(), xaiPath, req.SSO)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to parse sso import result"})
+		return
+	}
+	payload["message"] = "xai sso account imported"
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (p *ProxyServer) handleWebUISaveXaiConfig(w http.ResponseWriter, r *http.Request) {
 	provider := plugin.GetXaiDesktopProviderCached()
 	if provider == nil {
@@ -177,6 +236,30 @@ func (p *ProxyServer) handleWebUISaveXaiConfig(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"message": "xai config saved"})
+}
+
+func (p *ProxyServer) handleWebUISetXaiAutoRefreshToken(w http.ResponseWriter, r *http.Request) {
+	provider := plugin.GetXaiDesktopProviderCached()
+	if provider == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "xai-accounts 插件不可用"})
+		return
+	}
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Enabled == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "enabled 必须是布尔值"})
+		return
+	}
+	xaiPath := resolveWebUIXaiConfigPath(provider, p.getConfigPath())
+	if err := provider.SetAutoRefreshToken(xaiPath, *req.Enabled); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "xai automatic token refresh updated",
+		"enabled": *req.Enabled,
+	})
 }
 
 func (p *ProxyServer) handleWebUIAddXaiAccount(w http.ResponseWriter, r *http.Request) {

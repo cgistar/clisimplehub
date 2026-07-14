@@ -280,6 +280,13 @@ export interface XaiAccountInput {
   expiresAt?: string
 }
 
+export interface XaiSSOImportResult extends ActionResponse {
+  success: boolean
+  action: 'created' | 'updated' | string
+  account?: XaiAccount
+  warning?: string
+}
+
 export interface XaiConfigForm {
   rotationMode: string
   proxyUrl: string
@@ -289,6 +296,7 @@ export interface XaiConfigForm {
   tokenAuth: string
   clientSurface: string
   dynamicStatsig: boolean
+  autoRefreshToken: boolean
   customHeaders: Record<string, string>
 }
 

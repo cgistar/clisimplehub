@@ -13,15 +13,24 @@ import (
 
 // StartDeviceFlow 请求 device code。
 func (a *XAIAuth) StartDeviceFlow(ctx context.Context) (*DeviceCodeResponse, error) {
+	return a.StartDeviceFlowWithScope(ctx, Scope)
+}
+
+// StartDeviceFlowWithScope 请求指定 scope 的 device code。
+func (a *XAIAuth) StartDeviceFlowWithScope(ctx context.Context, scope string) (*DeviceCodeResponse, error) {
 	discovery, err := a.Discover(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return a.RequestDeviceCode(ctx, discovery.DeviceAuthorizationEndpoint, discovery.TokenEndpoint)
+	return a.requestDeviceCode(ctx, discovery.DeviceAuthorizationEndpoint, discovery.TokenEndpoint, scope)
 }
 
 // RequestDeviceCode POST device authorization endpoint。
 func (a *XAIAuth) RequestDeviceCode(ctx context.Context, deviceAuthorizationEndpoint, tokenEndpoint string) (*DeviceCodeResponse, error) {
+	return a.requestDeviceCode(ctx, deviceAuthorizationEndpoint, tokenEndpoint, Scope)
+}
+
+func (a *XAIAuth) requestDeviceCode(ctx context.Context, deviceAuthorizationEndpoint, tokenEndpoint, scope string) (*DeviceCodeResponse, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -31,7 +40,7 @@ func (a *XAIAuth) RequestDeviceCode(ctx context.Context, deviceAuthorizationEndp
 	}
 	form := url.Values{
 		"client_id": {ClientID},
-		"scope":     {Scope},
+		"scope":     {strings.TrimSpace(scope)},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, deviceAuthorizationEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {

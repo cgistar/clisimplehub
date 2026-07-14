@@ -110,8 +110,10 @@ type XaiConfig struct {
 	ClientSurface string `json:"clientSurface,omitempty"`
 	// DynamicStatsig：nil/缺省=true
 	// 控制 grok.com rate-limits 等请求的 x-statsig-id 是否动态生成。
-	DynamicStatsig *bool             `json:"dynamicStatsig,omitempty"`
-	CustomHeaders  map[string]string `json:"customHeaders,omitempty"`
+	DynamicStatsig *bool `json:"dynamicStatsig,omitempty"`
+	// AutoRefreshToken：nil/缺省=false；开启后后台定期刷新临近过期的 OAuth token。
+	AutoRefreshToken *bool             `json:"autoRefreshToken,omitempty"`
+	CustomHeaders    map[string]string `json:"customHeaders,omitempty"`
 }
 
 // DynamicStatsigEnabled 是否动态生成 x-statsig-id（默认 true）。
@@ -129,6 +131,20 @@ func (c *XaiConfig) SetDynamicStatsig(enabled bool) {
 	}
 	v := enabled
 	c.DynamicStatsig = &v
+}
+
+// AutoRefreshTokenEnabled 是否启用后台 OAuth token 自动刷新（默认 false）。
+func (c XaiConfig) AutoRefreshTokenEnabled() bool {
+	return c.AutoRefreshToken != nil && *c.AutoRefreshToken
+}
+
+// SetAutoRefreshToken 写入自动刷新开关。
+func (c *XaiConfig) SetAutoRefreshToken(enabled bool) {
+	if c == nil {
+		return
+	}
+	v := enabled
+	c.AutoRefreshToken = &v
 }
 
 type XaiMultiConfig struct {

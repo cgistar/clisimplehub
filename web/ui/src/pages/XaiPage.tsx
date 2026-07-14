@@ -2,6 +2,7 @@ import type { XaiAccount, XaiPageData } from '@/types'
 import { createXaiConfigForm } from '@/lib/xai'
 import KpiCard from '@/components/KpiCard'
 import XaiAccountCard from './components/XaiAccountCard'
+import { Menu } from '@base-ui/react/menu'
 
 interface XaiPageProps {
   data: XaiPageData | null
@@ -9,12 +10,15 @@ interface XaiPageProps {
   busyAction: string
   onOpenConfig: () => void
   onOpenImport: () => void
+  onOpenSSOImport: () => void
   onRefreshXai: () => void | Promise<void>
   onCopyVisibleAccounts: (accounts: XaiAccount[]) => void | Promise<void>
   onActivateAccount: (accountId: string) => void
   onProbeStream: (accountId: string) => void
   onRefreshQuota: (accountId: string) => void
+  onSSO2Auth: (accountId: string) => void
   onRefreshToken: (accountId: string) => void
+  onSetAutoRefreshToken: (enabled: boolean) => void
   onCopyAccount: (account: XaiAccount) => void
   onEditAccount: (account: XaiAccount) => void
   onDeleteAccount: (accountId: string) => void
@@ -26,12 +30,15 @@ export default function XaiPage({
   busyAction,
   onOpenConfig,
   onOpenImport,
+  onOpenSSOImport,
   onRefreshXai,
   onCopyVisibleAccounts,
   onActivateAccount,
   onProbeStream,
   onRefreshQuota,
+  onSSO2Auth,
   onRefreshToken,
+  onSetAutoRefreshToken,
   onCopyAccount,
   onEditAccount,
   onDeleteAccount,
@@ -79,18 +86,35 @@ export default function XaiPage({
         <div className="card-header codex-account-section-header">
           <div>
             <h2 className="card-title">账号卡片</h2>
-            <div className="card-subtitle">支持激活、连通测试、刷新额度、刷新 Token、复制 auth.json、导入、删除</div>
+            <div className="card-subtitle">支持激活、连通测试、刷新额度、SSO2Auth、刷新 Token、复制 auth.json、导入、删除</div>
           </div>
           <div className="actions codex-account-section-actions">
+            <label className="checkbox-row" title="每分钟检查并刷新 5 分钟内到期的已启用 OAuth 账号">
+              <input
+                type="checkbox"
+                checked={globalConfig.autoRefreshToken}
+                disabled={busyAction === 'xai:auto-refresh'}
+                onChange={(event) => onSetAutoRefreshToken(event.target.checked)}
+              />
+              <span>{busyAction === 'xai:auto-refresh' ? '保存中...' : '自动更新 Token'}</span>
+            </label>
             <button className="btn" type="button" onClick={onRefreshXai} disabled={loading}>
               {loading ? '刷新中...' : '刷新'}
             </button>
             <button className="btn" type="button" onClick={() => onCopyVisibleAccounts(accounts)} disabled={accounts.length === 0}>
               复制
             </button>
-            <button className="btn" type="button" onClick={onOpenImport}>
-              导入
-            </button>
+            <Menu.Root>
+              <Menu.Trigger className="btn" type="button">账号</Menu.Trigger>
+              <Menu.Portal>
+                <Menu.Positioner className="account-menu-positioner" sideOffset={8} align="end">
+                  <Menu.Popup className="account-menu-popup">
+                    <Menu.Item className="account-menu-item" onClick={onOpenImport}>JSON 导入</Menu.Item>
+                    <Menu.Item className="account-menu-item" onClick={onOpenSSOImport}>SSO 导入</Menu.Item>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
             <button className="btn" type="button" onClick={onOpenConfig}>
               配置
             </button>
@@ -109,6 +133,7 @@ export default function XaiPage({
                 onActivate={onActivateAccount}
                 onProbeStream={onProbeStream}
                 onRefreshQuota={onRefreshQuota}
+                onSSO2Auth={onSSO2Auth}
                 onRefreshToken={onRefreshToken}
                 onCopy={onCopyAccount}
                 onEdit={onEditAccount}

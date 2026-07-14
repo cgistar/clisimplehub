@@ -413,7 +413,7 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		Email:          dto.Email,
 		PlanType:       dto.PlanType,
 		Enabled:        enabled,
-		Websockets:     dto.Websockets,
+		Websockets:     resolveNewAccountWebsockets(dto.Websockets),
 		Password:       dto.Password,
 		MFACode:        dto.MFACode,
 		ProxyUrl:       dto.ProxyUrl,
@@ -467,7 +467,7 @@ type codexAccountImportDTO struct {
 	PlanType     string `json:"planType"`
 	AccountID    string `json:"accountId"`
 	Enabled      *bool  `json:"enabled,omitempty"`
-	Websockets   bool   `json:"websockets"`
+	Websockets   *bool  `json:"websockets,omitempty"`
 	AccessToken  string `json:"accessToken"`
 	IDToken      string `json:"idToken"`
 	ExpiresAt    string `json:"expiresAt"`
@@ -476,6 +476,10 @@ type codexAccountImportDTO struct {
 	MFACode      string `json:"mfaCode"`
 	Weight       int    `json:"weight"`
 	Expired      string `json:"expired"`
+}
+
+func resolveNewAccountWebsockets(value *bool) bool {
+	return value == nil || *value
 }
 
 func normalizeCodexAccountImportDTO(dto *codexAccountImportDTO) {

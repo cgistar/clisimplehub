@@ -3,10 +3,16 @@ package proxy
 
 import "time"
 
+const (
+	RequestTransportHTTP      = "http"
+	RequestTransportWebSocket = "websocket"
+)
+
 // RequestLog represents a single request log entry
 type RequestLog struct {
 	ID            string    `json:"id"`
 	InterfaceType string    `json:"interfaceType"`
+	Transport     string    `json:"transport"`
 	ProviderName  string    `json:"providerName"`
 	EndpointName  string    `json:"endpointName"`
 	Transformer   string    `json:"transformer,omitempty"`

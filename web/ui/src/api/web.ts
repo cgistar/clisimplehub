@@ -30,6 +30,7 @@ import type {
   XaiConfigForm,
   XaiEditForm,
   XaiPageData,
+  XaiSSOImportResult,
 } from '@/types'
 
 export const webApi = {
@@ -80,6 +81,16 @@ export const webApi = {
       method: 'POST',
       body: JSON.stringify({ accountId }),
     }),
+  sso2authXaiAccount: (accountId: string) =>
+    apiFetch<ActionResponse & { account?: XaiAccount; warning?: string }>('/web/api/xai/sso2auth', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
+  importXaiSSOAccount: (sso: string) =>
+    apiFetch<XaiSSOImportResult>('/web/api/xai/sso-import', {
+      method: 'POST',
+      body: JSON.stringify({ sso }),
+    }),
   addXaiAccount: (payload: XaiAccountInput) =>
     apiFetch<XaiAccount & ActionResponse>('/web/api/xai/accounts', {
       method: 'POST',
@@ -96,6 +107,11 @@ export const webApi = {
     apiFetch<ActionResponse>('/web/api/xai/config', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  setXaiAutoRefreshToken: (enabled: boolean) =>
+    apiFetch<ActionResponse & { enabled: boolean }>('/web/api/xai/auto-refresh-token', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
     }),
   getCodexModelPrices: () => apiFetch<CodexModelPrice[]>('/web/api/codex/model-prices'),
   saveCodexModelPrices: (prices: CodexModelPrice[]) =>
@@ -131,7 +147,7 @@ export const webApi = {
   addCodexAccount: (payload: CodexAccountInput) =>
     apiFetch<CodexAccount & ActionResponse>('/web/api/codex/accounts', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, websockets: payload.websockets !== false }),
     }),
   updateCodexAccount: (payload: CodexEditForm) =>
     apiFetch<ActionResponse>('/web/api/codex/accounts/update', {

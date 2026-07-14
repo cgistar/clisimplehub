@@ -105,6 +105,7 @@ func (a *XAIAuth) Discover(ctx context.Context) (*Discovery, error) {
 		AuthorizationEndpoint       string `json:"authorization_endpoint"`
 		TokenEndpoint               string `json:"token_endpoint"`
 		DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
+		UserInfoEndpoint            string `json:"userinfo_endpoint"`
 	}
 	if err = json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("xai discovery: parse response: %w", err)
@@ -124,10 +125,18 @@ func (a *XAIAuth) Discover(ctx context.Context) (*Discovery, error) {
 			return nil, err
 		}
 	}
+	userInfoEndpoint := ""
+	if strings.TrimSpace(payload.UserInfoEndpoint) != "" {
+		userInfoEndpoint, err = ValidateOAuthEndpoint(payload.UserInfoEndpoint, "userinfo_endpoint")
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &Discovery{
 		AuthorizationEndpoint:       authorizationEndpoint,
 		TokenEndpoint:               tokenEndpoint,
 		DeviceAuthorizationEndpoint: deviceAuthEndpoint,
+		UserInfoEndpoint:            userInfoEndpoint,
 	}, nil
 }
 
@@ -186,7 +195,7 @@ func (a *XAIAuth) RefreshTokens(ctx context.Context, refreshToken, tokenEndpoint
 	tokenEndpoint = strings.TrimSpace(tokenEndpoint)
 
 	result, err, _ := xaiRefreshGroup.Do(refreshToken, func() (interface{}, error) {
-		return a.refreshTokensSingleFlight(context.WithoutCancel(ctx), refreshToken, tokenEndpoint)
+		return a.refreshTokensSingleFlight(ctx, refreshToken, tokenEndpoint)
 	})
 	if err != nil {
 		return nil, err

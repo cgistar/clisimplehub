@@ -7,7 +7,8 @@ import type {
   XaiGlobalConfig,
   XaiDeviceLoginInfo,
   XaiLoginResult,
-  XaiTestResult
+  XaiTestResult,
+  XaiSSOImportResult
 } from '@/types/xai'
 
 const DEFAULT_BASE_URL = 'https://api.x.ai/v1'
@@ -132,6 +133,27 @@ export const xaiApi = {
     }
   },
 
+  async sso2authAccount(accountId: string): Promise<XaiTestResult> {
+    const result = await App.ConvertXaiSSOToAuth(accountId)
+    return {
+      success: Boolean(result?.success),
+      account: result?.account ? normalizeAccount(result.account) : undefined,
+      error: result?.error || '',
+      warning: result?.warning || ''
+    }
+  },
+
+  async importSSOAccount(sso: string): Promise<XaiSSOImportResult> {
+    const result = await App.ImportXaiSSOAccount(sso)
+    return {
+      success: Boolean(result?.success),
+      action: result?.action || '',
+      account: result?.account ? normalizeAccount(result.account) : undefined,
+      error: result?.error || '',
+      warning: result?.warning || ''
+    }
+  },
+
   async getGlobalConfig(): Promise<XaiGlobalConfig> {
     const config = await App.GetXaiGlobalConfig()
     return {
@@ -143,6 +165,7 @@ export const xaiApi = {
       tokenAuth: config?.tokenAuth || '',
       clientSurface: config?.clientSurface || '',
       dynamicStatsig: config?.dynamicStatsig !== false,
+      autoRefreshToken: Boolean(config?.autoRefreshToken),
       customHeaders: config?.customHeaders || {}
     }
   },
@@ -157,8 +180,13 @@ export const xaiApi = {
       tokenAuth: config.tokenAuth || '',
       clientSurface: config.clientSurface || '',
       dynamicStatsig: config.dynamicStatsig !== false,
+      autoRefreshToken: config.autoRefreshToken,
       customHeaders: config.customHeaders || {}
     })
+  },
+
+  async setAutoRefreshToken(enabled: boolean): Promise<void> {
+    await App.SetXaiAutoRefreshToken(enabled)
   },
 
   async startLoginWithURL(): Promise<string> {

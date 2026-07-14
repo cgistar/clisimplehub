@@ -4,6 +4,7 @@
       <XaiAccountToolbar
         @oauth-login="showOAuthModal = true"
         @api-key="handleOpenApiKeyModal"
+        @sso-import="showSSOImportModal = true"
         @json-import="showJsonImportModal = true"
         @bulk-delete="showBulkDeleteModal = true"
         @open-config="showGlobalConfigModal = true"
@@ -34,6 +35,11 @@
       @success="handleJsonImportSuccess"
     />
 
+    <XaiSSOImportModal
+      v-model:show="showSSOImportModal"
+      @success="handleSSOImportSuccess"
+    />
+
     <XaiBulkDeleteModal
       v-model:show="showBulkDeleteModal"
       @success="handleBulkDeleteSuccess"
@@ -57,6 +63,7 @@ import XaiAccountList from './XaiAccountList.vue'
 import XaiOAuthLoginModal from './XaiOAuthLoginModal.vue'
 import XaiAccountEditModal from './XaiAccountEditModal.vue'
 import XaiJsonImportModal from './XaiJsonImportModal.vue'
+import XaiSSOImportModal from './XaiSSOImportModal.vue'
 import XaiBulkDeleteModal from './XaiBulkDeleteModal.vue'
 import XaiGlobalConfigModal from './XaiGlobalConfigModal.vue'
 
@@ -67,6 +74,7 @@ const xaiStore = useXaiAccountsStore()
 const showOAuthModal = ref(false)
 const showEditModal = ref(false)
 const showJsonImportModal = ref(false)
+const showSSOImportModal = ref(false)
 const showBulkDeleteModal = ref(false)
 const showGlobalConfigModal = ref(false)
 const editMode = ref<'edit' | 'create-api-key'>('edit')
@@ -125,6 +133,10 @@ async function handleEditSuccess(payload: XaiAccountInput) {
 }
 
 function handleJsonImportSuccess() {
+  void xaiStore.loadAccounts(true)
+}
+
+function handleSSOImportSuccess() {
   void xaiStore.loadAccounts(true)
 }
 

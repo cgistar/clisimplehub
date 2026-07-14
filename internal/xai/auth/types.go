@@ -16,6 +16,8 @@ const (
 	// ClientID is the public xAI Grok CLI OAuth client ID.
 	ClientID = "b1a00492-073a-47ea-816f-4c329264a828"
 	Scope    = "openid profile email offline_access grok-cli:access api:access"
+	// SSOScope 与 grok_sso2auth.py 保持一致，仅用于 SSO 自动确认 Device Flow。
+	SSOScope = Scope + " conversations:read conversations:write"
 	// RedirectHost is the loopback host used by xAI OAuth.
 	RedirectHost = "127.0.0.1"
 	// CallbackPort is the preferred loopback callback port.
@@ -51,6 +53,7 @@ type Discovery struct {
 	AuthorizationEndpoint       string `json:"authorization_endpoint"`
 	TokenEndpoint               string `json:"token_endpoint"`
 	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
+	UserInfoEndpoint            string `json:"userinfo_endpoint"`
 }
 
 // DeviceCodeResponse 表示 xAI device authorization 响应。

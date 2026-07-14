@@ -14,6 +14,7 @@
         @activate="handleActivate"
         @test="handleTest"
         @refresh-quota="handleRefreshQuota"
+        @sso2auth="handleSSO2Auth"
         @refresh-token="handleRefreshToken"
         @copy="handleCopy"
         @edit="handleEdit"
@@ -126,6 +127,20 @@ async function handleRefreshQuota(accountId: string): Promise<void> {
   }
 }
 
+async function handleSSO2Auth(accountId: string): Promise<void> {
+  if (!accountId || isAccountPending(accountId)) return
+  setAccountPending(accountId, true)
+  try {
+    const warning = await xaiStore.sso2authAccount(accountId)
+    if (warning) message.warning(t('xai.sso2authWarning') + warning)
+    else message.success(t('xai.sso2authSuccess'))
+  } catch (error) {
+    message.error(t('xai.sso2authFailed') + toErrorMessage(error))
+  } finally {
+    setAccountPending(accountId, false)
+  }
+}
+
 async function handleCopy(account: XaiAccount): Promise<void> {
   try {
     await navigator.clipboard.writeText(buildXaiAccountCopyJson(account))
@@ -191,7 +206,7 @@ defineExpose({
   min-height: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 10px;
   align-content: start;
   padding-bottom: 8px;

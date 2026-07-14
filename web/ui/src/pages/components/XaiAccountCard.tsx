@@ -1,6 +1,6 @@
 import type { XaiAccount, XaiQuotaWindow } from '@/types'
 import { getXaiExpireInfo, getXaiStatus } from '@/lib/xai'
-import { ActivityIcon, CopyIcon, EditIcon, GaugeIcon, PowerIcon, RefreshIcon, TrashIcon } from '@/components/icons'
+import { ActivityIcon, CopyIcon, EditIcon, GaugeIcon, KeyIcon, PowerIcon, RefreshIcon, TrashIcon } from '@/components/icons'
 
 interface XaiAccountCardProps {
   account: XaiAccount
@@ -8,6 +8,7 @@ interface XaiAccountCardProps {
   onActivate: (accountId: string) => void
   onProbeStream: (accountId: string) => void
   onRefreshQuota: (accountId: string) => void
+  onSSO2Auth: (accountId: string) => void
   onRefreshToken: (accountId: string) => void
   onCopy: (account: XaiAccount) => void
   onEdit: (account: XaiAccount) => void
@@ -53,6 +54,7 @@ export default function XaiAccountCard({
   onActivate,
   onProbeStream,
   onRefreshQuota,
+  onSSO2Auth,
   onRefreshToken,
   onCopy,
   onEdit,
@@ -63,12 +65,14 @@ export default function XaiAccountCard({
   const localId = account.id || ''
   const canActivate = Boolean(localId) && !account.isActive && account.status !== 'banned'
   const canRefreshQuota = Boolean(String(account.sso || '').trim())
+  const canSSO2Auth = Boolean(String(account.sso || '').trim())
   const activateBusy = busyAction === `xai:activate:${localId}`
   const probeBusy = busyAction === `xai:probe:${localId}`
   const quotaBusy = busyAction === `xai:quota:${localId}`
+  const sso2authBusy = busyAction === `xai:sso2auth:${localId}`
   const refreshBusy = busyAction === `xai:refresh:${localId}`
   const deleteBusy = busyAction === `xai:delete:${localId}`
-  const actionBusy = activateBusy || probeBusy || quotaBusy || refreshBusy || deleteBusy
+  const actionBusy = activateBusy || probeBusy || quotaBusy || sso2authBusy || refreshBusy || deleteBusy
   const pool = poolLabel(account.pool)
   const quotaText = quotaSummary(account)
 
@@ -128,6 +132,16 @@ export default function XaiAccountCard({
           <button
             className="codex-action-btn"
             type="button"
+            title={refreshBusy ? '刷新 Token 中...' : '刷新 Token'}
+            aria-label="刷新 Token"
+            disabled={actionBusy || !localId}
+            onClick={() => onRefreshToken(localId)}
+          >
+            <RefreshIcon />
+          </button>
+          <button
+            className="codex-action-btn"
+            type="button"
             title={probeBusy ? '连通测试中...' : '连通测试'}
             aria-label="连通测试"
             disabled={actionBusy || !localId}
@@ -154,12 +168,18 @@ export default function XaiAccountCard({
           <button
             className="codex-action-btn"
             type="button"
-            title={refreshBusy ? '刷新 Token 中...' : '刷新 Token'}
-            aria-label="刷新 Token"
-            disabled={actionBusy || !localId}
-            onClick={() => onRefreshToken(localId)}
+            title={
+              !canSSO2Auth
+                ? '需要 SSO Cookie 才能执行 SSO2Auth'
+                : sso2authBusy
+                  ? 'SSO2Auth 处理中...'
+                  : 'SSO2Auth'
+            }
+            aria-label="SSO2Auth"
+            disabled={actionBusy || !localId || !canSSO2Auth}
+            onClick={() => onSSO2Auth(localId)}
           >
-            <RefreshIcon />
+            <KeyIcon />
           </button>
           <button
             className="codex-action-btn"

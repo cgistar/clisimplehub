@@ -45,6 +45,10 @@ const formattedTime = computed(() => {
   return formatTimeSafe(props.log.timestamp, '-');
 });
 
+const transportText = computed(() => {
+  return props.log.transport === 'websocket' ? 'WebSocket' : 'HTTP';
+});
+
 const isRealtimeInProgress = computed(() => {
   const status = props.log.status;
   return (
@@ -123,6 +127,9 @@ function handleClick(): void {
         <span class="log-time">{{ formattedTime }}</span>
         <span class="log-separator">•</span>
         <span class="log-interface-type">{{ log.interfaceType }}</span>
+        <n-tag size="small" round :bordered="false" class="transport-tag">
+          {{ transportText }}
+        </n-tag>
         <n-tag :type="statusType" size="small" round>
           {{ statusText }}
         </n-tag>
@@ -218,6 +225,11 @@ function handleClick(): void {
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.5px;
+}
+
+.transport-tag {
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-size: 10px;
 }
 
 .log-separator {
