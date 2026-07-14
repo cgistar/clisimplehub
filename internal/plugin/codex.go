@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
+
+	"clisimplehub/internal/storage"
 )
 
 type CodexDesktopProvider interface {
@@ -45,7 +48,70 @@ type CodexDesktopProvider interface {
 }
 
 type CodexResponsesWebsocketProvider interface {
-	HandleResponsesWebsocket(w http.ResponseWriter, r *http.Request)
+	HandleResponsesWebsocket(w http.ResponseWriter, r *http.Request, endpoint *storage.Endpoint)
+}
+
+// CodexTokenUsage 使用与 executor.TokenUsage 相同的字段，但避免 plugin 包反向依赖 executor。
+type CodexTokenUsage struct {
+	InputTokens  int64
+	OutputTokens int64
+	TotalTokens  int64
+	CachedCreate int64
+	CachedRead   int64
+	Reasoning    int64
+}
+
+type CodexAdditionalModelUsage struct {
+	Model  string
+	Tokens CodexTokenUsage
+}
+
+// CodexUsageRecord 描述一次上游账号执行；故障转移的每次账号尝试各发布一条。
+type CodexUsageRecord struct {
+	Provider            string
+	ExecutorType        string
+	AccountID           string
+	UpstreamAccountID   string
+	AccountEmail        string
+	AuthType            string
+	PlanType            string
+	Source              string
+	Model               string
+	RequestedModel      string
+	Path                string
+	RequestedAt         time.Time
+	Duration            time.Duration
+	TTFT                time.Duration
+	StatusCode          int
+	Status              string
+	Error               string
+	ReasoningEffort     string
+	ServiceTier         string
+	ResponseServiceTier string
+	Tokens              CodexTokenUsage
+	AdditionalModels    []CodexAdditionalModelUsage
+}
+
+type CodexUsageObserver func(CodexUsageRecord)
+
+type codexUsageObserverContextKey struct{}
+
+func WithCodexUsageObserver(ctx context.Context, observer CodexUsageObserver) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if observer == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, codexUsageObserverContextKey{}, observer)
+}
+
+func CodexUsageObserverFromContext(ctx context.Context) CodexUsageObserver {
+	if ctx == nil {
+		return nil
+	}
+	observer, _ := ctx.Value(codexUsageObserverContextKey{}).(CodexUsageObserver)
+	return observer
 }
 
 func GetCodexDesktopProvider() CodexDesktopProvider {

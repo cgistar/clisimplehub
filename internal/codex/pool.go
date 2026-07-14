@@ -128,6 +128,44 @@ func (p *CodexAccountPool) SelectWebsocketExcluding(excluded map[string]bool) *s
 	})
 }
 
+// AllAvailableSupportWebsockets 报告当前可用账号是否全部启用 WebSocket。
+func (p *CodexAccountPool) AllAvailableSupportWebsockets() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	avail := p.availableAccounts(nil)
+	if len(avail) == 0 {
+		return false
+	}
+	for _, account := range avail {
+		if account == nil || !account.Websockets {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *CodexAccountPool) SelectByID(accountID string) *shared.CodexAccount {
+	if p == nil {
+		return nil
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.accounts {
+		account := &p.accounts[i]
+		if accountLocalID(account) == accountID && p.isAccountAvailable(account, nil) {
+			return cloneAccount(account)
+		}
+	}
+	return nil
+}
+
 func (p *CodexAccountPool) selectMatching(match func(*shared.CodexAccount) bool) *shared.CodexAccount {
 	if p == nil {
 		return nil

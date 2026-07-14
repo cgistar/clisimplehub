@@ -22,6 +22,14 @@ type CodexAccountStat struct {
 	Status              string
 	ErrorType           string
 	DurationMs          int64
+	TTFTMs              int64
+	ExecutorType        string
+	RequestedModel      string
+	Source              string
+	ReasoningEffort     string
+	ServiceTier         string
+	ResponseServiceTier string
+	AdditionalModel     bool
 	PrimaryUsedPct      *float64
 	SecondaryUsedPct    *float64
 	RequestPath         string

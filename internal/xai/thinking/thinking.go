@@ -714,7 +714,7 @@ func extractClaudeConfig(body []byte) ThinkingConfig {
 			}
 			return parseEffortValue(value)
 		}
-		// adaptive 无 effort：与 CPA 一致透传（由转换层写入 xhigh 等）
+		// adaptive 无 effort
 		return ThinkingConfig{}
 	}
 	if budget := gjson.GetBytes(body, "thinking.budget_tokens"); budget.Exists() {

@@ -68,6 +68,7 @@ export interface CodexGlobalConfig {
   clientVersion: string
   userAgent: string
   originator: string
+  betaFeatures: string
   customHeaders?: Record<string, string>
 }
 

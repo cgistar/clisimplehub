@@ -360,12 +360,20 @@ export const endpointApi = {
     return App.GetCodexConfig()
   },
 
+  async getGrokConfig(): Promise<CLIConfigResult> {
+    return App.GetGrokConfig()
+  },
+
   async saveClaudeConfig(settingsJson: string): Promise<void> {
     await App.SaveClaudeConfig(settingsJson)
   },
 
   async saveCodexConfig(configToml: string, authJson: string): Promise<void> {
     await App.SaveCodexConfig(configToml, authJson)
+  },
+
+  async saveGrokConfig(configToml: string, authJson: string): Promise<void> {
+    await App.SaveGrokConfig(configToml, authJson)
   },
 
   async processClaudeConfigWithIP(settingsJson: string, selectedIP: string): Promise<string> {

@@ -25,7 +25,7 @@ function normalizeSettings(settings: SettingsPayload): SettingsPayload {
     fallback: !!settings.fallback,
     debugMode: settings.debugMode || '',
     listenAddr: settings.listenAddr || '',
-    disableImageGeneration: settings.disableImageGeneration || 'passthrough'
+    disableImageGeneration: settings.disableImageGeneration || 'off'
   }
 }
 
@@ -67,7 +67,7 @@ export function useSettings() {
     fallback: false,
     debugMode: '',
     listenAddr: '',
-    disableImageGeneration: 'passthrough'
+    disableImageGeneration: 'off'
   })
 
   const cliDirs = ref<CLIConfigDirsPayload>({
@@ -91,8 +91,8 @@ export function useSettings() {
     { label: t('settings.debugModeFile'), value: 'file' }
   ])
   const disableImageGenOptions = computed<Array<{ label: string; value: string }>>(() => [
-    { label: t('settings.imageGenPassthrough'), value: 'passthrough' },
     { label: t('settings.imageGenOff'), value: 'off' },
+    { label: t('settings.imageGenPassthrough'), value: 'passthrough' },
     { label: t('settings.imageGenChat'), value: 'chat' },
     { label: t('settings.imageGenAll'), value: 'all' }
   ])

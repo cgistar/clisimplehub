@@ -168,6 +168,7 @@ export const codexApi = {
       clientVersion: config?.clientVersion || '',
       userAgent: config?.userAgent || '',
       originator: config?.originator || '',
+      betaFeatures: config?.betaFeatures || '',
       customHeaders: config?.customHeaders || {}
     }
   },
@@ -180,6 +181,7 @@ export const codexApi = {
       clientVersion: config.clientVersion || '',
       userAgent: config.userAgent || '',
       originator: config.originator || '',
+      betaFeatures: config.betaFeatures || '',
       customHeaders: config.customHeaders || {}
     })
   },

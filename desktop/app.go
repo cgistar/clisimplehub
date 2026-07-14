@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"clisimplehub/internal/appdb"
+	codexBackend "clisimplehub/internal/codex/backend"
 	codexShared "clisimplehub/internal/codex/shared"
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/dbconfig"
@@ -276,7 +277,7 @@ func (a *App) GetSettings() (*Settings, error) {
 		Fallback:               false, // Default fallback disabled
 		DebugMode:              "",
 		ListenAddr:             "0.0.0.0",
-		DisableImageGeneration: "passthrough",
+		DisableImageGeneration: "off",
 	}
 
 	// Get port from storage
@@ -326,9 +327,9 @@ func (a *App) GetSettings() (*Settings, error) {
 		settings.ListenAddr = listenAddr
 	}
 
-	// Get disable-image-generation 配置（默认 passthrough）
+	// Get disable-image-generation 配置（默认 off，即不禁用）
 	if v, err := a.storage.GetConfig(ConfigKeyDisableImageGeneration); err == nil && strings.TrimSpace(v) != "" {
-		settings.DisableImageGeneration = strings.TrimSpace(v)
+		settings.DisableImageGeneration = codexBackend.NormalizeImageGenerationMode(v)
 	}
 
 	return settings, nil
@@ -399,10 +400,7 @@ func (a *App) SaveSettings(settings *Settings) error {
 	}
 
 	// Save disable-image-generation 配置
-	imageGenMode := strings.TrimSpace(settings.DisableImageGeneration)
-	if imageGenMode == "" {
-		imageGenMode = "passthrough"
-	}
+	imageGenMode := codexBackend.NormalizeImageGenerationMode(settings.DisableImageGeneration)
 	if err := a.storage.SetConfig(ConfigKeyDisableImageGeneration, imageGenMode); err != nil {
 		return fmt.Errorf("failed to save disable-image-generation: %w", err)
 	}
@@ -1809,16 +1807,16 @@ func (a *App) doTestEndpoint(apiURL, apiKey, interfaceType, model, reasoning str
 		req.Header.Set("connection", "close")
 		req.Header.Set("content-type", "application/json")
 		req.Header.Set("sec-fetch-mode", "cors")
-		req.Header.Set("user-agent", "claude-cli/2.0.0 (external, cli)")
+		req.Header.Set("user-agent", "claude-cli/2.1.63 (external, cli)")
 		req.Header.Set("x-app", "cli")
 		req.Header.Set("x-stainless-arch", "arm64")
 		req.Header.Set("x-stainless-helper-method", "stream")
 		req.Header.Set("x-stainless-lang", "js")
 		req.Header.Set("x-stainless-os", "MacOS")
-		req.Header.Set("x-stainless-package-version", "0.60.0")
+		req.Header.Set("x-stainless-package-version", "0.74.0")
 		req.Header.Set("x-stainless-retry-count", "0")
 		req.Header.Set("x-stainless-runtime", "node")
-		req.Header.Set("x-stainless-runtime-version", "v23.11.0")
+		req.Header.Set("x-stainless-runtime-version", "v24.3.0")
 		req.Header.Set("x-stainless-timeout", "600")
 		req.Header.Set("x-api-key", apiKey)
 	case "codex":
@@ -2394,6 +2392,80 @@ func (a *App) SaveCodexConfig(configToml, authJson string) error {
 	return nil
 }
 
+// GetGrokConfigDir returns the Grok CLI config directory (~/.grok).
+func (a *App) GetGrokConfigDir() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".grok"), nil
+}
+
+// GetGrokConfig reads Grok CLI config files from ~/.grok.
+func (a *App) GetGrokConfig() (*CLIConfigResult, error) {
+	dir, err := a.GetGrokConfigDir()
+	if err != nil {
+		return &CLIConfigResult{Success: false, Message: err.Error()}, nil
+	}
+
+	files := []CLIConfigFile{}
+
+	configPath := filepath.Join(dir, "config.toml")
+	configContent, configExists := readFileContent(configPath)
+	if !configExists {
+		configContent = a.getDefaultGrokConfig()
+	}
+	files = append(files, CLIConfigFile{
+		Name:    "config.toml",
+		Content: configContent,
+		Exists:  configExists,
+	})
+
+	authPath := filepath.Join(dir, "auth.json")
+	authContent, authExists := readFileContent(authPath)
+	if !authExists {
+		authContent = a.getDefaultGrokAuth()
+	}
+	files = append(files, CLIConfigFile{
+		Name:    "auth.json",
+		Content: authContent,
+		Exists:  authExists,
+	})
+
+	return &CLIConfigResult{Success: true, Files: files}, nil
+}
+
+// SaveGrokConfig saves Grok CLI config files to ~/.grok.
+func (a *App) SaveGrokConfig(configToml, authJson string) error {
+	dir, err := a.GetGrokConfigDir()
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	if strings.TrimSpace(configToml) == "" {
+		return fmt.Errorf("config.toml cannot be empty")
+	}
+	configPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configToml), 0644); err != nil {
+		return fmt.Errorf("failed to write config.toml: %w", err)
+	}
+
+	var js json.RawMessage
+	if err := json.Unmarshal([]byte(authJson), &js); err != nil {
+		return fmt.Errorf("invalid JSON format in auth.json: %w", err)
+	}
+	authPath := filepath.Join(dir, "auth.json")
+	if err := os.WriteFile(authPath, []byte(authJson), 0600); err != nil {
+		return fmt.Errorf("failed to write auth.json: %w", err)
+	}
+
+	return nil
+}
+
 // ProcessCodexConfigResult represents the result of processing Codex config
 type ProcessCodexConfigResult struct {
 	ConfigToml string `json:"configToml"`
@@ -2421,18 +2493,67 @@ func tomlLineKey(line string) string {
 	return strings.TrimSpace(key)
 }
 
+const defaultCodexModelProvider = "shub"
+
+func codexModelProvider(configToml string) string {
+	for _, line := range strings.Split(configToml, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") {
+			break
+		}
+		if tomlLineKey(line) != "model_provider" {
+			continue
+		}
+
+		_, rawValue, _ := strings.Cut(trimmed, "=")
+		value := strings.TrimSpace(rawValue)
+		switch {
+		case strings.HasPrefix(value, `"`):
+			if end := strings.Index(value[1:], `"`); end >= 0 {
+				if provider, err := strconv.Unquote(value[:end+2]); err == nil && strings.TrimSpace(provider) != "" {
+					return strings.TrimSpace(provider)
+				}
+			}
+		case strings.HasPrefix(value, "'"):
+			if end := strings.Index(value[1:], "'"); end >= 0 {
+				if provider := strings.TrimSpace(value[1 : end+1]); provider != "" {
+					return provider
+				}
+			}
+		default:
+			if provider := strings.TrimSpace(strings.SplitN(value, "#", 2)[0]); provider != "" {
+				return provider
+			}
+		}
+
+		return defaultCodexModelProvider
+	}
+
+	return defaultCodexModelProvider
+}
+
 func updateCodexLocalProviderConfig(configToml, baseURL, experimentalBearerToken string) string {
 	lines := strings.Split(configToml, "\n")
 	newLines := make([]string, 0, len(lines)+3)
-	inLocalProvider := false
-	localProviderFound := false
+	provider := codexModelProvider(configToml)
+	providerSection := fmt.Sprintf("[model_providers.%s]", provider)
+	inTargetProvider := false
+	targetProviderFound := false
 	baseURLUpdated := false
+	supportsWebsocketsFound := false
 	tokenUpdated := false
 
 	appendMissingFields := func() {
 		if !baseURLUpdated {
 			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
 			baseURLUpdated = true
+		}
+		if !supportsWebsocketsFound {
+			newLines = append(newLines, "supports_websockets = true")
+			supportsWebsocketsFound = true
 		}
 		if experimentalBearerToken != "" && !tokenUpdated {
 			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
@@ -2444,21 +2565,25 @@ func updateCodexLocalProviderConfig(configToml, baseURL, experimentalBearerToken
 		trimmed := strings.TrimSpace(line)
 		isSection := strings.HasPrefix(trimmed, "[")
 
-		if isSection && inLocalProvider && !strings.HasPrefix(trimmed, "[model_providers.shub]") {
+		if isSection && inTargetProvider && !strings.HasPrefix(trimmed, providerSection) {
 			appendMissingFields()
-			inLocalProvider = false
+			inTargetProvider = false
 		}
 
-		if strings.HasPrefix(trimmed, "[model_providers.shub]") {
-			inLocalProvider = true
-			localProviderFound = true
+		if strings.HasPrefix(trimmed, providerSection) {
+			inTargetProvider = true
+			targetProviderFound = true
 		}
 
+		lineKey := tomlLineKey(line)
 		switch {
-		case inLocalProvider && tomlLineKey(line) == "base_url":
+		case inTargetProvider && lineKey == "base_url":
 			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
 			baseURLUpdated = true
-		case inLocalProvider && experimentalBearerToken != "" && tomlLineKey(line) == "experimental_bearer_token":
+		case inTargetProvider && lineKey == "supports_websockets":
+			newLines = append(newLines, line)
+			supportsWebsocketsFound = true
+		case inTargetProvider && experimentalBearerToken != "" && lineKey == "experimental_bearer_token":
 			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
 			tokenUpdated = true
 		default:
@@ -2466,16 +2591,17 @@ func updateCodexLocalProviderConfig(configToml, baseURL, experimentalBearerToken
 		}
 	}
 
-	if inLocalProvider {
+	if inTargetProvider {
 		appendMissingFields()
 	}
 
-	if !localProviderFound {
+	if !targetProviderFound {
 		if len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) != "" {
 			newLines = append(newLines, "")
 		}
-		newLines = append(newLines, "[model_providers.shub]")
+		newLines = append(newLines, providerSection)
 		newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
+		newLines = append(newLines, "supports_websockets = true")
 		if experimentalBearerToken != "" {
 			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
 		}
@@ -2704,6 +2830,19 @@ func (a *App) getDefaultCodexAuth() string {
 	return string(data)
 }
 
+func (a *App) getDefaultGrokConfig() string {
+	return `[cli]
+installer = "internal"
+
+[ui]
+permission_mode = "always-approve"
+`
+}
+
+func (a *App) getDefaultGrokAuth() string {
+	return "{}\n"
+}
+
 // =============================================================================
 // WebDAV Sync Methods
 // =============================================================================
@@ -2838,14 +2977,15 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 			return fmt.Errorf("failed to get current settings: %w", err)
 		}
 		settings := &Settings{
-			Port:       currentSettings.Port,
-			APIKey:     currentSettings.APIKey,
-			ProxyURL:   currentSettings.ProxyURL,
-			ClashPath:  currentSettings.ClashPath,
-			DBSource:   currentSettings.DBSource,
-			Fallback:   currentSettings.Fallback,
-			DebugMode:  currentSettings.DebugMode,
-			ListenAddr: currentSettings.ListenAddr,
+			Port:                   currentSettings.Port,
+			APIKey:                 currentSettings.APIKey,
+			ProxyURL:               currentSettings.ProxyURL,
+			ClashPath:              currentSettings.ClashPath,
+			DBSource:               currentSettings.DBSource,
+			Fallback:               currentSettings.Fallback,
+			DebugMode:              currentSettings.DebugMode,
+			ListenAddr:             currentSettings.ListenAddr,
+			DisableImageGeneration: currentSettings.DisableImageGeneration,
 		}
 
 		if port, ok := config.AppConfig["port"].(float64); ok {
@@ -2872,6 +3012,12 @@ func (a *App) SaveFullConfig(config *FullConfig) error {
 		}
 		if dbSource, ok := config.AppConfig["dbSource"].(string); ok {
 			settings.DBSource = dbSource
+		}
+		switch imageMode := config.AppConfig["disableImageGeneration"].(type) {
+		case string:
+			settings.DisableImageGeneration = imageMode
+		case bool:
+			settings.DisableImageGeneration = strconv.FormatBool(imageMode)
 		}
 
 		if fallback, ok := config.AppConfig["fallback"].(bool); ok {
@@ -3100,14 +3246,15 @@ func (a *App) CreateBackupData() (*BackupDataResponse, error) {
 
 	// 2. 组装 appConfig
 	appConfig := map[string]interface{}{
-		"port":       settings.Port,
-		"apiKey":     settings.APIKey,
-		"proxyUrl":   settings.ProxyURL,
-		"clashPath":  settings.ClashPath,
-		"dbSource":   settings.DBSource,
-		"fallback":   settings.Fallback,
-		"debugMode":  settings.DebugMode,
-		"listenAddr": settings.ListenAddr,
+		"port":                   settings.Port,
+		"apiKey":                 settings.APIKey,
+		"proxyUrl":               settings.ProxyURL,
+		"clashPath":              settings.ClashPath,
+		"dbSource":               settings.DBSource,
+		"fallback":               settings.Fallback,
+		"debugMode":              settings.DebugMode,
+		"listenAddr":             settings.ListenAddr,
+		"disableImageGeneration": settings.DisableImageGeneration,
 	}
 
 	// 3. 转换 vendors
@@ -3342,14 +3489,15 @@ func (a *App) mergeBackupWithLocal(backupData *config.BackupData) (*FullConfig, 
 
 	// 2. 合并 settings (远程覆盖本地)
 	mergedAppConfig := map[string]interface{}{
-		"port":       localSettings.Port,
-		"apiKey":     localSettings.APIKey,
-		"proxyUrl":   localSettings.ProxyURL,
-		"clashPath":  localSettings.ClashPath,
-		"dbSource":   localSettings.DBSource,
-		"fallback":   localSettings.Fallback,
-		"debugMode":  localSettings.DebugMode,
-		"listenAddr": localSettings.ListenAddr,
+		"port":                   localSettings.Port,
+		"apiKey":                 localSettings.APIKey,
+		"proxyUrl":               localSettings.ProxyURL,
+		"clashPath":              localSettings.ClashPath,
+		"dbSource":               localSettings.DBSource,
+		"fallback":               localSettings.Fallback,
+		"debugMode":              localSettings.DebugMode,
+		"listenAddr":             localSettings.ListenAddr,
+		"disableImageGeneration": localSettings.DisableImageGeneration,
 	}
 	for k, v := range backupData.AppConfig {
 		mergedAppConfig[k] = v

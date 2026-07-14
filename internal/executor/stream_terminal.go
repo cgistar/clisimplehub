@@ -11,6 +11,7 @@ import (
 
 var completedStreamEvents = map[string]struct{}{
 	"response.completed": {},
+	"response.done":      {},
 	"message_stop":       {},
 	"[DONE]":             {},
 }

@@ -30,6 +30,8 @@ type Request struct {
 
 	Config *codexShared.CodexMultiConfig
 	Client *http.Client
+	// EndpointHeaders 仅用于真实上游请求；普通 Header 优先级高于全局配置，身份 Header 最后统一生成。
+	EndpointHeaders map[string]string
 
 	AccessToken            string
 	AccountID              string

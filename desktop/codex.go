@@ -101,6 +101,7 @@ type CodexGlobalConfigDTO struct {
 	ClientVersion string            `json:"clientVersion"`
 	UserAgent     string            `json:"userAgent"`
 	Originator    string            `json:"originator"`
+	BetaFeatures  string            `json:"betaFeatures"`
 	CustomHeaders map[string]string `json:"customHeaders"`
 }
 

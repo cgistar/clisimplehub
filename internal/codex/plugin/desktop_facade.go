@@ -513,6 +513,7 @@ func (d *desktopFacade) GetCodexGlobalConfig(configPath string) (json.RawMessage
 		"clientVersion": strings.TrimSpace(mc.Config.ClientVersion),
 		"userAgent":     strings.TrimSpace(mc.Config.UserAgent),
 		"originator":    strings.TrimSpace(mc.Config.Originator),
+		"betaFeatures":  strings.TrimSpace(mc.Config.BetaFeatures),
 		"customHeaders": codexShared.NormalizeCustomHeadersForStorage(mc.Config.CustomHeaders),
 	})
 }
@@ -575,6 +576,7 @@ func (d *desktopFacade) SaveCodexGlobalConfig(configPath string, dtoJSON json.Ra
 		ClientVersion string             `json:"clientVersion"`
 		UserAgent     string             `json:"userAgent"`
 		Originator    string             `json:"originator"`
+		BetaFeatures  string             `json:"betaFeatures"`
 		CustomHeaders *map[string]string `json:"customHeaders"`
 	}
 	if err := json.Unmarshal(dtoJSON, &dto); err != nil {
@@ -594,6 +596,7 @@ func (d *desktopFacade) SaveCodexGlobalConfig(configPath string, dtoJSON json.Ra
 		ClientVersion: dto.ClientVersion,
 		UserAgent:     dto.UserAgent,
 		Originator:    dto.Originator,
+		BetaFeatures:  dto.BetaFeatures,
 	})
 	if dto.CustomHeaders != nil {
 		mc.Config.CustomHeaders = codexShared.NormalizeCustomHeadersForStorage(*dto.CustomHeaders)

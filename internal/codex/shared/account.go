@@ -125,6 +125,7 @@ type CodexConfig struct {
 	ClientVersion string            `json:"clientVersion,omitempty"` // Version header value
 	UserAgent     string            `json:"userAgent,omitempty"`     // User-Agent header value
 	Originator    string            `json:"originator,omitempty"`    // Originator header value
+	BetaFeatures  string            `json:"betaFeatures,omitempty"`  // X-Codex-Beta-Features header value
 	CustomHeaders map[string]string `json:"customHeaders,omitempty"` // Additional headers to inject into upstream requests
 }
 
@@ -142,6 +143,7 @@ func NormalizeCodexConfigForStorage(config CodexConfig) CodexConfig {
 	config.ClientVersion = strings.TrimSpace(config.ClientVersion)
 	config.UserAgent = strings.TrimSpace(config.UserAgent)
 	config.Originator = strings.TrimSpace(config.Originator)
+	config.BetaFeatures = strings.TrimSpace(config.BetaFeatures)
 	config.CustomHeaders = NormalizeCustomHeadersForStorage(config.CustomHeaders)
 	if config.ClientVersion == DefaultCodexClientVersion {
 		config.ClientVersion = ""
@@ -244,6 +246,13 @@ func (c *CodexMultiConfig) GetOriginator() string {
 		return DefaultCodexOriginator
 	}
 	return strings.TrimSpace(c.Config.Originator)
+}
+
+func (c *CodexMultiConfig) GetBetaFeatures() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Config.BetaFeatures)
 }
 
 // GetCustomHeaders returns the configured custom headers (may be nil)

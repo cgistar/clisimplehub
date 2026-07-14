@@ -103,7 +103,7 @@ export default function App() {
       proxyUrl: settingsData.proxyUrl || '',
       clashPath: settingsData.clashPath || '',
       dbSource: settingsData.dbSource || '',
-      disableImageGeneration: settingsData.disableImageGeneration || 'passthrough',
+      disableImageGeneration: settingsData.disableImageGeneration || 'off',
     })
   }, [settingsData])
 

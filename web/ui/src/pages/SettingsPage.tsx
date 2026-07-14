@@ -584,8 +584,8 @@ export default function SettingsPage({ data, form, loading, saving, onChange, on
             <div className="field mt-14">
               <label className="field-label">禁用图像生成</label>
               <select className="select" value={form.disableImageGeneration} onChange={(event) => updateField('disableImageGeneration', event.target.value)}>
-                <option value="passthrough">透传(默认)</option>
-                <option value="off">关闭(注入工具)</option>
+                <option value="off">不禁用(注入工具，默认)</option>
+                <option value="passthrough">透传</option>
                 <option value="chat">Chat(非 images 端点剥离)</option>
                 <option value="all">全部剥离</option>
               </select>

@@ -8,6 +8,7 @@
         @json-import="showJsonImportModal = true"
         @bulk-delete="showBulkDeleteModal = true"
         @open-config="showGlobalConfigModal = true"
+        @open-cli-config="handleOpenCliConfig"
       />
 
       <div class="xai-accounts-body">
@@ -48,6 +49,8 @@
     <XaiGlobalConfigModal
       v-model:show="showGlobalConfigModal"
     />
+
+    <XaiGrokConfigEditorModal ref="cliConfigEditorRef" />
   </div>
 </template>
 
@@ -66,6 +69,7 @@ import XaiJsonImportModal from './XaiJsonImportModal.vue'
 import XaiSSOImportModal from './XaiSSOImportModal.vue'
 import XaiBulkDeleteModal from './XaiBulkDeleteModal.vue'
 import XaiGlobalConfigModal from './XaiGlobalConfigModal.vue'
+import XaiGrokConfigEditorModal from './XaiGrokConfigEditorModal.vue'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -80,6 +84,7 @@ const showGlobalConfigModal = ref(false)
 const editMode = ref<'edit' | 'create-api-key'>('edit')
 const editingAccount = ref<XaiAccount | null>(null)
 const accountListRef = ref<InstanceType<typeof XaiAccountList> | null>(null)
+const cliConfigEditorRef = ref<InstanceType<typeof XaiGrokConfigEditorModal> | null>(null)
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -98,6 +103,14 @@ function handleEditAccount(account: XaiAccount) {
   editMode.value = 'edit'
   editingAccount.value = account
   showEditModal.value = true
+}
+
+async function handleOpenCliConfig(): Promise<void> {
+  try {
+    await cliConfigEditorRef.value?.open()
+  } catch (error) {
+    message.error(t('cliConfig.loadFailed') + ': ' + toErrorMessage(error))
+  }
 }
 
 function handleOpenApiKeyModal() {

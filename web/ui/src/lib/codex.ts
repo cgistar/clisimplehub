@@ -8,6 +8,7 @@ export const DEFAULT_CODEX_CONFIG: CodexConfigForm = {
   clientVersion: '',
   userAgent: '',
   originator: '',
+  betaFeatures: '',
   customHeaders: {},
 }
 
@@ -19,6 +20,7 @@ export function createCodexConfigForm(globalConfig: Partial<CodexConfigForm> = {
     clientVersion: globalConfig.clientVersion || DEFAULT_CODEX_CONFIG.clientVersion,
     userAgent: globalConfig.userAgent || DEFAULT_CODEX_CONFIG.userAgent,
     originator: globalConfig.originator || DEFAULT_CODEX_CONFIG.originator,
+    betaFeatures: globalConfig.betaFeatures || DEFAULT_CODEX_CONFIG.betaFeatures,
     customHeaders: normalizeCustomHeaders(globalConfig.customHeaders),
   }
 }

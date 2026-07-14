@@ -93,6 +93,7 @@ func (p *CodexPlugin) Init(cfg plugin.InitConfig) error {
 	p.accountStore = accountStore
 	p.service = NewCodexService()
 	p.service.SetAccountStore(accountStore)
+	p.service.enableUsageRefresh()
 	p.mu.Unlock()
 
 	if cfg.Storage != nil {
@@ -118,7 +119,7 @@ func (p *CodexPlugin) RegisterRoutes(r plugin.RouteRegistrar) {
 	r.HandleFunc("/v0/management/oauth-callback", r.RequireAuth(p.handleOAuthCallback))
 }
 
-func (p *CodexPlugin) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Request) {
+func (p *CodexPlugin) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Request, endpoint *storage.Endpoint) {
 	p.mu.RLock()
 	svc := p.service
 	p.mu.RUnlock()
@@ -128,7 +129,7 @@ func (p *CodexPlugin) HandleResponsesWebsocket(w http.ResponseWriter, r *http.Re
 		})
 		return
 	}
-	svc.HandleResponsesWebsocket(w, r)
+	svc.HandleResponsesWebsocket(w, r, endpoint)
 }
 
 func (p *CodexPlugin) Reload() error {
@@ -162,6 +163,7 @@ func (p *CodexPlugin) Close() error {
 	store := p.accountStore
 	p.accountStore = nil
 	if p.service != nil {
+		p.service.Close()
 		p.service.SetAccountStore(nil)
 	}
 	p.mu.Unlock()

@@ -16,12 +16,16 @@ import (
 // header: Session_id / Conversation_id / X-Client-Request-Id / Thread-Id / X-Codex-Window-Id / Turn-Metadata
 // 不改写 client_metadata.session_id / thread_id
 func applyIdentityConfuse(authID string, body []byte, headers http.Header) ([]byte, http.Header, IdentityState) {
+	body, state := applyIdentityConfuseBody(authID, body)
+	applyIdentityConfuseHeaders(headers, &state)
+	return body, headers, state
+}
+
+// applyIdentityConfuseBody 只改写请求体；Header 在所有自定义覆盖完成后统一处理。
+func applyIdentityConfuseBody(authID string, body []byte) ([]byte, IdentityState) {
 	authID = strings.TrimSpace(authID)
 	if authID == "" || len(body) == 0 {
-		return body, headers, IdentityState{}
-	}
-	if headers == nil {
-		headers = http.Header{}
+		return body, IdentityState{}
 	}
 
 	state := IdentityState{enabled: true, authID: authID}
@@ -43,8 +47,7 @@ func applyIdentityConfuse(authID string, body []byte, headers http.Header) ([]by
 		}
 	}
 
-	applyIdentityConfuseHeaders(headers, &state)
-	return body, headers, state
+	return body, state
 }
 
 func applyIdentityConfuseHeaders(headers http.Header, state *IdentityState) {
@@ -57,8 +60,7 @@ func applyIdentityConfuseHeaders(headers http.Header, state *IdentityState) {
 	if state.promptCacheKey == "" {
 		return
 	}
-	removeHeaderCaseInsensitive(headers, "Session-Id")
-	setHeaderCasePreserved(headers, "Session_id", state.promptCacheKey)
+	setCodexSessionHeader(headers, state.promptCacheKey)
 	if headerValueCaseInsensitive(headers, "Conversation_id") != "" {
 		setHeaderCasePreserved(headers, "Conversation_id", state.promptCacheKey)
 	}

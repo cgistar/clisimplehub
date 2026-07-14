@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	codexBackend "clisimplehub/internal/codex/backend"
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/statsdb"
@@ -1476,10 +1477,7 @@ func (p *ProxyServer) handleWebUISaveSettings(w http.ResponseWriter, r *http.Req
 			dbSource = ""
 		}
 	}
-	imageGenMode := strings.TrimSpace(req.DisableImageGeneration)
-	if imageGenMode == "" {
-		imageGenMode = "passthrough"
-	}
+	imageGenMode := codexBackend.NormalizeImageGenerationMode(req.DisableImageGeneration)
 	if err := p.store.SaveConfigValues(map[string]string{
 		"port":                   strconv.Itoa(req.Port),
 		"apiKey":                 newAPIKey,
@@ -1561,7 +1559,7 @@ func (p *ProxyServer) loadWebUISettings() (*webUISettings, error) {
 		DBDriver:               "sqlite",
 		DBSource:               "",
 		ConfigPath:             p.getConfigPath(),
-		DisableImageGeneration: "passthrough",
+		DisableImageGeneration: "off",
 	}
 
 	if portStr, err := p.store.GetConfig("port"); err == nil && strings.TrimSpace(portStr) != "" {
@@ -1594,7 +1592,7 @@ func (p *ProxyServer) loadWebUISettings() (*webUISettings, error) {
 		settings.DBSource = strings.TrimSpace(dbSource)
 	}
 	if v, err := p.store.GetConfig("disableImageGeneration"); err == nil && strings.TrimSpace(v) != "" {
-		settings.DisableImageGeneration = strings.TrimSpace(v)
+		settings.DisableImageGeneration = codexBackend.NormalizeImageGenerationMode(v)
 	}
 	return settings, nil
 }

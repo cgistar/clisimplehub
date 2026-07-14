@@ -134,6 +134,17 @@ export default function CodexConfigDialog({ open, form, saving, onClose, onChang
             </div>
 
             <div className="field mt-14">
+              <label className="field-label">Beta Features</label>
+              <input
+                className="input"
+                value={form.betaFeatures}
+                onChange={(event) => updateField('betaFeatures', event.target.value)}
+                placeholder="可选，多个特性标记用逗号分隔"
+              />
+              <div className="field-help">作为 X-Codex-Beta-Features 的默认值；客户端 Header 可覆盖。</div>
+            </div>
+
+            <div className="field mt-14">
               <div className="field-inline-header">
                 <label className="field-label">Custom Headers</label>
                 <button type="button" className="btn small primary" onClick={addHeaderRow} disabled={saving}>

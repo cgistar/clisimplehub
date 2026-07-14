@@ -12,9 +12,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	codexBackend "clisimplehub/internal/codex/backend"
 	"clisimplehub/internal/config"
 	"clisimplehub/internal/plugin"
 	"clisimplehub/internal/storage"
@@ -288,14 +290,15 @@ func (p *ProxyServer) createWebUIBackupData() (*webUIBackupDataResponse, error) 
 	}
 
 	appConfig := map[string]interface{}{
-		"port":       settings.Port,
-		"apiKey":     settings.APIKey,
-		"fallback":   settings.Fallback,
-		"debugMode":  settings.DebugMode,
-		"listenAddr": settings.ListenAddr,
-		"proxyUrl":   settings.ProxyURL,
-		"clashPath":  settings.ClashPath,
-		"dbSource":   settings.DBSource,
+		"port":                   settings.Port,
+		"apiKey":                 settings.APIKey,
+		"fallback":               settings.Fallback,
+		"debugMode":              settings.DebugMode,
+		"listenAddr":             settings.ListenAddr,
+		"proxyUrl":               settings.ProxyURL,
+		"clashPath":              settings.ClashPath,
+		"dbSource":               settings.DBSource,
+		"disableImageGeneration": settings.DisableImageGeneration,
 	}
 
 	vendorConfigs := make([]config.VendorConfig, len(vendors))
@@ -579,6 +582,15 @@ func (p *ProxyServer) applyWebUIBackupAppConfig(appConfig map[string]interface{}
 	}
 	if clashPath, ok := appConfig["clashPath"].(string); ok {
 		if err := p.store.SetConfig("clashPath", strings.TrimSpace(clashPath)); err != nil {
+			return err
+		}
+	}
+	if imageMode, ok := appConfig["disableImageGeneration"].(string); ok {
+		if err := p.store.SetConfig("disableImageGeneration", codexBackend.NormalizeImageGenerationMode(imageMode)); err != nil {
+			return err
+		}
+	} else if imageMode, ok := appConfig["disableImageGeneration"].(bool); ok {
+		if err := p.store.SetConfig("disableImageGeneration", codexBackend.NormalizeImageGenerationMode(strconv.FormatBool(imageMode))); err != nil {
 			return err
 		}
 	}

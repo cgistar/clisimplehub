@@ -215,6 +215,7 @@ export interface CodexConfigForm {
   clientVersion: string
   userAgent: string
   originator: string
+  betaFeatures: string
   customHeaders: Record<string, string>
 }
 

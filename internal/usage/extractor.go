@@ -114,10 +114,16 @@ func applyUsageMap(usage map[string]any, tokens *TokenStats) {
 		if v, ok := parseInt64(promptDetails["cached_tokens"]); ok {
 			setMax(&tokens.CachedRead, v)
 		}
+		if v, ok := firstParsedInt64(promptDetails, "cache_creation_tokens", "cache_write_tokens"); ok {
+			setMax(&tokens.CachedCreate, v)
+		}
 	}
 	if inputDetails, ok := usage["input_tokens_details"].(map[string]any); ok {
 		if v, ok := parseInt64(inputDetails["cached_tokens"]); ok {
 			setMax(&tokens.CachedRead, v)
+		}
+		if v, ok := firstParsedInt64(inputDetails, "cache_creation_tokens", "cache_write_tokens"); ok {
+			setMax(&tokens.CachedCreate, v)
 		}
 	}
 	if completionDetails, ok := usage["completion_tokens_details"].(map[string]any); ok {
@@ -130,6 +136,15 @@ func applyUsageMap(usage map[string]any, tokens *TokenStats) {
 			setMax(&tokens.Reasoning, v)
 		}
 	}
+}
+
+func firstParsedInt64(values map[string]any, keys ...string) (int64, bool) {
+	for _, key := range keys {
+		if value, ok := parseInt64(values[key]); ok {
+			return value, true
+		}
+	}
+	return 0, false
 }
 
 // extractGeminiUsage 从 Gemini usageMetadata 提取 token 数据

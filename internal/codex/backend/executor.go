@@ -93,6 +93,9 @@ func resultFromHTTPResponse(ctx context.Context, resp *http.Response, req Reques
 			stream = NewReasoningReplayCaptureReadCloser(stream, replayScope)
 		}
 		result.Stream = stream
+		// 流式结果的协议由本层确定，不能继承上游可能错误的 JSON 响应头。
+		result.Headers.Set("Content-Type", "text/event-stream")
+		result.Headers.Del("Content-Length")
 		return result, nil
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && req.IsStreaming && IsImagesPath(req.Path) {
@@ -139,7 +142,7 @@ func resultFromHTTPResponse(ctx context.Context, resp *http.Response, req Reques
 		result.Headers.Del("Content-Length")
 		return result, nil
 	}
-	// 非流式 /responses：上游强制 SSE，聚合为 completed JSON 并对齐空 output 回填。
+	// 非流式 /responses：上游强制 SSE，聚合为 completed JSON 并回填空 output。
 	if !req.IsStreaming && !IsCompactPath(req.Path) {
 		if completed, ok := AggregateResponsesSSEToCompleted(data); ok {
 			result.Body = completed

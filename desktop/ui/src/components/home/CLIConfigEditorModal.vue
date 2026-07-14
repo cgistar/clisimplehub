@@ -9,6 +9,8 @@ import {
   NSelect,
   NSpace,
   NSpin,
+  NTabPane,
+  NTabs,
   NTag,
   NText
 } from 'naive-ui'
@@ -27,6 +29,7 @@ const processing = ref(false)
 const saving = ref(false)
 const currentEditorType = ref<EditorType | null>(null)
 const files = ref<CLIConfigFile[]>([])
+const activeTab = ref('')
 const localIPs = ref<LocalIPInfo[]>([])
 const selectedIP = ref<string | null>(null)
 const proxyPort = ref(5600)
@@ -84,6 +87,7 @@ function resetState(): void {
   saving.value = false
   currentEditorType.value = null
   files.value = []
+  activeTab.value = ''
   localIPs.value = []
   selectedIP.value = null
   proxyPort.value = 5600
@@ -123,6 +127,7 @@ async function open(type: InterfaceType | EditorType): Promise<void> {
   loading.value = true
   currentEditorType.value = editorType
   files.value = []
+  activeTab.value = ''
 
   try {
     const [ips, settings, result] = await Promise.all([
@@ -139,6 +144,7 @@ async function open(type: InterfaceType | EditorType): Promise<void> {
     proxyPort.value = settings?.port || 5600
     selectedIP.value = resolveSelectedIP(settings?.listenAddr, localIPs.value)
     files.value = (result.files || []).map((file) => ({ ...file }))
+    activeTab.value = files.value[0]?.name || ''
   } catch (error) {
     feedback.error(t('cliConfig.loadFailed') + ': ' + toErrorMessage(error))
     show.value = false
@@ -269,21 +275,32 @@ defineExpose({
         </div>
 
         <div class="cli-config-files">
-          <div v-for="file in files" :key="file.name" class="cli-config-file">
-            <div class="cli-config-file-header">
-              <n-text strong>{{ file.name }}</n-text>
-              <n-tag size="small" :type="isProxyConfigured(file) ? 'success' : 'warning'">
-                {{ isProxyConfigured(file) ? `✅ ${t('cliConfig.proxyConfigured')}` : `❌ ${t('cliConfig.proxyNotConfigured')}` }}
-              </n-tag>
-            </div>
-            <n-input
-              v-model:value="file.content"
-              class="cli-config-textarea"
-              type="textarea"
-              :autosize="{ minRows: 8, maxRows: 16 }"
-              :spellcheck="false"
-            />
-          </div>
+          <n-tabs v-model:value="activeTab" type="line" size="small" animated>
+            <n-tab-pane
+              v-for="file in files"
+              :key="file.name"
+              :name="file.name"
+              :tab="file.name"
+              display-directive="show"
+            >
+              <div class="cli-config-file">
+                <div class="cli-config-file-header">
+                  <n-text strong>{{ file.name }}</n-text>
+                  <n-tag size="small" :type="isProxyConfigured(file) ? 'success' : 'warning'">
+                    {{ isProxyConfigured(file) ? `✅ ${t('cliConfig.proxyConfigured')}` : `❌ ${t('cliConfig.proxyNotConfigured')}` }}
+                  </n-tag>
+                </div>
+                <n-input
+                  :value="file.content"
+                  class="cli-config-textarea"
+                  type="textarea"
+                  :autosize="false"
+                  :spellcheck="false"
+                  @update:value="(v) => updateFileContent(file.name, v)"
+                />
+              </div>
+            </n-tab-pane>
+          </n-tabs>
         </div>
       </div>
 
@@ -307,11 +324,27 @@ defineExpose({
 <style scoped>
 .cli-config-modal-card {
   width: min(960px, calc(100vw - 40px));
+  height: min(860px, calc(100vh - 40px));
   max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
+.cli-config-modal-card :deep(.n-card__content) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cli-config-modal-card :deep(.n-card__footer) {
+  flex: 0 0 auto;
+}
+
 .cli-config-loading {
+  flex: 1;
   min-height: 220px;
   display: flex;
   align-items: center;
@@ -320,13 +353,16 @@ defineExpose({
 }
 
 .cli-config-content {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: calc(100vh - 220px);
+  overflow: hidden;
 }
 
 .cli-config-ip-selector {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -341,28 +377,74 @@ defineExpose({
 }
 
 .cli-config-files {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  overflow: auto;
-  padding-right: 4px;
+  overflow: hidden;
+}
+
+.cli-config-files :deep(.n-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.cli-config-files :deep(.n-tabs-nav) {
+  flex: 0 0 auto;
+}
+
+.cli-config-files :deep(.n-tabs-pane-wrapper) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cli-config-files :deep(.n-tab-pane) {
+  height: 100%;
 }
 
 .cli-config-file {
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  padding: 10px;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: var(--bg-primary);
+  padding-top: 4px;
+  overflow: hidden;
 }
 
 .cli-config-file-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.cli-config-textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  display: flex !important;
+}
+
+.cli-config-textarea :deep(.n-input-wrapper) {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.cli-config-textarea :deep(textarea) {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  resize: none;
+  overflow: auto !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
 }
 
 .cli-config-proxy-preview {
@@ -375,11 +457,8 @@ defineExpose({
 @media (max-width: 900px) {
   .cli-config-modal-card {
     width: calc(100vw - 20px);
+    height: calc(100vh - 20px);
     max-height: calc(100vh - 20px);
-  }
-
-  .cli-config-content {
-    max-height: calc(100vh - 240px);
   }
 
   .cli-config-proxy-preview {

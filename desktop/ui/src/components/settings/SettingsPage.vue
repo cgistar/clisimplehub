@@ -264,7 +264,7 @@ function getGeneralSnapshot(): string {
     fallback: !!settingsForm.value.fallback,
     debugMode: String(settingsForm.value.debugMode || ''),
     listenAddr: String(settingsForm.value.listenAddr || ''),
-    disableImageGeneration: String(settingsForm.value.disableImageGeneration || 'passthrough'),
+    disableImageGeneration: String(settingsForm.value.disableImageGeneration || 'off'),
     claudeConfigDir: String(cliDirs.value.claudeConfigDir || '').trim(),
     codexConfigDir: String(cliDirs.value.codexConfigDir || '').trim()
   })

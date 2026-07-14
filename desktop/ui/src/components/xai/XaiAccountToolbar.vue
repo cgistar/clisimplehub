@@ -34,6 +34,14 @@
           <template #icon><n-icon><RefreshCw /></n-icon></template>
           {{ t('common.refresh') }}
         </n-button>
+        <n-button
+          quaternary
+          circle
+          :title="t('xai.cliConfigEditor')"
+          @click="emit('open-cli-config')"
+        >
+          <template #icon><n-icon><Pencil /></n-icon></template>
+        </n-button>
         <n-button @click="handleCopyVisibleAccounts" :disabled="filteredAccounts.length === 0">
           <template #icon><n-icon><Copy /></n-icon></template>
           {{ t('xai.copyVisibleAccounts') }}
@@ -69,7 +77,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { NInput, NSelect, NSpace, NTag, NButton, NDropdown, NIcon, NSwitch, useMessage } from 'naive-ui'
-import { Search, RefreshCw, Plus, Trash2, Settings, Copy } from 'lucide-vue-next'
+import { Search, RefreshCw, Plus, Trash2, Settings, Copy, Pencil } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useXaiAccountsStore } from '../../stores/xaiAccountsStore'
@@ -97,6 +105,7 @@ const emit = defineEmits<{
   'json-import': []
   'bulk-delete': []
   'open-config': []
+  'open-cli-config': []
 }>()
 
 const statusOptions = computed(() => [

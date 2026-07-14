@@ -48,7 +48,7 @@ func (p *CodexPlugin) handleCodexRoute(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			svc.HandleResponsesWebsocket(w, r)
+			svc.HandleResponsesWebsocket(w, r, nil)
 			return
 		}
 		svc.HandleResponses(w, r)

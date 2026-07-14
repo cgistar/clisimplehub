@@ -1,15 +1,13 @@
 package codexplugin
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	codex "clisimplehub/internal/codex"
@@ -19,59 +17,7 @@ import (
 	"clisimplehub/internal/plugin"
 )
 
-func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequest) (ret *executor.UpstreamRoundTripResult) {
-	startTime := time.Now()
-	var usedAccount *codexShared.CodexAccount
-	requestModel := ""
-	requestPath := ""
-	if req != nil {
-		requestModel = strings.TrimSpace(req.RequestModel)
-		if requestModel == "" {
-			requestModel = extractModelFromBody(req.Body)
-		}
-		requestPath = req.OriginalPath
-		if requestPath == "" {
-			requestPath = req.TargetPath
-		}
-	}
-
-	defer func() {
-		pool := codex.GetPool()
-		if pool == nil || ret == nil || usedAccount == nil {
-			return
-		}
-		store := pool.Store()
-		if store == nil {
-			return
-		}
-		now := time.Now()
-		stat := &codexShared.CodexAccountStat{
-			AccountID:    usedAccount.ID,
-			AccountEmail: usedAccount.Email,
-			Model:        requestModel,
-			Date:         now.Format("2006-01-02"),
-			Hour:         now.Hour(),
-			StatusCode:   ret.StatusCode,
-			DurationMs:   time.Since(startTime).Milliseconds(),
-			RequestPath:  requestPath,
-		}
-		if ret.Error != nil {
-			stat.Status = "error"
-			stat.ErrorType = ret.Error.Error()
-		} else {
-			stat.Status = "success"
-		}
-		if ret.Tokens != nil {
-			applyCodexAccountStatTokens(stat, ret.Tokens)
-		}
-		if ret.Stream != nil {
-			// 流式响应的 token 只能在下游读取到 completed 事件后确定。
-			ret.Stream = newCodexStatsReadCloser(ret.Stream, store, stat)
-			return
-		}
-		insertCodexAccountStatAsync(store, stat)
-	}()
-
+func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequest) *executor.UpstreamRoundTripResult {
 	if req == nil {
 		return roundTripInternalError(fmt.Errorf("nil upstream request"))
 	}
@@ -133,13 +79,11 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 				break
 			}
 		}
-		usedAccount = account
-
 		if debugLogger != nil {
 			debugLogger.Log("尝试账号 %s (attempt %d)", maskToken(account.RefreshToken), attempt+1)
 		}
 
-		upstream, retryable := s.roundTripWithAccount(ctx, account, req, pool, config)
+		upstream, retryable := s.roundTripWithAccount(ctx, account, req, pool, config, nil)
 		if upstream == nil {
 			return roundTripInternalError(fmt.Errorf("unexpected nil round-trip result"))
 		}
@@ -165,7 +109,34 @@ func (s *CodexService) RoundTrip(ctx context.Context, req *executor.UpstreamRequ
 	}
 }
 
-func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexShared.CodexAccount, req *executor.UpstreamRequest, pool *codex.CodexAccountPool, config *codexShared.CodexMultiConfig) (*executor.UpstreamRoundTripResult, bool) {
+func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexShared.CodexAccount, req *executor.UpstreamRequest, pool *codex.CodexAccountPool, config *codexShared.CodexMultiConfig, reporter *codexUsageReporter) (ret *executor.UpstreamRoundTripResult, retryable bool) {
+	if reporter == nil {
+		reporter = newCodexHTTPUsageReporter(ctx, s, account, req)
+	}
+	defer func() {
+		if ret == nil {
+			reporter.PublishFailure(http.StatusInternalServerError, errors.New("codex round trip returned nil result"))
+			return
+		}
+		reporter.ObserveHeaders(ret.Headers)
+		if len(ret.RequestBody) > 0 {
+			reporter.SetTranslatedRequest(ret.RequestBody)
+		}
+		if ret.Stream != nil && ret.Error == nil && ret.StatusCode == http.StatusOK {
+			ret.Stream = reporter.TrackSSEStream(ret.Stream)
+			return
+		}
+		if ret.Error != nil || ret.StatusCode != http.StatusOK {
+			reportErr := ret.Error
+			if reportErr == nil {
+				reportErr = fmt.Errorf("codex upstream returned %d", ret.StatusCode)
+			}
+			reporter.PublishFailure(ret.StatusCode, reportErr)
+			return
+		}
+		reporter.PublishSuccess(ret.Body)
+	}()
+
 	debugLogger := executor.DebugLoggerFromContext(ctx)
 	configPath := pool.ConfigPath()
 
@@ -241,7 +212,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 		), false
 	}
 
-	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 0)
+	client := reporter.TrackHTTPClient(executor.NewHTTPClientForcedProxyURL(proxyURL, 0))
 	requestPath := req.OriginalPath
 	if strings.TrimSpace(requestPath) == "" {
 		requestPath = req.TargetPath
@@ -276,6 +247,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 			Headers:                req.Headers,
 			IsStreaming:            req.IsStreaming,
 			Config:                 config,
+			EndpointHeaders:        endpointHeadersFromUpstreamRequest(req),
 			Client:                 client,
 			AccessToken:            token,
 			AccountID:              acctID,
@@ -375,9 +347,6 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 		if cooldown <= 0 {
 			cooldown = parseCooldownDuration(&http.Response{Header: backendResult.Headers})
 		}
-		if snapshot := extractCodexUsageHeaders(backendResult.Headers); snapshot != nil {
-			pool.UpdateUsageSnapshot(account.ID, snapshot)
-		}
 		pool.MarkFailed(account.ID, codexShared.CodexStatusValid, cooldown, "rate_limit")
 		return &executor.UpstreamRoundTripResult{
 			StatusCode:    backendResult.StatusCode,
@@ -406,12 +375,20 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 	return buildCodexBackendSuccessRoundTrip(backendResult, debugLogger, pool, account), false
 }
 
+func endpointHeadersFromUpstreamRequest(req *executor.UpstreamRequest) map[string]string {
+	if req == nil || req.Endpoint == nil || len(req.Endpoint.Headers) == 0 {
+		return nil
+	}
+	headers := make(map[string]string, len(req.Endpoint.Headers))
+	for key, value := range req.Endpoint.Headers {
+		headers[key] = value
+	}
+	return headers
+}
+
 func buildCodexBackendSuccessRoundTrip(result *codexBackend.Result, debugLogger interface{ Log(string, ...any) }, pool *codex.CodexAccountPool, account *codexShared.CodexAccount) *executor.UpstreamRoundTripResult {
 	if result == nil {
 		return roundTripInternalError(fmt.Errorf("nil backend result"))
-	}
-	if snapshot := extractCodexUsageHeaders(result.Headers); snapshot != nil {
-		pool.UpdateUsageSnapshot(account.ID, snapshot)
 	}
 	pool.ReportSuccess(account.ID)
 
@@ -469,85 +446,6 @@ func cloneHTTPHeader(headers http.Header) http.Header {
 	return headers.Clone()
 }
 
-type codexStatsReadCloser struct {
-	upstream io.ReadCloser
-	store    codexShared.CodexAccountStore
-	stat     *codexShared.CodexAccountStat
-
-	lineBuf         []byte
-	latest          *executor.TokenUsage
-	streamCompleted bool
-	once            sync.Once
-}
-
-func newCodexStatsReadCloser(upstream io.ReadCloser, store codexShared.CodexAccountStore, stat *codexShared.CodexAccountStat) io.ReadCloser {
-	if upstream == nil || store == nil || stat == nil {
-		return upstream
-	}
-	statCopy := *stat
-	return &codexStatsReadCloser{
-		upstream: upstream,
-		store:    store,
-		stat:     &statCopy,
-	}
-}
-
-func (r *codexStatsReadCloser) Read(p []byte) (int, error) {
-	n, err := r.upstream.Read(p)
-	if n > 0 {
-		r.feed(p[:n])
-	}
-	if err != nil {
-		r.finish(err)
-	}
-	return n, err
-}
-
-func (r *codexStatsReadCloser) Close() error {
-	err := r.upstream.Close()
-	r.finish(err)
-	return err
-}
-
-func (r *codexStatsReadCloser) feed(chunk []byte) {
-	r.lineBuf = append(r.lineBuf, chunk...)
-	for {
-		idx := bytes.IndexByte(r.lineBuf, '\n')
-		if idx < 0 {
-			return
-		}
-		line := append([]byte(nil), r.lineBuf[:idx]...)
-		if len(line) > 0 && line[len(line)-1] == '\r' {
-			line = line[:len(line)-1]
-		}
-		r.lineBuf = r.lineBuf[idx+1:]
-		if tokens := tokensFromCodexStreamLine(line); tokens != nil {
-			r.latest = tokens
-		}
-		if _, ok := executor.CompletedStreamLineEvent(line); ok {
-			r.streamCompleted = true
-		}
-	}
-}
-
-func (r *codexStatsReadCloser) finish(readErr error) {
-	r.once.Do(func() {
-		if len(r.lineBuf) > 0 {
-			if tokens := tokensFromCodexStreamLine(r.lineBuf); tokens != nil {
-				r.latest = tokens
-			}
-		}
-		if readErr != nil && readErr != io.EOF && !r.streamCompleted {
-			r.stat.Status = "error"
-			r.stat.ErrorType = readErr.Error()
-		}
-		if r.latest != nil {
-			applyCodexAccountStatTokens(r.stat, r.latest)
-		}
-		insertCodexAccountStatAsync(r.store, r.stat)
-	})
-}
-
 func applyCodexAccountStatTokens(stat *codexShared.CodexAccountStat, tokens *executor.TokenUsage) {
 	if stat == nil || tokens == nil {
 		return
@@ -562,17 +460,6 @@ func applyCodexAccountStatTokens(stat *codexShared.CodexAccountStat, tokens *exe
 		stat.CachedTokens = tokens.CachedCreate
 	}
 	stat.ReasoningTokens = tokens.Reasoning
-}
-
-func tokensFromCodexStreamLine(line []byte) *executor.TokenUsage {
-	payload := bytes.TrimSpace(line)
-	if bytes.HasPrefix(payload, []byte("data:")) {
-		payload = bytes.TrimSpace(payload[len("data:"):])
-	}
-	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
-		return nil
-	}
-	return extractTokensFromBody(payload)
 }
 
 func insertCodexAccountStatAsync(store codexShared.CodexAccountStore, stat *codexShared.CodexAccountStat) {

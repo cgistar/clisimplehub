@@ -49,6 +49,13 @@
           </div>
         </n-form-item-gi>
 
+        <n-form-item-gi :span="24" :label="`${t('codex.betaFeatures')}:`">
+          <div class="config-field">
+            <n-input v-model:value="form.betaFeatures" :placeholder="t('codex.betaFeaturesPlaceholder')" />
+            <n-text depth="3" class="config-help">{{ t('codex.betaFeaturesHelp') }}</n-text>
+          </div>
+        </n-form-item-gi>
+
         <n-form-item-gi :span="24">
           <n-divider class="config-divider" />
         </n-form-item-gi>
@@ -142,6 +149,7 @@ const form = reactive<CodexGlobalConfig>({
   clientVersion: '',
   userAgent: '',
   originator: '',
+  betaFeatures: '',
   customHeaders: {}
 })
 
@@ -158,6 +166,7 @@ function fillForm(config: CodexGlobalConfig): void {
   form.clientVersion = config.clientVersion || ''
   form.userAgent = config.userAgent || ''
   form.originator = config.originator || ''
+  form.betaFeatures = config.betaFeatures || ''
   form.customHeaders = normalizeCustomHeaders(config.customHeaders)
   customHeaderRows.value = customHeadersToRows(form.customHeaders)
 }
@@ -236,6 +245,7 @@ async function save(): Promise<void> {
       clientVersion: String(form.clientVersion || '').trim(),
       userAgent: String(form.userAgent || '').trim(),
       originator: String(form.originator || '').trim(),
+      betaFeatures: String(form.betaFeatures || '').trim(),
       customHeaders: rowsToCustomHeaders(customHeaderRows.value)
     }
     await codexApi.saveGlobalConfig(payload)
