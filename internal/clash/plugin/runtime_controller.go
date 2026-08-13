@@ -132,6 +132,14 @@ func applyRuntimeSelections(ctx context.Context, cfg *ClashConfig, plan *runtime
 			return err
 		}
 	}
+	for _, subscription := range plan.subscriptions {
+		if subscription.groupName == "" || subscription.selection == "" {
+			continue
+		}
+		if err := putRuntimeGroupSelection(ctx, controllerCfg, subscription.groupName, subscription.selection); err != nil {
+			return err
+		}
+	}
 	if plan.trafficGroup != "" && plan.trafficSelection != "" {
 		if err := putRuntimeGroupSelection(ctx, controllerCfg, plan.trafficGroup, plan.trafficSelection); err != nil {
 			return err

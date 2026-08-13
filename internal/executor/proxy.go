@@ -26,14 +26,18 @@ const (
 	DefaultHTTPDialTimeout       = 10 * time.Second
 	DefaultTLSHandshakeTimeout   = 10 * time.Second
 	DefaultResponseHeaderTimeout = 120 * time.Second
+	// DefaultStreamResponseHeaderTimeout allows reasoning models to delay their first streamed event.
+	DefaultStreamResponseHeaderTimeout = DefaultHTTPTimeout
 
 	// DefaultStreamReadIdleTimeout is the max idle gap while reading streaming body.
-	DefaultStreamReadIdleTimeout = 300 * time.Second
+	DefaultStreamReadIdleTimeout = DefaultHTTPTimeout
 )
 
 var (
-	sharedTransportOnce sync.Once
-	sharedTransport     *http.Transport
+	sharedTransportOnce          sync.Once
+	sharedStreamingTransportOnce sync.Once
+	sharedTransport              *http.Transport
+	sharedStreamingTransport     *http.Transport
 )
 
 type modelSuffixParts struct {
@@ -75,9 +79,15 @@ func applyModelSuffix(model, suffix string) string {
 	return model + suffix
 }
 
-func getSharedTransport() *http.Transport {
+func getSharedTransport(streaming bool) *http.Transport {
+	if streaming {
+		sharedStreamingTransportOnce.Do(func() {
+			sharedStreamingTransport = newBaseTransport(true)
+		})
+		return sharedStreamingTransport
+	}
 	sharedTransportOnce.Do(func() {
-		sharedTransport = newBaseTransport()
+		sharedTransport = newBaseTransport(false)
 	})
 	return sharedTransport
 }
@@ -85,13 +95,14 @@ func getSharedTransport() *http.Transport {
 // NewHTTPClient 创建 HTTP 客户端，支持代理配置
 // 优先级: appConfig.proxyUrl > endpoint.ProxyURL > 默认直连
 func NewHTTPClient(endpoint *EndpointConfig, timeout time.Duration) *http.Client {
+	streaming := timeout == DisableHTTPClientTimeout
 	client := &http.Client{
 		Timeout:   normalizeHTTPClientTimeout(timeout),
-		Transport: getSharedTransport(),
+		Transport: getSharedTransport(streaming),
 	}
 
 	if proxyURL := plugin.GetAppProxyURL(); proxyURL != "" {
-		if t := buildProxyTransport(proxyURL); t != nil {
+		if t := buildProxyTransport(proxyURL, streaming); t != nil {
 			client.Transport = t
 			return client
 		}
@@ -106,7 +117,7 @@ func NewHTTPClient(endpoint *EndpointConfig, timeout time.Duration) *http.Client
 		return client
 	}
 
-	transport := buildProxyTransport(proxyURL)
+	transport := buildProxyTransport(proxyURL, streaming)
 	if transport != nil {
 		client.Transport = transport
 	}
@@ -117,7 +128,8 @@ func NewHTTPClient(endpoint *EndpointConfig, timeout time.Duration) *http.Client
 // NewHTTPClientForcedProxyURL creates an HTTP client that only uses the provided proxy URL.
 // When proxyURL is empty, it forces direct connection (does not use environment proxy variables).
 func NewHTTPClientForcedProxyURL(proxyURL string, timeout time.Duration) *http.Client {
-	transport := newBaseTransport()
+	streaming := timeout == DisableHTTPClientTimeout
+	transport := newBaseTransport(streaming)
 	transport.Proxy = nil
 	client := &http.Client{
 		Timeout:   normalizeHTTPClientTimeout(timeout),
@@ -171,7 +183,7 @@ func NewHTTPClientForcedProxyURL(proxyURL string, timeout time.Duration) *http.C
 
 // buildProxyTransport 根据代理 URL 创建 HTTP Transport
 // 支持 socks5, http, https 代理协议
-func buildProxyTransport(proxyURL string) *http.Transport {
+func buildProxyTransport(proxyURL string, streaming bool) *http.Transport {
 	if proxyURL == "" {
 		return nil
 	}
@@ -184,9 +196,9 @@ func buildProxyTransport(proxyURL string) *http.Transport {
 
 	switch parsedURL.Scheme {
 	case "socks5":
-		return buildSOCKS5Transport(parsedURL)
+		return buildSOCKS5Transport(parsedURL, streaming)
 	case "http", "https":
-		transport := newBaseTransport()
+		transport := newBaseTransport(streaming)
 		transport.Proxy = http.ProxyURL(parsedURL)
 		return transport
 	default:
@@ -196,7 +208,7 @@ func buildProxyTransport(proxyURL string) *http.Transport {
 }
 
 // buildSOCKS5Transport 创建 SOCKS5 代理 Transport
-func buildSOCKS5Transport(parsedURL *url.URL) *http.Transport {
+func buildSOCKS5Transport(parsedURL *url.URL, streaming bool) *http.Transport {
 	var auth *proxy.Auth
 	if parsedURL.User != nil {
 		username := parsedURL.User.Username()
@@ -214,7 +226,7 @@ func buildSOCKS5Transport(parsedURL *url.URL) *http.Transport {
 		return nil
 	}
 
-	transport := newBaseTransport()
+	transport := newBaseTransport(streaming)
 	transport.DialContext = dialContextFromProxyDialer(dialer)
 	return transport
 }
@@ -312,7 +324,7 @@ func normalizeHTTPClientTimeout(timeout time.Duration) time.Duration {
 	}
 }
 
-func newBaseTransport() *http.Transport {
+func newBaseTransport(streaming bool) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
 	dialer := &net.Dialer{
@@ -321,7 +333,11 @@ func newBaseTransport() *http.Transport {
 	}
 	transport.DialContext = dialer.DialContext
 	transport.TLSHandshakeTimeout = DefaultTLSHandshakeTimeout
-	transport.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+	if streaming {
+		transport.ResponseHeaderTimeout = DefaultStreamResponseHeaderTimeout
+	} else {
+		transport.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+	}
 
 	transport.DisableKeepAlives = false
 	transport.MaxIdleConns = 100

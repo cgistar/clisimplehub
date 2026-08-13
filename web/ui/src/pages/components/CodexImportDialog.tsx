@@ -93,26 +93,13 @@ export default function CodexImportDialog({ open, onClose, onSuccess }: CodexImp
 
     setImporting(true)
     try {
-      let successCount = 0
-      let failedCount = 0
-      let skippedCount = 0
+      const result = await webApi.importCodexAccounts(dtos)
+      const successCount = Number(result.success || 0)
+      const failedCount = Number(result.failed || 0)
+      const skippedCount = Number(result.skipped || 0)
 
-      for (const dto of dtos) {
-        try {
-          await webApi.addCodexAccount(dto)
-          successCount += 1
-        } catch (error) {
-          const reason = toErrorMessage(error).toLowerCase()
-          if (reason.includes('already exists') || reason.includes('duplicate')) {
-            skippedCount += 1
-          } else {
-            failedCount += 1
-          }
-        }
-      }
-
-      let message = `JSON 导入完成：成功 ${successCount}，失败 ${failedCount}`
-      if (skippedCount > 0) {
+      let message = result.message || `JSON 导入完成：成功 ${successCount}，失败 ${failedCount}`
+      if (!result.message && skippedCount > 0) {
         message += `，跳过重复 ${skippedCount}`
       }
       toast.success(message)

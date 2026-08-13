@@ -150,8 +150,7 @@ async function handleRestoreAccount(accountId: string) {
 }
 
 async function handleJsonImportSuccess() {
-  message.success(t('codex.importSuccess'))
-  await codexStore.loadAccounts(true)
+  // 批量导入结果 toast 已在 modal 内展示；store.importAccounts 成功后已刷新列表
 }
 
 async function handleBulkDeleteSuccess() {

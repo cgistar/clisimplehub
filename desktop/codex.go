@@ -239,6 +239,46 @@ func (a *App) AddCodexAccount(dto *CodexAccountDTO) (*CodexAccountDTO, error) {
 	return &result, nil
 }
 
+// CodexImportAccountsResultDTO 批量导入结果。
+type CodexImportAccountsResultDTO struct {
+	Success  int                          `json:"success"`
+	Failed   int                          `json:"failed"`
+	Skipped  int                          `json:"skipped"`
+	Imported int                          `json:"imported"`
+	Message  string                       `json:"message"`
+	Errors   []CodexImportAccountErrorDTO `json:"errors,omitempty"`
+}
+
+type CodexImportAccountErrorDTO struct {
+	Index  int    `json:"index"`
+	Email  string `json:"email,omitempty"`
+	Reason string `json:"reason"`
+}
+
+// ImportCodexAccounts 批量校验并保存账号（一次落库，一次刷新）。
+func (a *App) ImportCodexAccounts(dtos []CodexAccountDTO) (*CodexImportAccountsResultDTO, error) {
+	if len(dtos) == 0 {
+		return nil, fmt.Errorf("no accounts to import")
+	}
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	dtoJSON, err := json.Marshal(dtos)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := cp.ImportAccounts(a.getCodexMultiConfigPath(), dtoJSON)
+	if err != nil {
+		return nil, err
+	}
+	var result CodexImportAccountsResultDTO
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (a *App) WriteCodexAccountToAuthJSON(dto *CodexAccountDTO) error {
 	if dto == nil {
 		return fmt.Errorf("account data is required")
@@ -838,17 +878,24 @@ type CodexResetResponseDTO struct {
 }
 
 type CodexResetCreditDTO struct {
-	ID              string  `json:"id"`
-	ResetType       string  `json:"reset_type"`
-	Status          string  `json:"status"`
-	GrantedAt       string  `json:"granted_at"`
-	ExpiresAt       string  `json:"expires_at"`
-	RedeemStartedAt string  `json:"redeem_started_at"`
-	RedeemedAt      string  `json:"redeemed_at"`
-	ProfileImageURL *string `json:"profile_image_url"`
-	ProfileUserID   *string `json:"profile_user_id"`
-	Title           *string `json:"title"`
-	Description     *string `json:"description"`
+	ID                string  `json:"id"`
+	ResetType         string  `json:"reset_type"`
+	IsSupportedByPlan bool    `json:"is_supported_by_plan"`
+	Status            string  `json:"status"`
+	GrantedAt         string  `json:"granted_at"`
+	ExpiresAt         string  `json:"expires_at"`
+	RedeemStartedAt   string  `json:"redeem_started_at"`
+	RedeemedAt        string  `json:"redeemed_at"`
+	ProfileImageURL   *string `json:"profile_image_url"`
+	ProfileUserID     *string `json:"profile_user_id"`
+	Title             *string `json:"title"`
+	Description       *string `json:"description"`
+}
+
+type CodexResetCreditsListDTO struct {
+	Credits          []CodexResetCreditDTO `json:"credits"`
+	AvailableCount   int                   `json:"available_count"`
+	TotalEarnedCount int                   `json:"total_earned_count"`
 }
 
 func (a *App) GetCodexAccountUsage(accountId string) (*CodexUsageResult, error) {
@@ -883,7 +930,7 @@ func (a *App) getCodexAccountUsage(accountId string, fetch func(context.Context,
 	return &result, nil
 }
 
-func (a *App) ConsumeCodexAccountResetCredit(accountId string) (*CodexResetResponseDTO, error) {
+func (a *App) ListCodexAccountResetCredits(accountId string) (*CodexResetCreditsListDTO, error) {
 	cp := codexProvider()
 	if cp == nil {
 		return nil, fmt.Errorf("codex plugin not available")
@@ -892,7 +939,30 @@ func (a *App) ConsumeCodexAccountResetCredit(accountId string) (*CodexResetRespo
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	raw, err := cp.ConsumeAccountResetCredit(ctx, a.getCodexMultiConfigPath(), accountId)
+	raw, err := cp.ListAccountResetCredits(ctx, a.getCodexMultiConfigPath(), accountId)
+	if err != nil {
+		return nil, err
+	}
+	var result CodexResetCreditsListDTO
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (a *App) ConsumeCodexAccountResetCredit(accountId, creditId string) (*CodexResetResponseDTO, error) {
+	if strings.TrimSpace(creditId) == "" {
+		return nil, fmt.Errorf("creditId is required")
+	}
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := cp.ConsumeAccountResetCredit(ctx, a.getCodexMultiConfigPath(), accountId, creditId)
 	if err != nil {
 		return nil, err
 	}

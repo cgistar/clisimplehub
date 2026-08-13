@@ -54,13 +54,17 @@ func (b *HeaderBuilder) WithSessionID(sessionID string) *HeaderBuilder {
 	return b
 }
 
-// ApplyTo applies the headers to an http.Request
+// ApplyTo applies the headers to an http.Request.
+// GET/HEAD 请求不设置 Content-Type（无 body）。
 func (b *HeaderBuilder) ApplyTo(req *http.Request) {
 	if req == nil {
 		return
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
+	if method != http.MethodGet && method != http.MethodHead {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("Accept", b.accept)
 	req.Header.Set("Connection", b.connection)
 	req.Header.Set("User-Agent", b.userAgent)

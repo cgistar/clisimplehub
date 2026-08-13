@@ -1444,6 +1444,70 @@ code {
   width: min(1120px, calc(100vw - 48px));
 }
 
+.codex-reset-credits-dialog {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.reset-credits-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reset-credit-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 6px;
+  background: var(--bg-secondary, #f8fafc);
+}
+
+.reset-credit-item.disabled {
+  opacity: 0.55;
+  background: var(--bg-tertiary, #f1f5f9);
+}
+
+.reset-credit-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.reset-credit-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary, #1f2937);
+  word-break: break-word;
+}
+
+.reset-credit-desc {
+  font-size: 12px;
+  color: var(--text-secondary, #4b5563);
+  word-break: break-word;
+}
+
+.reset-credit-meta,
+.reset-credit-time {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-tertiary, #6b7280);
+}
+
+.reset-credit-unsupported {
+  font-size: 11px;
+  color: var(--danger, #dc2626);
+}
+
 .model-prices-table-wrap {
   overflow-x: auto;
 }
@@ -2009,4 +2073,54 @@ code {
   html {
     @apply font-sans;
   }
+}
+
+/* 代理页 */
+.proxy-page { display: grid; gap: 16px; }
+.proxy-overview { overflow: visible; }
+.proxy-overview-header { align-items: center; }
+.proxy-status-block, .proxy-status-meta, .proxy-dialog-toolbar, .proxy-node-title, .proxy-node-footer { display: flex; align-items: center; gap: 10px; }
+.proxy-globe { width: 38px; height: 38px; border-radius: 999px; background: #e0f2fe; color: #0369a1; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.proxy-status-meta { margin-top: 7px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+.status-badge { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #d7e0ea; border-radius: 999px; padding: 3px 8px; font-size: 12px; white-space: nowrap; }
+.status-badge.running { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+.status-badge.stopped { color: #64748b; background: #f8fafc; }
+.proxy-copy-address { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 0; color: #475569; cursor: pointer; }
+.proxy-copy-address:hover { color: var(--primary); }
+.proxy-subscriptions-section { min-height: 260px; }
+.proxy-subscriptions-body { padding: 18px; }
+.proxy-subscription-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.proxy-subscription-card, .proxy-node-card { border: 1px solid #dfe7ef; border-radius: 14px; background: #fff; padding: 15px; transition: 150ms ease; }
+.proxy-subscription-card.active { border-color: #7dd3fc; background: #f0f9ff; }
+.proxy-subscription-card.disabled { opacity: .62; }
+.proxy-subscription-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.proxy-subscription-title > div, .proxy-node-title > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.proxy-subscription-title strong, .proxy-node-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proxy-subscription-title span, .proxy-node-title span { color: var(--muted); font-size: 12px; }
+.proxy-selected-node { margin: 13px 0; border-radius: 10px; background: #f8fafc; padding: 8px 10px; color: #475569; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proxy-subscription-actions .btn, .proxy-dialog-toolbar .btn, .proxy-node-footer .btn { display: inline-flex; align-items: center; gap: 5px; }
+.proxy-config-dialog { width: min(880px, calc(100vw - 32px)); }
+.proxy-yaml, .proxy-node-input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.proxy-nodes-dialog { width: min(1180px, calc(100vw - 28px)); height: min(86vh, 900px); display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.proxy-nodes-dialog .dialog-header { padding: 20px 22px; margin: 0; border-bottom: 1px solid #e2e8f0; }
+.proxy-dialog-toolbar { padding: 12px 22px; border-bottom: 1px solid #e2e8f0; flex-wrap: wrap; }
+.proxy-nodes-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 22px; }
+.proxy-node-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.proxy-node-card { cursor: pointer; }
+.proxy-node-card:hover { border-color: #cbd5e1; }
+.proxy-node-card.selected { border-color: #38bdf8; background: #f0f9ff; }
+.proxy-node-title { align-items: flex-start; justify-content: space-between; }
+.proxy-node-address { margin: 12px 0; color: #475569; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proxy-node-footer { justify-content: space-between; }
+.proxy-latency { color: #64748b; font-size: 12px; font-weight: 650; }
+.proxy-latency.good { color: #059669; } .proxy-latency.warn { color: #d97706; } .proxy-latency.bad { color: #dc2626; }
+.btn.icon-only { padding-left: 9px; padding-right: 9px; }
+.proxy-nodes-dialog .dialog-actions { padding: 13px 22px; margin: 0; border-top: 1px solid #e2e8f0; }
+
+@media (max-width: 720px) {
+  .proxy-overview-header { align-items: flex-start; }
+  .proxy-overview-header > .actions { width: 100%; }
+  .proxy-subscription-grid, .proxy-node-grid { grid-template-columns: 1fr; }
+  .proxy-status-meta { align-items: flex-start; }
+  .proxy-nodes-dialog { width: calc(100vw - 14px); height: 92vh; }
 }

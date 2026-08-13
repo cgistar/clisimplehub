@@ -9,6 +9,7 @@ import (
 // ClashDesktopProvider is an optional interface for plugins that provide
 // Clash proxy management for the desktop GUI.
 type ClashDesktopProvider interface {
+	IsAvailable() bool
 	GetStatus() (json.RawMessage, error)
 	GetNodes() (json.RawMessage, error)
 	SelectNode(nodeName string) error

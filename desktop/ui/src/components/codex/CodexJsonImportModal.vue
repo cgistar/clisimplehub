@@ -273,36 +273,25 @@ async function handleImport(): Promise<void> {
       if (!confirmed) return
     }
 
-    let successCount = 0
-    let failedCount = 0
-    let skippedCount = 0
+    const result = await codexStore.importAccounts(dtos)
+    const successCount = result.success || 0
+    const failedCount = result.failed || 0
+    const skippedCount = result.skipped || 0
 
-    for (const dto of dtos) {
-      try {
-        await codexStore.addAccount(dto)
-        successCount += 1
-      } catch (error) {
-        const reason = toErrorMessage(error)
-        if (reason.includes('already exists') || reason.includes('duplicate')) {
-          skippedCount += 1
-        } else {
-          failedCount += 1
-        }
-      }
-    }
-
-    let resultMessage = t('codex.importSuccess', {
+    let resultMessage = result.message || t('codex.importSuccess', {
       success: successCount,
       failed: failedCount
     })
-
-    if (skippedCount > 0) {
+    if (skippedCount > 0 && !result.message) {
       resultMessage += ` (${t('codex.skippedDuplicate')}: ${skippedCount})`
     }
 
     message.success(resultMessage)
     visible.value = false
-    emit('success')
+    // 成功导入后 store 已统一刷新，避免再触发整表 reload 造成闪烁
+    if (successCount > 0) {
+      emit('success')
+    }
   } catch (error) {
     message.error(t('codex.importFailed') + ': ' + toErrorMessage(error))
   } finally {

@@ -15,7 +15,7 @@
         @test="handleTest"
         @fetch-usage="handleFetchUsage"
         @fetch-primary-usage="handleFetchPrimaryUsage"
-        @reset-credit="handleResetCredit"
+        :reset-credit="handleResetCredit"
         @copy="handleCopy"
         @get-token="(account: CodexAccount) => emit('get-token', account)"
         @edit="handleEdit"
@@ -171,15 +171,16 @@ async function handleFetchPrimaryUsage(accountId: string): Promise<void> {
   })
 }
 
-async function handleResetCredit(accountId: string): Promise<void> {
+async function handleResetCredit(accountId: string, creditId: string): Promise<void> {
   await runWithAccountPending(accountId, async () => {
     try {
       saveScrollPosition()
-      const result = await codexStore.consumeResetCredit(accountId)
+      const result = await codexStore.consumeResetCredit(accountId, creditId)
       message.success(t('codex.resetRateLimitSuccess', { count: result.windows_reset || 0 }))
       restoreScrollPosition()
     } catch (error) {
       message.error(t('codex.resetRateLimitFailed') + ': ' + toErrorMessage(error))
+      throw error
     }
   })
 }

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -227,9 +228,11 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Post("/web/api/codex/refresh-token", p.requireWebUISession(p.handleWebUIRefreshCodexToken))
 	r.Post("/web/api/codex/usage", p.requireWebUISession(p.handleWebUIFetchCodexUsage))
 	r.Post("/web/api/codex/usage/primary", p.requireWebUISession(p.handleWebUIFetchCodexPrimaryUsage))
+	r.Post("/web/api/codex/reset-credits", p.requireWebUISession(p.handleWebUIListCodexResetCredits))
 	r.Post("/web/api/codex/reset", p.requireWebUISession(p.handleWebUIConsumeCodexResetCredit))
 	r.Post("/web/api/codex/config", p.requireWebUISession(p.handleWebUISaveCodexConfig))
 	r.Post("/web/api/codex/accounts", p.requireWebUISession(p.handleWebUIAddCodexAccount))
+	r.Post("/web/api/codex/accounts/import", p.requireWebUISession(p.handleWebUIImportCodexAccounts))
 	r.Post("/web/api/codex/accounts/update", p.requireWebUISession(p.handleWebUIUpdateCodexAccount))
 	r.Post("/web/api/codex/accounts/restore", p.requireWebUISession(p.handleWebUIRestoreCodexAccount))
 	r.Delete("/web/api/codex/accounts/{accountId}", p.requireWebUISession(p.handleWebUIDeleteCodexAccount))
@@ -246,6 +249,7 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Post("/web/api/xai/accounts", p.requireWebUISession(p.handleWebUIAddXaiAccount))
 	r.Post("/web/api/xai/accounts/update", p.requireWebUISession(p.handleWebUIUpdateXaiAccount))
 	r.Delete("/web/api/xai/accounts/{accountId}", p.requireWebUISession(p.handleWebUIDeleteXaiAccount))
+	p.registerWebUIClashRoutes(r)
 	r.Get("/web/api/settings", p.requireWebUISession(p.handleWebUISettings))
 	r.Post("/web/api/settings", p.requireWebUISession(p.handleWebUISaveSettings))
 	r.Post("/web/api/settings/database/test", p.requireWebUISession(p.handleWebUITestDatabase))
@@ -401,8 +405,9 @@ func (p *ProxyServer) handleWebUISession(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated": authenticated,
-		"hasApiKey":     hasAPIKey,
+		"authenticated":  authenticated,
+		"hasApiKey":      hasAPIKey,
+		"proxyAvailable": webUIClashProvider() != nil,
 	})
 }
 
@@ -1161,13 +1166,37 @@ func (p *ProxyServer) handleWebUIFetchCodexPrimaryUsage(w http.ResponseWriter, r
 	})
 }
 
-func (p *ProxyServer) handleWebUIConsumeCodexResetCredit(w http.ResponseWriter, r *http.Request) {
+func (p *ProxyServer) handleWebUIListCodexResetCredits(w http.ResponseWriter, r *http.Request) {
 	provider, accountID, codexPath, ok := p.parseWebUICodexAccountAction(w, r)
 	if !ok {
 		return
 	}
 
-	result, err := provider.ConsumeAccountResetCredit(r.Context(), codexPath, accountID)
+	result, err := provider.ListAccountResetCredits(r.Context(), codexPath, accountID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "failed to parse reset credits payload",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (p *ProxyServer) handleWebUIConsumeCodexResetCredit(w http.ResponseWriter, r *http.Request) {
+	provider, accountID, creditID, codexPath, ok := p.parseWebUICodexAccountActionWithCredit(w, r)
+	if !ok {
+		return
+	}
+
+	result, err := provider.ConsumeAccountResetCredit(r.Context(), codexPath, accountID, creditID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": err.Error(),
@@ -1307,6 +1336,78 @@ func (p *ProxyServer) handleWebUIAddCodexAccount(w http.ResponseWriter, r *http.
 	}
 	payload["message"] = "codex account added"
 	writeJSON(w, http.StatusOK, payload)
+}
+
+func (p *ProxyServer) handleWebUIImportCodexAccounts(w http.ResponseWriter, r *http.Request) {
+	provider := plugin.GetCodexDesktopProviderCached()
+	if provider == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "codex-accounts 插件不可用",
+		})
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "请求体读取失败",
+		})
+		return
+	}
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "请求体为空",
+		})
+		return
+	}
+
+	// 支持 accounts 数组，或 { "accounts": [...] }
+	var payload json.RawMessage
+	switch trimmed[0] {
+	case '[':
+		payload = json.RawMessage(trimmed)
+	case '{':
+		var wrapper struct {
+			Accounts json.RawMessage `json:"accounts"`
+		}
+		if err := json.Unmarshal(trimmed, &wrapper); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "请求体格式无效",
+			})
+			return
+		}
+		if len(bytes.TrimSpace(wrapper.Accounts)) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "accounts 必填",
+			})
+			return
+		}
+		payload = wrapper.Accounts
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "请求体格式无效",
+		})
+		return
+	}
+
+	codexPath := resolveWebUICodexConfigPath(provider, p.getConfigPath())
+	raw, err := provider.ImportAccounts(codexPath, payload)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "failed to parse import result",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (p *ProxyServer) handleWebUIDeleteCodexAccount(w http.ResponseWriter, r *http.Request) {
@@ -1743,22 +1844,33 @@ func resolveWebUICodexConfigPath(provider plugin.CodexDesktopProvider, configPat
 }
 
 func (p *ProxyServer) parseWebUICodexAccountAction(w http.ResponseWriter, r *http.Request) (plugin.CodexDesktopProvider, string, string, bool) {
+	provider, accountID, _, codexPath, ok := p.parseWebUICodexAccountRequest(w, r, false)
+	return provider, accountID, codexPath, ok
+}
+
+// parseWebUICodexAccountActionWithCredit 解析 accountId + creditId（consume 路径必填 creditId）。
+func (p *ProxyServer) parseWebUICodexAccountActionWithCredit(w http.ResponseWriter, r *http.Request) (plugin.CodexDesktopProvider, string, string, string, bool) {
+	return p.parseWebUICodexAccountRequest(w, r, true)
+}
+
+func (p *ProxyServer) parseWebUICodexAccountRequest(w http.ResponseWriter, r *http.Request, requireCredit bool) (plugin.CodexDesktopProvider, string, string, string, bool) {
 	provider := plugin.GetCodexDesktopProviderCached()
 	if provider == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": "codex-accounts 插件不可用",
 		})
-		return nil, "", "", false
+		return nil, "", "", "", false
 	}
 
 	var req struct {
 		AccountID string `json:"accountId"`
+		CreditID  string `json:"creditId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": "请求体格式无效",
 		})
-		return nil, "", "", false
+		return nil, "", "", "", false
 	}
 
 	accountID := strings.TrimSpace(req.AccountID)
@@ -1766,11 +1878,18 @@ func (p *ProxyServer) parseWebUICodexAccountAction(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": "accountId 必填",
 		})
-		return nil, "", "", false
+		return nil, "", "", "", false
+	}
+	creditID := strings.TrimSpace(req.CreditID)
+	if requireCredit && creditID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "creditId 必填",
+		})
+		return nil, "", "", "", false
 	}
 
 	codexPath := resolveWebUICodexConfigPath(provider, p.getConfigPath())
-	return provider, accountID, codexPath, true
+	return provider, accountID, creditID, codexPath, true
 }
 
 func convertStorageEndpoints(endpoints []*storage.Endpoint) []*Endpoint {

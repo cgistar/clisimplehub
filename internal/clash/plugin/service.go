@@ -3,6 +3,7 @@ package clashplugin
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,7 +20,7 @@ import (
 
 const (
 	maxSubscriptionBytes  = 8 << 20 // 8MiB
-	subscriptionUserAgent = "mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
+	subscriptionUserAgent = "mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1 clash.meta/mihomo/v1.19.21"
 
 	runtimeGroupSelector = "selector"
 	runtimeGroupChain    = "chain"
@@ -105,6 +106,11 @@ func (s *ClashService) SyncSelectedNodesFromController(ctx context.Context) (int
 	if now, err := getRuntimeProxyNow(ctx, controllerCfg, runtimeGroupMiddle); err == nil {
 		applyNow(now, false)
 	}
+	for _, subscription := range plan.subscriptions {
+		if now, err := getRuntimeProxyNow(ctx, controllerCfg, subscription.groupName); err == nil {
+			applyNow(now, false)
+		}
+	}
 	if len(updates) == 0 {
 		return 0, nil
 	}
@@ -156,6 +162,12 @@ type runtimePlan struct {
 	trafficSelection string
 	exitSelection    string
 	middleSelection  string
+	subscriptions    []runtimeGroupSelection
+}
+
+type runtimeGroupSelection struct {
+	groupName string
+	selection string
 }
 
 func defaultHubProxyGroups(allProxyNames []string) []any {
@@ -1282,27 +1294,30 @@ func selectedNodeForSubscription(sub *Subscription) string {
 	return strings.TrimSpace(nodeName(sub.Nodes[0]))
 }
 
-func runtimeProxyName(subName, subID, nodeName string) string {
-	prefix := strings.TrimSpace(subName)
-	if prefix == "" {
-		prefix = strings.TrimSpace(subID)
-	}
-	return prefix + ":" + strings.TrimSpace(nodeName)
+func runtimeShortID(subscriptionID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(subscriptionID)))
+	return fmt.Sprintf("%x", sum[:4])
 }
 
 func runtimeNodeKey(subID, nodeName string) string {
 	return strings.TrimSpace(subID) + "\x00" + strings.TrimSpace(nodeName)
 }
 
-func nextRuntimeProxyName(baseName string, usedRuntimeNames map[string]struct{}) string {
+func nextRuntimeName(baseName, subscriptionID string, usedRuntimeNames map[string]struct{}) string {
 	baseName = strings.TrimSpace(baseName)
 	if _, exists := usedRuntimeNames[baseName]; !exists {
 		usedRuntimeNames[baseName] = struct{}{}
 		return baseName
 	}
 
+	candidateBase := baseName + "-" + runtimeShortID(subscriptionID)
+	if _, exists := usedRuntimeNames[candidateBase]; !exists {
+		usedRuntimeNames[candidateBase] = struct{}{}
+		return candidateBase
+	}
+
 	for suffix := 2; ; suffix++ {
-		candidate := fmt.Sprintf("%s (%d)", baseName, suffix)
+		candidate := fmt.Sprintf("%s-%d", candidateBase, suffix)
 		if _, exists := usedRuntimeNames[candidate]; exists {
 			continue
 		}
@@ -1311,13 +1326,33 @@ func nextRuntimeProxyName(baseName string, usedRuntimeNames map[string]struct{})
 	}
 }
 
-func runtimeProxyNamesByNodeKey(cfg *ClashConfig) map[string]string {
-	namesByKey := make(map[string]string)
+func runtimeReservedNames() map[string]struct{} {
+	return map[string]struct{}{
+		"DIRECT":               {},
+		"REJECT":               {},
+		"REJECT-DROP":          {},
+		"PASS":                 {},
+		"COMPATIBLE":           {},
+		"GLOBAL":               {},
+		runtimeGroupSelector:   {},
+		runtimeGroupChain:      {},
+		runtimeGroupExit:       {},
+		runtimeGroupMiddle:     {},
+		runtimeGroupAllNodes:   {},
+		runtimeGroupHub:        {},
+		runtimeGroupAutoSelect: {},
+		runtimeGroupFailover:   {},
+	}
+}
+
+func runtimeNamesForConfig(cfg *ClashConfig) (map[string]string, map[string]string) {
+	nodeNamesByKey := make(map[string]string)
+	groupNamesBySub := make(map[string]string)
 	if cfg == nil {
-		return namesByKey
+		return nodeNamesByKey, groupNamesBySub
 	}
 
-	usedRuntimeNames := make(map[string]struct{})
+	usedRuntimeNames := runtimeReservedNames()
 	for i := range cfg.Subscriptions {
 		sub := &cfg.Subscriptions[i]
 		if !sub.Enabled || len(sub.Nodes) == 0 {
@@ -1325,11 +1360,30 @@ func runtimeProxyNamesByNodeKey(cfg *ClashConfig) map[string]string {
 		}
 		for j := range sub.Nodes {
 			node := sub.Nodes[j]
-			baseName := runtimeProxyName(sub.Name, sub.ID, nodeName(node))
-			runtimeName := nextRuntimeProxyName(baseName, usedRuntimeNames)
-			namesByKey[runtimeNodeKey(sub.ID, nodeName(node))] = runtimeName
+			baseName := strings.TrimSpace(nodeName(node))
+			if baseName == "" {
+				baseName = "node"
+			}
+			nodeNamesByKey[runtimeNodeKey(sub.ID, nodeName(node))] = nextRuntimeName(baseName, sub.ID, usedRuntimeNames)
 		}
 	}
+
+	for i := range cfg.Subscriptions {
+		sub := &cfg.Subscriptions[i]
+		if !sub.Enabled || len(sub.Nodes) == 0 {
+			continue
+		}
+		baseName := strings.TrimSpace(sub.Name)
+		if baseName == "" {
+			baseName = "subscription"
+		}
+		groupNamesBySub[sub.ID] = nextRuntimeName(baseName, sub.ID, usedRuntimeNames)
+	}
+	return nodeNamesByKey, groupNamesBySub
+}
+
+func runtimeProxyNamesByNodeKey(cfg *ClashConfig) map[string]string {
+	namesByKey, _ := runtimeNamesForConfig(cfg)
 	return namesByKey
 }
 
@@ -1418,8 +1472,7 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 	allProxyNames := make([]string, 0)
 	nodeNamesBySub := make(map[string][]string)
 	selectedRuntimeBySub := make(map[string]string)
-	usedRuntimeNames := make(map[string]struct{})
-	nodeRuntimeByKey := make(map[string]string)
+	nodeRuntimeByKey, groupRuntimeBySub := runtimeNamesForConfig(normalized)
 
 	appendSubscriptionProxies := func(sub *Subscription, dialerProxy string) error {
 		if sub == nil || len(sub.Nodes) == 0 {
@@ -1432,8 +1485,7 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 
 		for i := range sub.Nodes {
 			node := sub.Nodes[i]
-			name := nextRuntimeProxyName(runtimeProxyName(sub.Name, sub.ID, nodeName(node)), usedRuntimeNames)
-			nodeRuntimeByKey[runtimeNodeKey(sub.ID, nodeName(node))] = name
+			name := nodeRuntimeByKey[runtimeNodeKey(sub.ID, nodeName(node))]
 
 			nodeCopy := node
 			proxyMap, err := buildProxyMap(name, &nodeCopy)
@@ -1542,6 +1594,24 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 			"name":    runtimeGroupAllNodes,
 			"type":    "select",
 			"proxies": allProxyNames,
+		})
+	}
+
+	for i := range normalized.Subscriptions {
+		sub := &normalized.Subscriptions[i]
+		names := nodeNamesBySub[sub.ID]
+		groupName := groupRuntimeBySub[sub.ID]
+		if groupName == "" || len(names) == 0 {
+			continue
+		}
+		proxyGroups = append(proxyGroups, map[string]any{
+			"name":    groupName,
+			"type":    "select",
+			"proxies": names,
+		})
+		plan.subscriptions = append(plan.subscriptions, runtimeGroupSelection{
+			groupName: groupName,
+			selection: selectedRuntimeBySub[sub.ID],
 		})
 	}
 
@@ -1762,17 +1832,37 @@ func (s *ClashService) shouldRestartRuntime(beforeCfg, afterCfg *ClashConfig) bo
 }
 
 func (s *ClashService) restartRuntime() error {
-	s.mu.RLock()
-	running := s.running
-	s.mu.RUnlock()
-	if !running {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.running {
 		return nil
 	}
-	if err := s.Stop(); err != nil {
-		log.Printf("[clash] restart stop error: %v", err)
+
+	cfg := s.config.Get()
+	runtimeYAML, plan, ready, err := buildRuntimeForConfig(cfg)
+	if err != nil {
+		return err
 	}
-	if err := s.Start(); err != nil {
-		return fmt.Errorf("restart clash: %w", err)
+	if !ready {
+		return fmt.Errorf("no active subscription with valid nodes")
+	}
+
+	if reloader, ok := s.instance.(interface{ Reload([]byte) error }); ok {
+		if err := reloader.Reload(runtimeYAML); err != nil {
+			return fmt.Errorf("reload clash runtime: %w", err)
+		}
+	} else {
+		if err := s.stopLocked(); err != nil {
+			return fmt.Errorf("restart clash: %w", err)
+		}
+		if err := s.startWithRuntime(runtimeYAML); err != nil {
+			return fmt.Errorf("restart clash: %w", err)
+		}
+	}
+
+	if err := applyRuntimeSelectionsWithRetry(cfg, plan, 20, 50*time.Millisecond); err != nil {
+		log.Printf("[clash] apply runtime selections after restart warning: %v", err)
 	}
 	return nil
 }

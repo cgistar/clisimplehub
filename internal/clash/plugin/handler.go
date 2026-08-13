@@ -214,7 +214,12 @@ func (h *handler) handleSubscriptionConvert(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "url is required", http.StatusBadRequest)
 		return
 	}
-	converter := newSubscriptionConverter(loadConverterSettings(h.svc.dataDir), nil, requestBaseURL(r))
+	settings, err := loadConverterSettings(h.svc.dataDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	converter := newSubscriptionConverter(settings, nil, requestBaseURL(r))
 	converter.options = parseConverterOptions(r)
 	result, err := converter.Convert(r.Context(), urls, target)
 	if err != nil {
@@ -238,7 +243,12 @@ func (h *handler) handleSubscriptionIPs(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "url is required", http.StatusBadRequest)
 		return
 	}
-	converter := newSubscriptionConverter(loadConverterSettings(h.svc.dataDir), nil, requestBaseURL(r))
+	settings, err := loadConverterSettings(h.svc.dataDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	converter := newSubscriptionConverter(settings, nil, requestBaseURL(r))
 	info, err := converter.subscriptionServerIPs(r.Context(), urls)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -258,7 +268,12 @@ func (h *handler) handleRouterOSSubscriptionIPs(w http.ResponseWriter, r *http.R
 		http.Error(w, "url is required", http.StatusBadRequest)
 		return
 	}
-	converter := newSubscriptionConverter(loadConverterSettings(h.svc.dataDir), nil, requestBaseURL(r))
+	settings, err := loadConverterSettings(h.svc.dataDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	converter := newSubscriptionConverter(settings, nil, requestBaseURL(r))
 	info, err := converter.subscriptionServerIPs(r.Context(), urls)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -305,7 +320,12 @@ func (h *handler) handleMihomoGroupRule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "group is required", http.StatusBadRequest)
 		return
 	}
-	converter := newSubscriptionConverter(loadConverterSettings(h.svc.dataDir), nil, requestBaseURL(r))
+	settings, err := loadConverterSettings(h.svc.dataDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	converter := newSubscriptionConverter(settings, nil, requestBaseURL(r))
 	rules := converter.groupRules(r.Context(), groupName)
 	if r.URL.Query().Get("format") == "yaml" {
 		w.Header().Set("Content-Type", "application/yaml; charset=UTF-8")

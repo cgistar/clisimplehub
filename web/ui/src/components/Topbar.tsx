@@ -5,9 +5,10 @@ interface TopbarProps {
   route: RouteKey
   onNavigate: (route: RouteKey) => void
   onLogout: () => void | Promise<void>
+  proxyAvailable: boolean
 }
 
-export default function Topbar({ route, onNavigate, onLogout }: TopbarProps) {
+export default function Topbar({ route, onNavigate, onLogout, proxyAvailable }: TopbarProps) {
   return (
     <header className="topbar">
       <div className="brand">
@@ -28,6 +29,11 @@ export default function Topbar({ route, onNavigate, onLogout }: TopbarProps) {
         <NavLink active={route === 'xai'} onClick={() => onNavigate('xai')}>
           xAI
         </NavLink>
+        {proxyAvailable ? (
+          <NavLink active={route === 'proxy'} onClick={() => onNavigate('proxy')}>
+            代理
+          </NavLink>
+        ) : null}
         <NavLink active={route === 'settings'} onClick={() => onNavigate('settings')}>
           设置
         </NavLink>

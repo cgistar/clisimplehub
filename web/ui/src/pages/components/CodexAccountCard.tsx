@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import type { CodexAccount } from '@/types'
 import { formatDateTime, formatTokenCount } from '@/lib/format'
 import { getCodexPlanLabel, getCodexStatus, getCodexSubscriptionActiveUntil, getExpireInfo } from '@/lib/codex'
 import { ActivityIcon, CopyIcon, EditIcon, PowerIcon, RefreshIcon, TrashIcon } from '@/components/icons'
 import CodexUsageBar from './CodexUsageBar'
+import CodexResetCreditsDialog from './CodexResetCreditsDialog'
 
 interface CodexAccountCardProps {
   account: CodexAccount
@@ -11,7 +13,7 @@ interface CodexAccountCardProps {
   onRefreshToken: (accountId: string) => void
   onFetchUsage: (accountId: string) => void
   onFetchPrimaryUsage: (accountId: string) => void
-  onResetCredit: (accountId: string) => void
+  onResetCredit: (accountId: string, creditId: string) => void | Promise<void>
   onCopy: (account: CodexAccount) => void
   onEdit: (account: CodexAccount) => void
   onDelete: (accountId: string) => void
@@ -45,16 +47,28 @@ export default function CodexAccountCard({
   const subscriptionActiveUntil = getCodexSubscriptionActiveUntil(account.idToken)
   const resetCreditsAvailableCount = Number(account.codexUsage?.resetCreditsAvailableCount || 0)
   const estimatedCost = formatEstimatedCost(account.todayEstimatedCost)
+  const [resetCreditsOpen, setResetCreditsOpen] = useState(false)
 
-  function confirmResetCredit() {
-    if (actionBusy || resetCreditsAvailableCount <= 0) return
-    if (window.confirm(`确定重置账号 ${displayName} 的周限吗？当前可用次数：${resetCreditsAvailableCount}`)) {
-      onResetCredit(localId)
-    }
+  function openResetCreditsDialog() {
+    if (actionBusy || resetCreditsAvailableCount <= 0 || !localId) return
+    setResetCreditsOpen(true)
+  }
+
+  async function handleResetCreditConfirm(creditId: string): Promise<void> {
+    await onResetCredit(localId, creditId)
+    setResetCreditsOpen(false)
   }
 
   return (
     <article className={`codex-account-card${account.isActive ? ' active' : ''}`}>
+      <CodexResetCreditsDialog
+        open={resetCreditsOpen}
+        accountId={localId}
+        displayName={displayName}
+        busy={actionBusy}
+        onOpenChange={setResetCreditsOpen}
+        onConfirm={handleResetCreditConfirm}
+      />
       <div className="codex-account-card-header">
         <div className="codex-header-main">
           <h3 className="list-item-title no-margin codex-card-title" title={displayName}>
@@ -72,7 +86,7 @@ export default function CodexAccountCard({
               title={resetBusy ? '重置周限中...' : '重置周限'}
               aria-label={resetBusy ? '重置周限中...' : '重置周限'}
               disabled={actionBusy || !localId}
-              onClick={confirmResetCredit}
+              onClick={openResetCreditsDialog}
             >
               {resetCreditsAvailableCount}
             </button>

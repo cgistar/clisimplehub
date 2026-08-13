@@ -13,6 +13,10 @@ type desktopFacade struct{}
 
 var _ plugin.ClashDesktopProvider = (*ClashPlugin)(nil)
 
+func (p *ClashPlugin) IsAvailable() bool {
+	return p.getService() != nil && ShouldShowClashUI()
+}
+
 func (p *ClashPlugin) GetStatus() (json.RawMessage, error) {
 	svc := p.getService()
 	if svc == nil {

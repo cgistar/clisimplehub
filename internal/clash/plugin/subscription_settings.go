@@ -2,7 +2,7 @@ package clashplugin
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -52,41 +52,89 @@ type converterRuleGroup struct {
 }
 
 type converterSettingsFile struct {
-	ProxyTestURL    string                          `json:"proxy-test-url"`
-	TestInterval    int                             `json:"test-interval"`
-	Countries       map[string][]string             `json:"countrys"`
-	CountriesAlt    map[string][]string             `json:"countries"`
-	CustomGroup     map[string]converterCustomGroup `json:"custom_group"`
-	ProxyGroups     []converterProxyGroup           `json:"proxy_groups"`
-	OtherRules      []converterRuleGroup            `json:"other_rules"`
-	GroupBaseOption map[string]any                  `json:"groupBaseOption"`
-	LandingNodeURL  string                          `json:"landingNode"`
-	WSOpts          map[string]any                  `json:"ws-opts"`
-	Mihomo          map[string]any                  `json:"mihomo"`
-	SingBox         map[string]any                  `json:"singbox"`
+	ProxyTestURL    string                       `json:"proxy-test-url"`
+	TestInterval    int                          `json:"test-interval"`
+	Countries       map[string][]string          `json:"countrys"`
+	CountriesAlt    map[string][]string          `json:"countries"`
+	CustomGroup     orderedConverterCustomGroups `json:"custom_group"`
+	ProxyGroups     []converterProxyGroup        `json:"proxy_groups"`
+	OtherRules      []converterRuleGroup         `json:"other_rules"`
+	GroupBaseOption map[string]any               `json:"groupBaseOption"`
+	LandingNodeURL  string                       `json:"landingNode"`
+	WSOpts          map[string]any               `json:"ws-opts"`
+	Mihomo          map[string]any               `json:"mihomo"`
+	SingBox         map[string]any               `json:"singbox"`
 }
 
 type converterCustomGroup struct {
 	Name    string   `json:"name"`
 	Keys    []string `json:"keys"`
+	Regex   string   `json:"regex"`
 	NotAuto bool     `json:"notAuto"`
 }
 
-func loadConverterSettings(dataDir string) *converterSettings {
+type orderedConverterCustomGroup struct {
+	Key   string
+	Group converterCustomGroup
+}
+
+type orderedConverterCustomGroups []orderedConverterCustomGroup
+
+func (groups *orderedConverterCustomGroups) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok || delim != '{' {
+		return fmt.Errorf("custom_group must be a JSON object")
+	}
+	seen := make(map[string]struct{})
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return fmt.Errorf("custom_group key must be a string")
+		}
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("custom_group contains duplicate key %q", key)
+		}
+		seen[key] = struct{}{}
+
+		var group converterCustomGroup
+		if err := decoder.Decode(&group); err != nil {
+			return fmt.Errorf("custom_group %q: %w", key, err)
+		}
+		*groups = append(*groups, orderedConverterCustomGroup{Key: key, Group: group})
+	}
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadConverterSettings(dataDir string) (*converterSettings, error) {
 	settings := defaultConverterSettings()
 	for _, name := range []string{converterSettingsFilename, "setting.json"} {
 		path := filepath.Join(dataDir, name)
 		data, err := os.ReadFile(path)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("read subscription settings %s: %w", path, err)
+			}
 			continue
 		}
-		if loaded, err := parseConverterSettings(data); err == nil {
-			return loaded
-		} else {
-			log.Printf("[clash] subscription settings parse failed %s: %v", path, err)
+		loaded, err := parseConverterSettings(data)
+		if err != nil {
+			return nil, fmt.Errorf("parse subscription settings %s: %w", path, err)
 		}
+		return loaded, nil
 	}
-	return settings
+	return settings, nil
 }
 
 func parseConverterSettings(data []byte) (*converterSettings, error) {
@@ -130,7 +178,11 @@ func parseConverterSettings(data []byte) (*converterSettings, error) {
 		settings.Countries = matchersFromCountryMap(file.Countries)
 	}
 	if len(file.CustomGroup) > 0 {
-		settings.CustomGroups = matchersFromCustomGroupMap(file.CustomGroup)
+		customGroups, err := matchersFromCustomGroups(file.CustomGroup)
+		if err != nil {
+			return nil, err
+		}
+		settings.CustomGroups = customGroups
 	}
 	return settings, nil
 }
@@ -197,16 +249,21 @@ func matchersFromCountryMap(input map[string][]string) []converterMatcher {
 	return out
 }
 
-func matchersFromCustomGroupMap(input map[string]converterCustomGroup) []converterMatcher {
+func matchersFromCustomGroups(input orderedConverterCustomGroups) ([]converterMatcher, error) {
 	out := make([]converterMatcher, 0, len(input))
-	for key, group := range input {
+	for _, item := range input {
+		key, group := item.Key, item.Group
 		name := strings.TrimSpace(group.Name)
 		if name == "" {
 			name = key
 		}
-		out = append(out, newCustomMatcher(key, name, group.Keys, group.NotAuto))
+		matcher, err := newConfiguredCustomMatcher(key, name, group.Keys, group.Regex, group.NotAuto)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, matcher)
 	}
-	return out
+	return out, nil
 }
 
 func normalizeConverterProxyGroups(groups []converterProxyGroup) []converterProxyGroup {
@@ -247,6 +304,24 @@ func newCustomMatcher(key, name string, keys []string, notAuto bool) converterMa
 	m := newMatcher(key, name, keys)
 	m.NotAuto = notAuto
 	return m
+}
+
+func newConfiguredCustomMatcher(key, name string, keys []string, expression string, notAuto bool) (converterMatcher, error) {
+	m := newCustomMatcher(key, name, keys, notAuto)
+	expression = strings.TrimSpace(expression)
+	if expression == "" {
+		return m, nil
+	}
+	configuredPattern, err := regexp.Compile(expression)
+	if err != nil {
+		return converterMatcher{}, fmt.Errorf("custom_group %q has invalid regex: %w", key, err)
+	}
+	if len(m.Keys) == 0 {
+		m.Pattern = configuredPattern
+	} else {
+		m.Pattern = regexp.MustCompile("(?:" + m.Pattern.String() + ")|(?:" + configuredPattern.String() + ")")
+	}
+	return m, nil
 }
 
 func newMatcher(key, name string, keys []string) converterMatcher {

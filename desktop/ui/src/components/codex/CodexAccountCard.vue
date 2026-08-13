@@ -26,9 +26,9 @@
         :aria-disabled="busy"
         :title="t('codex.resetRateLimit')"
         :aria-label="t('codex.resetRateLimit')"
-        @click="confirmReset"
-        @keydown.enter.prevent="confirmReset"
-        @keydown.space.prevent="confirmReset"
+        @click="openResetCreditsDialog"
+        @keydown.enter.prevent="openResetCreditsDialog"
+        @keydown.space.prevent="openResetCreditsDialog"
       >
         {{ resetCreditsAvailableCount }}
       </n-tag>
@@ -153,24 +153,80 @@
         </button>
       </div>
     </div>
+
+    <n-modal
+      :show="resetCreditsVisible"
+      preset="card"
+      :title="t('codex.resetCreditsDialogTitle')"
+      style="max-width: 520px; width: 90vw"
+      @update:show="onResetCreditsVisibleChange"
+    >
+      <div class="reset-credits-body">
+        <div v-if="resetCreditsLoading" class="reset-credits-state">
+          <n-spin size="small" />
+          <span>{{ t('codex.resetCreditsDialogLoading') }}</span>
+        </div>
+        <div v-else-if="resetCreditsError" class="reset-credits-state error">
+          {{ resetCreditsError }}
+        </div>
+        <div v-else-if="!resetCredits.length" class="reset-credits-state empty">
+          {{ t('codex.resetCreditsDialogEmpty') }}
+        </div>
+        <ul v-else class="reset-credits-list">
+          <li
+            v-for="item in resetCredits"
+            :key="item.id"
+            class="reset-credit-item"
+            :class="{ disabled: !isCreditUsable(item) }"
+          >
+            <div class="reset-credit-main">
+              <div class="reset-credit-title">{{ creditTitle(item) }}</div>
+              <div v-if="creditDescription(item)" class="reset-credit-desc">{{ creditDescription(item) }}</div>
+              <div class="reset-credit-meta">
+                <span>{{ t('codex.resetCreditsType') }}: {{ item.reset_type || '-' }}</span>
+                <span>{{ t('codex.resetCreditsStatus') }}: {{ creditStatusLabel(item) }}</span>
+              </div>
+              <div class="reset-credit-time">
+                <span v-if="formatDate(item.granted_at)">{{ t('codex.resetCreditsGrantedAt') }}: {{ formatDate(item.granted_at) }}</span>
+                <span v-if="formatDate(item.expires_at)">{{ t('codex.resetCreditsExpiresAt') }}: {{ formatDate(item.expires_at) }}</span>
+              </div>
+              <div v-if="!item.is_supported_by_plan" class="reset-credit-unsupported">
+                {{ t('codex.resetCreditsUnsupported') }}
+              </div>
+            </div>
+            <button
+              type="button"
+              class="reset-credit-btn"
+              :disabled="busy || !isCreditUsable(item)"
+              @click="confirmResetItem(item)"
+            >
+              {{ t('codex.resetCreditsResetAction') }}
+            </button>
+          </li>
+        </ul>
+      </div>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
-import { NTag, useDialog } from 'naive-ui'
+import { NTag, NModal, NSpin, useDialog } from 'naive-ui'
 import { Power, RefreshCw, Activity, Copy, KeyRound, Edit, Trash } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import type { CodexAccount } from '@/types/codex'
+import { useCodexAccountsStore } from '../../stores/codexAccountsStore'
+import type { CodexAccount, CodexResetCredit } from '@/types/codex'
 import CodexUsageBar from './CodexUsageBar.vue'
 
 const { t } = useI18n()
 const dialog = useDialog()
+const codexStore = useCodexAccountsStore()
 
 const props = withDefaults(defineProps<{
   account: CodexAccount
   isActive?: boolean
   busy?: boolean
+  resetCredit: (accountId: string, creditId: string) => Promise<void>
 }>(), {
   isActive: false,
   busy: false
@@ -181,7 +237,6 @@ const emit = defineEmits<{
   test: [accountId: string]
   'fetch-usage': [accountId: string]
   'fetch-primary-usage': [accountId: string]
-  'reset-credit': [accountId: string]
   copy: [account: CodexAccount]
   'get-token': [account: CodexAccount]
   edit: [account: CodexAccount]
@@ -322,19 +377,90 @@ function confirmDelete() {
   })
 }
 
-function confirmReset() {
-  if (props.busy || resetCreditsAvailableCount.value <= 0) return
+const resetCreditsVisible = ref(false)
+const resetCreditsLoading = ref(false)
+const resetCreditsError = ref('')
+const resetCredits = ref<CodexResetCredit[]>([])
+let resetCreditsRequestGen = 0
 
+async function openResetCreditsDialog(): Promise<void> {
+  if (props.busy || resetCreditsAvailableCount.value <= 0) return
+  resetCreditsVisible.value = true
+  resetCreditsError.value = ''
+  resetCreditsLoading.value = true
+  resetCredits.value = []
+  const gen = ++resetCreditsRequestGen
+  try {
+    const list = await codexStore.listResetCredits(props.account.id)
+    if (gen !== resetCreditsRequestGen) return
+    resetCredits.value = list?.credits ?? []
+  } catch (cause) {
+    if (gen !== resetCreditsRequestGen) return
+    const detail = String(cause instanceof Error ? cause.message : cause)
+    resetCreditsError.value = `${t('codex.resetCreditsDialogFailed')}: ${detail}`
+  } finally {
+    if (gen === resetCreditsRequestGen) {
+      resetCreditsLoading.value = false
+    }
+  }
+}
+
+function onResetCreditsVisibleChange(show: boolean): void {
+  if (!show) {
+    closeResetCreditsDialog()
+    return
+  }
+  resetCreditsVisible.value = true
+}
+
+function closeResetCreditsDialog(): void {
+  resetCreditsVisible.value = false
+  resetCreditsRequestGen += 1
+  resetCreditsLoading.value = false
+  resetCreditsError.value = ''
+  resetCredits.value = []
+}
+
+function isCreditUsable(item: CodexResetCredit): boolean {
+  return Boolean(item.id?.trim()) && Boolean(item.is_supported_by_plan) && item.status === 'available'
+}
+
+function creditTitle(item: CodexResetCredit): string {
+  return (item.title && item.title.trim()) || t('codex.resetCreditsItemTitleFallback')
+}
+
+function creditDescription(item: CodexResetCredit): string {
+  return (item.description && item.description.trim()) || ''
+}
+
+function creditStatusLabel(item: CodexResetCredit): string {
+  if (item.status === 'available') return t('codex.resetCreditsAvailable')
+  return item.status || '-'
+}
+
+function formatDate(value: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function confirmResetItem(item: CodexResetCredit): void {
+  if (props.busy || !isCreditUsable(item)) return
+  const creditId = item.id.trim()
   dialog.warning({
     title: t('common.confirm'),
-    content: t('codex.resetRateLimitConfirm', {
-      account: displayName.value,
-      count: resetCreditsAvailableCount.value
-    }),
-    positiveText: t('codex.resetRateLimit'),
+    content: t('codex.resetCreditsConfirmItem', { account: displayName.value }),
+    positiveText: t('codex.resetCreditsResetAction'),
     negativeText: t('common.cancel'),
-    onPositiveClick: () => {
-      emit('reset-credit', props.account.id)
+    onPositiveClick: async () => {
+      try {
+        await props.resetCredit(props.account.id, creditId)
+        closeResetCreditsDialog()
+      } catch {
+        // 失败保留列表弹窗，便于重试
+        return false
+      }
     }
   })
 }
@@ -611,5 +737,115 @@ function formatEstimatedCost(cost: number | null | undefined): string {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
+}
+
+.reset-credits-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.reset-credits-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 16px 0;
+  justify-content: center;
+}
+
+.reset-credits-state.error {
+  color: var(--danger, #dc2626);
+}
+
+.reset-credits-state.empty {
+  color: var(--text-tertiary);
+}
+
+.reset-credits-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reset-credit-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 6px;
+  background: var(--bg-secondary, #f8fafc);
+}
+
+.reset-credit-item.disabled {
+  opacity: 0.55;
+  background: var(--bg-tertiary, #f1f5f9);
+}
+
+.reset-credit-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.reset-credit-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.reset-credit-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.reset-credit-meta,
+.reset-credit-time {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.reset-credit-unsupported {
+  font-size: 11px;
+  color: var(--danger, #dc2626);
+}
+
+.reset-credit-btn {
+  appearance: none;
+  border: 1px solid var(--accent, #0284c7);
+  background: transparent;
+  color: var(--accent, #0284c7);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.reset-credit-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #0284c7) 10%, white);
+}
+
+.reset-credit-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  border-color: var(--border-color, #cbd5e1);
+  color: var(--text-tertiary);
 }
 </style>

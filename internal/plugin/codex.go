@@ -21,6 +21,7 @@ type CodexDesktopProvider interface {
 	GetActiveAccount(configPath string) (json.RawMessage, error)
 	SetActiveAccount(configPath, refreshToken string) error
 	AddAccount(configPath string, dto json.RawMessage) (json.RawMessage, error)
+	ImportAccounts(configPath string, dto json.RawMessage) (json.RawMessage, error)
 	UpdateAccount(configPath string, dto json.RawMessage) error
 	RestoreAccount(configPath, accountId string) error
 	DeleteAccount(configPath, refreshToken string) error
@@ -33,7 +34,8 @@ type CodexDesktopProvider interface {
 	TestAccount(configPath, refreshToken string) (json.RawMessage, error)
 	GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
 	GetAccountPrimaryUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
-	ConsumeAccountResetCredit(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
+	ListAccountResetCredits(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
+	ConsumeAccountResetCredit(ctx context.Context, configPath, accountId, creditID string) (json.RawMessage, error)
 	GetCodexAccountStats(ctx context.Context, timeRange string) (json.RawMessage, error)
 	StartHeadlessLogin(ctx context.Context, email, password, clientID, proxyURL string, onStep func(string)) (json.RawMessage, error)
 	StartHeadlessLoginWithProvider(ctx context.Context, req json.RawMessage, onStep func(string)) (json.RawMessage, error)

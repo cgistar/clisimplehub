@@ -5,12 +5,14 @@ import type {
   CodexAccountInput,
   CodexAccountsPage,
   CodexGlobalConfig,
+  CodexImportAccountsResult,
   CodexLoginResult,
 
   CodexModelPrice,
   CodexTestResult,
   CodexUsage,
   CodexResetResult,
+  CodexResetCreditsList,
   CodexUsageResult,
   CodexUsageWindow,
   HeadlessLoginState,
@@ -117,6 +119,37 @@ export const codexApi = {
     return normalizeAccount(account)
   },
 
+  async importAccounts(inputs: CodexAccountInput[]): Promise<CodexImportAccountsResult> {
+    if (!hasWailsMethod('ImportCodexAccounts')) {
+      const response = await fetch('/web/api/codex/accounts/import', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accounts: inputs.map((item) => ({ ...item, websockets: item.websockets !== false })) })
+      })
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>
+      if (!response.ok) {
+        throw new Error(String(payload.error || response.statusText || 'request failed'))
+      }
+      return payload as CodexImportAccountsResult
+    }
+    const result = await App.ImportCodexAccounts(inputs.map((item) => toCodexDto(item)))
+    return {
+      success: Number(result?.success || 0),
+      failed: Number(result?.failed || 0),
+      skipped: Number(result?.skipped || 0),
+      imported: Number(result?.imported || 0),
+      message: String(result?.message || ''),
+      errors: Array.isArray(result?.errors)
+        ? result.errors.map((item: { index?: number; email?: string; reason?: string }) => ({
+            index: Number(item?.index || 0),
+            email: item?.email || '',
+            reason: String(item?.reason || '')
+          }))
+        : []
+    }
+  },
+
   async updateAccount(input: CodexAccountInput): Promise<void> {
     await App.UpdateCodexAccount(toCodexDto(input))
   },
@@ -152,11 +185,38 @@ export const codexApi = {
     return App.GetCodexAccountPrimaryUsage(accountId)
   },
 
-  async consumeAccountResetCredit(accountId: string): Promise<CodexResetResult> {
+  async consumeAccountResetCredit(accountId: string, creditId: string): Promise<CodexResetResult> {
     if (!hasWailsMethod('ConsumeCodexAccountResetCredit')) {
-      return postWebCodexAccountAction<CodexResetResult>('/web/api/codex/reset', accountId)
+      const response = await fetch('/web/api/codex/reset', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId, creditId })
+      })
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>
+      if (!response.ok) {
+        throw new Error(String(payload.error || response.statusText || 'request failed'))
+      }
+      return payload as CodexResetResult
     }
-    return window.go.main.App.ConsumeCodexAccountResetCredit(accountId) as Promise<CodexResetResult>
+    return window.go.main.App.ConsumeCodexAccountResetCredit(accountId, creditId) as Promise<CodexResetResult>
+  },
+
+  async listAccountResetCredits(accountId: string): Promise<CodexResetCreditsList> {
+    if (!hasWailsMethod('ListCodexAccountResetCredits')) {
+      const response = await fetch('/web/api/codex/reset-credits', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId })
+      })
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>
+      if (!response.ok) {
+        throw new Error(String(payload.error || response.statusText || 'request failed'))
+      }
+      return payload as CodexResetCreditsList
+    }
+    return App.ListCodexAccountResetCredits(accountId)
   },
 
   async getGlobalConfig(): Promise<CodexGlobalConfig> {

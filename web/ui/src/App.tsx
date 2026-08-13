@@ -6,13 +6,14 @@ import type { ApiError } from '@/api/client'
 import { copyToClipboard } from '@/lib/format'
 import { buildCodexAccountCopyData, buildCodexAccountsCopyJson, createCodexConfigForm, createCodexEditForm } from '@/lib/codex'
 import { buildXaiAccountCopyJson, buildXaiAccountsCopyJson, createXaiConfigForm, createXaiEditForm } from '@/lib/xai'
-import type { ActionResponse, CodexAccount, CodexConfigForm, CodexEditForm, CodexPageData, EndpointInfo, HomePageData, RouteKey, SettingsData, SettingsForm, XaiAccount, XaiConfigForm, XaiEditForm, XaiPageData } from '@/types'
+import type { ActionResponse, ClashPageData, CodexAccount, CodexConfigForm, CodexEditForm, CodexPageData, EndpointInfo, HomePageData, RouteKey, SettingsData, SettingsForm, XaiAccount, XaiConfigForm, XaiEditForm, XaiPageData } from '@/types'
 import LoginScreen from '@/components/LoginScreen'
 import Topbar from '@/components/Topbar'
 import PageHeader from '@/components/PageHeader'
 import HomePage from '@/pages/HomePage'
 import CodexPage from '@/pages/CodexPage'
 import XaiPage from '@/pages/XaiPage'
+import ProxyPage from '@/pages/ProxyPage'
 import SettingsPage from '@/pages/SettingsPage'
 import CodexConfigDialog from '@/pages/components/CodexConfigDialog'
 import CodexEditDialog from '@/pages/components/CodexEditDialog'
@@ -30,6 +31,7 @@ export default function App() {
   const [sessionLoading, setSessionLoading] = useState<boolean>(true)
   const [authenticated, setAuthenticated] = useState<boolean>(false)
   const [hasApiKey, setHasApiKey] = useState<boolean>(true)
+  const [proxyAvailable, setProxyAvailable] = useState<boolean>(false)
   const [loginKey, setLoginKey] = useState<string>('')
   const [loginLoading, setLoginLoading] = useState<boolean>(false)
   const [pageLoading, setPageLoading] = useState<boolean>(false)
@@ -38,6 +40,7 @@ export default function App() {
   const [homeData, setHomeData] = useState<HomePageData | null>(null)
   const [codexData, setCodexData] = useState<CodexPageData | null>(null)
   const [xaiData, setXaiData] = useState<XaiPageData | null>(null)
+  const [clashData, setClashData] = useState<ClashPageData | null>(null)
   const [settingsData, setSettingsData] = useState<SettingsData | null>(null)
   const [settingsForm, setSettingsForm] = useState<SettingsForm | null>(null)
   const [settingsSaving, setSettingsSaving] = useState<boolean>(false)
@@ -71,6 +74,7 @@ export default function App() {
         const data = await webApi.getSession()
         setAuthenticated(Boolean(data.authenticated))
         setHasApiKey(Boolean(data.hasApiKey))
+        setProxyAvailable(Boolean(data.proxyAvailable))
       } catch (error) {
         const message = (error as ApiError).message || '会话状态获取失败'
         setGlobalError(message)
@@ -124,6 +128,13 @@ export default function App() {
         if (!xaiConfigDialogOpen) {
           setXaiConfigForm(createXaiConfigForm(data?.globalConfig))
         }
+        return
+      }
+      if (currentRoute === 'proxy') {
+        const data = await webApi.getClash()
+        setClashData(data)
+        setProxyAvailable(Boolean(data.available))
+        if (!data.available) navigate('home')
         return
       }
       if (currentRoute === 'settings') {
@@ -181,6 +192,8 @@ export default function App() {
     setHomeData(null)
     setCodexData(null)
     setXaiData(null)
+    setClashData(null)
+    setProxyAvailable(false)
     setSettingsData(null)
     setSettingsForm(null)
     setCodexConfigDialogOpen(false)
@@ -272,8 +285,16 @@ export default function App() {
     await runCodexAction(`codex:usage-primary:${accountId}`, () => webApi.fetchCodexPrimaryUsage(accountId), '5 小时用量已更新', '获取 Codex 5 小时用量失败')
   }
 
-  async function handleConsumeCodexResetCredit(accountId: string): Promise<void> {
-    await runCodexAction(`codex:reset:${accountId}`, () => webApi.consumeCodexResetCredit(accountId), '周限已重置', '重置 Codex 周限失败')
+  async function handleConsumeCodexResetCredit(accountId: string, creditId: string): Promise<void> {
+    const result = await runCodexAction(
+      `codex:reset:${accountId}`,
+      () => webApi.consumeCodexResetCredit(accountId, creditId),
+      '周限已重置',
+      '重置 Codex 周限失败',
+    )
+    if (!result) {
+      throw new Error('重置 Codex 周限失败')
+    }
   }
 
   async function handleDeleteCodexAccount(accountId: string): Promise<void> {
@@ -554,6 +575,10 @@ export default function App() {
         return
       }
 
+      const session = await webApi.getSession()
+      setProxyAvailable(Boolean(session.proxyAvailable))
+      if (!session.proxyAvailable && route === 'proxy') navigate('home')
+
       toast.success(result.restartRequired ? '设置已保存。端口或监听地址已修改，需要手动重启服务后生效。' : '设置已保存')
     } catch (error) {
       const apiError = error as ApiError
@@ -571,14 +596,16 @@ export default function App() {
   const pageTitle = useMemo<string>(() => {
     if (route === 'codex') return 'Codex'
     if (route === 'xai') return 'xAI'
+    if (route === 'proxy') return '代理'
     if (route === 'settings') return '设置'
     return '主页'
   }, [route])
 
   const pageDescription = useMemo<string>(() => {
     if (route === 'home') return '查看端点概览、实时请求与最近请求。'
-    if (route === 'codex') return '查看 Codex 账号池、卡片操作与全局配置。'
+    if (route === 'codex') return ''
     if (route === 'xai') return '查看 xAI 账号池、连通测试、auth.json 导入导出与全局配置。'
+    if (route === 'proxy') return '管理 Clash/Mihomo 运行状态、订阅、链式代理与节点。'
     return '管理基础设置、全局代理、WebDAV 备份与服务器同步。'
   }, [route])
 
@@ -602,7 +629,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <Toaster />
-      <Topbar route={route} onNavigate={navigate} onLogout={handleLogout} />
+      <Topbar route={route} proxyAvailable={proxyAvailable} onNavigate={navigate} onLogout={handleLogout} />
 
       <main className="page">
         <PageHeader
@@ -610,7 +637,7 @@ export default function App() {
           description={pageDescription}
           loading={pageLoading}
           onRefresh={() => void refreshCurrentPage(route)}
-          showRefresh={route !== 'codex' && route !== 'xai'}
+          showRefresh={route !== 'codex' && route !== 'xai' && route !== 'proxy'}
           extraActions={route === 'home' ? (
             <button type="button" className="btn" onClick={() => setHomeStatsDialogOpen(true)}>
               统计
@@ -664,6 +691,14 @@ export default function App() {
             onCopyAccount={handleCopyXaiAccount}
             onEditAccount={handleOpenXaiEdit}
             onDeleteAccount={handleDeleteXaiAccount}
+          />
+        ) : route === 'proxy' ? (
+          <ProxyPage
+            data={clashData}
+            loading={pageLoading}
+            onRefresh={() => refreshCurrentPage('proxy')}
+            onUnavailable={() => navigate('home')}
+            onAuthExpired={handleAuthExpired}
           />
         ) : (
           <SettingsPage

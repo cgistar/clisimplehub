@@ -367,13 +367,186 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	if err := json.Unmarshal(dtoJSON, &dto); err != nil {
 		return nil, err
 	}
-	normalizeCodexAccountImportDTO(&dto)
+	account, err := p.buildAccountFromImportDTO(&dto)
+	if err != nil {
+		return nil, err
+	}
+
+	store := p.GetAccountStore()
+	if store == nil {
+		return nil, fmt.Errorf("account store not initialized")
+	}
+	ctx := context.Background()
+	if existing, _ := store.GetByID(ctx, account.ID); existing != nil {
+		return nil, fmt.Errorf("account with this id already exists")
+	}
+	if account.RefreshToken != "" {
+		if rt, _ := store.GetByRefreshToken(ctx, account.RefreshToken); rt != nil {
+			return nil, fmt.Errorf("account with this refreshToken already exists")
+		}
+	}
+	if err := store.Insert(ctx, account); err != nil {
+		return nil, err
+	}
+	p.afterAccountsImported([]*codexShared.CodexAccount{account})
+
+	p.mu.RLock()
+	codexJsonPath := p.codexJsonPath
+	p.mu.RUnlock()
+	mc, _ := codexShared.LoadCodexMultiConfig(codexJsonPath)
+	activeID := ""
+	if mc != nil {
+		activeID = mc.ActiveAccountID
+	}
+	return json.Marshal(codexShared.MarshalAccountForFrontend(account, account.ID == activeID))
+}
+
+// ImportAccounts 批量校验并一次落库导入账号，避免逐个保存触发多次 UI/pool 刷新。
+func (p *CodexPlugin) ImportAccounts(configPath string, dtoJSON json.RawMessage) (json.RawMessage, error) {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(dtoJSON, &rawItems); err != nil {
+		// 兼容 { "accounts": [...] }
+		var wrapper struct {
+			Accounts []json.RawMessage `json:"accounts"`
+		}
+		if err2 := json.Unmarshal(dtoJSON, &wrapper); err2 != nil || len(wrapper.Accounts) == 0 {
+			return nil, fmt.Errorf("invalid import payload: expect account array")
+		}
+		rawItems = wrapper.Accounts
+	}
+	if len(rawItems) == 0 {
+		return nil, fmt.Errorf("no accounts to import")
+	}
+
+	store := p.GetAccountStore()
+	if store == nil {
+		return nil, fmt.Errorf("account store not initialized")
+	}
+	ctx := context.Background()
+
+	existingAccounts, err := store.ListAccounts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list existing accounts: %w", err)
+	}
+	existingIDs := make(map[string]struct{}, len(existingAccounts))
+	existingRefresh := make(map[string]struct{}, len(existingAccounts))
+	for i := range existingAccounts {
+		a := &existingAccounts[i]
+		if id := strings.TrimSpace(a.ID); id != "" {
+			existingIDs[id] = struct{}{}
+		}
+		if rt := strings.TrimSpace(a.RefreshToken); rt != "" {
+			existingRefresh[rt] = struct{}{}
+		}
+	}
+
+	type importFailure struct {
+		Index  int    `json:"index"`
+		Email  string `json:"email,omitempty"`
+		Reason string `json:"reason"`
+	}
+	result := struct {
+		Success  int             `json:"success"`
+		Failed   int             `json:"failed"`
+		Skipped  int             `json:"skipped"`
+		Errors   []importFailure `json:"errors,omitempty"`
+		Message  string          `json:"message"`
+		Imported int             `json:"imported"`
+	}{
+		Errors: make([]importFailure, 0),
+	}
+
+	batchIDs := make(map[string]struct{}, len(rawItems))
+	batchRefresh := make(map[string]struct{}, len(rawItems))
+	toInsert := make([]*codexShared.CodexAccount, 0, len(rawItems))
+
+	for i, raw := range rawItems {
+		var dto codexAccountImportDTO
+		if err := json.Unmarshal(raw, &dto); err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, importFailure{Index: i + 1, Reason: "invalid account json"})
+			continue
+		}
+		account, buildErr := p.buildAccountFromImportDTO(&dto)
+		if buildErr != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, importFailure{
+				Index:  i + 1,
+				Email:  strings.TrimSpace(dto.Email),
+				Reason: buildErr.Error(),
+			})
+			continue
+		}
+
+		if _, ok := existingIDs[account.ID]; ok {
+			result.Skipped++
+			result.Errors = append(result.Errors, importFailure{
+				Index:  i + 1,
+				Email:  account.Email,
+				Reason: "account with this id already exists",
+			})
+			continue
+		}
+		if account.RefreshToken != "" {
+			if _, ok := existingRefresh[account.RefreshToken]; ok {
+				result.Skipped++
+				result.Errors = append(result.Errors, importFailure{
+					Index:  i + 1,
+					Email:  account.Email,
+					Reason: "account with this refreshToken already exists",
+				})
+				continue
+			}
+		}
+		if _, ok := batchIDs[account.ID]; ok {
+			result.Failed++
+			result.Errors = append(result.Errors, importFailure{
+				Index:  i + 1,
+				Email:  account.Email,
+				Reason: "duplicate account id in import batch",
+			})
+			continue
+		}
+		if account.RefreshToken != "" {
+			if _, ok := batchRefresh[account.RefreshToken]; ok {
+				result.Failed++
+				result.Errors = append(result.Errors, importFailure{
+					Index:  i + 1,
+					Email:  account.Email,
+					Reason: "duplicate refreshToken in import batch",
+				})
+				continue
+			}
+		}
+
+		batchIDs[account.ID] = struct{}{}
+		if account.RefreshToken != "" {
+			batchRefresh[account.RefreshToken] = struct{}{}
+		}
+		toInsert = append(toInsert, account)
+	}
+
+	if len(toInsert) > 0 {
+		if err := store.InsertMany(ctx, toInsert); err != nil {
+			return nil, fmt.Errorf("batch insert accounts: %w", err)
+		}
+		p.afterAccountsImported(toInsert)
+		result.Success = len(toInsert)
+		result.Imported = len(toInsert)
+	}
+
+	result.Message = fmt.Sprintf("JSON 导入完成：成功 %d，失败 %d，跳过重复 %d", result.Success, result.Failed, result.Skipped)
+	return json.Marshal(result)
+}
+
+func (p *CodexPlugin) buildAccountFromImportDTO(dto *codexAccountImportDTO) (*codexShared.CodexAccount, error) {
+	if dto == nil {
+		return nil, fmt.Errorf("account data is required")
+	}
+	normalizeCodexAccountImportDTO(dto)
 
 	if dto.RefreshToken == "" && dto.AccessToken == "" {
 		return nil, fmt.Errorf("either refreshToken or accessToken is required")
-	}
-	if dto.AccountID == "" {
-		dto.AccountID = uuid.NewString()
 	}
 	if dto.Email == "" {
 		return nil, fmt.Errorf("email is required")
@@ -386,27 +559,12 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 		return nil, fmt.Errorf("account id is required")
 	}
 
-	store := p.GetAccountStore()
-	if store == nil {
-		return nil, fmt.Errorf("account store not initialized")
-	}
-
-	existing, _ := store.GetByID(context.Background(), localID)
-	if existing != nil {
-		return nil, fmt.Errorf("account with this id already exists")
-	}
-	if dto.RefreshToken != "" {
-		if rt, _ := store.GetByRefreshToken(context.Background(), dto.RefreshToken); rt != nil {
-			return nil, fmt.Errorf("account with this refreshToken already exists")
-		}
-	}
-
 	now := time.Now()
 	enabled := true
 	if dto.Enabled != nil {
 		enabled = *dto.Enabled
 	}
-	account := codexShared.CodexAccount{
+	account := &codexShared.CodexAccount{
 		ID:             localID,
 		RefreshToken:   dto.RefreshToken,
 		AccessToken:    dto.AccessToken,
@@ -431,12 +589,14 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 			account.ExpiresAt = t
 		}
 	}
+	return account, nil
+}
 
-	if err := store.Insert(context.Background(), &account); err != nil {
-		return nil, err
+func (p *CodexPlugin) afterAccountsImported(accounts []*codexShared.CodexAccount) {
+	if len(accounts) == 0 {
+		return
 	}
 
-	// Update active account in codex.json if first account
 	p.mu.RLock()
 	codexJsonPath := p.codexJsonPath
 	p.mu.RUnlock()
@@ -445,22 +605,23 @@ func (p *CodexPlugin) AddAccount(configPath string, dtoJSON json.RawMessage) (js
 	if mc == nil {
 		mc = &codexShared.CodexMultiConfig{}
 	}
-	if mc.ActiveAccountID == "" {
-		mc.ActiveAccountID = account.ID
+	if strings.TrimSpace(mc.ActiveAccountID) == "" {
+		mc.ActiveAccountID = accounts[0].ID
 		_ = codexShared.SaveCodexMultiConfig(codexJsonPath, mc)
 	}
 
 	if svc := p.GetService(); svc != nil {
-		svc.RemoveAuthManager(account.ID)
+		for _, account := range accounts {
+			if account != nil {
+				svc.RemoveAuthManager(account.ID)
+			}
+		}
 		svc.ensureCodexEndpoint()
 	}
 
 	if pool := codex.GetPool(); pool != nil {
 		pool.Reload()
 	}
-
-	isActive := account.ID == mc.ActiveAccountID
-	return json.Marshal(codexShared.MarshalAccountForFrontend(&account, isActive))
 }
 
 type codexAccountImportDTO struct {

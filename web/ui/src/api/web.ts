@@ -3,6 +3,8 @@ import type {
   ActionResponse,
   CodexAccount,
   CodexAccountInput,
+  CodexImportAccountsResult,
+  CodexResetCreditsList,
   AuthSessionResponse,
   BackupData,
   BackupDataResponse,
@@ -10,6 +12,11 @@ import type {
   CodexEditForm,
   CodexModelPrice,
   CodexPageData,
+  ClashConfig,
+  ClashNode,
+  ClashPageData,
+  ClashRefreshResult,
+  ClashSpeedTestResult,
   DatabaseTestResult,
   EndpointImportInput,
   EndpointImportResponse,
@@ -61,6 +68,23 @@ export const webApi = {
     }),
   getCodex: () => apiFetch<CodexPageData>('/web/api/codex'),
   getXai: () => apiFetch<XaiPageData>('/web/api/xai'),
+  getClash: () => apiFetch<ClashPageData>('/web/api/clash'),
+  startClash: () => apiFetch<ActionResponse>('/web/api/clash/start', { method: 'POST' }),
+  stopClash: () => apiFetch<ActionResponse>('/web/api/clash/stop', { method: 'POST' }),
+  reloadClash: () => apiFetch<ActionResponse>('/web/api/clash/reload', { method: 'POST' }),
+  saveClashConfig: (config: ClashConfig) => apiFetch<ActionResponse>('/web/api/clash/config', { method: 'PUT', body: JSON.stringify(config) }),
+  addClashSubscription: (name: string, url: string) => apiFetch<ActionResponse>('/web/api/clash/subscriptions', { method: 'POST', body: JSON.stringify({ name, url }) }),
+  updateClashSubscription: (id: string, name: string, url: string) => apiFetch<ActionResponse>(`/web/api/clash/subscriptions/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ name, url }) }),
+  removeClashSubscription: (id: string) => apiFetch<ActionResponse>(`/web/api/clash/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  toggleClashSubscription: (id: string) => apiFetch<ActionResponse>(`/web/api/clash/subscriptions/${encodeURIComponent(id)}/toggle`, { method: 'POST' }),
+  setActiveClashSubscription: (id: string) => apiFetch<ActionResponse>(`/web/api/clash/subscriptions/${encodeURIComponent(id)}/active`, { method: 'POST' }),
+  refreshClashSubscription: (id: string) => apiFetch<ClashRefreshResult>(`/web/api/clash/subscriptions/${encodeURIComponent(id)}/refresh`, { method: 'POST' }),
+  setClashChain: (subscriptionId: string) => apiFetch<ActionResponse>('/web/api/clash/chain', { method: 'POST', body: JSON.stringify({ subscriptionId }) }),
+  parseClashNodes: (id: string, content: string) => apiFetch<ClashNode[]>(`/web/api/clash/subscriptions/${encodeURIComponent(id)}/nodes/parse`, { method: 'POST', body: JSON.stringify({ content }) }),
+  replaceClashNodes: (id: string, nodes: ClashNode[], selectedNode: string) => apiFetch<ActionResponse>(`/web/api/clash/subscriptions/${encodeURIComponent(id)}/nodes`, { method: 'PUT', body: JSON.stringify({ nodes, selectedNode }) }),
+  getClashNodeConfig: (nodeName: string) => apiFetch<{ config: string }>(`/web/api/clash/nodes/config?nodeName=${encodeURIComponent(nodeName)}`),
+  testClashNode: (nodeName: string, mode: 'http' | 'tcp') => apiFetch<ClashSpeedTestResult>('/web/api/clash/nodes/test', { method: 'POST', body: JSON.stringify({ nodeName, mode }) }),
+  cancelClashTests: () => apiFetch<ActionResponse>('/web/api/clash/nodes/tests/cancel', { method: 'POST' }),
   activateXaiAccount: (accountId: string) =>
     apiFetch<ActionResponse>('/web/api/xai/active', {
       method: 'POST',
@@ -139,8 +163,13 @@ export const webApi = {
       method: 'POST',
       body: JSON.stringify({ accountId }),
     }),
-  consumeCodexResetCredit: (accountId: string) =>
+  consumeCodexResetCredit: (accountId: string, creditId: string) =>
     apiFetch<ActionResponse>('/web/api/codex/reset', {
+      method: 'POST',
+      body: JSON.stringify({ accountId, creditId }),
+    }),
+  listCodexResetCredits: (accountId: string) =>
+    apiFetch<CodexResetCreditsList>('/web/api/codex/reset-credits', {
       method: 'POST',
       body: JSON.stringify({ accountId }),
     }),
@@ -148,6 +177,13 @@ export const webApi = {
     apiFetch<CodexAccount & ActionResponse>('/web/api/codex/accounts', {
       method: 'POST',
       body: JSON.stringify({ ...payload, websockets: payload.websockets !== false }),
+    }),
+  importCodexAccounts: (accounts: CodexAccountInput[]) =>
+    apiFetch<CodexImportAccountsResult>('/web/api/codex/accounts/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        accounts: accounts.map((payload) => ({ ...payload, websockets: payload.websockets !== false })),
+      }),
     }),
   updateCodexAccount: (payload: CodexEditForm) =>
     apiFetch<ActionResponse>('/web/api/codex/accounts/update', {

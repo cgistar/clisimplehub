@@ -1,8 +1,86 @@
-export type RouteKey = 'home' | 'codex' | 'xai' | 'settings'
+export type RouteKey = 'home' | 'codex' | 'xai' | 'proxy' | 'settings'
 
 export interface AuthSessionResponse {
   authenticated: boolean
   hasApiKey: boolean
+  proxyAvailable?: boolean
+}
+
+export type ClashLogLevel = 'debug' | 'info' | 'warning' | 'error' | 'none'
+
+export interface ClashNode {
+  name: string
+  type: string
+  server: string
+  port: number
+  sourceId: string
+  latency: number
+  [key: string]: unknown
+}
+
+export interface ClashDraftNode extends ClashNode {
+  _draftAdded?: boolean
+}
+
+export interface ClashSubscription {
+  id: string
+  name: string
+  url: string
+  enabled: boolean
+  active: boolean
+  selectedNode: string
+  nodes: ClashNode[]
+  format: string
+  lastUpdated: string
+}
+
+export interface ClashNodeRef {
+  subscriptionId: string
+  nodeName: string
+}
+
+export interface ClashChainConfig {
+  entry: ClashNodeRef
+  middle?: ClashNodeRef
+  exit: ClashNodeRef
+}
+
+export interface ClashStatus {
+  running: boolean
+  socksAddr?: string
+  selectedNode?: string
+  nodeCount: number
+}
+
+export interface ClashConfig {
+  socksListen: string
+  socksPort: number
+  logLevel: ClashLogLevel | string
+  globalProxy?: boolean
+  userYaml: string
+  chain?: ClashChainConfig
+  dialerProxyId?: string
+  subscriptions: ClashSubscription[]
+  [key: string]: unknown
+}
+
+export interface ClashPageData {
+  available: boolean
+  message?: string
+  status?: ClashStatus
+  config?: ClashConfig
+  nodes?: ClashNode[]
+}
+
+export interface ClashRefreshResult {
+  totalNodes: number
+  errors?: string[]
+}
+
+export interface ClashSpeedTestResult {
+  nodeName: string
+  latency: number
+  error?: string
 }
 
 export interface EndpointInfo {
@@ -143,6 +221,27 @@ export interface CodexUsage {
   resetCreditsAvailableCount?: number
 }
 
+export interface CodexResetCredit {
+  id: string
+  reset_type: string
+  is_supported_by_plan: boolean
+  status: string
+  granted_at: string
+  expires_at: string
+  redeem_started_at?: string
+  redeemed_at?: string
+  profile_image_url?: string | null
+  profile_user_id?: string | null
+  title?: string | null
+  description?: string | null
+}
+
+export interface CodexResetCreditsList {
+  credits: CodexResetCredit[]
+  available_count: number
+  total_earned_count: number
+}
+
 export interface CodexAccount {
   id?: string
   refreshToken?: string
@@ -206,6 +305,21 @@ export interface CodexAccountInput {
   mfaCode?: string
   isActive?: boolean
   expiresAt?: string
+}
+
+export interface CodexImportAccountError {
+  index: number
+  email?: string
+  reason: string
+}
+
+export interface CodexImportAccountsResult {
+  success: number
+  failed: number
+  skipped: number
+  imported?: number
+  message?: string
+  errors?: CodexImportAccountError[]
 }
 
 export interface CodexConfigForm {

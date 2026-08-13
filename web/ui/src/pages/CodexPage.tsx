@@ -20,7 +20,7 @@ interface CodexPageProps {
   onRefreshToken: (accountId: string) => void
   onFetchUsage: (accountId: string) => void
   onFetchPrimaryUsage: (accountId: string) => void
-  onResetCredit: (accountId: string) => void
+  onResetCredit: (accountId: string, creditId: string) => void | Promise<void>
   onCopyAccount: (account: CodexAccount) => void
   onEditAccount: (account: CodexAccount) => void
   onDeleteAccount: (accountId: string) => void

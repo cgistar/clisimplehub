@@ -10,13 +10,10 @@ interface PageHeaderProps {
 }
 
 export default function PageHeader({ title, description, loading, onRefresh, showRefresh = true, extraActions }: PageHeaderProps) {
+  void title
+  void description
   return (
     <div className="page-header">
-      <div>
-        <h1 className="page-title">{title}</h1>
-        <p className="page-desc">{description}</p>
-      </div>
-
       {showRefresh || extraActions ? (
         <div className="actions">
           {showRefresh ? (

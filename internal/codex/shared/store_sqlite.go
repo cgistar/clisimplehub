@@ -681,6 +681,76 @@ func (s *SQLiteCodexAccountStore) Insert(ctx context.Context, a *CodexAccount) e
 	return err
 }
 
+// InsertMany 在同一事务中批量插入账号，供 JSON 导入等场景一次落库。
+func (s *SQLiteCodexAccountStore) InsertMany(ctx context.Context, accounts []*CodexAccount) error {
+	if len(accounts) == 0 {
+		return nil
+	}
+	return s.withTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		now := time.Now()
+		query := s.rebind(`
+			INSERT INTO codex_accounts (
+				id, account_id, refresh_token, access_token, id_token, email, plan_type,
+				enabled, websockets, password, mfa_code, expires_at, status, weight, proxy_url,
+				cooldown_until, cooldown_reason,
+				usage_primary_used_pct, usage_primary_reset_secs, usage_primary_window_mins,
+				usage_secondary_used_pct, usage_secondary_reset_secs, usage_secondary_window_mins,
+				usage_primary_over_secondary_pct, usage_reset_credits_available_count, usage_updated_at,
+				created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		for i, a := range accounts {
+			if a == nil {
+				return fmt.Errorf("account[%d] is nil", i)
+			}
+			EnsureCodexLocalID(a)
+			if strings.TrimSpace(a.ID) == "" {
+				a.ID = strings.TrimSpace(a.AccountID)
+			}
+			if strings.TrimSpace(a.ID) == "" {
+				return fmt.Errorf("account[%d] id is required", i)
+			}
+			if a.CreatedAt.IsZero() {
+				a.CreatedAt = now
+			}
+			if a.UpdatedAt.IsZero() {
+				a.UpdatedAt = now
+			}
+
+			var usagePrimPct, usageSecPct, usagePriOverSec float64
+			var usagePrimReset, usagePrimWin, usageSecReset, usageSecWin, usageResetCredits int
+			var usageUpdatedAt any
+			if a.CodexUsage != nil {
+				usagePrimPct = a.CodexUsage.PrimaryUsedPercent
+				usagePrimReset = a.CodexUsage.PrimaryResetAfterSeconds
+				usagePrimWin = a.CodexUsage.PrimaryWindowMinutes
+				usageSecPct = a.CodexUsage.SecondaryUsedPercent
+				usageSecReset = a.CodexUsage.SecondaryResetAfterSeconds
+				usageSecWin = a.CodexUsage.SecondaryWindowMinutes
+				usagePriOverSec = a.CodexUsage.PrimaryOverSecondaryPercent
+				usageResetCredits = a.CodexUsage.ResetCreditsAvailableCount
+				if !a.CodexUsage.UpdatedAt.IsZero() {
+					usageUpdatedAt = sqliteTime(a.CodexUsage.UpdatedAt)
+				}
+			}
+
+			if _, err := tx.ExecContext(txCtx, query,
+				a.ID, a.AccountID, a.RefreshToken, a.AccessToken, a.IDToken, a.Email, a.PlanType,
+				boolToInt(a.Enabled), boolToInt(a.Websockets),
+				a.Password, a.MFACode,
+				nullTime(a.ExpiresAt), string(a.Status), a.EffectiveWeight(), a.ProxyUrl,
+				nullTime(a.CooldownUntil), a.CooldownReason,
+				usagePrimPct, usagePrimReset, usagePrimWin,
+				usageSecPct, usageSecReset, usageSecWin,
+				usagePriOverSec, usageResetCredits, usageUpdatedAt,
+				sqliteTime(a.CreatedAt), sqliteTime(a.UpdatedAt),
+			); err != nil {
+				return fmt.Errorf("insert account %q: %w", a.ID, err)
+			}
+		}
+		return nil
+	})
+}
+
 func (s *SQLiteCodexAccountStore) Update(ctx context.Context, a *CodexAccount) error {
 	if a == nil {
 		return errors.New("nil account")

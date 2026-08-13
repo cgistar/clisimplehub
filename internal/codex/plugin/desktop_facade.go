@@ -222,6 +222,11 @@ func (d *desktopFacade) AddAccount(configPath string, dtoJSON json.RawMessage) (
 	return nil, fmt.Errorf("AddAccount must be called via CodexPlugin")
 }
 
+// ImportAccounts is overridden by CodexPlugin.ImportAccounts in plugin.go
+func (d *desktopFacade) ImportAccounts(configPath string, dtoJSON json.RawMessage) (json.RawMessage, error) {
+	return nil, fmt.Errorf("ImportAccounts must be called via CodexPlugin")
+}
+
 func (d *desktopFacade) UpdateAccount(configPath string, dtoJSON json.RawMessage) error {
 	var dto struct {
 		ID           string  `json:"id"`
@@ -708,24 +713,112 @@ func (d *desktopFacade) GetAccountPrimaryUsage(ctx context.Context, configPath, 
 	return d.getAccountUsage(ctx, configPath, accountId, fetchCodexUsageFromHeaders)
 }
 
-func (d *desktopFacade) ConsumeAccountResetCredit(ctx context.Context, configPath, accountId string) (json.RawMessage, error) {
+func (d *desktopFacade) ConsumeAccountResetCredit(ctx context.Context, configPath, accountId, creditID string) (json.RawMessage, error) {
+	accountId = strings.TrimSpace(accountId)
+	if accountId == "" {
+		return nil, fmt.Errorf("accountId is required")
+	}
+	creditID = strings.TrimSpace(creditID)
+	if creditID == "" {
+		return nil, fmt.Errorf("creditId is required")
+	}
+
+	accessToken, acctID, client, mc, mgr, err := d.resolveResetCreditsContext(ctx, configPath, accountId)
+	if err != nil {
+		return nil, err
+	}
+
+	redeemID := uuid.NewString()
+	reset, err := codexAuth.PostCodexReset(ctx, client, codexAuth.ResetQuery{
+		AccessToken: accessToken,
+		AccountID:   acctID,
+		UserAgent:   mc.Config.UserAgent,
+		Originator:  mc.Config.Originator,
+		RedeemID:    redeemID,
+		CreditID:    creditID,
+		ProxyURL:    "",
+	})
+	if err != nil && isCodexResetUnauthorized(err) {
+		if refreshErr := mgr.ForceRefresh(); refreshErr != nil {
+			return nil, fmt.Errorf("reset failed and token refresh failed: %w", refreshErr)
+		}
+		accessToken, acctID, client, _, _, refreshErr := d.resolveResetCreditsContext(ctx, configPath, accountId)
+		if refreshErr != nil {
+			return nil, fmt.Errorf("auth failed after token refresh: %w", refreshErr)
+		}
+		reset, err = codexAuth.PostCodexReset(ctx, client, codexAuth.ResetQuery{
+			AccessToken: accessToken,
+			AccountID:   acctID,
+			UserAgent:   mc.Config.UserAgent,
+			Originator:  mc.Config.Originator,
+			RedeemID:    redeemID,
+			CreditID:    creditID,
+			ProxyURL:    "",
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(reset)
+}
+
+// ListAccountResetCredits 调用 GET /wham/rate-limit-reset-credits 拉取可用重置次数列表。
+func (d *desktopFacade) ListAccountResetCredits(ctx context.Context, configPath, accountId string) (json.RawMessage, error) {
 	accountId = strings.TrimSpace(accountId)
 	if accountId == "" {
 		return nil, fmt.Errorf("accountId is required")
 	}
 
-	store := getStore()
-	if store == nil {
-		return nil, fmt.Errorf("account store not initialized")
+	accessToken, acctID, client, mc, mgr, err := d.resolveResetCreditsContext(ctx, configPath, accountId)
+	if err != nil {
+		return nil, err
 	}
 
-	account, err := store.GetByID(ctx, accountId)
-	if err != nil || account == nil {
-		return nil, fmt.Errorf("account not found: %s", accountId)
+	list, err := codexAuth.ListResetCredits(ctx, client, codexAuth.ResetQuery{
+		AccessToken: accessToken,
+		AccountID:   acctID,
+		UserAgent:   mc.Config.UserAgent,
+		Originator:  mc.Config.Originator,
+	})
+	if err != nil && isCodexResetUnauthorized(err) {
+		if refreshErr := mgr.ForceRefresh(); refreshErr != nil {
+			return nil, fmt.Errorf("list reset credits failed and token refresh failed: %w", refreshErr)
+		}
+		accessToken, acctID, client, mc, _, refreshErr := d.resolveResetCreditsContext(ctx, configPath, accountId)
+		if refreshErr != nil {
+			return nil, fmt.Errorf("auth failed after token refresh: %w", refreshErr)
+		}
+		list, err = codexAuth.ListResetCredits(ctx, client, codexAuth.ResetQuery{
+			AccessToken: accessToken,
+			AccountID:   acctID,
+			UserAgent:   mc.Config.UserAgent,
+			Originator:  mc.Config.Originator,
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(list)
+}
+
+// resolveResetCreditsContext 解析账号 token / 代理 / 多端配置，供 reset-credits 的 list 与 consume 共用。
+func (d *desktopFacade) resolveResetCreditsContext(ctx context.Context, configPath, accountId string) (accessToken, accountID string, client *http.Client, mc *codexShared.CodexMultiConfig, mgr *codexAuth.CodexAuthManager, err error) {
+	store := getStore()
+	if store == nil {
+		err = fmt.Errorf("account store not initialized")
+		return
+	}
+
+	account, getErr := store.GetByID(ctx, accountId)
+	if getErr != nil || account == nil {
+		err = fmt.Errorf("account not found: %s", accountId)
+		return
 	}
 
 	proxyURL := strings.TrimSpace(account.ProxyUrl)
-	mc, _ := codexShared.LoadCodexMultiConfig(configPath)
+	mc, _ = codexShared.LoadCodexMultiConfig(configPath)
 	if proxyURL == "" && mc != nil {
 		proxyURL = mc.ProxyUrl
 	}
@@ -735,53 +828,25 @@ func (d *desktopFacade) ConsumeAccountResetCredit(ctx context.Context, configPat
 
 	svc := getService()
 	if svc == nil {
-		return nil, fmt.Errorf("codex service not available")
+		err = fmt.Errorf("codex service not available")
+		return
 	}
-	mgr := svc.GetOrCreateAuthManager(accountId, configPath, proxyURL)
-	accessToken, acctID, err := mgr.GetAccessToken()
-	if err != nil {
+	mgr = svc.GetOrCreateAuthManager(accountId, configPath, proxyURL)
+	accessToken, accountID, tokenErr := mgr.GetAccessToken()
+	if tokenErr != nil {
 		if strings.TrimSpace(account.AccessToken) == "" {
-			return nil, fmt.Errorf("auth failed: %v", err)
+			err = fmt.Errorf("auth failed: %v", tokenErr)
+			return
 		}
 		accessToken = strings.TrimSpace(account.AccessToken)
-		acctID = strings.TrimSpace(account.AccountID)
+		accountID = strings.TrimSpace(account.AccountID)
 	}
-	if strings.TrimSpace(acctID) == "" {
-		acctID = strings.TrimSpace(account.AccountID)
-	}
-
-	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
-	redeemID := uuid.NewString()
-	reset, err := codexAuth.PostCodexReset(ctx, client, codexAuth.ResetQuery{
-		AccessToken: accessToken,
-		AccountID:   acctID,
-		UserAgent:   mc.Config.UserAgent,
-		Originator:  mc.Config.Originator,
-		RedeemID:    redeemID,
-		ProxyURL:    proxyURL,
-	})
-	if err != nil && isCodexResetUnauthorized(err) {
-		if refreshErr := mgr.ForceRefresh(); refreshErr != nil {
-			return nil, fmt.Errorf("reset failed and token refresh failed: %w", refreshErr)
-		}
-		accessToken, acctID, err = mgr.GetAccessToken()
-		if err != nil {
-			return nil, fmt.Errorf("auth failed after token refresh: %w", err)
-		}
-		reset, err = codexAuth.PostCodexReset(ctx, client, codexAuth.ResetQuery{
-			AccessToken: accessToken,
-			AccountID:   acctID,
-			UserAgent:   mc.Config.UserAgent,
-			Originator:  mc.Config.Originator,
-			RedeemID:    redeemID,
-			ProxyURL:    proxyURL,
-		})
-	}
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(accountID) == "" {
+		accountID = strings.TrimSpace(account.AccountID)
 	}
 
-	return json.Marshal(reset)
+	client = executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
+	return
 }
 
 func isCodexResetUnauthorized(err error) bool {

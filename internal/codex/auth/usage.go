@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	UsageAPIURL             = "https://chatgpt.com/backend-api/wham/usage"
-	CODEX_RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
+	UsageAPIURL               = "https://chatgpt.com/backend-api/wham/usage"
+	CODEX_RESET_CREDITS_URL   = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+	CODEX_CONSUME_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 )
 
 // UsageRateLimit represents rate limit information
@@ -214,6 +215,7 @@ type ResetQuery struct {
 	UserAgent   string
 	Originator  string
 	RedeemID    string
+	CreditID    string
 	ProxyURL    string
 }
 
@@ -225,17 +227,25 @@ type CodexResetResponse struct {
 }
 
 type CodexResetCredit struct {
-	ID              string  `json:"id"`
-	ResetType       string  `json:"reset_type"`
-	Status          string  `json:"status"`
-	GrantedAt       string  `json:"granted_at"`
-	ExpiresAt       string  `json:"expires_at"`
-	RedeemStartedAt string  `json:"redeem_started_at"`
-	RedeemedAt      string  `json:"redeemed_at"`
-	ProfileImageURL *string `json:"profile_image_url"`
-	ProfileUserID   *string `json:"profile_user_id"`
-	Title           *string `json:"title"`
-	Description     *string `json:"description"`
+	ID                string  `json:"id"`
+	ResetType         string  `json:"reset_type"`
+	IsSupportedByPlan bool    `json:"is_supported_by_plan"`
+	Status            string  `json:"status"`
+	GrantedAt         string  `json:"granted_at"`
+	ExpiresAt         string  `json:"expires_at"`
+	RedeemStartedAt   string  `json:"redeem_started_at"`
+	RedeemedAt        string  `json:"redeemed_at"`
+	ProfileImageURL   *string `json:"profile_image_url"`
+	ProfileUserID     *string `json:"profile_user_id"`
+	Title             *string `json:"title"`
+	Description       *string `json:"description"`
+}
+
+// CodexResetCreditsListResponse 对应 GET /wham/rate-limit-reset-credits 响应。
+type CodexResetCreditsListResponse struct {
+	Credits          []CodexResetCredit `json:"credits"`
+	AvailableCount   int                `json:"available_count"`
+	TotalEarnedCount int                `json:"total_earned_count"`
 }
 
 func PostCodexReset(ctx context.Context, client *http.Client, query ResetQuery) (*CodexResetResponse, error) {
@@ -256,16 +266,19 @@ func PostCodexReset(ctx context.Context, client *http.Client, query ResetQuery) 
 		redeemID = uuid.NewString()
 	}
 
-	// Build request body
-	body := map[string]string{
-		"redeem_request_id": redeemID,
+	creditID := strings.TrimSpace(query.CreditID)
+	if creditID == "" {
+		return nil, fmt.Errorf("creditId is required")
 	}
-	bodyBytes, err := json.Marshal(body)
+	bodyBytes, err := json.Marshal(map[string]any{
+		"redeem_request_id": redeemID,
+		"credit_id":         creditID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, CODEX_RESET_CREDITS_URL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, CODEX_CONSUME_CREDITS_URL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -304,6 +317,61 @@ func PostCodexReset(ctx context.Context, client *http.Client, query ResetQuery) 
 	}
 
 	return &resetResp, nil
+}
+
+// ListResetCredits 拉取账号当前可用的限制重置次数列表。
+// 对应 GET /wham/rate-limit-reset-credits，未授权时返回 (nil, error)。
+func ListResetCredits(ctx context.Context, client *http.Client, query ResetQuery) (*CodexResetCreditsListResponse, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	accessToken := strings.TrimSpace(query.AccessToken)
+	if accessToken == "" {
+		return nil, fmt.Errorf("accessToken is required")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, CODEX_RESET_CREDITS_URL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	builder := NewHeaderBuilder(accessToken, query.AccountID)
+	if query.UserAgent != "" {
+		builder.WithUserAgent(query.UserAgent)
+	}
+	if query.Originator != "" {
+		builder.WithOriginator(query.Originator)
+	}
+	builder.ApplyTo(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		snippet := strings.TrimSpace(string(bodyBytes))
+		if snippet == "" {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateRunes(snippet, 200))
+	}
+
+	var listResp CodexResetCreditsListResponse
+	if err := json.Unmarshal(bodyBytes, &listResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &listResp, nil
 }
 
 func truncateRunes(s string, max int) string {

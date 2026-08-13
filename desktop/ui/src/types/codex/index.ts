@@ -52,6 +52,21 @@ export interface CodexAccountInput {
   isActive?: boolean
 }
 
+export interface CodexImportAccountError {
+  index: number
+  email?: string
+  reason: string
+}
+
+export interface CodexImportAccountsResult {
+  success: number
+  failed: number
+  skipped: number
+  imported?: number
+  message?: string
+  errors?: CodexImportAccountError[]
+}
+
 export interface CodexModelPrice {
   model: string
   inputPer1M: number
@@ -98,6 +113,7 @@ export type CodexUsageResult = main.CodexUsageResult
 export interface CodexResetCredit {
   id: string
   reset_type: string
+  is_supported_by_plan: boolean
   status: string
   granted_at: string
   expires_at: string
@@ -113,6 +129,12 @@ export interface CodexResetResult {
   code: string
   credit: CodexResetCredit
   windows_reset: number
+}
+
+export interface CodexResetCreditsList {
+  credits: CodexResetCredit[]
+  available_count: number
+  total_earned_count: number
 }
 
 export interface HeadlessLoginState {

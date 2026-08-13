@@ -57,6 +57,7 @@ type CodexAccountStore interface {
 	GetByID(ctx context.Context, accountID string) (*CodexAccount, error)
 	GetByRefreshToken(ctx context.Context, rt string) (*CodexAccount, error)
 	Insert(ctx context.Context, account *CodexAccount) error
+	InsertMany(ctx context.Context, accounts []*CodexAccount) error
 	Update(ctx context.Context, account *CodexAccount) error
 	Delete(ctx context.Context, accountID string) error
 	DeleteMany(ctx context.Context, accountIDs []string) error

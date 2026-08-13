@@ -5,7 +5,9 @@ import type {
   CodexAccount,
   CodexAccountInput,
   CodexAccountStatus,
+  CodexImportAccountsResult,
   CodexPagination,
+  CodexResetCreditsList,
   CodexResetResult,
   CodexTestResult,
   CodexUsageResult
@@ -214,6 +216,20 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     }
   }
 
+  async function importAccounts(accountDataList: CodexAccountInput[]): Promise<CodexImportAccountsResult> {
+    clearError()
+    try {
+      const result = await codexApi.importAccounts(accountDataList)
+      if ((result.success || 0) > 0) {
+        await loadAccounts(true)
+      }
+      return result
+    } catch (cause) {
+      error.value = String(cause)
+      throw cause
+    }
+  }
+
   async function updateAccount(accountData: CodexAccountInput): Promise<void> {
     clearError()
 
@@ -341,17 +357,27 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     }
   }
 
-  async function consumeResetCredit(accountId: string): Promise<CodexResetResult> {
+  async function consumeResetCredit(accountId: string, creditId: string): Promise<CodexResetResult> {
     clearError()
 
     try {
-      const result = await codexApi.consumeAccountResetCredit(accountId)
+      const result = await codexApi.consumeAccountResetCredit(accountId, creditId)
       try {
         await fetchUsage(accountId)
       } catch {
         // 重置已经成功；用量刷新失败不应覆盖主操作结果。
       }
       return result
+    } catch (cause) {
+      error.value = String(cause)
+      throw cause
+    }
+  }
+
+  async function listResetCredits(accountId: string): Promise<CodexResetCreditsList> {
+    clearError()
+    try {
+      return await codexApi.listAccountResetCredits(accountId)
     } catch (cause) {
       error.value = String(cause)
       throw cause
@@ -380,6 +406,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     loadMore,
     setActiveAccount,
     addAccount,
+    importAccounts,
     updateAccount,
     restoreAccount,
     deleteAccount,
@@ -388,6 +415,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
     fetchUsage,
     fetchPrimaryUsage,
     consumeResetCredit,
+    listResetCredits,
     setSearchQuery,
     setFilterStatus,
     clearError
