@@ -48,7 +48,6 @@
 
     <div class="card-body">
       <CodexUsageBar
-        :label="t('codex.usage5h')"
         :used-percent="account.codexUsage?.primary?.usedPercent ?? 0"
         :remaining-seconds="account.codexUsage?.primary?.remainingSeconds ?? 0"
         refreshable
@@ -57,7 +56,6 @@
         @refresh="emit('fetch-primary-usage', account.id)"
       />
       <CodexUsageBar
-        :label="t('codex.usageWeek')"
         :used-percent="account.codexUsage?.secondary?.usedPercent ?? 0"
         :remaining-seconds="account.codexUsage?.secondary?.remainingSeconds ?? 0"
       />

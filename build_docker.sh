@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
 DOCKERFILE="${DOCKERFILE:-$ROOT_DIR/Dockerfile}"
 CONTAINER_CLI="${CONTAINER_CLI:-}"
+#https://mirrors.aliyun.com/alpine/v3.22/main
 MIRROR_URL="${MIRROR_URL:-}"
 
 SERVICE_NAME="${SERVICE_NAME:-clisimplehub-server}"

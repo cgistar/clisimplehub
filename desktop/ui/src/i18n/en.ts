@@ -262,8 +262,6 @@ export default {
     submitCallbackUrl: 'Submit Callback',
     oauthCallbackSubmitFailed: 'Failed to submit callback',
     jsonImportMenu: 'JSON Import',
-    usage5h: '5h',
-    usageWeek: 'Wk',
     // Usage related
     usage: 'Usage',
     usageFailedPrefix: 'Failed to fetch usage: ',

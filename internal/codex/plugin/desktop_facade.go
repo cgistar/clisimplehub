@@ -901,7 +901,7 @@ func (d *desktopFacade) getAccountUsage(ctx context.Context, configPath, account
 		acctID = strings.TrimSpace(account.AccountID)
 	}
 
-	usage, planType, err := fetchCodexUsage(ctx, accessToken, acctID, proxyURL, mc)
+	usage, planType, err := fetch(ctx, accessToken, acctID, proxyURL, mc)
 	if err != nil {
 		return nil, err
 	}

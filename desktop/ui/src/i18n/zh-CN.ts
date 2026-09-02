@@ -275,8 +275,6 @@ export default {
     submitCallbackUrl: '提交回调',
     oauthCallbackSubmitFailed: '提交回调失败',
     jsonImportMenu: 'JSON 导入',
-    usage5h: '1限',
-    usageWeek: '2限',
     // 用量相关
     usage: '用量',
     usageFailedPrefix: '获取用量失败：',

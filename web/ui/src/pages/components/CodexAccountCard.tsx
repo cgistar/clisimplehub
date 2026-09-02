@@ -100,7 +100,6 @@ export default function CodexAccountCard({
 
       <div className="codex-account-card-body">
         <CodexUsageBar
-          label="1限"
           usage={account.codexUsage?.primary}
           refreshable
           refreshDisabled={actionBusy || !localId}
@@ -108,7 +107,6 @@ export default function CodexAccountCard({
           onRefresh={() => onFetchPrimaryUsage(localId)}
         />
         <CodexUsageBar
-          label="2限"
           usage={account.codexUsage?.secondary ?? {}}
         />
 

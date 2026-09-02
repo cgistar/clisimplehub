@@ -1,6 +1,6 @@
 <template>
   <div class="codex-usage-bar">
-    <span class="usage-label">{{ label }}</span>
+    <span v-if="label" class="usage-label">{{ label }}</span>
     <button
       v-if="refreshable"
       type="button"

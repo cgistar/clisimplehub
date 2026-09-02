@@ -3,7 +3,7 @@ import { formatCompactRemainingSeconds } from '@/lib/format'
 import { RefreshIcon } from '@/components/icons'
 
 interface CodexUsageBarProps {
-  label: string
+  label?: string
   usage?: CodexUsageWindow
   refreshable?: boolean
   refreshDisabled?: boolean
@@ -23,13 +23,13 @@ export default function CodexUsageBar({
 
   const usedPercent = Math.max(0, Math.min(100, Number(usage?.usedPercent || 0)))
   const tone = usedPercent >= 90 ? 'error' : usedPercent >= 70 ? 'warning' : 'primary'
+  const remaining = formatCompactRemainingSeconds(usage?.remainingSeconds)
+  const headText = label ? `${label}: ${remaining}` : remaining
 
   return (
     <div className="codex-usage-block">
       <div className="codex-usage-head">
-        <span className="codex-usage-label">
-          {label}: {formatCompactRemainingSeconds(usage?.remainingSeconds)}
-        </span>
+        <span className="codex-usage-label">{headText}</span>
         {refreshable ? (
           <button
             className="codex-usage-refresh-btn"

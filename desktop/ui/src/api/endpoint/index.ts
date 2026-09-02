@@ -64,6 +64,44 @@ function tomlLineKey(line: string): string {
   return line.slice(0, separatorIndex).trim()
 }
 
+const defaultCodexModelProvider = 'shub'
+
+function codexModelProvider(configToml: string): string {
+  for (const line of configToml.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    if (trimmed.startsWith('[')) break
+    if (tomlLineKey(line) !== 'model_provider') continue
+
+    const separatorIndex = trimmed.indexOf('=')
+    const value = trimmed.slice(separatorIndex + 1).trim()
+    if (value.startsWith('"')) {
+      const match = value.match(/^"((?:\\.|[^"\\])*)"/)
+      if (match) {
+        try {
+          const provider = JSON.parse(`"${match[1]}"`) as string
+          if (provider.trim() !== '') return provider.trim()
+        } catch {
+          // 解析失败时沿用默认 provider，与桌面端逻辑保持一致。
+        }
+      }
+    } else if (value.startsWith("'")) {
+      const endIndex = value.indexOf("'", 1)
+      if (endIndex >= 0) {
+        const provider = value.slice(1, endIndex + 1).trim()
+        if (provider !== '') return provider
+      }
+    } else {
+      const provider = value.split('#', 1)[0].trim()
+      if (provider !== '') return provider
+    }
+
+    return defaultCodexModelProvider
+  }
+
+  return defaultCodexModelProvider
+}
+
 function updateCodexLocalProviderConfig(
   configToml: string,
   apiUrl: string,
@@ -71,6 +109,7 @@ function updateCodexLocalProviderConfig(
 ): string {
   const lines = configToml.split('\n')
   const newLines: string[] = []
+  const providerSection = `[model_providers.${codexModelProvider(configToml)}]`
   let inLocalProvider = false
   let localProviderFound = false
   let baseUrlUpdated = false
@@ -91,12 +130,12 @@ function updateCodexLocalProviderConfig(
     const trimmed = line.trim()
     const isSection = trimmed.startsWith('[')
 
-    if (isSection && inLocalProvider && !trimmed.startsWith('[model_providers.shub]')) {
+    if (isSection && inLocalProvider && !trimmed.startsWith(providerSection)) {
       appendMissingLocalProviderFields()
       inLocalProvider = false
     }
 
-    if (trimmed.startsWith('[model_providers.shub]')) {
+    if (trimmed.startsWith(providerSection)) {
       inLocalProvider = true
       localProviderFound = true
     }
@@ -120,7 +159,7 @@ function updateCodexLocalProviderConfig(
     if (newLines.length > 0 && newLines[newLines.length - 1].trim() !== '') {
       newLines.push('')
     }
-    newLines.push('[model_providers.shub]')
+    newLines.push(providerSection)
     newLines.push(`base_url = '${apiUrl}'`)
     if (experimentalBearerToken) {
       newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken)}`)
