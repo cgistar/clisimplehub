@@ -106,11 +106,12 @@ type CodexGlobalConfigDTO struct {
 }
 
 type CodexTestResult struct {
-	AccessToken string `json:"accessToken"`
-	AccountID   string `json:"accountId,omitempty"`
-	Email       string `json:"email,omitempty"`
-	PlanType    string `json:"planType,omitempty"`
-	ExpiresAt   string `json:"expiresAt"`
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+	AccountID    string `json:"accountId,omitempty"`
+	Email        string `json:"email,omitempty"`
+	PlanType     string `json:"planType,omitempty"`
+	ExpiresAt    string `json:"expiresAt"`
 }
 
 type CodexLoginResultDTO struct {

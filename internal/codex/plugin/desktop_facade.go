@@ -461,22 +461,26 @@ func (d *desktopFacade) TestAccount(configPath, accountId string) (json.RawMessa
 		}
 	}
 
-	accessToken, idToken, _, email, planType, expiresAt, err := codexAuth.RefreshAndTest(account.RefreshToken, proxyURL, configPath)
+	result, err := codexAuth.RefreshAndTest(account.RefreshToken, proxyURL, configPath)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := store.UpdateTokens(context.Background(), account.ID, accessToken, idToken, account.RefreshToken, expiresAt); err != nil {
+	if err := store.UpdateTokens(context.Background(), account.ID, result.AccessToken, result.IDToken, result.RefreshToken, result.ExpiresAt); err != nil {
 		return nil, fmt.Errorf("persist refreshed tokens failed: %w", err)
 	}
 
-	// Keep in-memory account aligned with refreshed token fields to avoid overwriting expires_at in later full updates.
-	account.AccessToken = accessToken
-	account.IDToken = idToken
-	account.ExpiresAt = expiresAt
-	if email != "" || planType != "" {
-		account.Email = email
-		account.PlanType = planType
+	account.AccessToken = result.AccessToken
+	account.IDToken = result.IDToken
+	account.RefreshToken = result.RefreshToken
+	account.ExpiresAt = result.ExpiresAt
+	if result.Email != "" {
+		account.Email = result.Email
+	}
+	if result.PlanType != "" {
+		account.PlanType = result.PlanType
+	}
+	if result.Email != "" || result.PlanType != "" {
 		if err := store.Update(context.Background(), account); err != nil {
 			return nil, fmt.Errorf("persist refreshed profile failed: %w", err)
 		}
@@ -497,11 +501,12 @@ func (d *desktopFacade) TestAccount(configPath, accountId string) (json.RawMessa
 	}
 
 	return json.Marshal(map[string]any{
-		"accessToken": accessToken,
-		"accountId":   account.AccountID,
-		"email":       email,
-		"planType":    planType,
-		"expiresAt":   expiresAt.Format(time.RFC3339),
+		"accessToken":  result.AccessToken,
+		"refreshToken": result.RefreshToken,
+		"accountId":    account.AccountID,
+		"email":        result.Email,
+		"planType":     result.PlanType,
+		"expiresAt":    result.ExpiresAt.Format(time.RFC3339),
 	})
 }
 

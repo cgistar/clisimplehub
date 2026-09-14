@@ -31,7 +31,7 @@ export default function Topbar({ route, onNavigate, onLogout, proxyAvailable }: 
         </NavLink>
         {proxyAvailable ? (
           <NavLink active={route === 'proxy'} onClick={() => onNavigate('proxy')}>
-            代理
+            隧道
           </NavLink>
         ) : null}
         <NavLink active={route === 'settings'} onClick={() => onNavigate('settings')}>

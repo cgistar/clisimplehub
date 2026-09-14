@@ -156,44 +156,76 @@ func (m *CodexAuthManager) refreshTokenLocked() error {
 	return fmt.Errorf("token refresh failed after %d attempts: %w", MaxRetries, lastErr)
 }
 
-func (m *CodexAuthManager) handleRefreshResponse(body []byte) error {
-	var resp struct {
+type RefreshTestResult struct {
+	AccessToken  string
+	RefreshToken string
+	IDToken      string
+	AccountID    string
+	Email        string
+	PlanType     string
+	ExpiresAt    time.Time
+}
+
+func parseTokenRefreshResponse(body []byte, fallbackRefreshToken string) (*RefreshTestResult, error) {
+	var tokenResp struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		IDToken      string `json:"id_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return fmt.Errorf("decode refresh response: %w", err)
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return nil, fmt.Errorf("decode refresh response: %w", err)
 	}
-	if resp.AccessToken == "" {
-		return fmt.Errorf("response missing access_token")
-	}
-
-	m.accessToken = resp.AccessToken
-	if resp.RefreshToken != "" && resp.RefreshToken != m.refreshToken {
-		m.refreshToken = resp.RefreshToken
-	}
-	if resp.IDToken != "" {
-		m.idToken = resp.IDToken
-		if claims, err := ParseJWTToken(resp.IDToken); err == nil {
-			if claims.Email != "" {
-				m.email = claims.Email
-			}
-			if claims.CodexAuth.ChatgptAccountID != "" {
-				m.accountID = claims.CodexAuth.ChatgptAccountID
-			}
-			if claims.CodexAuth.ChatgptPlanType != "" {
-				m.planType = claims.CodexAuth.ChatgptPlanType
-			}
-		}
+	if strings.TrimSpace(tokenResp.AccessToken) == "" {
+		return nil, fmt.Errorf("response missing access_token")
 	}
 
-	expiresIn := resp.ExpiresIn
+	result := &RefreshTestResult{
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: strings.TrimSpace(tokenResp.RefreshToken),
+		IDToken:      tokenResp.IDToken,
+	}
+	if result.RefreshToken == "" {
+		result.RefreshToken = fallbackRefreshToken
+	}
+
+	expiresIn := tokenResp.ExpiresIn
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}
-	m.expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+	result.ExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+
+	if tokenResp.IDToken != "" {
+		if claims, parseErr := ParseJWTToken(tokenResp.IDToken); parseErr == nil {
+			result.Email = claims.Email
+			result.AccountID = claims.CodexAuth.ChatgptAccountID
+			result.PlanType = claims.CodexAuth.ChatgptPlanType
+		}
+	}
+	return result, nil
+}
+
+func (m *CodexAuthManager) handleRefreshResponse(body []byte) error {
+	result, err := parseTokenRefreshResponse(body, m.refreshToken)
+	if err != nil {
+		return err
+	}
+
+	m.accessToken = result.AccessToken
+	m.refreshToken = result.RefreshToken
+	if result.IDToken != "" {
+		m.idToken = result.IDToken
+	}
+	if result.Email != "" {
+		m.email = result.Email
+	}
+	if result.AccountID != "" {
+		m.accountID = result.AccountID
+	}
+	if result.PlanType != "" {
+		m.planType = result.PlanType
+	}
+	m.expiresAt = result.ExpiresAt
 
 	m.persistToStore()
 	return nil
@@ -207,7 +239,7 @@ func (m *CodexAuthManager) persistToStore() {
 		m.localID, m.accessToken, m.idToken, m.refreshToken, m.expiresAt)
 }
 
-func RefreshAndTest(refreshToken, proxyURL, configPath string) (accessToken, idToken, accountID, email, planType string, expiresAt time.Time, err error) {
+func RefreshAndTest(refreshToken, proxyURL, configPath string) (*RefreshTestResult, error) {
 	client := executor.NewHTTPClientForcedProxyURL(proxyURL, 30*time.Second)
 
 	data := url.Values{
@@ -219,47 +251,22 @@ func RefreshAndTest(refreshToken, proxyURL, configPath string) (accessToken, idT
 
 	req, err := http.NewRequestWithContext(context.Background(), "POST", TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", "", "", "", "", time.Time{}, err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", "", "", "", time.Time{}, err
+		return nil, err
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyStr := strings.TrimSpace(string(body))
-		return "", "", "", "", "", time.Time{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodyStr)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodyStr)
 	}
 
-	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", "", "", "", "", time.Time{}, err
-	}
-
-	accessToken = tokenResp.AccessToken
-	idToken = tokenResp.IDToken
-	expiresIn := tokenResp.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-
-	if tokenResp.IDToken != "" {
-		if claims, parseErr := ParseJWTToken(tokenResp.IDToken); parseErr == nil {
-			email = claims.Email
-			accountID = claims.CodexAuth.ChatgptAccountID
-			planType = claims.CodexAuth.ChatgptPlanType
-		}
-	}
-	return
+	return parseTokenRefreshResponse(body, refreshToken)
 }

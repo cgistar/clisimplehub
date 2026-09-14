@@ -8,7 +8,7 @@ export default {
     kiro: 'Kiro',
     codex: 'Codex',
     xai: 'xAI',
-    clash: '科学上网',
+    clash: '隧道',
     settings: '设置',
   },
   webdav: {
@@ -698,7 +698,7 @@ export default {
     kiroSignSocialExchangeFailed: '无法将社交登录授权码兑换为令牌',
   },
   clash: {
-    title: '科学上网',
+    title: '隧道',
     running: '运行中',
     stopped: '已停止',
     start: '启动',

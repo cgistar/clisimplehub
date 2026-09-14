@@ -310,6 +310,7 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
         patchAccountById(accountId, {
           accountId: result.accountId,
           accessToken: result.accessToken,
+          ...(result.refreshToken ? { refreshToken: result.refreshToken } : {}),
           email: result.email,
           planType: result.planType,
           expiresAt: result.expiresAt,

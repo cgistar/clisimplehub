@@ -596,7 +596,7 @@ export default function App() {
   const pageTitle = useMemo<string>(() => {
     if (route === 'codex') return 'Codex'
     if (route === 'xai') return 'xAI'
-    if (route === 'proxy') return '代理'
+    if (route === 'proxy') return '隧道'
     if (route === 'settings') return '设置'
     return '主页'
   }, [route])
