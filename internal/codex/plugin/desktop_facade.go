@@ -1,6 +1,7 @@
 package codexplugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -912,8 +913,8 @@ func (d *desktopFacade) getAccountUsage(ctx context.Context, configPath, account
 	}
 
 	if usage != nil {
-		pool := codex.GetPool()
-		if pool != nil {
+		usage.PreserveResetCreditsFrom(account.CodexUsage)
+		if pool := codex.GetPool(); pool != nil {
 			pool.UpdateUsageSnapshot(accountId, usage)
 		}
 	}
@@ -926,6 +927,9 @@ func (d *desktopFacade) getAccountUsage(ctx context.Context, configPath, account
 		}
 	}
 
+	if usage == nil {
+		usage = account.CodexUsage
+	}
 	return json.Marshal(formatUsageResult(usage))
 }
 
@@ -1468,7 +1472,10 @@ func fetchCodexUsageFromHeaders(ctx context.Context, accessToken, accountID, pro
 		return nil, "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read response: %w", err)
+	}
 
 	if resp.StatusCode >= 400 {
 		return nil, "", fmt.Errorf("upstream %d: %s", resp.StatusCode, string(respBody))
@@ -1476,5 +1483,13 @@ func fetchCodexUsageFromHeaders(ctx context.Context, accessToken, accountID, pro
 
 	planType := resp.Header.Get("X-Codex-Plan-Type")
 	snapshot := extractCodexUsageHeaders(resp.Header)
+	if err := decodeCodexSSEStream(bytes.NewReader(respBody), func(payload []byte) error {
+		if observed := extractCodexRateLimitsSnapshot(payload, time.Now()); observed != nil {
+			snapshot = observed
+		}
+		return nil
+	}); err != nil {
+		return nil, "", fmt.Errorf("parse usage response: %w", err)
+	}
 	return snapshot, planType, nil
 }

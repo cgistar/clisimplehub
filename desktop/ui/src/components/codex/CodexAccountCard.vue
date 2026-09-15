@@ -52,7 +52,7 @@
         :remaining-seconds="account.codexUsage?.primary?.remainingSeconds ?? 0"
         refreshable
         :refresh-disabled="busy"
-        :refresh-title="t('codex.fetchUsage')"
+        :refresh-title="busy ? t('codex.requestTesting') : t('codex.requestTest')"
         @refresh="emit('fetch-primary-usage', account.id)"
       />
       <CodexUsageBar

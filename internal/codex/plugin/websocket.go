@@ -1154,7 +1154,7 @@ func normalizeCodexHTTPFallbackCompletion(payload []byte) []byte {
 
 func isResponsesWebsocketTerminalEvent(eventType string) bool {
 	eventType = strings.TrimSpace(eventType)
-	return eventType == "response.completed" || eventType == "response.done"
+	return eventType == "response.completed" || eventType == "response.done" || eventType == "response.incomplete"
 }
 
 type responsesWebsocketCollector struct {

@@ -348,10 +348,16 @@ export const useCodexAccountsStore = defineStore('codexAccounts', () => {
 
     try {
       const result = await codexApi.getAccountPrimaryUsage(accountId)
+      const current = accounts.value.find((account) => String(account.id || '').trim() === String(accountId || '').trim())
+      const existingCount = toSafeNumber(current?.codexUsage?.resetCreditsAvailableCount)
+      const incomingCount = toSafeNumber(result?.resetCreditsAvailableCount)
+      const merged = incomingCount > 0 || existingCount <= 0
+        ? result
+        : { ...result, resetCreditsAvailableCount: existingCount }
       patchAccountById(accountId, {
-        codexUsage: normalizeUsage(result)
+        codexUsage: normalizeUsage(merged)
       })
-      return result
+      return merged
     } catch (cause) {
       error.value = String(cause)
       throw cause

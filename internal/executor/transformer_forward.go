@@ -271,7 +271,7 @@ func handleLineStreamingResponse(ctx context.Context, w http.ResponseWriter, ups
 	useResponsesFramer := plan.Transformer == nil && isResponsesPassthroughPlan(plan)
 	var responsesFramer *codexBackend.ResponsesSSEFramer
 	if useResponsesFramer {
-		responsesFramer = &codexBackend.ResponsesSSEFramer{}
+		responsesFramer = &codexBackend.ResponsesSSEFramer{PreserveNativeOutput: upstream.PreserveNativeOutput}
 	}
 
 readLoop:
@@ -868,7 +868,6 @@ func cloneStringMap(src map[string]string) map[string]string {
 	}
 	return out
 }
-
 
 func isResponsesPassthroughPlan(plan *TransformationPlan) bool {
 	if plan == nil {

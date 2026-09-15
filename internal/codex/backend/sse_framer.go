@@ -13,6 +13,7 @@ import (
 // ResponsesSSEFramer 重组 Responses SSE 帧，并在 response.completed.output 为空时
 // 用已收集的 output_item.done 回填
 type ResponsesSSEFramer struct {
+	PreserveNativeOutput bool
 	pending              []byte
 	outputItems          map[int][]byte
 	outputOrder          []int
@@ -89,6 +90,9 @@ func (f *ResponsesSSEFramer) writeFrame(w io.Writer, frame []byte) {
 func (f *ResponsesSSEFramer) repairFrame(frame []byte) []byte {
 	payload, ok := responsesSSEDataPayload(frame)
 	if !ok || len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) || !json.Valid(payload) {
+		return frame
+	}
+	if f.PreserveNativeOutput {
 		return frame
 	}
 	switch gjson.GetBytes(payload, "type").String() {

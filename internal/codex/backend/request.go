@@ -104,7 +104,7 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 			return nil, nil, nil, IdentityState{}, ReplayScope{}, err
 		}
 	} else {
-		body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration), req.Headers)
+		body = finalizeResponsesBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration), req.Headers, req.Source)
 	}
 
 	// Claude→Codex：在 finalize 后注入 reasoning replay
@@ -128,6 +128,7 @@ func Prepare(ctx context.Context, req Request) (*http.Request, []byte, *imagePre
 	}
 	ApplyHeaders(httpReq, req.AccessToken, req.AccountID, req.IsStreaming || IsImagesPath(req.Path), req.Config, clientHeaders)
 	applyWebsocketHeaderOverrides(httpReq.Header, req.EndpointHeaders)
+	applyModelHeaderOverrides(httpReq.Header, BaseModelName(req.Model))
 	applyIdentityConfuseHeaders(httpReq.Header, &identityState)
 	return httpReq, body, imageMeta, identityState, replayScope, nil
 }
@@ -140,11 +141,13 @@ func PrepareWebsocket(ctx context.Context, req Request) ([]byte, http.Header, Id
 	if updated, applied := ApplySuffixThinking(body, req.Model); applied {
 		body = updated
 	}
-	body = finalizeResponsesWebsocketBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration), req.Headers)
+	nativeLite := isNativeCodexRequest(req.Source, body, req.Headers)
+	body = finalizeResponsesWebsocketBody(body, req.Model, req.PlanType, resolveImageGenMode(req.DisableImageGeneration), req.Headers, req.Source)
 	body, headers := applyPromptCache(req.Source, body, req.OriginalBody, req.Headers, req.Model, req.LocalAccountID)
 	hasPromptCache := promptCacheKeyFromBody(body) != ""
 	body, identityState := applyIdentityConfuseBody(req.LocalAccountID, body)
-	upstreamHeaders := applyWebsocketHeadersWithOverrides(req.AccessToken, req.AccountID, req.Config, headers, req.EndpointHeaders, hasPromptCache)
+	upstreamHeaders := applyWebsocketHeadersWithOverrides(req.AccessToken, req.AccountID, req.Config, headers, req.EndpointHeaders, hasPromptCache, nativeLite, req.Headers)
+	applyModelHeaderOverrides(upstreamHeaders, BaseModelName(req.Model))
 	applyIdentityConfuseHeaders(upstreamHeaders, &identityState)
 	return BuildWebsocketRequestBody(body), upstreamHeaders, identityState, nil
 }
@@ -214,7 +217,7 @@ func methodOrPost(method string) string {
 	return method
 }
 
-func finalizeResponsesBody(body []byte, model string, planType string, imageGenMode string, headers http.Header) []byte {
+func finalizeResponsesBody(body []byte, model string, planType string, imageGenMode string, headers http.Header, source ...string) []byte {
 	baseModel := BaseModelName(model)
 	if baseModel == "" {
 		baseModel = BaseModelName(gjson.GetBytes(body, "model").String())
@@ -224,16 +227,19 @@ func finalizeResponsesBody(body []byte, model string, planType string, imageGenM
 	}
 	body, _ = sjson.SetBytes(body, "stream", true)
 	body = deleteUnsupportedFields(body)
-	body = normalizeInstructions(body)
+	native := isNativeCodexRequest(firstSource(source), body, headers)
+	body = normalizeInstructions(body, native)
 	body = sanitizeReasoningEncryptedContent(body)
+	body = sanitizeCodexInputItemIDs(body)
 	lite := isResponsesLiteRequest(body, headers)
 	body = normalizeParallelToolCallsForTools(body, lite)
+	body = normalizeCodexToolSchemas(body)
 	return applyImageGenerationPolicy(body, baseModel, planType, imageGenMode, lite)
 }
 
 // finalizeResponsesWebsocketBody 保留 Responses WebSocket v2 的增量字段。
 // previous_response_id 等字段由持久上游连接消费，不能复用 HTTP 清理逻辑。
-func finalizeResponsesWebsocketBody(body []byte, model string, planType string, imageGenMode string, headers http.Header) []byte {
+func finalizeResponsesWebsocketBody(body []byte, model string, planType string, imageGenMode string, headers http.Header, source ...string) []byte {
 	baseModel := BaseModelName(model)
 	if baseModel == "" {
 		baseModel = BaseModelName(gjson.GetBytes(body, "model").String())
@@ -242,10 +248,13 @@ func finalizeResponsesWebsocketBody(body []byte, model string, planType string, 
 		body, _ = sjson.SetBytes(body, "model", baseModel)
 	}
 	body, _ = sjson.SetBytes(body, "stream", true)
-	body = normalizeInstructions(body)
+	native := isNativeCodexRequest(firstSource(source), body, headers)
+	body = normalizeInstructions(body, native)
 	body = sanitizeReasoningEncryptedContent(body)
+	body = sanitizeCodexInputItemIDs(body)
 	lite := isResponsesLiteRequest(body, headers)
 	body = normalizeWebsocketParallelToolCalls(body, lite)
+	body = normalizeCodexToolSchemas(body)
 	return applyImageGenerationPolicy(body, baseModel, planType, imageGenMode, lite)
 }
 
@@ -259,11 +268,33 @@ func finalizeCompactBody(body []byte, model string, imageGenMode string, headers
 	}
 	body, _ = sjson.DeleteBytes(body, "stream")
 	body = deleteUnsupportedFields(body)
-	body = normalizeInstructions(body)
+	body = normalizeInstructions(body, false)
 	body = sanitizeReasoningEncryptedContent(body)
+	body = sanitizeCodexInputItemIDs(body)
 	lite := isResponsesLiteRequest(body, headers)
 	body = normalizeParallelToolCallsForTools(body, lite)
+	body = normalizeCodexToolSchemas(body)
 	return applyImageGenerationPolicy(body, baseModel, "", imageGenMode, lite)
+}
+
+func firstSource(source []string) string {
+	if len(source) == 0 {
+		return SourceCodex
+	}
+	return source[0]
+}
+
+func IsNativeCodexRequest(source string, body []byte, headers http.Header) bool {
+	return isNativeCodexRequest(source, body, headers)
+}
+
+func isNativeCodexRequest(source string, body []byte, headers http.Header) bool {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case SourceCodex, "openai-response", "":
+	default:
+		return false
+	}
+	return isResponsesLiteRequest(body, headers)
 }
 
 // applyImageGenerationPolicy 根据四态配置处理 image_generation 工具：
@@ -304,18 +335,26 @@ func IsResponsesLiteRequest(body []byte, headers http.Header) bool {
 }
 
 func deleteUnsupportedFields(body []byte) []byte {
+	reasoningSummaryDelivery := gjson.GetBytes(body, "stream_options.reasoning_summary_delivery")
 	for _, field := range []string{
 		"previous_response_id",
 		"prompt_cache_retention",
 		"safety_identifier",
 		"stream_options",
+		"generate",
 	} {
 		body, _ = sjson.DeleteBytes(body, field)
+	}
+	if reasoningSummaryDelivery.Exists() {
+		body, _ = sjson.SetBytes(body, "stream_options.reasoning_summary_delivery", reasoningSummaryDelivery.Value())
 	}
 	return body
 }
 
-func normalizeInstructions(body []byte) []byte {
+func normalizeInstructions(body []byte, native bool) []byte {
+	if native {
+		return body
+	}
 	instructions := gjson.GetBytes(body, "instructions")
 	if !instructions.Exists() || instructions.Type == gjson.Null {
 		body, _ = sjson.SetBytes(body, "instructions", "")
@@ -406,7 +445,7 @@ func ensureImageGenerationTool(body []byte, baseModel string, planType string, l
 		return body
 	}
 	for _, t := range tools.Array() {
-		if t.Get("type").String() == "image_generation" {
+		if t.Get("type").String() == "image_generation" || isImageGenerationFunctionTool(t) {
 			return body
 		}
 	}
@@ -468,14 +507,23 @@ func ApplyHeaders(req *http.Request, accessToken, accountID string, isStreaming 
 	if val := filtered.Get("X-Codex-Turn-Metadata"); val != "" {
 		req.Header.Set("X-Codex-Turn-Metadata", val)
 	}
+	if val := filtered.Get("X-Codex-Turn-State"); val != "" {
+		req.Header.Set("X-Codex-Turn-State", val)
+	}
 	if val := filtered.Get("X-Client-Request-Id"); val != "" {
 		req.Header.Set("X-Client-Request-Id", val)
+	}
+	if val := filtered.Get("X-Codex-Window-Id"); val != "" {
+		req.Header.Set("X-Codex-Window-Id", val)
+	}
+	if val := filtered.Get("Thread-Id"); val != "" {
+		req.Header.Set("Thread-Id", val)
 	}
 
 	// UA：配置优先 → 客户端透传 → 默认（不再强制伪装 DefaultCodexUserAgent）。
 	userAgent := ""
 	if config != nil {
-		userAgent = strings.TrimSpace(config.GetUserAgent())
+		userAgent = strings.TrimSpace(config.Config.UserAgent)
 	}
 	if userAgent == "" && clientHeaders != nil {
 		userAgent = strings.TrimSpace(clientHeaders.Get("User-Agent"))
@@ -528,6 +576,38 @@ func ApplyHeaders(req *http.Request, accessToken, accountID string, isStreaming 
 	}
 }
 
+func isImageGenerationFunctionTool(tool gjson.Result) bool {
+	switch tool.Get("type").String() {
+	case "function":
+		return tool.Get("name").String() == "image_gen.imagegen"
+	case "namespace":
+		if tool.Get("name").String() != "image_gen" {
+			return false
+		}
+		tools := tool.Get("tools")
+		if !tools.IsArray() {
+			return false
+		}
+		for _, nestedTool := range tools.Array() {
+			if nestedTool.Get("type").String() == "function" && nestedTool.Get("name").String() == "imagegen" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func applyModelHeaderOverrides(headers http.Header, modelName string) {
+	if headers == nil || BaseModelName(modelName) != "gpt-5.6-luna" {
+		return
+	}
+	headers.Set("User-Agent", codexShared.DefaultCodexUserAgent)
+	headers.Set("Originator", codexShared.DefaultCodexOriginator)
+	if strings.Contains(headers.Get("User-Agent"), "Mac OS") && codexSessionHeaderValue(headers) == "" {
+		setCodexSessionHeader(headers, uuid.NewString())
+	}
+}
+
 func copyHeaderIfPresent(dst http.Header, src http.Header, key string) {
 	if dst == nil || src == nil {
 		return
@@ -549,10 +629,10 @@ func ApplyWebsocketHeaders(accessToken, accountID string, config *codexShared.Co
 // ApplyWebsocketHeadersWithOverrides 构建不含 prompt-cache 派生身份的 WS 握手 Header。
 // 真实 executor 通过私有 helper 显式传入 prompt-cache 状态，避免信任客户端 Conversation_id。
 func ApplyWebsocketHeadersWithOverrides(accessToken, accountID string, config *codexShared.CodexMultiConfig, clientHeaders http.Header, endpointHeaders map[string]string) http.Header {
-	return applyWebsocketHeadersWithOverrides(accessToken, accountID, config, clientHeaders, endpointHeaders, false)
+	return applyWebsocketHeadersWithOverrides(accessToken, accountID, config, clientHeaders, endpointHeaders, false, false, clientHeaders)
 }
 
-func applyWebsocketHeadersWithOverrides(accessToken, accountID string, config *codexShared.CodexMultiConfig, clientHeaders http.Header, endpointHeaders map[string]string, hasPromptCache bool) http.Header {
+func applyWebsocketHeadersWithOverrides(accessToken, accountID string, config *codexShared.CodexMultiConfig, clientHeaders http.Header, endpointHeaders map[string]string, hasPromptCache bool, nativeLite bool, originalClient http.Header) http.Header {
 	headers := make(http.Header)
 	if token := strings.TrimSpace(accessToken); token != "" {
 		headers.Set("Authorization", "Bearer "+token)
@@ -615,17 +695,23 @@ func applyWebsocketHeadersWithOverrides(accessToken, accountID string, config *c
 	headers.Set("OpenAI-Beta", betaHeader)
 
 	sessionID := codexSessionHeaderValue(clientHeaders)
-	if sessionID == "" && strings.Contains(userAgent, "Mac OS") {
+	if sessionID == "" && !nativeLite && strings.Contains(userAgent, "Mac OS") {
 		sessionID = uuid.NewString()
 	}
 	if sessionID != "" {
 		setCodexSessionHeader(headers, sessionID)
 	}
 	// Conversation_id 只接受 applyPromptCache 明确标记的 prompt-cache session。
-	if hasPromptCache && clientHeaders != nil {
+	if hasPromptCache && !nativeLite && clientHeaders != nil {
 		if cacheSession := strings.TrimSpace(headerValueCaseInsensitive(clientHeaders, "Conversation_id")); cacheSession != "" {
 			setHeaderCasePreserved(headers, "Conversation_id", cacheSession)
 		}
+	}
+	if nativeLite {
+		if val := strings.TrimSpace(headerValueCaseInsensitive(originalClient, responsesLiteHeader)); val != "" {
+			headers.Set(responsesLiteHeader, val)
+		}
+		applyNativeWebsocketIdentityHeaders(headers, originalClient)
 	}
 
 	if config != nil {
@@ -671,17 +757,40 @@ func isManagedWebsocketHandshakeHeader(key string) bool {
 		strings.HasPrefix(key, "sec-websocket-")
 }
 
+func applyNativeWebsocketIdentityHeaders(headers, originalClient http.Header) {
+	if headers == nil {
+		return
+	}
+	removeHeaderCaseInsensitive(headers, "session_id")
+	removeHeaderCaseInsensitive(headers, "conversation_id")
+	if originalClient == nil {
+		return
+	}
+	for key, values := range originalClient {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "session-id", "session_id", "conversation_id", "thread-id", "x-codex-routing-hint", "x-codex-window-id":
+			if len(values) == 0 {
+				continue
+			}
+			removeHeaderCaseInsensitive(headers, key)
+			headers[key] = append([]string(nil), values...)
+		}
+	}
+}
+
 func FilterClientHeaders(clientHeaders http.Header) http.Header {
 	filtered := make(http.Header)
 	if clientHeaders == nil {
 		return filtered
 	}
-	// 上游透传主集合；Window/Conversation 仍可读作 replay sessionKey，但不强制写上游。
 	for _, key := range []string{
 		"Version",
 		"X-Codex-Beta-Features",
 		"X-Codex-Turn-Metadata",
+		"X-Codex-Turn-State",
 		"X-Client-Request-Id",
+		"X-Codex-Window-Id",
+		"Thread-Id",
 		"Originator",
 	} {
 		if val := strings.TrimSpace(headerValueCaseInsensitive(clientHeaders, key)); val != "" {

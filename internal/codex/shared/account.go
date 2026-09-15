@@ -26,10 +26,15 @@ const (
 
 const (
 	DefaultCodexBaseURL       = "https://chatgpt.com/backend-api/codex"
-	DefaultCodexClientVersion = "0.144.0"
+	DefaultCodexClientVersion = "0.154.0"
 	DefaultCodexOriginator    = "codex-tui"
-	DefaultCodexUserAgent     = DefaultCodexOriginator + "/" + DefaultCodexClientVersion + " (Mac OS 26.0.1; arm64) Apple_Terminal/464(" + DefaultCodexOriginator + "; " + DefaultCodexClientVersion + ")"
+	DefaultCodexUserAgent     = "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
 )
+
+var legacyDefaultCodexClientVersions = []string{"0.144.0"}
+var legacyDefaultCodexUserAgents = []string{
+	"codex-tui/0.144.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464(codex-tui; 0.144.0)",
+}
 
 type CodexUsageSnapshot struct {
 	PrimaryUsedPercent          float64   `json:"primaryUsedPercent,omitempty"`
@@ -42,6 +47,15 @@ type CodexUsageSnapshot struct {
 	ResetCreditsAvailableCount  int       `json:"resetCreditsAvailableCount,omitempty"`
 	ResetCreditsAvailable       bool      `json:"-"`
 	UpdatedAt                   time.Time `json:"updatedAt,omitempty"`
+}
+
+// PreserveResetCreditsFrom 在当前快照未携带重置次数信息时，沿用已有快照中的重置次数。
+func (s *CodexUsageSnapshot) PreserveResetCreditsFrom(src *CodexUsageSnapshot) {
+	if s == nil || src == nil || s.ResetCreditsAvailable {
+		return
+	}
+	s.ResetCreditsAvailableCount = src.ResetCreditsAvailableCount
+	s.ResetCreditsAvailable = src.ResetCreditsAvailable || src.ResetCreditsAvailableCount > 0
 }
 
 func ComputeResetMeta(updatedAt time.Time, resetAfterSeconds int) (resetAt time.Time, remainingSeconds int) {
@@ -145,13 +159,39 @@ func NormalizeCodexConfigForStorage(config CodexConfig) CodexConfig {
 	config.Originator = strings.TrimSpace(config.Originator)
 	config.BetaFeatures = strings.TrimSpace(config.BetaFeatures)
 	config.CustomHeaders = NormalizeCustomHeadersForStorage(config.CustomHeaders)
-	if config.ClientVersion == DefaultCodexClientVersion {
+	if isDefaultCodexClientVersion(config.ClientVersion) {
 		config.ClientVersion = ""
 	}
-	if config.UserAgent == DefaultCodexUserAgent {
+	if isDefaultCodexUserAgent(config.UserAgent) {
 		config.UserAgent = ""
 	}
 	return config
+}
+
+func isDefaultCodexClientVersion(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || value == DefaultCodexClientVersion {
+		return true
+	}
+	for _, legacy := range legacyDefaultCodexClientVersions {
+		if value == legacy {
+			return true
+		}
+	}
+	return false
+}
+
+func isDefaultCodexUserAgent(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || value == DefaultCodexUserAgent {
+		return true
+	}
+	for _, legacy := range legacyDefaultCodexUserAgents {
+		if value == legacy {
+			return true
+		}
+	}
+	return false
 }
 
 func NormalizeCustomHeadersForStorage(headers map[string]string) map[string]string {
@@ -226,7 +266,7 @@ func (c *CodexMultiConfig) GetBaseURL() string {
 
 // GetClientVersion returns the configured client version or default
 func (c *CodexMultiConfig) GetClientVersion() string {
-	if c == nil || strings.TrimSpace(c.Config.ClientVersion) == "" {
+	if c == nil || isDefaultCodexClientVersion(c.Config.ClientVersion) {
 		return DefaultCodexClientVersion
 	}
 	return strings.TrimSpace(c.Config.ClientVersion)
@@ -234,7 +274,7 @@ func (c *CodexMultiConfig) GetClientVersion() string {
 
 // GetUserAgent returns the configured user agent or default
 func (c *CodexMultiConfig) GetUserAgent() string {
-	if c == nil || strings.TrimSpace(c.Config.UserAgent) == "" {
+	if c == nil || isDefaultCodexUserAgent(c.Config.UserAgent) {
 		return DefaultCodexUserAgent
 	}
 	return strings.TrimSpace(c.Config.UserAgent)

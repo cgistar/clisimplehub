@@ -1191,6 +1191,7 @@ func (s *SQLiteCodexAccountStore) DeleteStats(ctx context.Context, accountID str
 const codexModelPricesInitializedKey = "model_prices_initialized_v1"
 
 var defaultCodexModelPrices = []CodexModelPrice{
+	{Model: "gpt-6-astra", InputPer1M: 12.5, CachedInputPer1M: 1.25, CacheWritePer1M: 0, OutputPer1M: 75},
 	{Model: "gpt-5.6-sol", InputPer1M: 10, CachedInputPer1M: 1, CacheWritePer1M: 12.5, OutputPer1M: 60},
 	{Model: "gpt-5.6-terra", InputPer1M: 5, CachedInputPer1M: 0.5, CacheWritePer1M: 6.25, OutputPer1M: 30},
 	{Model: "gpt-5.6-luna", InputPer1M: 2, CachedInputPer1M: 0.2, CacheWritePer1M: 2.5, OutputPer1M: 12},

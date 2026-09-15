@@ -46,7 +46,7 @@ func PrepareOpenAIImageBody(raw []byte) ([]byte, error) {
 		out, _ = sjson.SetBytes(out, "model", openAIImagesMainModel)
 		out, _ = sjson.SetBytes(out, "stream", true)
 		out = deleteUnsupportedFields(out)
-		return normalizeInstructions(out), nil
+		return normalizeInstructions(out, false), nil
 	}
 	return raw, nil
 }
@@ -60,7 +60,7 @@ func PrepareOpenAIImageRequest(path string, body []byte, model string, headers h
 	out, _ = sjson.SetBytes(out, "model", openAIImagesMainModel)
 	out, _ = sjson.SetBytes(out, "stream", true)
 	out = deleteUnsupportedFields(out)
-	out = normalizeInstructions(out)
+	out = normalizeInstructions(out, false)
 	return out, prepared.ResponseFormat, prepared.StreamPrefix, nil
 }
 

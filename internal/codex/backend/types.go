@@ -47,15 +47,16 @@ type Request struct {
 }
 
 type Result struct {
-	StatusCode    int
-	Headers       http.Header
-	Body          []byte
-	Stream        io.ReadCloser
-	TargetURL     string
-	TargetHeaders map[string]string
-	RequestBody   []byte
-	Error         error
-	ReplayScope   ReplayScope
+	StatusCode           int
+	Headers              http.Header
+	Body                 []byte
+	Stream               io.ReadCloser
+	TargetURL            string
+	TargetHeaders        map[string]string
+	RequestBody          []byte
+	Error                error
+	ReplayScope          ReplayScope
+	PreserveNativeOutput bool
 }
 
 type IdentityState struct {
@@ -75,6 +76,7 @@ type StatusError struct {
 	Code       int
 	Body       []byte
 	RetryAfter *time.Duration
+	retryable  bool
 }
 
 func (e StatusError) Error() string {
@@ -86,4 +88,8 @@ func (e StatusError) Error() string {
 
 func (e StatusError) StatusCode() int {
 	return e.Code
+}
+
+func (e StatusError) Retryable() bool {
+	return e.retryable
 }

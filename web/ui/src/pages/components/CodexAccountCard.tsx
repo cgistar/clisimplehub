@@ -103,7 +103,7 @@ export default function CodexAccountCard({
           usage={account.codexUsage?.primary}
           refreshable
           refreshDisabled={actionBusy || !localId}
-          refreshTitle={primaryUsageBusy ? '刷新 首个用量限制中...' : '刷新 首个用量限制'}
+          refreshTitle={primaryUsageBusy ? '请求测试中...' : '请求测试'}
           onRefresh={() => onFetchPrimaryUsage(localId)}
         />
         <CodexUsageBar

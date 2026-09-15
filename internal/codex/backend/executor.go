@@ -87,6 +87,8 @@ func resultFromHTTPResponse(ctx context.Context, resp *http.Response, req Reques
 		ReplayScope:   replayScope,
 	}
 
+	result.PreserveNativeOutput = isNativeCodexRequest(req.Source, requestBody, req.Headers)
+
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && req.IsStreaming && !IsCompactPath(req.Path) && !IsImagesPath(req.Path) {
 		stream := NewIdentityExposeReadCloser(resp.Body, identityState)
 		if replayScope.Valid() {
@@ -124,6 +126,13 @@ func resultFromHTTPResponse(ctx context.Context, resp *http.Response, req Reques
 		result.Body = statusErr.Body
 		result.Error = statusErr
 		return result, statusErr
+	}
+	if detectEmptyIncompleteInSSE(data) {
+		se := NewEmptyIncompleteStreamError()
+		result.StatusCode = se.Code
+		result.Body = se.Body
+		result.Error = se
+		return result, se
 	}
 	if IsImagesPath(req.Path) {
 		var body []byte

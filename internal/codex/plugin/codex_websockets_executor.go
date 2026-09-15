@@ -244,6 +244,8 @@ func (e *CodexWebsocketsExecutor) executeWebsocketStream(ctx context.Context, se
 		defer sess.clearActive(readCh)
 		defer sess.reqMu.Unlock()
 
+		outputItems := 0
+		sawOutputDelta := false
 		for {
 			msgType, payload, readErr := readCodexWebsocketMessage(ctx, conn, readCh)
 			if readErr != nil {
@@ -271,6 +273,21 @@ func (e *CodexWebsocketsExecutor) executeWebsocketStream(ctx context.Context, se
 			payload = codexBackend.ExposeIdentityPayload(payload, identityState)
 			reporter.ObservePayload(payload)
 			eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+			if codexBackend.HasMeaningfulCodexOutputDelta(payload) {
+				sawOutputDelta = true
+			}
+			if eventType == "response.output_item.done" {
+				item := gjson.GetBytes(payload, "item")
+				if item.Exists() && item.IsObject() && item.Get("type").String() != "" {
+					outputItems++
+				}
+			}
+			if codexBackend.IsCodexTerminalEmptyIncomplete(payload, outputItems, sawOutputDelta) {
+				emptyErr := newCodexWebsocketExecutionError(http.StatusBadGateway, true, errors.New(codexBackend.CodexEmptyIncompleteStreamMessage))
+				reporter.PublishFailure(http.StatusBadGateway, emptyErr)
+				e.sendChunk(ctx, out, codexWebsocketChunk{Err: emptyErr})
+				return
+			}
 			switch {
 			case eventType == "error":
 				reporter.PublishFailure(http.StatusBadGateway, newCodexWebsocketUpstreamError(payload))
@@ -357,14 +374,28 @@ func (e *CodexWebsocketsExecutor) executeHTTPStream(ctx context.Context, session
 		defer close(out)
 		defer sess.reqMu.Unlock()
 		defer source.Close()
+		outputItems := 0
+		sawOutputDelta := false
 		err := decodeCodexSSEStream(source, func(payload []byte) error {
 			reporter.MarkFirstResponseByte()
 			reporter.ObservePayload(payload)
 			eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+			if codexBackend.HasMeaningfulCodexOutputDelta(payload) {
+				sawOutputDelta = true
+			}
+			if eventType == "response.output_item.done" {
+				item := gjson.GetBytes(payload, "item")
+				if item.Exists() && item.IsObject() && item.Get("type").String() != "" {
+					outputItems++
+				}
+			}
+			if codexBackend.IsCodexTerminalEmptyIncomplete(payload, outputItems, sawOutputDelta) {
+				return newCodexWebsocketExecutionError(http.StatusBadGateway, true, errors.New(codexBackend.CodexEmptyIncompleteStreamMessage))
+			}
 			switch eventType {
 			case "error":
 				reporter.PublishFailure(http.StatusBadGateway, newCodexWebsocketUpstreamError(payload))
-			case "response.completed", "response.done":
+			case "response.completed", "response.done", "response.incomplete":
 				reporter.PublishSuccess(payload)
 			}
 			payload = normalizeCodexHTTPFallbackCompletion(payload)
@@ -377,7 +408,7 @@ func (e *CodexWebsocketsExecutor) executeHTTPStream(ctx context.Context, session
 			switch eventType {
 			case "error":
 				return errCodexHTTPUpstreamEvent
-			case "response.completed", "response.done":
+			case "response.completed", "response.done", "response.incomplete":
 				return errCodexHTTPStreamCompleted
 			}
 			return nil

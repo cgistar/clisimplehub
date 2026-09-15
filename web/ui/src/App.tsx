@@ -282,7 +282,7 @@ export default function App() {
   }
 
   async function handleFetchCodexPrimaryUsage(accountId: string): Promise<void> {
-    await runCodexAction(`codex:usage-primary:${accountId}`, () => webApi.fetchCodexPrimaryUsage(accountId), '5 小时用量已更新', '获取 Codex 5 小时用量失败')
+    await runCodexAction(`codex:usage-primary:${accountId}`, () => webApi.fetchCodexPrimaryUsage(accountId), '请求测试成功', '请求测试失败')
   }
 
   async function handleConsumeCodexResetCredit(accountId: string, creditId: string): Promise<void> {

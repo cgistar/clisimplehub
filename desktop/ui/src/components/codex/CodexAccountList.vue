@@ -163,10 +163,10 @@ async function handleFetchPrimaryUsage(accountId: string): Promise<void> {
     try {
       saveScrollPosition()
       await codexStore.fetchPrimaryUsage(accountId)
-      message.success(t('codex.usageSuccess'))
+      message.success(t('codex.requestTestSuccess'))
       restoreScrollPosition()
     } catch (error) {
-      message.error(t('codex.usageFailedPrefix') + ': ' + toErrorMessage(error))
+      message.error(t('codex.requestTestFailed') + ': ' + toErrorMessage(error))
     }
   })
 }

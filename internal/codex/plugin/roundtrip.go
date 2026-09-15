@@ -361,6 +361,11 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 
 	if backendResult.StatusCode != http.StatusOK {
 		respBody := backendResult.Body
+		retryable := false
+		var statusErr codexBackend.StatusError
+		if errors.As(backendResult.Error, &statusErr) {
+			retryable = statusErr.Retryable()
+		}
 		return &executor.UpstreamRoundTripResult{
 			StatusCode:    backendResult.StatusCode,
 			Body:          respBody,
@@ -369,7 +374,7 @@ func (s *CodexService) roundTripWithAccount(ctx context.Context, account *codexS
 			TargetHeaders: backendResult.TargetHeaders,
 			RequestBody:   append([]byte(nil), backendResult.RequestBody...),
 			Error:         fmt.Errorf("upstream returned %d", backendResult.StatusCode),
-		}, false
+		}, retryable
 	}
 
 	return buildCodexBackendSuccessRoundTrip(backendResult, debugLogger, pool, account), false
@@ -393,13 +398,14 @@ func buildCodexBackendSuccessRoundTrip(result *codexBackend.Result, debugLogger 
 	pool.ReportSuccess(account.ID)
 
 	out := &executor.UpstreamRoundTripResult{
-		StatusCode:    result.StatusCode,
-		Headers:       cloneHTTPHeader(result.Headers),
-		Body:          result.Body,
-		Stream:        result.Stream,
-		TargetURL:     result.TargetURL,
-		TargetHeaders: result.TargetHeaders,
-		RequestBody:   append([]byte(nil), result.RequestBody...),
+		StatusCode:           result.StatusCode,
+		Headers:              cloneHTTPHeader(result.Headers),
+		Body:                 result.Body,
+		Stream:               result.Stream,
+		TargetURL:            result.TargetURL,
+		TargetHeaders:        result.TargetHeaders,
+		RequestBody:          append([]byte(nil), result.RequestBody...),
+		PreserveNativeOutput: result.PreserveNativeOutput,
 	}
 	if result.Stream == nil {
 		out.Tokens = extractTokensFromBody(result.Body)

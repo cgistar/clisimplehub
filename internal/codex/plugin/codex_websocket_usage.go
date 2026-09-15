@@ -251,6 +251,13 @@ func (r *codexUsageReporter) ObservePayload(payload []byte) {
 	if r == nil || len(payload) == 0 {
 		return
 	}
+	if r.account != nil {
+		if snapshot := extractCodexRateLimitsSnapshot(payload, time.Now()); snapshot != nil {
+			if pool := codex.GetPool(); pool != nil {
+				pool.UpdateUsageSnapshot(r.account.ID, snapshot)
+			}
+		}
+	}
 	tokens := extractTokensFromBody(payload)
 	responseTier := strings.TrimSpace(gjson.GetBytes(payload, "response.service_tier").String())
 	if responseTier == "" {

@@ -182,7 +182,7 @@ func writeUpstreamRoundTripHTTPResult(w http.ResponseWriter, result *executor.Up
 		w.WriteHeader(statusCode)
 		buf := make([]byte, 32*1024)
 		flusher, _ := w.(http.Flusher)
-		framer := &codexBackend.ResponsesSSEFramer{}
+		framer := &codexBackend.ResponsesSSEFramer{PreserveNativeOutput: result.PreserveNativeOutput}
 		for {
 			n, readErr := result.Stream.Read(buf)
 			if n > 0 {
@@ -270,6 +270,10 @@ func retryAfterFromBackendError(err error) time.Duration {
 }
 
 func extractCodexUsageHeaders(headers http.Header) *codexShared.CodexUsageSnapshot {
+	return extractCodexUsageHeadersAt(headers, time.Now())
+}
+
+func extractCodexUsageHeadersAt(headers http.Header, now time.Time) *codexShared.CodexUsageSnapshot {
 	hasAny := false
 	parseFloat := func(key string) float64 {
 		v := headers.Get(key)
@@ -295,13 +299,27 @@ func extractCodexUsageHeaders(headers http.Header) *codexShared.CodexUsageSnapsh
 		}
 		return n
 	}
+	parseResetAfter := func(prefix string) int {
+		if seconds := parseInt(prefix + "reset-after-seconds"); seconds > 0 {
+			return seconds
+		}
+		resetAt := parseInt(prefix + "reset-at")
+		if resetAt <= 0 {
+			return 0
+		}
+		remaining := time.Unix(int64(resetAt), 0).Sub(now)
+		if remaining <= 0 {
+			return 0
+		}
+		return int(remaining.Seconds())
+	}
 
 	s := &codexShared.CodexUsageSnapshot{
 		PrimaryUsedPercent:          parseFloat("x-codex-primary-used-percent"),
-		PrimaryResetAfterSeconds:    parseInt("x-codex-primary-reset-after-seconds"),
+		PrimaryResetAfterSeconds:    parseResetAfter("x-codex-primary-"),
 		PrimaryWindowMinutes:        parseInt("x-codex-primary-window-minutes"),
 		SecondaryUsedPercent:        parseFloat("x-codex-secondary-used-percent"),
-		SecondaryResetAfterSeconds:  parseInt("x-codex-secondary-reset-after-seconds"),
+		SecondaryResetAfterSeconds:  parseResetAfter("x-codex-secondary-"),
 		SecondaryWindowMinutes:      parseInt("x-codex-secondary-window-minutes"),
 		PrimaryOverSecondaryPercent: parseFloat("x-codex-primary-over-secondary-limit-percent"),
 	}
@@ -309,7 +327,7 @@ func extractCodexUsageHeaders(headers http.Header) *codexShared.CodexUsageSnapsh
 	if !hasAny {
 		return nil
 	}
-	s.UpdatedAt = time.Now()
+	s.UpdatedAt = now
 	return s
 }
 

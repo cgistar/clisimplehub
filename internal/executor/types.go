@@ -82,15 +82,16 @@ type UpstreamRequest struct {
 }
 
 type UpstreamRoundTripResult struct {
-	StatusCode    int
-	Headers       http.Header
-	Body          []byte
-	Stream        io.ReadCloser
-	TargetURL     string
-	TargetHeaders map[string]string
-	RequestBody   []byte
-	Tokens        *TokenUsage
-	Error         error
+	StatusCode           int
+	Headers              http.Header
+	Body                 []byte
+	Stream               io.ReadCloser
+	TargetURL            string
+	TargetHeaders        map[string]string
+	RequestBody          []byte
+	Tokens               *TokenUsage
+	Error                error
+	PreserveNativeOutput bool
 }
 
 // StreamWriter 用于写入流式响应
