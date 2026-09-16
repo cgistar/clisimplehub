@@ -2493,9 +2493,12 @@ func tomlLineKey(line string) string {
 	return strings.TrimSpace(key)
 }
 
-const defaultCodexModelProvider = "shub"
+const (
+	defaultCodexModelProvider = "openai-custom"
+	codexModelProviderName    = "OpanAI"
+)
 
-func codexModelProvider(configToml string) string {
+func configuredCodexModelProvider(configToml string) (string, bool) {
 	for _, line := range strings.Split(configToml, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -2512,79 +2515,143 @@ func codexModelProvider(configToml string) string {
 		value := strings.TrimSpace(rawValue)
 		switch {
 		case strings.HasPrefix(value, `"`):
-			if end := strings.Index(value[1:], `"`); end >= 0 {
-				if provider, err := strconv.Unquote(value[:end+2]); err == nil && strings.TrimSpace(provider) != "" {
-					return strings.TrimSpace(provider)
+			for end := 1; end < len(value); end++ {
+				if value[end] != '"' || escapedByBackslash(value, end) {
+					continue
 				}
+				provider, err := strconv.Unquote(value[:end+1])
+				if err == nil && strings.TrimSpace(provider) != "" {
+					return strings.TrimSpace(provider), true
+				}
+				break
 			}
 		case strings.HasPrefix(value, "'"):
 			if end := strings.Index(value[1:], "'"); end >= 0 {
 				if provider := strings.TrimSpace(value[1 : end+1]); provider != "" {
-					return provider
+					return provider, true
 				}
 			}
 		default:
 			if provider := strings.TrimSpace(strings.SplitN(value, "#", 2)[0]); provider != "" {
-				return provider
+				return provider, true
 			}
 		}
-
-		return defaultCodexModelProvider
+		return defaultCodexModelProvider, false
 	}
 
-	return defaultCodexModelProvider
+	return defaultCodexModelProvider, false
+}
+
+func escapedByBackslash(value string, index int) bool {
+	backslashes := 0
+	for index--; index >= 0 && value[index] == '\\'; index-- {
+		backslashes++
+	}
+	return backslashes%2 != 0
+}
+
+func tomlSectionHeader(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "[") {
+		return ""
+	}
+	end := strings.Index(trimmed, "]")
+	if end < 0 {
+		return ""
+	}
+	suffix := strings.TrimSpace(trimmed[end+1:])
+	if suffix != "" && !strings.HasPrefix(suffix, "#") {
+		return ""
+	}
+	return trimmed[:end+1]
 }
 
 func updateCodexLocalProviderConfig(configToml, baseURL, experimentalBearerToken string) string {
 	lines := strings.Split(configToml, "\n")
-	newLines := make([]string, 0, len(lines)+3)
-	provider := codexModelProvider(configToml)
+	newLines := make([]string, 0, len(lines)+8)
+	provider, providerConfigured := configuredCodexModelProvider(configToml)
 	providerSection := fmt.Sprintf("[model_providers.%s]", provider)
+	inTopLevel := true
+	modelProviderUpdated := false
 	inTargetProvider := false
 	targetProviderFound := false
+	nameUpdated := false
 	baseURLUpdated := false
-	supportsWebsocketsFound := false
+	requiresOpenAIAuthUpdated := false
+	wireAPIUpdated := false
 	tokenUpdated := false
 
 	appendMissingFields := func() {
+		if !nameUpdated {
+			newLines = append(newLines, fmt.Sprintf("name = %s", strconv.Quote(codexModelProviderName)))
+			nameUpdated = true
+		}
 		if !baseURLUpdated {
-			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
+			newLines = append(newLines, fmt.Sprintf("base_url = %s", strconv.Quote(baseURL)))
 			baseURLUpdated = true
 		}
-		if !supportsWebsocketsFound {
-			newLines = append(newLines, "supports_websockets = true")
-			supportsWebsocketsFound = true
+		if !requiresOpenAIAuthUpdated {
+			newLines = append(newLines, "requires_openai_auth = true")
+			requiresOpenAIAuthUpdated = true
 		}
-		if experimentalBearerToken != "" && !tokenUpdated {
+		if !wireAPIUpdated {
+			newLines = append(newLines, `wire_api = "responses"`)
+			wireAPIUpdated = true
+		}
+		if !tokenUpdated {
 			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
 			tokenUpdated = true
 		}
 	}
 
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		isSection := strings.HasPrefix(trimmed, "[")
+		sectionHeader := tomlSectionHeader(line)
+		isSection := sectionHeader != ""
 
-		if isSection && inTargetProvider && !strings.HasPrefix(trimmed, providerSection) {
+		if isSection && inTargetProvider && sectionHeader != providerSection {
 			appendMissingFields()
 			inTargetProvider = false
 		}
 
-		if strings.HasPrefix(trimmed, providerSection) {
+		if isSection && inTopLevel {
+			if !modelProviderUpdated {
+				newLines = append(newLines, fmt.Sprintf("model_provider = %s", strconv.Quote(provider)), "")
+				modelProviderUpdated = true
+			}
+			inTopLevel = false
+		}
+
+		if sectionHeader == providerSection {
 			inTargetProvider = true
 			targetProviderFound = true
 		}
 
 		lineKey := tomlLineKey(line)
 		switch {
+		case inTopLevel && lineKey == "model_provider":
+			if providerConfigured {
+				newLines = append(newLines, line)
+			} else {
+				newLines = append(newLines, fmt.Sprintf("model_provider = %s", strconv.Quote(provider)))
+			}
+			modelProviderUpdated = true
+		case inTargetProvider && lineKey == "name":
+			newLines = append(newLines, fmt.Sprintf("name = %s", strconv.Quote(codexModelProviderName)))
+			nameUpdated = true
 		case inTargetProvider && lineKey == "base_url":
-			newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
+			newLines = append(newLines, fmt.Sprintf("base_url = %s", strconv.Quote(baseURL)))
 			baseURLUpdated = true
-		case inTargetProvider && lineKey == "supports_websockets":
-			newLines = append(newLines, line)
-			supportsWebsocketsFound = true
+		case inTargetProvider && lineKey == "requires_openai_auth":
+			newLines = append(newLines, "requires_openai_auth = true")
+			requiresOpenAIAuthUpdated = true
+		case inTargetProvider && lineKey == "wire_api":
+			newLines = append(newLines, `wire_api = "responses"`)
+			wireAPIUpdated = true
 		case inTargetProvider && experimentalBearerToken != "" && lineKey == "experimental_bearer_token":
 			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
+			tokenUpdated = true
+		case inTargetProvider && lineKey == "experimental_bearer_token":
+			newLines = append(newLines, line)
 			tokenUpdated = true
 		default:
 			newLines = append(newLines, line)
@@ -2595,16 +2662,19 @@ func updateCodexLocalProviderConfig(configToml, baseURL, experimentalBearerToken
 		appendMissingFields()
 	}
 
+	if !modelProviderUpdated {
+		if len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) != "" {
+			newLines = append(newLines, "")
+		}
+		newLines = append(newLines, fmt.Sprintf("model_provider = %s", strconv.Quote(provider)))
+	}
+
 	if !targetProviderFound {
 		if len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) != "" {
 			newLines = append(newLines, "")
 		}
 		newLines = append(newLines, providerSection)
-		newLines = append(newLines, fmt.Sprintf("base_url = '%s'", baseURL))
-		newLines = append(newLines, "supports_websockets = true")
-		if experimentalBearerToken != "" {
-			newLines = append(newLines, fmt.Sprintf("experimental_bearer_token = %s", strconv.Quote(experimentalBearerToken)))
-		}
+		appendMissingFields()
 	}
 
 	return strings.Join(newLines, "\n")
@@ -2789,7 +2859,7 @@ windows_wsl_setup_acknowledged = true
 model_verbosity = "high"
 plan_mode_reasoning_effort = "high"
 supports_websockets = true
-model_provider = "shub"
+model_provider = "openai-custom"
 
 [features]
 plan_tool = true
@@ -2804,11 +2874,12 @@ multi_agent = true
 steer = true
 goals = true
 
-[model_providers.shub]
-name = "shub"
+[model_providers.openai-custom]
+name = "OpanAI"
 base_url = "%s"
 requires_openai_auth = true
 wire_api = "responses"
+experimental_bearer_token = ""
 
 [tui]
 status_line = ["current-dir", "git-branch", "model-with-reasoning", "five-hour-limit", "weekly-limit", "context-used"]

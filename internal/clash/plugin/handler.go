@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"clisimplehub/internal/plugin"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,11 +29,13 @@ func registerRoutes(r plugin.RouteRegistrar, svc *ClashService) {
 	r.HandleFunc("/sub", h.handleSubscriptionConvert)
 	r.HandleFunc("/subip", h.handleSubscriptionIPs)
 	r.HandleFunc("/rosip", h.handleRouterOSSubscriptionIPs)
+	r.HandleFunc("/roscn", h.handleRouterOSChinaRoutes)
 	r.HandleFunc("/grouprule/mihomo", h.handleMihomoGroupRule)
 }
 
 type handler struct {
-	svc *ClashService
+	svc          *ClashService
+	rosCNFetcher func(context.Context) (*routerOSChinaRoutes, error)
 }
 
 func (h *handler) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -281,6 +284,35 @@ func (h *handler) handleRouterOSSubscriptionIPs(w http.ResponseWriter, r *http.R
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
 	_, _ = w.Write(renderRouterOSIPScript(info))
+}
+
+func (h *handler) handleRouterOSChinaRoutes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		name = "CN"
+	}
+	if !validRouterOSAddressListName(name) {
+		http.Error(w, "name must be 1-64 characters using only letters, digits, '.', '_' or '-'", http.StatusBadRequest)
+		return
+	}
+
+	fetcher := h.rosCNFetcher
+	if fetcher == nil {
+		fetcher = func(ctx context.Context) (*routerOSChinaRoutes, error) {
+			return fetchRouterOSChinaRoutes(ctx, h.svc)
+		}
+	}
+	routes, err := fetcher(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
+	_, _ = w.Write(renderRouterOSChinaRoutes(name, routes))
 }
 
 func parseConverterOptions(r *http.Request) converterOptions {

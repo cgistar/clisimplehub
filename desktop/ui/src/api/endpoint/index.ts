@@ -64,9 +64,10 @@ function tomlLineKey(line: string): string {
   return line.slice(0, separatorIndex).trim()
 }
 
-const defaultCodexModelProvider = 'shub'
+const defaultCodexModelProvider = 'openai-custom'
+const codexModelProviderName = 'OpanAI'
 
-function codexModelProvider(configToml: string): string {
+function configuredCodexModelProvider(configToml: string): string | undefined {
   for (const line of configToml.split('\n')) {
     const trimmed = line.trim()
     if (trimmed === '' || trimmed.startsWith('#')) continue
@@ -82,24 +83,33 @@ function codexModelProvider(configToml: string): string {
           const provider = JSON.parse(`"${match[1]}"`) as string
           if (provider.trim() !== '') return provider.trim()
         } catch {
-          // 解析失败时沿用默认 provider，与桌面端逻辑保持一致。
+          return undefined
         }
       }
     } else if (value.startsWith("'")) {
       const endIndex = value.indexOf("'", 1)
       if (endIndex >= 0) {
-        const provider = value.slice(1, endIndex + 1).trim()
+        const provider = value.slice(1, endIndex).trim()
         if (provider !== '') return provider
       }
     } else {
       const provider = value.split('#', 1)[0].trim()
       if (provider !== '') return provider
     }
-
-    return defaultCodexModelProvider
+    return undefined
   }
 
-  return defaultCodexModelProvider
+  return undefined
+}
+
+function tomlSectionHeader(line: string): string {
+  const trimmed = line.trim()
+  const endIndex = trimmed.indexOf(']')
+  if (!trimmed.startsWith('[') || endIndex < 0) return ''
+
+  const suffix = trimmed.slice(endIndex + 1).trim()
+  if (suffix !== '' && !suffix.startsWith('#')) return ''
+  return trimmed.slice(0, endIndex + 1)
 }
 
 function updateCodexLocalProviderConfig(
@@ -109,42 +119,87 @@ function updateCodexLocalProviderConfig(
 ): string {
   const lines = configToml.split('\n')
   const newLines: string[] = []
-  const providerSection = `[model_providers.${codexModelProvider(configToml)}]`
+  const configuredProvider = configuredCodexModelProvider(configToml)
+  const provider = configuredProvider || defaultCodexModelProvider
+  const providerSection = `[model_providers.${provider}]`
+  let inTopLevel = true
+  let modelProviderUpdated = false
   let inLocalProvider = false
   let localProviderFound = false
+  let nameUpdated = false
   let baseUrlUpdated = false
+  let requiresOpenAIAuthUpdated = false
+  let wireAPIUpdated = false
   let tokenUpdated = false
 
   const appendMissingLocalProviderFields = () => {
+    if (!nameUpdated) {
+      newLines.push(`name = ${formatTomlString(codexModelProviderName)}`)
+      nameUpdated = true
+    }
     if (!baseUrlUpdated) {
-      newLines.push(`base_url = '${apiUrl}'`)
+      newLines.push(`base_url = ${formatTomlString(apiUrl)}`)
       baseUrlUpdated = true
     }
-    if (experimentalBearerToken && !tokenUpdated) {
-      newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken)}`)
+    if (!requiresOpenAIAuthUpdated) {
+      newLines.push('requires_openai_auth = true')
+      requiresOpenAIAuthUpdated = true
+    }
+    if (!wireAPIUpdated) {
+      newLines.push('wire_api = "responses"')
+      wireAPIUpdated = true
+    }
+    if (!tokenUpdated) {
+      newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken || '')}`)
       tokenUpdated = true
     }
   }
 
   for (const line of lines) {
-    const trimmed = line.trim()
-    const isSection = trimmed.startsWith('[')
+    const sectionHeader = tomlSectionHeader(line)
+    const isSection = sectionHeader !== ''
 
-    if (isSection && inLocalProvider && !trimmed.startsWith(providerSection)) {
+    if (isSection && inLocalProvider && sectionHeader !== providerSection) {
       appendMissingLocalProviderFields()
       inLocalProvider = false
     }
 
-    if (trimmed.startsWith(providerSection)) {
+    if (isSection && inTopLevel) {
+      if (!modelProviderUpdated) {
+        newLines.push(`model_provider = ${formatTomlString(provider)}`, '')
+        modelProviderUpdated = true
+      }
+      inTopLevel = false
+    }
+
+    if (sectionHeader === providerSection) {
       inLocalProvider = true
       localProviderFound = true
     }
 
-    if (inLocalProvider && tomlLineKey(line) === 'base_url') {
-      newLines.push(`base_url = '${apiUrl}'`)
+    const lineKey = tomlLineKey(line)
+    if (inTopLevel && lineKey === 'model_provider') {
+      newLines.push(
+        configuredProvider ? line : `model_provider = ${formatTomlString(defaultCodexModelProvider)}`
+      )
+      modelProviderUpdated = true
+    } else if (inLocalProvider && lineKey === 'name') {
+      newLines.push(`name = ${formatTomlString(codexModelProviderName)}`)
+      nameUpdated = true
+    } else if (inLocalProvider && lineKey === 'base_url') {
+      newLines.push(`base_url = ${formatTomlString(apiUrl)}`)
       baseUrlUpdated = true
-    } else if (inLocalProvider && experimentalBearerToken && tomlLineKey(line) === 'experimental_bearer_token') {
+    } else if (inLocalProvider && lineKey === 'requires_openai_auth') {
+      newLines.push('requires_openai_auth = true')
+      requiresOpenAIAuthUpdated = true
+    } else if (inLocalProvider && lineKey === 'wire_api') {
+      newLines.push('wire_api = "responses"')
+      wireAPIUpdated = true
+    } else if (inLocalProvider && experimentalBearerToken && lineKey === 'experimental_bearer_token') {
       newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken)}`)
+      tokenUpdated = true
+    } else if (inLocalProvider && lineKey === 'experimental_bearer_token') {
+      newLines.push(line)
       tokenUpdated = true
     } else {
       newLines.push(line)
@@ -155,15 +210,19 @@ function updateCodexLocalProviderConfig(
     appendMissingLocalProviderFields()
   }
 
+  if (!modelProviderUpdated) {
+    if (newLines.length > 0 && newLines[newLines.length - 1].trim() !== '') {
+      newLines.push('')
+    }
+    newLines.push(`model_provider = ${formatTomlString(provider)}`)
+  }
+
   if (!localProviderFound) {
     if (newLines.length > 0 && newLines[newLines.length - 1].trim() !== '') {
       newLines.push('')
     }
     newLines.push(providerSection)
-    newLines.push(`base_url = '${apiUrl}'`)
-    if (experimentalBearerToken) {
-      newLines.push(`experimental_bearer_token = ${formatTomlString(experimentalBearerToken)}`)
-    }
+    appendMissingLocalProviderFields()
   }
 
   return newLines.join('\n')
