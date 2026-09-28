@@ -185,6 +185,7 @@ export default function CodexPage({
         saving={modelPricesSaving}
         onOpenChange={setModelPricesOpen}
         onSave={saveModelPrices}
+        onRestore={webApi.getDefaultCodexModelPrices}
       />
     </div>
   )

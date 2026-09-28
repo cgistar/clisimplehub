@@ -2847,27 +2847,16 @@ func (a *App) getDefaultCodexConfig() string {
 	settings, _ := a.GetSettings()
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d/v1", settings.Port)
 
-	return fmt.Sprintf(`disable_response_storage = true
-network_access = true
-sandbox_mode = "workspace-write"
-experimental_use_rmcp_client = true
+	return fmt.Sprintf(`sandbox_mode = "workspace-write"
 model = "gpt-5.5"
 model_reasoning_effort = "high"
 personality = "pragmatic"
 web_search = "live"
-windows_wsl_setup_acknowledged = true
 model_verbosity = "high"
 plan_mode_reasoning_effort = "high"
-supports_websockets = true
 model_provider = "openai-custom"
 
 [features]
-plan_tool = true
-view_image_tool = true
-streamable_shell = false
-rmcp_client = true
-skills = true
-parallel = true
 unified_exec = true
 shell_snapshot = true
 multi_agent = true

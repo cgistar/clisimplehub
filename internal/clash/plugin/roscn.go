@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +32,7 @@ func fetchRouterOSChinaRoutes(ctx context.Context, svc *ClashService) (*routerOS
 		return routes, nil
 	}
 
-	proxyURL := routerOSSocks5ProxyURL(svc)
+	proxyURL := builtInSocks5ProxyURL(svc)
 	if proxyURL == "" {
 		return nil, fmt.Errorf("download China routes directly: %w; the built-in SOCKS5 proxy is not running", directErr)
 	}
@@ -113,28 +112,6 @@ func downloadCIDRs(ctx context.Context, client *http.Client, rawURL string, want
 		return nil, fmt.Errorf("upstream returned no routes")
 	}
 	return routes, nil
-}
-
-func routerOSSocks5ProxyURL(svc *ClashService) string {
-	if svc == nil {
-		return ""
-	}
-	svc.mu.RLock()
-	running := svc.running
-	svc.mu.RUnlock()
-	if !running || svc.config == nil {
-		return ""
-	}
-	cfg := svc.config.Get()
-	host := strings.TrimSpace(cfg.SocksListen)
-	if cfg.SocksPort <= 0 || cfg.SocksPort > 65535 {
-		return ""
-	}
-	switch host {
-	case "", "0.0.0.0", "::", "[::]":
-		host = "127.0.0.1"
-	}
-	return "socks5://" + net.JoinHostPort(host, strconv.Itoa(cfg.SocksPort))
 }
 
 func validRouterOSAddressListName(name string) bool {

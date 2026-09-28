@@ -26,7 +26,10 @@
 
     <template #footer>
       <n-space justify="space-between">
-        <n-button :disabled="loading || saving" @click="addRow">添加模型</n-button>
+        <n-space>
+          <n-button :disabled="loading || saving" @click="addRow">添加模型</n-button>
+          <n-button :disabled="loading || saving" @click="restoreDefaults">恢复</n-button>
+        </n-space>
         <n-space>
           <n-button :disabled="saving" @click="close">取消</n-button>
           <n-button type="primary" :loading="saving" :disabled="loading" @click="save">保存</n-button>
@@ -40,6 +43,7 @@
 import { ref, watch } from 'vue'
 import { NButton, NInput, NInputNumber, NModal, NSpace, NSpin, useMessage } from 'naive-ui'
 import { useCodexModelPricesStore } from '@/stores/codexModelPricesStore'
+import { codexApi } from '@/api/codex'
 import type { CodexModelPrice } from '@/types/codex'
 
 const props = defineProps<{ show: boolean }>()
@@ -85,6 +89,17 @@ watch(visible, (show) => {
 
 function addRow(): void {
   rows.value.push({ model: '', inputPer1M: 0, cachedInputPer1M: 0, cacheWritePer1M: 0, outputPer1M: 0 })
+}
+
+async function restoreDefaults(): Promise<void> {
+  loading.value = true
+  try {
+    rows.value = copyPrices(await codexApi.getDefaultModelPrices())
+  } catch (error) {
+    message.error(`加载内置模型单价失败：${toErrorMessage(error)}`)
+  } finally {
+    loading.value = false
+  }
 }
 
 function removeRow(index: number): void {

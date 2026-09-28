@@ -541,6 +541,10 @@ func (d *desktopFacade) GetCodexModelPrices() (json.RawMessage, error) {
 	return json.Marshal(prices)
 }
 
+func (d *desktopFacade) GetDefaultCodexModelPrices() (json.RawMessage, error) {
+	return json.Marshal(codexShared.DefaultCodexModelPrices())
+}
+
 func (d *desktopFacade) SaveCodexModelPrices(dto json.RawMessage) (json.RawMessage, error) {
 	if strings.TrimSpace(string(dto)) == "null" {
 		return nil, fmt.Errorf("model prices must be an array")

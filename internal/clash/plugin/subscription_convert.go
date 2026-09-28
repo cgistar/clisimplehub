@@ -22,10 +22,13 @@ import (
 	"time"
 
 	mihomoconvert "github.com/metacubex/mihomo/common/convert"
+	"golang.org/x/sync/singleflight"
 	"gopkg.in/yaml.v3"
 )
 
 const maxMergedSubscriptionURLs = 8
+
+const defaultSubscriptionConvertUserAgent = "sing-box/1.13.0-alpha.27"
 
 type subscriptionTarget string
 
@@ -60,21 +63,28 @@ type subscriptionServerIPInfo struct {
 }
 
 type subscriptionConverter struct {
-	settings *converterSettings
-	client   *http.Client
-	baseURL  string
-	options  converterOptions
+	settings      *converterSettings
+	client        *http.Client
+	baseURL       string
+	options       converterOptions
+	ini           *singBoxINI
+	ruleWarnings  []string
+	ruleWarningMu sync.Mutex
+	ruleProxyURL  func() string
+	ruleCacheDir  string
 
 	allowPrivateFetch bool
 }
 
 type converterOptions struct {
-	SocksPort int
-	NoRPRX    bool
-	Landing   bool
-	FixedNode string
-	Tun       bool
-	Version   string
+	UserAgent      string
+	SocksPort      int
+	NoRPRX         bool
+	Landing        bool
+	FixedNode      string
+	Tun            bool
+	SkipCertVerify *bool
+	UDP            *bool
 }
 
 type ruleHostCacheEntry struct {
@@ -91,6 +101,8 @@ var ruleHostCache = struct {
 	sync.Mutex
 	items map[string]ruleHostCacheEntry
 }{items: map[string]ruleHostCacheEntry{}}
+
+var ruleHostFetchGroup singleflight.Group
 
 func newSubscriptionConverter(settings *converterSettings, client *http.Client, baseURL string) *subscriptionConverter {
 	if settings == nil {
@@ -226,9 +238,12 @@ func (c *subscriptionConverter) Convert(ctx context.Context, urls []string, targ
 	headers := outputHeadersForSubscriptions(target, fetched)
 	switch target {
 	case targetSingBox:
-		body, err := c.renderSingBox(nodes)
+		body, err := c.renderSingBoxContext(ctx, nodes)
 		if err != nil {
 			return nil, err
+		}
+		if warnings := c.subscriptionWarnings(); len(warnings) > 0 {
+			headers["X-Subscription-Warnings"] = strings.Join(warnings, "; ")
 		}
 		return &subscriptionOutput{Body: body, ContentType: "application/json; charset=UTF-8", Headers: headers}, nil
 	case targetBase64:
@@ -382,7 +397,7 @@ func (c *subscriptionConverter) fetch(ctx context.Context, rawURL string) (*fetc
 	if err != nil {
 		return nil, fmt.Errorf("create request %s: %w", rawURL, err)
 	}
-	req.Header.Set("User-Agent", subscriptionUserAgent)
+	req.Header.Set("User-Agent", firstNonEmptyValue(c.options.UserAgent, defaultSubscriptionConvertUserAgent))
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -829,8 +844,7 @@ func (c *subscriptionConverter) buildMihomoGroupsAndRules(nodes []ProxyNode, lan
 
 	existingRuleProviders := extractMihomoRuleProviders(c.settings.Mihomo)
 	ruleProviders := cloneProviderMap(existingRuleProviders)
-	rules := directRulesForProxyServers(nodes)
-	rules = append(rules, localNetworkDirectRules()...)
+	rules := localNetworkDirectRules()
 	for _, group := range c.settings.ProxyGroups {
 		if len(group.Rules) == 0 && len(group.Hosts) == 0 {
 			for _, ruleSet := range group.RuleSet {
@@ -925,44 +939,6 @@ func cloneProviderMap(input map[string]any) map[string]any {
 		}
 	}
 	return out
-}
-
-func directRulesForProxyServers(nodes []ProxyNode) []string {
-	seen := map[string]struct{}{}
-	var rules []string
-	for _, node := range nodes {
-		server := nodeServer(node)
-		if server == "" {
-			continue
-		}
-		if ip := net.ParseIP(server); ip != nil {
-			rule := "IP-CIDR," + ip.String() + "/32,DIRECT,no-resolve"
-			if _, ok := seen[rule]; !ok {
-				seen[rule] = struct{}{}
-				rules = append(rules, rule)
-			}
-			continue
-		}
-		suffix := registrableDomain(server)
-		if suffix == "" {
-			continue
-		}
-		rule := "DOMAIN-SUFFIX," + suffix + ",DIRECT"
-		if _, ok := seen[rule]; !ok {
-			seen[rule] = struct{}{}
-			rules = append(rules, rule)
-		}
-	}
-	return rules
-}
-
-func registrableDomain(host string) string {
-	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), ".")
-	parts := strings.Split(host, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	return strings.Join(parts[len(parts)-2:], ".")
 }
 
 func localNetworkDirectRules() []string {
@@ -1185,12 +1161,14 @@ func dedupeSingBoxRuleSets(ruleSets []any) []any {
 }
 
 func (c *subscriptionConverter) renderSingBox(nodes []ProxyNode) ([]byte, error) {
+	return c.renderSingBoxContext(context.Background(), nodes)
+}
+
+func (c *subscriptionConverter) renderSingBoxContext(ctx context.Context, nodes []ProxyNode) ([]byte, error) {
 	cfg := cloneAnyMap(c.settings.SingBox)
 	applySingBoxOptions(cfg, c.options)
-	version := singBoxVersionNumber(c.options.Version)
 	outbounds := []any{
 		map[string]any{"tag": "DIRECT", "type": "direct"},
-		map[string]any{"tag": "REJECT", "type": "block"},
 	}
 	var convertedNodes []ProxyNode
 	for _, node := range nodes {
@@ -1199,20 +1177,35 @@ func (c *subscriptionConverter) renderSingBox(nodes []ProxyNode) ([]byte, error)
 			log.Printf("[clash] sing-box conversion skipped %s: %v", nodeName(node), err)
 			continue
 		}
+		applySingBoxNodeOptions(outbound, c.options)
 		outbounds = append(outbounds, outbound)
 		convertedNodes = append(convertedNodes, node)
 	}
 	if len(convertedNodes) == 0 {
 		return nil, fmt.Errorf("no nodes can be converted to sing-box")
 	}
-	outbounds = append(outbounds, c.buildSingBoxGroups(convertedNodes)...)
+	var groups []any
+	if c.ini != nil {
+		var err error
+		groups, err = c.buildCustomSingBoxGroups(convertedNodes)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		groups = c.buildSingBoxGroups(convertedNodes)
+	}
+	outbounds = append(outbounds, groups...)
 	finalOutbound := c.defaultProxyGroupName()
+	if c.ini != nil {
+		finalOutbound = c.ini.Groups[0].Name
+	}
 	if c.options.FixedNode != "" && hasNodeByName(convertedNodes, c.options.FixedNode) {
+		defaultOutbound := finalOutbound
 		finalOutbound = "手动选择"
 		outbounds = append(outbounds, map[string]any{
 			"tag":       finalOutbound,
 			"type":      "selector",
-			"outbounds": []string{c.options.FixedNode, c.defaultProxyGroupName(), "DIRECT"},
+			"outbounds": []string{c.options.FixedNode, defaultOutbound, "DIRECT"},
 		})
 	}
 	cfg["outbounds"] = outbounds
@@ -1221,10 +1214,31 @@ func (c *subscriptionConverter) renderSingBox(nodes []ProxyNode) ([]byte, error)
 		route = map[string]any{}
 		cfg["route"] = route
 	}
-	normalizeSingBoxRouteRules(route, c.defaultProxyGroupName(), version)
+	normalizeSingBoxRouteRules(route, finalOutbound)
 	route["final"] = finalOutbound
-	routeBuild := c.buildSingBoxRouteRules()
+	var routeBuild singBoxRouteBuild
+	if c.ini != nil {
+		rules, final, err := c.buildINIRules(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if c.ini.Overwrite {
+			route["rules"] = nil
+		}
+		routeBuild.Rules = rules
+		if final != "" {
+			route["final"] = final
+		}
+		route["auto_detect_interface"] = true
+	} else {
+		routeBuild = c.buildSingBoxRouteRules()
+	}
 	route["rules"] = appendSingBoxRules(route["rules"], routeBuild.Rules)
+	if c.options.UDP != nil && !*c.options.UDP {
+		// 路由层禁用 UDP，覆盖 AnyTLS 等没有 network 选项的出站。
+		existing, _ := route["rules"].([]any)
+		route["rules"] = append([]any{map[string]any{"network": "udp", "action": "reject"}}, existing...)
+	}
 	if ruleSets := appendSingBoxRuleSets(route["rule_set"], routeBuild.RuleSets); len(ruleSets) > 0 {
 		route["rule_set"] = ruleSets
 	}
@@ -1239,7 +1253,6 @@ func (c *subscriptionConverter) renderSingBox(nodes []ProxyNode) ([]byte, error)
 }
 
 func applySingBoxOptions(cfg map[string]any, options converterOptions) {
-	version := singBoxVersionNumber(options.Version)
 	if inbounds, ok := cfg["inbounds"].([]any); ok {
 		for _, item := range inbounds {
 			if inbound, ok := item.(map[string]any); ok {
@@ -1262,12 +1275,7 @@ func applySingBoxOptions(cfg map[string]any, options converterOptions) {
 			"strict_route": true,
 			"sniff":        true,
 		}
-		if version >= 1010 {
-			tun["address"] = []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"}
-		} else {
-			tun["inet4_address"] = "172.19.0.1/30"
-			tun["inet6_address"] = "fdfe:dcba:9876::1/126"
-		}
+		tun["address"] = []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"}
 		inbounds, _ := cfg["inbounds"].([]any)
 		cfg["inbounds"] = append(inbounds, tun)
 	}
@@ -1280,27 +1288,7 @@ func effectiveSocksPort(options converterOptions) int {
 	return 7891
 }
 
-func singBoxVersionNumber(raw string) int {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 1012
-	}
-	parts := strings.Split(raw, ".")
-	if len(parts) == 0 {
-		return 1012
-	}
-	major, _ := strconv.Atoi(parts[0])
-	minor := 0
-	if len(parts) > 1 {
-		minor, _ = strconv.Atoi(parts[1])
-	}
-	if major == 0 && minor == 0 {
-		return 1012
-	}
-	return major*1000 + minor
-}
-
-func normalizeSingBoxRouteRules(route map[string]any, defaultGroup string, version int) {
+func normalizeSingBoxRouteRules(route map[string]any, defaultGroup string) {
 	rules, ok := route["rules"].([]any)
 	if !ok {
 		return
@@ -1310,11 +1298,11 @@ func normalizeSingBoxRouteRules(route map[string]any, defaultGroup string, versi
 		if !ok {
 			continue
 		}
-		normalizeSingBoxRuleOutbound(rule, defaultGroup, version)
+		normalizeSingBoxRuleOutbound(rule, defaultGroup)
 	}
 }
 
-func normalizeSingBoxRuleOutbound(rule map[string]any, defaultGroup string, version int) {
+func normalizeSingBoxRuleOutbound(rule map[string]any, defaultGroup string) {
 	outbound := stringFromMap(rule, "outbound")
 	if outbound == "" {
 		return
@@ -1325,12 +1313,8 @@ func normalizeSingBoxRuleOutbound(rule map[string]any, defaultGroup string, vers
 	case "direct":
 		rule["outbound"] = "DIRECT"
 	case "reject":
-		if version >= 1011 {
-			delete(rule, "outbound")
-			rule["action"] = "reject"
-		} else {
-			rule["outbound"] = "REJECT"
-		}
+		delete(rule, "outbound")
+		rule["action"] = "reject"
 	}
 }
 
@@ -1457,7 +1441,7 @@ func mihomoRuleToSingBox(rule, outbound string) map[string]any {
 	if len(parts) < 2 || outbound == "" {
 		return nil
 	}
-	rec := map[string]any{"outbound": outbound}
+	rec := singBoxRuleAction(outbound)
 	switch strings.ToUpper(strings.TrimSpace(parts[0])) {
 	case "DOMAIN-SUFFIX":
 		rec["domain_suffix"] = []string{strings.TrimSpace(parts[1])}
@@ -1476,11 +1460,14 @@ func mihomoRuleToSingBox(rule, outbound string) map[string]any {
 	default:
 		return nil
 	}
-	if strings.EqualFold(outbound, "REJECT") {
-		delete(rec, "outbound")
-		rec["action"] = "reject"
-	}
 	return rec
+}
+
+func singBoxRuleAction(target string) map[string]any {
+	if target == "REJECT" {
+		return map[string]any{"action": "reject"}
+	}
+	return map[string]any{"outbound": target}
 }
 
 func (c *subscriptionConverter) groupRules(ctx context.Context, groupName string) []string {
@@ -1507,16 +1494,24 @@ func (c *subscriptionConverter) groupRules(ctx context.Context, groupName string
 
 func (c *subscriptionConverter) fetchRuleHost(ctx context.Context, rawURL string) ([]string, error) {
 	cacheKey := strings.TrimSpace(rawURL)
-	if cached, ok := getCachedRuleHost(cacheKey); ok {
+	memoryKey := c.ruleMemoryCacheKey(cacheKey)
+	if cached, ok := getCachedRuleHost(memoryKey); ok {
 		return cached, nil
 	}
-	body, err := c.fetchText(ctx, rawURL)
+	value, err, _ := ruleHostFetchGroup.Do(memoryKey, func() (any, error) {
+		if cached, ok := getCachedRuleHost(memoryKey); ok {
+			return ruleFetchResult{rules: cached}, nil
+		}
+		return c.fetchAndCacheRuleHost(ctx, cacheKey, memoryKey)
+	})
 	if err != nil {
 		return nil, err
 	}
-	rules := parseRuleHostContent(path.Ext(mustURLPath(rawURL)), []byte(body))
-	setCachedRuleHost(cacheKey, rules)
-	return rules, nil
+	result := value.(ruleFetchResult)
+	if result.stale {
+		c.addSubscriptionWarning("using stale cached rules: " + cacheKey)
+	}
+	return append([]string(nil), result.rules...), nil
 }
 
 func (c *subscriptionConverter) fetchText(ctx context.Context, rawURL string) (string, error) {
@@ -1525,24 +1520,51 @@ func (c *subscriptionConverter) fetchText(ctx context.Context, rawURL string) (s
 			return "", err
 		}
 	}
+	return fetchRuleText(ctx, c.client, rawURL)
+}
+
+func fetchRuleText(ctx context.Context, client *http.Client, rawURL string) (string, error) {
+	response, err := fetchRuleTextConditional(ctx, client, rawURL, "", "")
+	return response.body, err
+}
+
+func fetchRuleTextConditional(ctx context.Context, client *http.Client, rawURL, etag, lastModified string) (ruleHTTPResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return "", err
+		return ruleHTTPResponse{}, err
 	}
 	req.Header.Set("User-Agent", subscriptionUserAgent)
-	resp, err := c.client.Do(req)
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	if lastModified != "" {
+		req.Header.Set("If-Modified-Since", lastModified)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return ruleHTTPResponse{}, err
 	}
 	defer resp.Body.Close()
+	result := ruleHTTPResponse{
+		etag:         resp.Header.Get("ETag"),
+		lastModified: resp.Header.Get("Last-Modified"),
+	}
+	if resp.StatusCode == http.StatusNotModified {
+		result.notModified = true
+		return result, nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("http %d", resp.StatusCode)
+		return ruleHTTPResponse{}, fmt.Errorf("http %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSubscriptionBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSubscriptionBytes+1))
 	if err != nil {
-		return "", err
+		return ruleHTTPResponse{}, err
 	}
-	return string(body), nil
+	if len(body) > maxSubscriptionBytes {
+		return ruleHTTPResponse{}, fmt.Errorf("rule response exceeds %d bytes", maxSubscriptionBytes)
+	}
+	result.body = string(body)
+	return result, nil
 }
 
 func getCachedRuleHost(key string) ([]string, bool) {
@@ -1562,6 +1584,10 @@ func getCachedRuleHost(key string) ([]string, bool) {
 }
 
 func setCachedRuleHost(key string, rules []string) {
+	setCachedRuleHostUntil(key, rules, time.Now().Add(ruleCacheTTL))
+}
+
+func setCachedRuleHostUntil(key string, rules []string, expiresAt time.Time) {
 	if key == "" {
 		return
 	}
@@ -1569,7 +1595,7 @@ func setCachedRuleHost(key string, rules []string) {
 	defer ruleHostCache.Unlock()
 	ruleHostCache.items[key] = ruleHostCacheEntry{
 		rules:     append([]string(nil), rules...),
-		expiresAt: time.Now().Add(24 * time.Hour),
+		expiresAt: expiresAt,
 	}
 }
 
@@ -1678,7 +1704,11 @@ func applyMihomoTLS(out map[string]any, node ProxyNode) {
 	if tls, ok := parseBoolAny(node["tls"]); ok {
 		tlsEnabled = tls
 	}
-	if !tlsEnabled && nodeType(node) != "trojan" && len(mapFromNode(node, "reality-opts")) == 0 {
+	switch nodeType(node) {
+	case "trojan", "anytls", "hysteria", "hysteria2", "tuic":
+		tlsEnabled = true
+	}
+	if !tlsEnabled && len(mapFromNode(node, "reality-opts")) == 0 {
 		return
 	}
 	tlsCfg := map[string]any{"enabled": true}

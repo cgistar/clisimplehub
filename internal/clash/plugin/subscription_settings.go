@@ -175,7 +175,19 @@ func parseConverterSettings(data []byte) (*converterSettings, error) {
 		file.Countries = file.CountriesAlt
 	}
 	if len(file.Countries) > 0 {
-		settings.Countries = matchersFromCountryMap(file.Countries)
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return nil, err
+		}
+		countryData := raw["countrys"]
+		if len(file.CountriesAlt) > 0 {
+			countryData = raw["countries"]
+		}
+		countries, err := orderedCountryMatchers(countryData)
+		if err != nil {
+			return nil, err
+		}
+		settings.Countries = countries
 	}
 	if len(file.CustomGroup) > 0 {
 		customGroups, err := matchersFromCustomGroups(file.CustomGroup)
@@ -241,12 +253,31 @@ func defaultConverterSettings() *converterSettings {
 	}
 }
 
-func matchersFromCountryMap(input map[string][]string) []converterMatcher {
-	out := make([]converterMatcher, 0, len(input))
-	for name, keys := range input {
+func orderedCountryMatchers(data []byte) ([]converterMatcher, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	var out []converterMatcher
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return nil, fmt.Errorf("invalid country name")
+		}
+		var keys []string
+		if err := decoder.Decode(&keys); err != nil {
+			return nil, err
+		}
 		out = append(out, newMatcher(name, name, keys))
 	}
-	return out
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func matchersFromCustomGroups(input orderedConverterCustomGroups) ([]converterMatcher, error) {

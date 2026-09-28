@@ -223,6 +223,7 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Delete("/web/api/home/endpoints/{endpointId}", p.requireWebUISession(p.handleWebUIDeleteEndpoint))
 	r.Get("/web/api/codex", p.requireWebUISession(p.handleWebUICodex))
 	r.Get("/web/api/codex/model-prices", p.requireWebUISession(p.handleWebUICodexModelPrices))
+	r.Get("/web/api/codex/model-prices/defaults", p.requireWebUISession(p.handleWebUIDefaultCodexModelPrices))
 	r.Put("/web/api/codex/model-prices", p.requireWebUISession(p.handleWebUISaveCodexModelPrices))
 	r.Post("/web/api/codex/active", p.requireWebUISession(p.handleWebUIActiveCodexAccount))
 	r.Post("/web/api/codex/refresh-token", p.requireWebUISession(p.handleWebUIRefreshCodexToken))
@@ -1061,6 +1062,21 @@ func (p *ProxyServer) handleWebUICodexModelPrices(w http.ResponseWriter, r *http
 		return
 	}
 	prices, err := provider.GetCodexModelPrices()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(prices)
+}
+
+func (p *ProxyServer) handleWebUIDefaultCodexModelPrices(w http.ResponseWriter, r *http.Request) {
+	provider := plugin.GetCodexDesktopProviderCached()
+	if provider == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "codex-accounts 插件不可用"})
+		return
+	}
+	prices, err := provider.GetDefaultCodexModelPrices()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

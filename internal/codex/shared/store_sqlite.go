@@ -1191,13 +1191,20 @@ func (s *SQLiteCodexAccountStore) DeleteStats(ctx context.Context, accountID str
 const codexModelPricesInitializedKey = "model_prices_initialized_v1"
 
 var defaultCodexModelPrices = []CodexModelPrice{
-	{Model: "gpt-6-astra", InputPer1M: 12.5, CachedInputPer1M: 1.25, CacheWritePer1M: 0, OutputPer1M: 75},
-	{Model: "gpt-5.6-sol", InputPer1M: 10, CachedInputPer1M: 1, CacheWritePer1M: 12.5, OutputPer1M: 60},
-	{Model: "gpt-5.6-terra", InputPer1M: 5, CachedInputPer1M: 0.5, CacheWritePer1M: 6.25, OutputPer1M: 30},
-	{Model: "gpt-5.6-luna", InputPer1M: 2, CachedInputPer1M: 0.2, CacheWritePer1M: 2.5, OutputPer1M: 12},
-	{Model: "gpt-5.5", InputPer1M: 12.5, CachedInputPer1M: 1.25, CacheWritePer1M: 0, OutputPer1M: 75},
-	{Model: "gpt-5.4", InputPer1M: 5, CachedInputPer1M: 0.5, CacheWritePer1M: 0, OutputPer1M: 30},
-	{Model: "gpt-5.4-mini", InputPer1M: 1.5, CachedInputPer1M: 0.15, CacheWritePer1M: 0, OutputPer1M: 9},
+	// 除 Astra 使用用户指定价格外，价格按 sub2api 的 model_prices_and_context_window.json 折算为 USD / 1M Token。
+	{Model: "gpt-6-astra", InputPer1M: 10, CachedInputPer1M: 1, CacheWritePer1M: 12.5, OutputPer1M: 50},
+	{Model: "gpt-6-sol", InputPer1M: 2, CachedInputPer1M: 0.2, CacheWritePer1M: 2.5, OutputPer1M: 10},
+	{Model: "gpt-6-luna", InputPer1M: 0.1, CachedInputPer1M: 0.01, CacheWritePer1M: 0.125, OutputPer1M: 0.5},
+	{Model: "gpt-5.6-sol", InputPer1M: 5, CachedInputPer1M: 0.5, CacheWritePer1M: 6.25, OutputPer1M: 30},
+	{Model: "gpt-5.6-terra", InputPer1M: 2, CachedInputPer1M: 0.2, CacheWritePer1M: 2.5, OutputPer1M: 12},
+	{Model: "gpt-5.6-luna", InputPer1M: 0.2, CachedInputPer1M: 0.02, CacheWritePer1M: 0.25, OutputPer1M: 1.2},
+	{Model: "gpt-5.5", InputPer1M: 5, CachedInputPer1M: 0.5, CacheWritePer1M: 0, OutputPer1M: 30},
+	{Model: "gpt-5.4", InputPer1M: 2.5, CachedInputPer1M: 0.25, CacheWritePer1M: 0, OutputPer1M: 15},
+	{Model: "gpt-5.4-mini", InputPer1M: 0.75, CachedInputPer1M: 0.075, CacheWritePer1M: 0, OutputPer1M: 4.5},
+}
+
+func DefaultCodexModelPrices() []CodexModelPrice {
+	return append([]CodexModelPrice(nil), defaultCodexModelPrices...)
 }
 
 func (s *SQLiteCodexAccountStore) initializeDefaultModelPrices(ctx context.Context) error {

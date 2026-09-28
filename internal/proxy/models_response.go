@@ -40,6 +40,8 @@ var openAIModelsCatalog = []staticOpenAIModel{
 	{ID: "gpt-5.3-codex-spark", Created: 1770912000, OwnedBy: "openai"},
 	{ID: "gpt-5.5", Created: 1776902400, OwnedBy: "openai"},
 	{ID: "gpt-6-astra", Created: 1783616400, OwnedBy: "openai"},
+	{ID: "gpt-6-sol", Created: 1790035200, OwnedBy: "openai"},
+	{ID: "gpt-6-luna", Created: 1790035200, OwnedBy: "openai"},
 	{ID: "gpt-5.6-sol", Created: 1783616400, OwnedBy: "openai"},
 	{ID: "gpt-5.6-terra", Created: 1783616400, OwnedBy: "openai"},
 	{ID: "gpt-5.6-luna", Created: 1783616400, OwnedBy: "openai"},

@@ -841,6 +841,22 @@ func (a *App) GetCodexModelPrices() ([]CodexModelPriceDTO, error) {
 	return prices, nil
 }
 
+func (a *App) GetDefaultCodexModelPrices() ([]CodexModelPriceDTO, error) {
+	cp := codexProvider()
+	if cp == nil {
+		return nil, fmt.Errorf("codex plugin not available")
+	}
+	raw, err := cp.GetDefaultCodexModelPrices()
+	if err != nil {
+		return nil, err
+	}
+	var prices []CodexModelPriceDTO
+	if err := json.Unmarshal(raw, &prices); err != nil {
+		return nil, err
+	}
+	return prices, nil
+}
+
 func (a *App) SaveCodexModelPrices(prices []CodexModelPriceDTO) ([]CodexModelPriceDTO, error) {
 	cp := codexProvider()
 	if cp == nil {

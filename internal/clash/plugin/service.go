@@ -1660,7 +1660,7 @@ func buildRuntimeForConfig(cfg *ClashConfig) ([]byte, *runtimePlan, bool, error)
 	runtimeCfg["rules"] = []string{"MATCH," + plan.trafficGroup}
 
 	runtimeCfg, err := mergeRuntimeConfigWithUserYAMLPrependRules(runtimeCfg, normalized,
-		"mixed-port", "bind-address", "allow-lan", "mode", "log-level", "ipv6", "profile", "proxies", "proxy-groups", "rules",
+		"mixed-port", "bind-address", "allow-lan", "mode", "log-level", "profile", "proxies", "proxy-groups", "rules",
 	)
 	if err != nil {
 		return nil, nil, false, err

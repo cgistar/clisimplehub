@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const defaultExternalController = ":9090"
+const defaultExternalController = ":9990"
 
 var defaultHubRuntimeRulesHead = []string{
 	"IP-CIDR,1.1.1.1/32," + runtimeGroupHub + ",no-resolve",
@@ -31,7 +31,7 @@ var defaultHubRuntimeRulesTail = []string{
 func defaultRuntimeDNSConfig() map[string]any {
 	return map[string]any{
 		"enable":                  true,
-		"ipv6":                    false,
+		"ipv6":                    true,
 		"use-system-hosts":        false,
 		"respect-rules":           true,
 		"default-nameserver":      []string{"223.5.5.5", "119.29.29.29", "1.2.4.8"},
@@ -48,7 +48,7 @@ func buildRuntimeBaseConfig(cfg *ClashConfig) map[string]any {
 		"allow-lan":           allowLAN(cfg),
 		"mode":                "rule",
 		"log-level":           clashLogLevel(cfg),
-		"ipv6":                false,
+		"ipv6":                true,
 		"dns":                 defaultRuntimeDNSConfig(),
 		"external-controller": defaultExternalController,
 	}

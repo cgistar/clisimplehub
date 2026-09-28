@@ -15,6 +15,7 @@ type CodexDesktopProvider interface {
 	GetCodexGlobalConfig(configPath string) (json.RawMessage, error)
 	SaveCodexGlobalConfig(configPath string, dto json.RawMessage) error
 	GetCodexModelPrices() (json.RawMessage, error)
+	GetDefaultCodexModelPrices() (json.RawMessage, error)
 	SaveCodexModelPrices(dto json.RawMessage) (json.RawMessage, error)
 	GetAccounts(configPath string) (json.RawMessage, error)
 	GetAccountsPage(configPath string, offset, limit int) (json.RawMessage, error)

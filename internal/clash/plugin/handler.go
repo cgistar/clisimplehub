@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"clisimplehub/internal/plugin"
@@ -36,6 +37,15 @@ func registerRoutes(r plugin.RouteRegistrar, svc *ClashService) {
 type handler struct {
 	svc          *ClashService
 	rosCNFetcher func(context.Context) (*routerOSChinaRoutes, error)
+}
+
+func (h *handler) subscriptionConverter(settings *converterSettings, r *http.Request) *subscriptionConverter {
+	converter := newSubscriptionConverter(settings, nil, requestBaseURL(r))
+	converter.ruleProxyURL = func() string { return builtInSocks5ProxyURL(h.svc) }
+	if h.svc != nil {
+		converter.ruleCacheDir = filepath.Join(h.svc.dataDir, "clash-rule-cache")
+	}
+	return converter
 }
 
 func (h *handler) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -217,13 +227,26 @@ func (h *handler) handleSubscriptionConvert(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "url is required", http.StatusBadRequest)
 		return
 	}
-	settings, err := loadConverterSettings(h.svc.dataDir)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	var settings *converterSettings
+	if target != targetSingBox {
+		settings, err = loadConverterSettings(h.svc.dataDir)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	converter := h.subscriptionConverter(settings, r)
+	converter.options = parseConverterOptions(r)
+	if err := parseSubscriptionNodeOptions(r, &converter.options); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	converter := newSubscriptionConverter(settings, nil, requestBaseURL(r))
-	converter.options = parseConverterOptions(r)
+	if target == targetSingBox {
+		if err := converter.loadSingBoxSettings(h.svc.dataDir); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	result, err := converter.Convert(r.Context(), urls, target)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -318,12 +341,12 @@ func (h *handler) handleRouterOSChinaRoutes(w http.ResponseWriter, r *http.Reque
 func parseConverterOptions(r *http.Request) converterOptions {
 	q := r.URL.Query()
 	return converterOptions{
+		UserAgent: strings.TrimSpace(q.Get("ua")),
 		SocksPort: parseQueryInt(q.Get("socks5_port")),
 		NoRPRX:    parseQueryBool(q.Get("no_rprx")),
 		Landing:   parseQueryBool(q.Get("landing")),
 		FixedNode: strings.TrimSpace(q.Get("fixed_node")),
 		Tun:       parseQueryBool(q.Get("tun")),
-		Version:   strings.TrimSpace(q.Get("ver")),
 	}
 }
 
@@ -357,7 +380,7 @@ func (h *handler) handleMihomoGroupRule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	converter := newSubscriptionConverter(settings, nil, requestBaseURL(r))
+	converter := h.subscriptionConverter(settings, r)
 	rules := converter.groupRules(r.Context(), groupName)
 	if r.URL.Query().Get("format") == "yaml" {
 		w.Header().Set("Content-Type", "application/yaml; charset=UTF-8")

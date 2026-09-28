@@ -138,6 +138,7 @@ export const webApi = {
       body: JSON.stringify({ enabled }),
     }),
   getCodexModelPrices: () => apiFetch<CodexModelPrice[]>('/web/api/codex/model-prices'),
+  getDefaultCodexModelPrices: () => apiFetch<CodexModelPrice[]>('/web/api/codex/model-prices/defaults'),
   saveCodexModelPrices: (prices: CodexModelPrice[]) =>
     apiFetch<CodexModelPrice[]>('/web/api/codex/model-prices', {
       method: 'PUT',

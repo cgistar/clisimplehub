@@ -75,7 +75,7 @@ func buildRuntimeYAML(cfg *ClashConfig, entry, middle, exit *ProxyNode, allowSin
 	runtimeCfg["rules"] = []string{"MATCH," + roleEntry}
 
 	runtimeCfg, err = mergeRuntimeConfigWithUserYAMLPrependRules(runtimeCfg, cfg,
-		"mixed-port", "bind-address", "allow-lan", "mode", "log-level", "ipv6", "proxies", "rules",
+		"mixed-port", "bind-address", "allow-lan", "mode", "log-level", "proxies", "rules",
 	)
 	if err != nil {
 		return nil, err

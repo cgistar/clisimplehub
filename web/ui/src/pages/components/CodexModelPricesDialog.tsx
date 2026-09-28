@@ -9,6 +9,7 @@ interface CodexModelPricesDialogProps {
   saving: boolean
   onOpenChange: (open: boolean) => void
   onSave: (prices: CodexModelPrice[]) => Promise<void>
+  onRestore: () => Promise<CodexModelPrice[]>
 }
 
 function copyPrices(prices: CodexModelPrice[]): CodexModelPrice[] {
@@ -21,9 +22,10 @@ function copyPrices(prices: CodexModelPrice[]): CodexModelPrice[] {
   }))
 }
 
-export default function CodexModelPricesDialog({ open, prices, loading, saving, onOpenChange, onSave }: CodexModelPricesDialogProps) {
+export default function CodexModelPricesDialog({ open, prices, loading, saving, onOpenChange, onSave, onRestore }: CodexModelPricesDialogProps) {
   const [rows, setRows] = useState<CodexModelPrice[]>([])
   const [validationError, setValidationError] = useState<string>('')
+  const [restoring, setRestoring] = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -46,6 +48,18 @@ export default function CodexModelPricesDialog({ open, prices, loading, saving, 
 
   function removeRow(index: number): void {
     setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))
+  }
+
+  async function restoreDefaults(): Promise<void> {
+    setRestoring(true)
+    try {
+      setRows(copyPrices(await onRestore()))
+      setValidationError('')
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : '加载内置模型单价失败')
+    } finally {
+      setRestoring(false)
+    }
   }
 
   async function submit(): Promise<void> {
@@ -107,10 +121,11 @@ export default function CodexModelPricesDialog({ open, prices, loading, saving, 
           {validationError ? <div className="notice danger-notice mt-12">{validationError}</div> : null}
         </DialogBody>
         <DialogFooter>
-          <button className="btn" type="button" disabled={loading || saving} onClick={addRow}>添加模型</button>
+          <button className="btn" type="button" disabled={loading || saving || restoring} onClick={addRow}>添加模型</button>
+          <button className="btn" type="button" disabled={loading || saving || restoring} onClick={() => void restoreDefaults()}>恢复</button>
           <span className="spacer" />
           <button className="btn" type="button" disabled={saving} onClick={() => onOpenChange(false)}>取消</button>
-          <button className="btn primary" type="button" disabled={loading || saving} onClick={() => void submit()}>{saving ? '保存中...' : '保存'}</button>
+          <button className="btn primary" type="button" disabled={loading || saving || restoring} onClick={() => void submit()}>{saving ? '保存中...' : '保存'}</button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

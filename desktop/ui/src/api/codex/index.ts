@@ -250,6 +250,10 @@ export const codexApi = {
     return App.GetCodexModelPrices()
   },
 
+  async getDefaultModelPrices(): Promise<CodexModelPrice[]> {
+    return App.GetDefaultCodexModelPrices()
+  },
+
   async saveModelPrices(prices: CodexModelPrice[]): Promise<CodexModelPrice[]> {
     return App.SaveCodexModelPrices(prices)
   },
