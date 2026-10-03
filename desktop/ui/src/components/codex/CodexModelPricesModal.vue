@@ -11,7 +11,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(price, index) in rows" :key="`${index}-${price.model}`">
+            <tr v-for="(price, index) in rows" :key="price.rowId">
               <td><n-input v-model:value="price.model" placeholder="例如 gpt-5.6-sol" /></td>
               <td><n-input-number v-model:value="price.inputPer1M" :min="0" :precision="6" /></td>
               <td><n-input-number v-model:value="price.cachedInputPer1M" :min="0" :precision="6" /></td>
@@ -53,7 +53,13 @@ const priceStore = useCodexModelPricesStore()
 const visible = ref(false)
 const loading = ref(false)
 const saving = ref(false)
-const rows = ref<CodexModelPrice[]>([])
+type PriceRow = CodexModelPrice & { rowId: number }
+const rows = ref<PriceRow[]>([])
+let nextRowId = 0
+
+function createRows(prices: CodexModelPrice[]): PriceRow[] {
+  return copyPrices(prices).map((price) => ({ ...price, rowId: nextRowId++ }))
+}
 
 function copyPrices(prices: CodexModelPrice[]): CodexModelPrice[] {
   return prices.map((price) => ({
@@ -74,7 +80,7 @@ watch(() => props.show, async (show) => {
   if (!show) return
   loading.value = true
   try {
-    rows.value = copyPrices(await priceStore.loadPrices())
+    rows.value = createRows(await priceStore.loadPrices())
   } catch (error) {
     message.error(`加载模型单价失败：${toErrorMessage(error)}`)
     visible.value = false
@@ -88,13 +94,13 @@ watch(visible, (show) => {
 })
 
 function addRow(): void {
-  rows.value.push({ model: '', inputPer1M: 0, cachedInputPer1M: 0, cacheWritePer1M: 0, outputPer1M: 0 })
+  rows.value.push(...createRows([{ model: '', inputPer1M: 0, cachedInputPer1M: 0, cacheWritePer1M: 0, outputPer1M: 0 }]))
 }
 
 async function restoreDefaults(): Promise<void> {
   loading.value = true
   try {
-    rows.value = copyPrices(await codexApi.getDefaultModelPrices())
+    rows.value = createRows(await codexApi.getDefaultModelPrices())
   } catch (error) {
     message.error(`加载内置模型单价失败：${toErrorMessage(error)}`)
   } finally {

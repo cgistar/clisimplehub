@@ -210,6 +210,9 @@ func (s *SQLiteCodexAccountStore) initSchema(ctx context.Context) error {
 	if err := s.initializeDefaultModelPrices(ctx); err != nil {
 		return err
 	}
+	if err := s.initializeGPT61ModelPrices(ctx); err != nil {
+		return err
+	}
 	if s.driver == dbconfig.DriverSQLite {
 		if err := s.migrateCodexAccountsLocalID(ctx); err != nil {
 			return err
@@ -1193,6 +1196,8 @@ const codexModelPricesInitializedKey = "model_prices_initialized_v1"
 var defaultCodexModelPrices = []CodexModelPrice{
 	// 除 Astra 使用用户指定价格外，价格按 sub2api 的 model_prices_and_context_window.json 折算为 USD / 1M Token。
 	{Model: "gpt-6-astra", InputPer1M: 10, CachedInputPer1M: 1, CacheWritePer1M: 12.5, OutputPer1M: 50},
+	{Model: "gpt-6.1-sol", InputPer1M: 2, CachedInputPer1M: 0.2, CacheWritePer1M: 2.5, OutputPer1M: 10},
+	{Model: "gpt-6.1-luna", InputPer1M: 0.1, CachedInputPer1M: 0.01, CacheWritePer1M: 0.125, OutputPer1M: 0.5},
 	{Model: "gpt-6-sol", InputPer1M: 2, CachedInputPer1M: 0.2, CacheWritePer1M: 2.5, OutputPer1M: 10},
 	{Model: "gpt-6-luna", InputPer1M: 0.1, CachedInputPer1M: 0.01, CacheWritePer1M: 0.125, OutputPer1M: 0.5},
 	{Model: "gpt-5.6-sol", InputPer1M: 5, CachedInputPer1M: 0.5, CacheWritePer1M: 6.25, OutputPer1M: 30},
@@ -1240,6 +1245,40 @@ func (s *SQLiteCodexAccountStore) initializeDefaultModelPrices(ctx context.Conte
 			codexModelPricesInitializedKey, "1", sqliteTime(time.Now()))
 		if err != nil {
 			return fmt.Errorf("write model price initialization marker: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *SQLiteCodexAccountStore) initializeGPT61ModelPrices(ctx context.Context) error {
+	const markerKey = "model_prices_gpt_6_1_initialized_v1"
+	return s.withTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		var marker string
+		err := tx.QueryRowContext(txCtx, s.rebind(`SELECT value FROM codex_store_metadata WHERE meta_key = ?`), markerKey).Scan(&marker)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read GPT 6.1 model price initialization marker: %w", err)
+		}
+
+		// 仅补充一次缺失的新模型，保留自定义价格及后续主动删除的结果。
+		now := sqliteTime(time.Now())
+		for _, price := range defaultCodexModelPrices {
+			if price.Model != "gpt-6.1-sol" && price.Model != "gpt-6.1-luna" {
+				continue
+			}
+			if _, err := tx.ExecContext(txCtx, s.rebind(`
+				INSERT INTO codex_model_prices (
+					model, input_per_1m, cached_input_per_1m, cache_write_per_1m, output_per_1m, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (model) DO NOTHING`),
+				price.Model, price.InputPer1M, price.CachedInputPer1M, price.CacheWritePer1M, price.OutputPer1M, now); err != nil {
+				return fmt.Errorf("insert GPT 6.1 model price %q: %w", price.Model, err)
+			}
+		}
+		if _, err := tx.ExecContext(txCtx, s.rebind(`
+			INSERT INTO codex_store_metadata (meta_key, value, updated_at) VALUES (?, ?, ?)`), markerKey, "1", now); err != nil {
+			return fmt.Errorf("write GPT 6.1 model price initialization marker: %w", err)
 		}
 		return nil
 	})

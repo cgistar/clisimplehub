@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CodexModelPrice } from '@/types'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
@@ -12,6 +12,8 @@ interface CodexModelPricesDialogProps {
   onRestore: () => Promise<CodexModelPrice[]>
 }
 
+type PriceRow = CodexModelPrice & { rowId: number }
+
 function copyPrices(prices: CodexModelPrice[]): CodexModelPrice[] {
   return prices.map((price) => ({
     model: price.model,
@@ -23,13 +25,18 @@ function copyPrices(prices: CodexModelPrice[]): CodexModelPrice[] {
 }
 
 export default function CodexModelPricesDialog({ open, prices, loading, saving, onOpenChange, onSave, onRestore }: CodexModelPricesDialogProps) {
-  const [rows, setRows] = useState<CodexModelPrice[]>([])
+  const [rows, setRows] = useState<PriceRow[]>([])
+  const nextRowId = useRef(0)
   const [validationError, setValidationError] = useState<string>('')
   const [restoring, setRestoring] = useState(false)
 
+  function createRows(prices: CodexModelPrice[]): PriceRow[] {
+    return copyPrices(prices).map((price) => ({ ...price, rowId: nextRowId.current++ }))
+  }
+
   useEffect(() => {
     if (open) {
-      setRows(copyPrices(prices))
+      setRows(createRows(prices))
       setValidationError('')
     }
   }, [open, prices])
@@ -43,7 +50,8 @@ export default function CodexModelPricesDialog({ open, prices, loading, saving, 
   }
 
   function addRow(): void {
-    setRows((current) => [...current, { model: '', inputPer1M: 0, cachedInputPer1M: 0, cacheWritePer1M: 0, outputPer1M: 0 }])
+    const addedRows = createRows([{ model: '', inputPer1M: 0, cachedInputPer1M: 0, cacheWritePer1M: 0, outputPer1M: 0 }])
+    setRows((current) => [...current, ...addedRows])
   }
 
   function removeRow(index: number): void {
@@ -53,7 +61,7 @@ export default function CodexModelPricesDialog({ open, prices, loading, saving, 
   async function restoreDefaults(): Promise<void> {
     setRestoring(true)
     try {
-      setRows(copyPrices(await onRestore()))
+      setRows(createRows(await onRestore()))
       setValidationError('')
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : '加载内置模型单价失败')
@@ -105,7 +113,7 @@ export default function CodexModelPricesDialog({ open, prices, loading, saving, 
                 <thead><tr><th>模型</th><th>输入 / 1M</th><th>缓存读取 / 1M</th><th>缓存写入 / 1M</th><th>输出 / 1M</th><th></th></tr></thead>
                 <tbody>
                   {rows.map((price, index) => (
-                    <tr key={`${index}-${price.model}`}>
+                    <tr key={price.rowId}>
                       <td><input className="input" value={price.model} onChange={(event) => updateRow(index, 'model', event.target.value)} placeholder="例如 gpt-5.6-sol" /></td>
                       <td><input className="input" type="number" min="0" step="any" value={price.inputPer1M} onChange={(event) => updateRow(index, 'inputPer1M', event.target.value)} /></td>
                       <td><input className="input" type="number" min="0" step="any" value={price.cachedInputPer1M} onChange={(event) => updateRow(index, 'cachedInputPer1M', event.target.value)} /></td>
