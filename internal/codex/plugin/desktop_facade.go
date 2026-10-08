@@ -47,7 +47,7 @@ func (d *desktopFacade) GetAccounts(configPath string) (json.RawMessage, error) 
 		})
 	}
 
-	accounts, err := store.ListAccounts(context.Background())
+	accounts, err := getService().refreshAccounts(context.Background(), "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -110,13 +110,26 @@ func (d *desktopFacade) GetAccountsPage(configPath string, offset, limit int) (j
 		limit = 200
 	}
 
-	accounts, err := store.ListAccountsPage(context.Background(), offset, limit)
-	if err != nil {
-		return nil, err
-	}
-	total, err := store.CountAccounts(context.Background())
-	if err != nil {
-		return nil, err
+	var accounts []codexShared.CodexAccount
+	var total int
+	if offset == 0 {
+		var err error
+		accounts, err = getService().refreshAccounts(context.Background(), "", "")
+		if err != nil {
+			return nil, err
+		}
+		total = len(accounts)
+		accounts = accounts[:min(limit, total)]
+	} else {
+		var err error
+		accounts, err = store.ListAccountsPage(context.Background(), offset, limit)
+		if err != nil {
+			return nil, err
+		}
+		total, err = store.CountAccounts(context.Background())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	mc, _ := codexShared.LoadCodexMultiConfig(configPath)
@@ -193,29 +206,8 @@ func (d *desktopFacade) SetActiveAccount(configPath, accountId string) error {
 		return fmt.Errorf("accountId is required")
 	}
 
-	store := getStore()
-	if store == nil {
-		return fmt.Errorf("account store not initialized")
-	}
-
-	account, err := store.GetByID(context.Background(), accountId)
-	if err != nil || account == nil {
-		return fmt.Errorf("account not found: %s", accountId)
-	}
-
-	mc, _ := codexShared.LoadCodexMultiConfig(configPath)
-	if mc == nil {
-		mc = &codexShared.CodexMultiConfig{}
-	}
-	mc.ActiveAccountID = accountId
-	if err := codexShared.SaveCodexMultiConfig(configPath, mc); err != nil {
-		return err
-	}
-
-	if pool := codex.GetPool(); pool != nil {
-		pool.Reload()
-	}
-	return nil
+	_, err := getService().refreshAccounts(context.Background(), configPath, accountId)
+	return err
 }
 
 // AddAccount is overridden by CodexPlugin.AddAccount in plugin.go

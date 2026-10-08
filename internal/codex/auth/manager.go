@@ -35,28 +35,23 @@ type CodexAuthManager struct {
 	expiresAt    time.Time
 	proxyURL     string
 	store        codexShared.CodexAccountStore
+	invalidated  bool
 	mu           sync.Mutex
 }
 
 func NewCodexAuthManager(account *codexShared.CodexAccount, store codexShared.CodexAccountStore) *CodexAuthManager {
-	m := &CodexAuthManager{
-		refreshToken: account.RefreshToken,
-		localID:      account.ID,
-		accessToken:  account.AccessToken,
-		idToken:      account.IDToken,
-		accountID:    account.AccountID,
-		email:        account.Email,
-		planType:     account.PlanType,
-		expiresAt:    account.ExpiresAt,
-		proxyURL:     account.ProxyUrl,
-		store:        store,
-	}
+	m := &CodexAuthManager{localID: account.ID, proxyURL: account.ProxyUrl, store: store}
+	m.syncAccountLocked(account)
 	return m
 }
 
 func (m *CodexAuthManager) GetAccessToken() (string, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.invalidated {
+		return "", "", fmt.Errorf("account is no longer available")
+	}
 
 	if m.accessToken != "" && time.Now().Add(TokenRefreshThreshold).Before(m.expiresAt) {
 		return m.accessToken, m.accountID, nil
@@ -88,6 +83,9 @@ func (m *CodexAuthManager) resolveProxyURL() string {
 }
 
 func (m *CodexAuthManager) refreshTokenLocked() error {
+	if m.invalidated {
+		return fmt.Errorf("account is no longer available")
+	}
 	if m.refreshToken == "" {
 		if m.accessToken == "" {
 			return fmt.Errorf("neither refresh token nor access token is set")

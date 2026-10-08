@@ -102,6 +102,7 @@ func (s *CodexService) proxyResponsesWebsocketTurns(ctx context.Context, downstr
 	lastResponseID := ""
 	var lastResponsePendingToolCallIDs []string
 	pinnedAccountID := ""
+	var pinnedAccountSnapshot *codexShared.CodexAccount
 	pinnedWebsocket := false
 	forceTranscriptReplayNextRequest := false
 
@@ -139,7 +140,13 @@ func (s *CodexService) proxyResponsesWebsocketTurns(ctx context.Context, downstr
 			activeAccountID != pinnedAccountID
 
 		pinnedAccount := pool.SelectByID(pinnedAccountID)
-		if pinnedAccountID != "" && (activeAccountChanged || pinnedAccount == nil) {
+		credentialsChanged := pinnedAccount != nil && pinnedAccountSnapshot != nil &&
+			(pinnedAccount.AccessToken != pinnedAccountSnapshot.AccessToken ||
+				pinnedAccount.RefreshToken != pinnedAccountSnapshot.RefreshToken ||
+				pinnedAccount.AccountID != pinnedAccountSnapshot.AccountID ||
+				pinnedAccount.ProxyUrl != pinnedAccountSnapshot.ProxyUrl)
+		// 相同本地 ID 的凭据变化也必须重建连接，避免下一 turn 沿用旧握手身份。
+		if pinnedAccountID != "" && (activeAccountChanged || pinnedAccount == nil || credentialsChanged) {
 			pinnedAccountID = ""
 			pinnedWebsocket = false
 			forceTranscriptReplayNextRequest = true
@@ -271,6 +278,7 @@ func (s *CodexService) proxyResponsesWebsocketTurns(ctx context.Context, downstr
 			// 上游流建立成功后提前 pin WS 账号，保证后续 turn 粘住同一会话。
 			if account.Websockets {
 				pinnedAccountID = strings.TrimSpace(account.ID)
+				pinnedAccountSnapshot = account
 				pinnedWebsocket = true
 			}
 
@@ -314,6 +322,7 @@ func (s *CodexService) proxyResponsesWebsocketTurns(ctx context.Context, downstr
 				lastResponseID = collector.CompletedResponseID()
 				lastResponsePendingToolCallIDs = collector.PendingToolCallIDs()
 				pinnedAccountID = strings.TrimSpace(account.ID)
+				pinnedAccountSnapshot = account
 				pinnedWebsocket = account.Websockets
 				forceTranscriptReplayNextRequest = false
 				turnCompleted = true

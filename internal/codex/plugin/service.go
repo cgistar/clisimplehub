@@ -2,6 +2,7 @@ package codexplugin
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -183,13 +184,40 @@ func (s *CodexService) GetOrCreateAuthManager(accountId, configPath, proxyURL st
 func (s *CodexService) RemoveAuthManager(accountId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if m := s.authManagers[accountId]; m != nil {
+		m.Invalidate()
+	}
 	delete(s.authManagers, accountId)
 }
 
 func (s *CodexService) ClearAuthManagers() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, m := range s.authManagers {
+		m.Invalidate()
+	}
 	s.authManagers = make(map[string]*codexAuth.CodexAuthManager)
+}
+
+func (s *CodexService) RefreshAuthManagers(ctx context.Context) error {
+	_, err := s.refreshAccounts(ctx, "", "")
+	return err
+}
+
+func (s *CodexService) refreshAccounts(ctx context.Context, configPath, activeAccountID string) ([]codexShared.CodexAccount, error) {
+	if s == nil {
+		return nil, fmt.Errorf("codex service not initialized")
+	}
+	pool := codex.GetPool()
+	if pool == nil {
+		return nil, fmt.Errorf("codex pool not initialized")
+	}
+	// 固定锁顺序：service -> manager（按 ID）-> pool；读库前阻止凭据刷新及新建 manager。
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return codexAuth.RefreshManagers(s.authManagers, func() ([]codexShared.CodexAccount, error) {
+		return pool.RefreshAccounts(ctx, configPath, activeAccountID)
+	})
 }
 
 func (s *CodexService) SaveConfigAndReload(configPath string, mc *codexShared.CodexMultiConfig) error {
