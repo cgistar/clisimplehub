@@ -35,16 +35,17 @@ export default function ProxyPage({ data, loading, onRefresh, onUnavailable, onA
   if (!data) return <div className="card empty-state">暂无代理数据</div>
   if (!data.available || !config || !status) return null
   const currentStatus = status
+  const socksAddress = status.socksAddr?.replace(/^0\.0\.0\.0:/, '127.0.0.1:')
 
   async function saveConfig(next: ClashConfig) { await run('config', () => webApi.saveClashConfig(next), '代理配置已保存'); setConfigOpen(false) }
   async function saveSubscription(name: string, url: string) { const current = editing; await run('subscription:save', () => current ? webApi.updateClashSubscription(current.id, name, url) : webApi.addClashSubscription(name, url), current ? '订阅已更新' : '订阅已添加'); setSubscriptionOpen(false); setEditing(null) }
   async function refreshSubscription(id: string) { setBusy(`subscription:${id}`); try { const result = await webApi.refreshClashSubscription(id); if (result.errors?.length) toast.warning(result.errors.join('; ')); else toast.success(`已刷新 ${result.totalNodes} 个节点`); await onRefresh() } catch (error) { const apiError = error as ApiError; if (apiError.status === 401 || apiError.status === 403) onAuthExpired(); else toast.error(error instanceof Error ? error.message : '刷新订阅失败') } finally { setBusy('') } }
-  async function copyAddress() { if (!currentStatus.socksAddr) return; try { await copyToClipboard(`socks5://${currentStatus.socksAddr}`); toast.success('代理地址已复制') } catch { toast.error('复制代理地址失败') } }
+  async function copyAddress() { if (!currentStatus.socksAddr) return; try { await copyToClipboard(`socks5://${socksAddress}`); toast.success('代理地址已复制') } catch { toast.error('复制代理地址失败') } }
 
   return <div className="proxy-page">
     <section className="card proxy-overview">
       <div className="card-header proxy-overview-header">
-        <div className="proxy-status-block"><span className="proxy-globe"><Globe size={18} /></span><div><h2 className="card-title">隧道</h2><div className="proxy-status-meta"><span className={`status-badge ${status.running ? 'running' : 'stopped'}`}>{status.running ? '运行中' : '已停止'}</span>{status.running ? <button type="button" className="proxy-copy-address" onClick={() => void copyAddress()}>SOCKS5://{status.socksAddr || '--'} <ClipboardCopy size={13} /></button> : null}<span>节点：{status.selectedNode || '--'}</span></div></div></div>
+        <div className="proxy-status-block"><span className="proxy-globe"><Globe size={18} /></span><div><h2 className="card-title">隧道</h2><div className="proxy-status-meta"><span className={`status-badge ${status.running ? 'running' : 'stopped'}`}>{status.running ? '运行中' : '已停止'}</span>{status.running ? <button type="button" className="proxy-copy-address" onClick={() => void copyAddress()}>SOCKS5://{socksAddress || '--'} <ClipboardCopy size={13} /></button> : null}<span>节点：{status.selectedNode || '--'}</span></div></div></div>
         <div className="actions"><button className={`btn ${status.running ? 'danger' : 'primary'}`} disabled={busy === 'runtime'} onClick={() => void run('runtime', status.running ? webApi.stopClash : webApi.startClash, status.running ? '代理已停止' : '代理已启动')}>{status.running ? <Square size={15} /> : <Play size={15} />} {status.running ? '停止' : '启动'}</button><button className="btn" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> 配置</button><button className="btn" disabled={busy === 'reload'} onClick={() => void run('reload', webApi.reloadClash, '代理配置已刷新')}><RefreshCw size={15} /> {busy === 'reload' ? '刷新中...' : '刷新'}</button><button className="btn primary" onClick={() => { setEditing(null); setSubscriptionOpen(true) }}>订阅</button></div>
       </div>
     </section>

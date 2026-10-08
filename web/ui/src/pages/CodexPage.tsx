@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import KpiCard from '@/components/KpiCard'
 import { createCodexConfigForm } from '@/lib/codex'
@@ -24,6 +24,7 @@ interface CodexPageProps {
   onCopyAccount: (account: CodexAccount) => void
   onEditAccount: (account: CodexAccount) => void
   onDeleteAccount: (accountId: string) => void
+  onDeleteAccounts: (accountIds: string[]) => Promise<boolean>
 }
 
 export default function CodexPage({
@@ -42,7 +43,32 @@ export default function CodexPage({
   onCopyAccount,
   onEditAccount,
   onDeleteAccount,
+  onDeleteAccounts,
 }: CodexPageProps) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const batchDeleteBusy = busyAction === 'codex:delete-batch'
+
+  useEffect(() => {
+    const existingIds = new Set((data?.accounts || []).map((account) => account.id))
+    setSelectedIds((current) => new Set([...current].filter((id) => existingIds.has(id))))
+  }, [data?.accounts])
+
+  function toggleAccount(accountId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(accountId)) next.delete(accountId)
+      else next.add(accountId)
+      return next
+    })
+  }
+
+  async function deleteSelectedAccounts() {
+    if (busyAction || loading) return
+    const ids = (data?.accounts || []).flatMap((account) => account.id && selectedIds.has(account.id) ? [account.id] : [])
+    if (!ids.length || !window.confirm(`确定删除选中的 ${ids.length} 个 Codex 账号吗？删除后无法恢复。`)) return
+    if (await onDeleteAccounts(ids)) setSelectedIds(new Set())
+  }
+
   const [modelPricesOpen, setModelPricesOpen] = useState(false)
   const [modelPrices, setModelPrices] = useState<CodexModelPrice[]>([])
   const [modelPricesLoading, setModelPricesLoading] = useState(false)
@@ -105,6 +131,9 @@ export default function CodexPage({
   }
 
   const accounts = data.accounts || []
+  const selectableIds = accounts.flatMap((account) => account.id ? [account.id] : [])
+  const selectedCount = selectableIds.filter((id) => selectedIds.has(id)).length
+  const allSelected = selectableIds.length > 0 && selectedCount === selectableIds.length
   const globalConfig = createCodexConfigForm(data.globalConfig)
   const validCount = accounts.filter((account) => account.status === 'valid').length
   const cooldownCount = accounts.filter((account) => Number(account.cooldownRemaining || 0) > 0).length
@@ -133,20 +162,26 @@ export default function CodexPage({
         <div className="card-header codex-account-section-header">
           <div>
             <h2 className="card-title">账号卡片</h2>
-            <div className="card-subtitle">支持激活、刷新 Token、获取用量、复制、删除</div>
+            <div className="card-subtitle">支持激活、刷新 Token、获取用量、复制、批量删除</div>
           </div>
 
           <div className="actions codex-account-section-actions">
-            <button className="btn" type="button" onClick={onRefreshCodex} disabled={loading}>
+            <button className="btn" type="button" disabled={Boolean(busyAction) || loading || selectableIds.length === 0} onClick={() => setSelectedIds(allSelected ? new Set() : new Set(selectableIds))}>
+              {allSelected ? '取消全选' : '全选'}
+            </button>
+            <button className="btn danger" type="button" disabled={Boolean(busyAction) || loading || selectedCount === 0} onClick={() => void deleteSelectedAccounts()}>
+              {batchDeleteBusy ? '删除中...' : `批量删除 (${selectedCount})`}
+            </button>
+            <button className="btn" type="button" onClick={onRefreshCodex} disabled={loading || batchDeleteBusy}>
               {loading ? '刷新中...' : '刷新'}
             </button>
             <button className="btn" type="button" onClick={() => onCopyVisibleAccounts(accounts)} disabled={accounts.length === 0}>
               复制
             </button>
-            <button className="btn" type="button" onClick={onOpenImport}>
+            <button className="btn" type="button" onClick={onOpenImport} disabled={batchDeleteBusy}>
               导入
             </button>
-            <button className="btn" type="button" onClick={onOpenConfig}>
+            <button className="btn" type="button" onClick={onOpenConfig} disabled={batchDeleteBusy}>
               配置
             </button>
             <button className="btn" type="button" onClick={() => void openModelPrices()}>
@@ -163,6 +198,9 @@ export default function CodexPage({
               <CodexAccountCard
                 key={account.id || account.accountId || account.refreshToken}
                 account={account}
+                selected={Boolean(account.id && selectedIds.has(account.id))}
+                selectionDisabled={Boolean(busyAction) || loading}
+                onToggleSelection={toggleAccount}
                 busyAction={busyAction}
                 onActivate={onActivateAccount}
                 onRefreshToken={onRefreshToken}

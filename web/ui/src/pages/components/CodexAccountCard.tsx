@@ -7,6 +7,9 @@ import CodexUsageBar from './CodexUsageBar'
 import CodexResetCreditsDialog from './CodexResetCreditsDialog'
 
 interface CodexAccountCardProps {
+  selected: boolean
+  selectionDisabled: boolean
+  onToggleSelection: (accountId: string) => void
   account: CodexAccount
   busyAction: string
   onActivate: (accountId: string) => void
@@ -21,6 +24,9 @@ interface CodexAccountCardProps {
 
 export default function CodexAccountCard({
   account,
+  selected,
+  selectionDisabled,
+  onToggleSelection,
   busyAction,
   onActivate,
   onRefreshToken,
@@ -43,7 +49,7 @@ export default function CodexAccountCard({
   const primaryUsageBusy = busyAction === `codex:usage-primary:${localId}`
   const resetBusy = busyAction === `codex:reset:${localId}`
   const deleteBusy = busyAction === `codex:delete:${localId}`
-  const actionBusy = activateBusy || refreshBusy || usageBusy || primaryUsageBusy || resetBusy || deleteBusy
+  const actionBusy = busyAction === 'codex:delete-batch' || activateBusy || refreshBusy || usageBusy || primaryUsageBusy || resetBusy || deleteBusy
   const subscriptionActiveUntil = getCodexSubscriptionActiveUntil(account.idToken)
   const resetCreditsAvailableCount = Number(account.codexUsage?.resetCreditsAvailableCount || 0)
   const estimatedCost = formatEstimatedCost(account.todayEstimatedCost)
@@ -71,6 +77,14 @@ export default function CodexAccountCard({
       />
       <div className="codex-account-card-header">
         <div className="codex-header-main">
+          <input
+            className="checkbox"
+            type="checkbox"
+            aria-label={`选择账号 ${displayName}`}
+            checked={selected}
+            disabled={selectionDisabled || !localId}
+            onChange={() => onToggleSelection(localId)}
+          />
           <h3 className="list-item-title no-margin codex-card-title" title={displayName}>
             {displayName}
           </h3>

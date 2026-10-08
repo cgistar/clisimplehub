@@ -236,6 +236,7 @@ func (p *ProxyServer) registerWebUIRoutes(r chi.Router) {
 	r.Post("/web/api/codex/accounts/import", p.requireWebUISession(p.handleWebUIImportCodexAccounts))
 	r.Post("/web/api/codex/accounts/update", p.requireWebUISession(p.handleWebUIUpdateCodexAccount))
 	r.Post("/web/api/codex/accounts/restore", p.requireWebUISession(p.handleWebUIRestoreCodexAccount))
+	r.Delete("/web/api/codex/accounts", p.requireWebUISession(p.handleWebUIDeleteCodexAccounts))
 	r.Delete("/web/api/codex/accounts/{accountId}", p.requireWebUISession(p.handleWebUIDeleteCodexAccount))
 
 	r.Get("/web/api/xai", p.requireWebUISession(p.handleWebUIXai))
@@ -1424,6 +1425,39 @@ func (p *ProxyServer) handleWebUIImportCodexAccounts(w http.ResponseWriter, r *h
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (p *ProxyServer) handleWebUIDeleteCodexAccounts(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountIDs []string `json:"accountIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求体格式无效"})
+		return
+	}
+	if len(req.AccountIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "accountIds 不能为空"})
+		return
+	}
+	for i, id := range req.AccountIDs {
+		req.AccountIDs[i] = strings.TrimSpace(id)
+		if req.AccountIDs[i] == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "accountIds 不能包含空账号 ID"})
+			return
+		}
+	}
+
+	provider := plugin.GetCodexDesktopProviderCached()
+	if provider == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "codex-accounts 插件不可用"})
+		return
+	}
+	codexPath := resolveWebUICodexConfigPath(provider, p.getConfigPath())
+	if err := provider.DeleteAccounts(codexPath, req.AccountIDs); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "所选 Codex 账号已删除"})
 }
 
 func (p *ProxyServer) handleWebUIDeleteCodexAccount(w http.ResponseWriter, r *http.Request) {

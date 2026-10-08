@@ -47,6 +47,8 @@ const subscriptionModalTitle = computed(() => {
   return t('clash.addSub')
 })
 
+const socksAddress = computed(() => clashStore.status.socksAddr.replace(/^0\.0\.0\.0:/, '127.0.0.1:'))
+
 const statusText = computed(() => {
   return clashStore.status.running ? t('clash.running') : t('clash.stopped')
 })
@@ -374,7 +376,7 @@ async function handleCopyProxyAddress(): Promise<void> {
   if (!clashStore.status.socksAddr) return
 
   try {
-    const proxyUrl = `socks5://${clashStore.status.socksAddr}`
+    const proxyUrl = `socks5://${socksAddress.value}`
     await navigator.clipboard.writeText(proxyUrl)
     message.success(t('logs.copyToClipboard'))
   } catch (error) {
@@ -398,7 +400,7 @@ async function handleCopyProxyAddress(): Promise<void> {
                 {{ statusText }}
               </span>
               <span v-if="clashStore.status.running" class="flex items-center gap-1 truncate text-xs text-slate-600">
-                <span>SOCKS5://{{ clashStore.status.socksAddr || '--' }}</span>
+                <span>SOCKS5://{{ socksAddress || '--' }}</span>
                 <button
                   v-if="clashStore.status.socksAddr"
                   type="button"

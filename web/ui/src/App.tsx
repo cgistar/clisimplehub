@@ -297,6 +297,12 @@ export default function App() {
     }
   }
 
+  async function handleDeleteCodexAccounts(accountIds: string[]): Promise<boolean> {
+    if (busyAction || !accountIds.length) return false
+    const result = await runCodexAction('codex:delete-batch', () => webApi.deleteCodexAccounts(accountIds), `已删除 ${accountIds.length} 个账号`, '批量删除 Codex 账号失败')
+    return result !== null
+  }
+
   async function handleDeleteCodexAccount(accountId: string): Promise<void> {
     await runCodexAction(`codex:delete:${accountId}`, () => webApi.deleteCodexAccount(accountId), '账号已删除', '删除 Codex 账号失败')
   }
@@ -671,6 +677,7 @@ export default function App() {
             onCopyAccount={handleCopyCodexAccount}
             onEditAccount={handleOpenCodexEdit}
             onDeleteAccount={handleDeleteCodexAccount}
+            onDeleteAccounts={handleDeleteCodexAccounts}
           />
         ) : route === 'xai' ? (
           <XaiPage

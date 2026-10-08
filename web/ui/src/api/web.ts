@@ -196,6 +196,11 @@ export const webApi = {
       method: 'POST',
       body: JSON.stringify({ accountId }),
     }),
+  deleteCodexAccounts: (accountIds: string[]) =>
+    apiFetch<ActionResponse>('/web/api/codex/accounts', {
+      method: 'DELETE',
+      body: JSON.stringify({ accountIds }),
+    }),
   deleteCodexAccount: (accountId: string) =>
     apiFetch<ActionResponse>(`/web/api/codex/accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' }),
   saveCodexConfig: (payload: CodexConfigForm) =>
