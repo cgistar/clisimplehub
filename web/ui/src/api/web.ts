@@ -4,6 +4,9 @@ import type {
   CodexAccount,
   CodexAccountInput,
   CodexImportAccountsResult,
+  CodexOAuthResult,
+  CodexOAuthStart,
+  CodexOAuthStatus,
   CodexResetCreditsList,
   AuthSessionResponse,
   BackupData,
@@ -173,6 +176,20 @@ export const webApi = {
     apiFetch<CodexResetCreditsList>('/web/api/codex/reset-credits', {
       method: 'POST',
       body: JSON.stringify({ accountId }),
+    }),
+  startCodexOAuthLogin: () =>
+    apiFetch<CodexOAuthStart>('/web/api/codex/oauth/start', { method: 'POST' }),
+  codexOAuthLoginStatus: (state: string) =>
+    apiFetch<CodexOAuthStatus>(`/web/api/codex/oauth/status?state=${encodeURIComponent(state)}`),
+  completeCodexOAuthLogin: (redirectUrl: string) =>
+    apiFetch<CodexOAuthResult>('/web/api/codex/oauth/callback', {
+      method: 'POST',
+      body: JSON.stringify({ redirectUrl }),
+    }),
+  cancelCodexOAuthLogin: (state: string) =>
+    apiFetch<ActionResponse>('/web/api/codex/oauth/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ state }),
     }),
   addCodexAccount: (payload: CodexAccountInput) =>
     apiFetch<CodexAccount & ActionResponse>('/web/api/codex/accounts', {

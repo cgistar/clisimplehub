@@ -730,7 +730,7 @@ export default {
     logLevel: '日志级别',
     userYaml: 'user.yaml',
     userYamlHelp: '可追加启动 YAML 自定义项；默认开启 IPv6，可用顶层 ipv6: false 关闭。dns 使用这里的配置，mixed-port、bind-address、allow-lan 仍由上方配置控制。',
-    userYamlPlaceholder: "ipv6: false\nglobal-client-fingerprint: chrome\nexternal-ui: ui\nsniffer:\n  enable: true",
+    userYamlPlaceholder: "ipv6: false\nexternal-ui: ui\nsniffer:\n  enable: true",
     subscriptions: '订阅源',
     subName: '订阅名称',
     subUrl: '订阅 URL',

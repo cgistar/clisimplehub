@@ -5,7 +5,7 @@
     :title="t('codex.oauthLoginModalTitle')"
     style="width: 600px"
     :mask-closable="false"
-    closable
+    :closable="!submitting"
   >
     <n-form>
       <n-form-item :label="t('codex.loginUrlLabel')">
@@ -32,9 +32,10 @@
           <n-input
             v-model:value="callbackUrl"
             :placeholder="t('codex.callbackUrlPlaceholder')"
+            :disabled="submitting"
             clearable
           />
-          <n-button :disabled="!callbackUrl.trim()" @click="handleSubmitCallbackUrl">
+          <n-button :disabled="!callbackUrl.trim() || starting || submitting || !active" :loading="submitting" @click="handleSubmitCallbackUrl">
             {{ t('codex.submitCallbackUrl') }}
           </n-button>
         </n-input-group>
@@ -50,14 +51,14 @@
 
     <template #footer>
       <n-space justify="end">
-        <n-button @click="handleClose">{{ t('common.close') }}</n-button>
+        <n-button :disabled="submitting" @click="handleClose">{{ t('common.close') }}</n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { NModal, NForm, NFormItem, NInput, NInputGroup, NButton, NAlert, NSpin, NIcon, NSpace, useMessage } from 'naive-ui'
 import { Copy, ExternalLink, EyeOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -81,46 +82,45 @@ const emit = defineEmits<{
 const visible = ref(false)
 const authUrl = ref('')
 const callbackUrl = ref('')
-const abortController = ref<AbortController | null>(null)
+const active = ref(false)
+const starting = ref(false)
+const submitting = ref(false)
+let generation = 0
+// 串行执行启停，防止快速重开时旧关闭请求停止新监听。
+let lifecycle: Promise<unknown> = Promise.resolve()
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
 }
 
-watch(() => props.show, async (newVal) => {
+watch(() => props.show, (newVal) => {
   visible.value = newVal
-  if (newVal) {
-    await startLogin()
-  } else {
-    cancelLogin()
-  }
+  if (newVal) void startLogin()
+  else void cancelLogin().catch((error) => message.error(toErrorMessage(error)))
 })
 
 watch(visible, (newVal) => {
-  if (!newVal) {
-    emit('update:show', false)
-    cancelLogin()
-  }
+  if (!newVal) emit('update:show', false)
 })
 
+onBeforeUnmount(() => { void cancelLogin().catch((error) => message.error(toErrorMessage(error))) })
+
 async function startLogin() {
+  const gen = ++generation
+  active.value = true
+  starting.value = true
+  callbackUrl.value = ''
+  authUrl.value = ''
   try {
-    abortController.value = new AbortController()
-    callbackUrl.value = ''
-
-    // Get OAuth URL
-    authUrl.value = await codexApi.startLoginWithURL()
-
-    // Wait for callback
-    const waitPromise = codexApi.waitForLoginCallback()
-    const abortPromise = new Promise<never>((_, reject) => {
-      abortController.value?.signal.addEventListener('abort', () => {
-        reject(new Error('Login cancelled by user'))
-      })
-    })
-
-    const result: CodexLoginResult = await Promise.race([waitPromise, abortPromise])
+    const pending = lifecycle.then(() => codexApi.startLoginWithURL())
+    lifecycle = pending.then(() => undefined, () => undefined)
+    const url = await pending
+    if (gen !== generation) return
+    authUrl.value = url
+    starting.value = false
+    const result: CodexLoginResult = await codexApi.waitForLoginCallback()
+    if (gen !== generation) return
 
     if (!result?.accountId) throw new Error('No account ID received')
     if (!result?.refreshToken && !result?.accessToken) throw new Error('No token payload received')
@@ -138,33 +138,38 @@ async function startLogin() {
 
     visible.value = false
   } catch (error) {
-    const errMsg = toErrorMessage(error)
-    if (errMsg === 'Login cancelled by user') {
-      visible.value = false
-      return
+    if (gen === generation) message.error(t('codex.oauthLoginFailed') + toErrorMessage(error))
+  } finally {
+    if (gen === generation) {
+      active.value = false
+      starting.value = false
+      authUrl.value = ''
     }
-
-    // Keep modal open on startup failures so users can still close/retry explicitly.
-    message.error(t('codex.oauthLoginFailed') + ': ' + errMsg)
   }
 }
 
 async function handleSubmitCallbackUrl() {
+  if (submitting.value) return
+  submitting.value = true
   try {
     await codexApi.submitLoginCallbackURL(callbackUrl.value)
   } catch (error) {
     message.error(t('codex.oauthCallbackSubmitFailed') + ': ' + toErrorMessage(error))
+  } finally {
+    submitting.value = false
   }
 }
 
-function cancelLogin() {
-  void codexApi.cancelLogin().catch(() => {
-    // Ignore cleanup errors when no login session exists.
-  })
-
-  if (abortController.value) {
-    abortController.value.abort()
-    abortController.value = null
+async function cancelLogin() {
+  const gen = ++generation
+  const pending = lifecycle.then(() => codexApi.cancelLogin())
+  lifecycle = pending.then(() => undefined, () => undefined)
+  await pending
+  if (gen === generation) {
+    active.value = false
+    starting.value = false
+    authUrl.value = ''
+    callbackUrl.value = ''
   }
 }
 

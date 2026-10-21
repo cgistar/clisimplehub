@@ -32,6 +32,14 @@ type CodexDesktopProvider interface {
 	SubmitLoginCallbackURL(ctx context.Context, callbackURL string) error
 	WaitForLoginCallback(ctx context.Context) (json.RawMessage, error)
 	CancelLogin() error
+	// StartOAuthURLLogin 生成登录链接，并在 127.0.0.1:1455 监听浏览器回调。
+	StartOAuthURLLogin(ctx context.Context) (json.RawMessage, error)
+	// OAuthURLLoginStatus 查询这次登录是否仍在监听，以及回调是否已经完成。
+	OAuthURLLoginStatus(state string) (json.RawMessage, error)
+	// CompleteOAuthURLLogin 用粘贴回来的 callback URL 换取 Token 并写入账号。
+	CompleteOAuthURLLogin(ctx context.Context, callbackURL string) (json.RawMessage, error)
+	// CancelOAuthURLLogin 结束这次登录并关闭 1455 端口。state 为空时关闭当前监听。
+	CancelOAuthURLLogin(state string) error
 	TestAccount(configPath, refreshToken string) (json.RawMessage, error)
 	GetAccountUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)
 	GetAccountPrimaryUsage(ctx context.Context, configPath, accountId string) (json.RawMessage, error)

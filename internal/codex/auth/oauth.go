@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	AuthURL     = "https://auth.openai.com/oauth/authorize"
-	RedirectURI = "http://localhost:1455/auth/callback"
-	OAuthPort   = 1455
+	AuthURL           = "https://auth.openai.com/oauth/authorize"
+	RedirectURI       = "http://localhost:1455/auth/callback"
+	OAuthPort         = 1455
+	OAuthLoginTimeout = 10 * time.Minute
 )
 
 type PKCECodes struct {
@@ -122,13 +123,16 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 		return "", nil, nil, fmt.Errorf("state generation: %w", err)
 	}
 
-	resultCh := make(chan *OAuthResult, 1)
-	server, err := startOAuthServer(resultCh)
+	waitCtx, waitCancel := context.WithTimeout(ctx, OAuthLoginTimeout)
+	resultCh := make(chan *CodexLoginResult, 1)
+	handler := newOAuthURLCallbackHandler(waitCtx, exchangePendingOAuthURLCode, resultCh)
+	server, err := startCallbackHTTPServer(handler)
 	if err != nil {
+		waitCancel()
 		return "", nil, nil, fmt.Errorf("start callback server: %w", err)
 	}
 
-	waitCtx, waitCancel := context.WithCancel(ctx)
+	cacheOAuthURLLogin(state, pkce, proxyURL)
 	var cleanupOnce sync.Once
 	cleanupFn := func() {
 		cleanupOnce.Do(func() {
@@ -138,29 +142,61 @@ func StartCodexLoginWithURL(ctx context.Context, proxyURL string) (authURL strin
 			_ = server.Shutdown(shutCtx)
 		})
 	}
+	go func() {
+		<-waitCtx.Done()
+		cleanupFn()
+	}()
 
 	authURL = BuildAuthURL(state, pkce)
-
 	waitFn = func() (*CodexLoginResult, error) {
-		var oauthResult *OAuthResult
 		select {
-		case oauthResult = <-resultCh:
-		case <-time.After(5 * time.Minute):
-			return nil, fmt.Errorf("login timeout")
+		case result := <-resultCh:
+			return result, nil
 		case <-waitCtx.Done():
 			return nil, waitCtx.Err()
 		}
-
-		if oauthResult.Error != "" {
-			return nil, fmt.Errorf("OAuth error: %s", oauthResult.Error)
-		}
-		if oauthResult.State != state {
-			return nil, fmt.Errorf("state mismatch")
-		}
-		return ExchangeCodeForTokens(ctx, oauthResult.Code, pkce, proxyURL)
 	}
-
 	return authURL, waitFn, cleanupFn, nil
+}
+
+// 回调失败不结束监听；关闭窗口只取消监听，未消费的 PKCE 由缓存管理。
+func newOAuthURLCallbackHandler(ctx context.Context, exchange func(string, string) (*CodexLoginResult, error), resultCh chan<- *CodexLoginResult) http.HandlerFunc {
+	var mu sync.Mutex
+	var completedState string
+	return func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			http.Error(w, err.Error(), http.StatusGone)
+			return
+		}
+		query := r.URL.Query()
+		state := strings.TrimSpace(query.Get("state"))
+		if state == "" || (completedState != "" && completedState != state) {
+			http.Error(w, "state mismatch", http.StatusBadRequest)
+			return
+		}
+		if errorMessage := query.Get("error"); errorMessage != "" {
+			http.Error(w, "OAuth error: "+errorMessage, http.StatusBadRequest)
+			return
+		}
+		code := strings.TrimSpace(query.Get("code"))
+		if code == "" {
+			http.Error(w, "No authorization code received", http.StatusBadRequest)
+			return
+		}
+		if completedState == "" {
+			result, err := exchange(state, code)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			completedState = state
+			resultCh <- result
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(successHTML))
+	}
 }
 
 func BuildAuthURL(state string, pkce *PKCECodes) string {
@@ -270,7 +306,7 @@ func SubmitCallbackURL(ctx context.Context, callbackURL string) error {
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := executor.NewHTTPClientForcedProxyURL("", 40*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("submit callback URL: %w", err)
@@ -285,15 +321,8 @@ func SubmitCallbackURL(ctx context.Context, callbackURL string) error {
 }
 
 func startOAuthServer(resultCh chan<- *OAuthResult) (*http.Server, error) {
-	addr := fmt.Sprintf("127.0.0.1:%d", OAuthPort)
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("port %d in use: %w", OAuthPort, err)
-	}
-
 	var once sync.Once
-	mux := http.NewServeMux()
-	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		code := q.Get("code")
 		state := q.Get("state")
@@ -316,7 +345,18 @@ func startOAuthServer(resultCh chan<- *OAuthResult) (*http.Server, error) {
 			}
 		})
 		http.Redirect(w, r, "/success", http.StatusFound)
-	})
+	}
+	return startCallbackHTTPServer(handler)
+}
+
+func startCallbackHTTPServer(handler http.HandlerFunc) (*http.Server, error) {
+	addr := fmt.Sprintf("127.0.0.1:%d", OAuthPort)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("port %d in use: %w", OAuthPort, err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/auth/callback", handler)
 	mux.HandleFunc("/success", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(successHTML))
@@ -325,7 +365,7 @@ func startOAuthServer(resultCh chan<- *OAuthResult) (*http.Server, error) {
 	server := &http.Server{
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: 40 * time.Second,
 	}
 
 	go func() {

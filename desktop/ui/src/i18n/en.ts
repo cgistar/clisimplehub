@@ -734,7 +734,7 @@ export default {
     logLevel: 'Log Level',
     userYaml: 'user.yaml',
     userYamlHelp: 'Append custom startup YAML here. IPv6 is enabled by default; set top-level ipv6: false to disable it. DNS comes from this block when provided; mixed-port, bind-address, and allow-lan still follow the fields above.',
-    userYamlPlaceholder: "ipv6: false\nglobal-client-fingerprint: chrome\nexternal-ui: ui\nsniffer:\n  enable: true",
+    userYamlPlaceholder: "ipv6: false\nexternal-ui: ui\nsniffer:\n  enable: true",
     subscriptions: 'Subscriptions',
     subName: 'Name',
     subUrl: 'Subscription URL',

@@ -313,6 +313,33 @@ export interface CodexImportAccountError {
   reason: string
 }
 
+export interface CodexOAuthStart {
+  url: string
+  state: string
+  callbackHost?: string
+  callbackPort?: number
+  listening?: boolean
+}
+
+export interface CodexOAuthStatus {
+  status: 'pending' | 'success' | 'error' | 'closed' | string
+  listening?: boolean
+  callbackHost?: string
+  callbackPort?: number
+  message?: string
+  email?: string
+  accountId?: string
+  planType?: string
+  error?: string
+}
+
+export interface CodexOAuthResult {
+  message?: string
+  email?: string
+  accountId?: string
+  planType?: string
+}
+
 export interface CodexImportAccountsResult {
   success: number
   failed: number

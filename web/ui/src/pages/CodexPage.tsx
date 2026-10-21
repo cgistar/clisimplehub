@@ -7,6 +7,7 @@ import type { CodexAccount, CodexModelPrice, CodexPageData } from '@/types'
 import { webApi } from '@/api/web'
 import CodexAccountCard from './components/CodexAccountCard'
 import CodexModelPricesDialog from './components/CodexModelPricesDialog'
+import CodexOAuthLoginDialog from './components/CodexOAuthLoginDialog'
 
 interface CodexPageProps {
   data: CodexPageData | null
@@ -69,6 +70,7 @@ export default function CodexPage({
     if (await onDeleteAccounts(ids)) setSelectedIds(new Set())
   }
 
+  const [oauthOpen, setOauthOpen] = useState(false)
   const [modelPricesOpen, setModelPricesOpen] = useState(false)
   const [modelPrices, setModelPrices] = useState<CodexModelPrice[]>([])
   const [modelPricesLoading, setModelPricesLoading] = useState(false)
@@ -178,6 +180,9 @@ export default function CodexPage({
             <button className="btn" type="button" onClick={() => onCopyVisibleAccounts(accounts)} disabled={accounts.length === 0}>
               复制
             </button>
+            <button className="btn" type="button" onClick={() => setOauthOpen(true)} disabled={batchDeleteBusy}>
+              OAuth 登录
+            </button>
             <button className="btn" type="button" onClick={onOpenImport} disabled={batchDeleteBusy}>
               导入
             </button>
@@ -216,6 +221,11 @@ export default function CodexPage({
         )}
       </section>
 
+      <CodexOAuthLoginDialog
+        open={oauthOpen}
+        onClose={() => setOauthOpen(false)}
+        onSuccess={onRefreshCodex}
+      />
       <CodexModelPricesDialog
         open={modelPricesOpen}
         prices={modelPrices}
